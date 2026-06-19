@@ -123,8 +123,8 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
   const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
 
   if (!session?.user?.id) {
-    console.warn('[createTrip] no authenticated user after refresh:', refreshErr?.message);
-    return null;
+    const msg = refreshErr?.message ?? 'No authenticated session';
+    throw new Error(`Auth error: ${msg}`);
   }
   const uid = session.user.id;
   const tok = session.access_token;
@@ -145,10 +145,9 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
   }).select('*').single();
 
   if (error) {
-    console.warn('[createTrip] insert error:', error.message, 'code:', error.code, 'details:', error.details);
-    return null;
+    throw new Error(`Supabase ${error.code ?? error.status}: ${error.message}${error.details ? ' — ' + error.details : ''}`);
   }
-  if (!data) return null;
+  if (!data) throw new Error('Insert returned no data');
   return mapTrip(data);
 }
 
