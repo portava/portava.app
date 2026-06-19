@@ -1,44 +1,52 @@
-# [Project name]
+# Travel Buddy
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A social travel passport mobile app — log trips, track destinations, and share your travel story.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- Workflows auto-start: `expo` (port 20682), `api-server` (port 8080)
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/travel-buddy run dev` — run Expo app manually
+- `pnpm --filter @workspace/api-server run dev` — run API server manually
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Mobile: Expo SDK 54, React Native, Expo Router
+- API: Express 5 (esbuild bundle, `artifacts/api-server`)
+- DB: Supabase (PostgreSQL + RLS), accessed via `@supabase/supabase-js`
+- Auth: Supabase Auth
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/travel-buddy/` — Expo mobile app
+  - `app/` — Expo Router screens
+  - `src/services/` — Supabase service layer (trips, auth, profiles)
+  - `src/lib/supabase.ts` — Supabase client
+  - `src/context/SessionContext.tsx` — auth session context
+  - `metro.config.js` — Metro bundler config (includes `_tmp` watcher blocklist fix)
+- `artifacts/api-server/` — Express API server
+  - `src/routes/trips.ts` — POST /api/trips (server-side trip creation)
+  - `src/lib/supabase.ts` — service role client
+  - `.env` — `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- **Trip creation routes through the API server**, not directly to Supabase PostgREST. The Supabase project rotated its JWT signing key to ECC P-256; PostgREST hasn't fully picked up the new key, so `auth.uid()` returns NULL and RLS fails. The API server verifies the user JWT via `supabase.auth.getUser(token)` (calls Auth directly, not PostgREST) then inserts with the service role key, bypassing RLS.
+- **Expo uses `sb_publishable_*` anon key** (new Supabase key format) for `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+- **Metro `_tmp` watcher blocklist** — `metro.config.js` blocks `*_tmp_\d+` paths to prevent ENOENT crashes when pnpm creates/deletes temp dirs during installs in workspace siblings.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
-
-## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Users sign in with Supabase Auth (email/password)
+- Create and manage trips (destination, dates, status, visibility)
+- View trip details; social passport for sharing travel history
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- After any `pnpm add` in a workspace sibling (e.g. `api-server`), restart the `expo` workflow — pnpm temp dirs can crash Metro if it's already running.
+- `artifacts/api-server/.env` must have both `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` or `/api/trips` returns 503.
+- `EXPO_PUBLIC_API_BASE_URL` in `artifacts/travel-buddy/.env` must point to the Replit dev domain (not the Expo domain) so the mobile app can reach the API server.
 
 ## Pointers
 

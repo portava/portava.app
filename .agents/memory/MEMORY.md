@@ -1,0 +1,2 @@
+- [Supabase ECC JWT workaround](supabase-ecc-jwt-workaround.md) — when PostgREST can't verify ECC P-256 tokens, route writes through the API server with a service role key
+- [Metro _tmp watcher crash](metro-tmp-watcher.md) — Metro crashes on ENOENT for `*_tmp_\d+` paths; block them in metro.config.js blockList
