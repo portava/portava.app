@@ -117,37 +117,43 @@ export interface CreateTripInput {
 export async function createTrip(input: CreateTripInput): Promise<TripRow | null> {
   if (!isSupabaseConfigured) return null;
 
-  // Refresh the session to guarantee a fresh, valid JWT before the insert.
-  // This is the primary fix for 403s caused by stale or post-rotation tokens.
-  const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+  // Get a fresh session token.
+  const { data: refreshed } = await supabase.auth.refreshSession();
   const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
 
   if (!session?.user?.id) {
-    const msg = refreshErr?.message ?? 'No authenticated session';
-    throw new Error(`Auth error: ${msg}`);
+    throw new Error('Auth error: No authenticated session');
   }
-  const uid = session.user.id;
-  const tok = session.access_token;
 
-  // Use a client that carries the token explicitly in the Authorization header,
-  // so auth.uid() resolves on the DB side (default client wasn't attaching it on web).
-  const db = authedClient(tok);
-  const { data, error } = await db.from('trips').insert({
-    owner_id: uid,
-    title: input.title,
-    destination_city: input.destinationCity,
-    destination_country: input.destinationCountry ?? null,
-    start_date: input.startDate ?? null,
-    end_date: input.endDate ?? null,
-    status: input.status ?? 'planning',
-    visibility: input.visibility ?? 'private',
-    cover_url: input.coverUrl ?? null,
-  }).select('*').single();
+  // Route through the API server so the insert is done server-side with the
+  // service role key — this bypasses PostgREST's JWT verification entirely,
+  // which is necessary because the Supabase project uses ECC P-256 signing
+  // while PostgREST on this project hasn't picked up the new key yet.
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      title: input.title,
+      destinationCity: input.destinationCity,
+      destinationCountry: input.destinationCountry,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      status: input.status ?? 'planning',
+      visibility: input.visibility ?? 'private',
+      coverUrl: input.coverUrl,
+    }),
+  });
 
-  if (error) {
-    throw new Error(`Supabase ${error.code ?? error.status}: ${error.message}${error.details ? ' — ' + error.details : ''}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(`API ${res.status}: ${err.error ?? res.statusText}`);
   }
-  if (!data) throw new Error('Insert returned no data');
+
+  const data = await res.json();
   return mapTrip(data);
 }
 

@@ -7,6 +7,7 @@ const config = getDefaultConfig(__dirname);
 config.resolver = config.resolver ?? {};
 config.resolver.blockList = [
   /node_modules.*react-native-reanimated_tmp.*/,
+  /node_modules.*_tmp_\d+/,
 ];
 
 module.exports = config;
