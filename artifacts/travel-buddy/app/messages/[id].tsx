@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe, Check } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, MapPin, ArrowRight } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -26,6 +26,57 @@ import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/tele
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
+
+// ── Meetup card ───────────────────────────────────────────────────────────────
+
+interface MeetupCardPayload {
+  type: 'meetup_card';
+  meetupId: string;
+  title: string;
+}
+
+function parseMeetupCard(body: string): MeetupCardPayload | null {
+  if (!body.startsWith('{')) return null;
+  try {
+    const obj = JSON.parse(body);
+    if (obj.type === 'meetup_card' && obj.meetupId && obj.title) return obj as MeetupCardPayload;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
+  return (
+    <Pressable
+      style={[mc.card, mine && mc.cardMine]}
+      onPress={() => router.push(`/meetup/${payload.meetupId}` as any)}
+    >
+      <View style={mc.row}>
+        <View style={mc.icon}><CalendarClock size={14} color={color.signal} /></View>
+        <Text style={mc.label}>Meetup</Text>
+      </View>
+      <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
+      <View style={mc.footer}>
+        <Text style={[mc.see, mine && mc.seeMine]}>Tap to RSVP or vote on a time</Text>
+        <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.signal} />
+      </View>
+    </Pressable>
+  );
+}
+
+const mc = StyleSheet.create({
+  card: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 260 },
+  cardMine: { backgroundColor: color.signal + '22', borderColor: color.signal + '55' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  icon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  label: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
+  title: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
+  titleMine: { color: color.ink },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  see: { ...t.small, color: color.signal, fontSize: 11 },
+  seeMine: { color: color.signal },
+});
+
+// ── Message bubble ────────────────────────────────────────────────────────────
 
 function MessageBubble({
   item,
@@ -55,6 +106,12 @@ function MessageBubble({
         </Text>
       </View>
     );
+  }
+
+  // Meetup card — special rendering
+  const meetupPayload = parseMeetupCard(item.body ?? '');
+  if (meetupPayload) {
+    return <MeetupCard payload={meetupPayload} mine={mine} />;
   }
 
   let bodyToShow: string;

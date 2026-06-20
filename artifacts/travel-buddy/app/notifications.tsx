@@ -1,30 +1,23 @@
 /**
- * Request Inbox — unified view of all social requests:
+ * Request Inbox — unified view of all social requests + meetup invites.
  *
- * Incoming tab: friend requests, circle invites, trip invites, message requests (pending only)
- * Outgoing tab: requests you sent with status history and Cancel where applicable
- *
- * Features:
- * - Skeleton placeholders on initial load
- * - Error state with Retry
- * - Two-tab layout: Incoming / Outgoing
- * - Status chip (pending, accepted, declined, cancelled)
- * - Relative timestamp + @username for each item
- * - All actions routed through the unified /api/me/requests service
+ * Incoming tab:
+ *   - friend requests, circle invites, trip invites, message requests (social)
+ *   - meetup invites (RSVP Going / Maybe / Can't go)
+ * Outgoing tab: requests you sent with status history and Cancel
  */
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, UserPlus, Users, Plane, MessageCircle } from 'lucide-react-native';
+import { X, UserPlus, Users, Plane, MessageCircle, CalendarClock } from 'lucide-react-native';
 import { useRequests } from '../src/hooks/useRequests';
 import { useIncomingMessageRequests } from '../src/hooks/useMessaging';
 import { acceptRequest, declineRequest, cancelRequest, type InboxItem } from '../src/services/requests';
+import { getMyMeetupInvites, rsvpMeetup, type MeetupInvite } from '../src/services/meetups';
 import { color, space, type as t } from '../src/theme/tokens';
 
 type TabKind = 'incoming' | 'outgoing';
-
-// ── Time helper ───────────────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -38,14 +31,14 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-// ── Status chip ───────────────────────────────────────────────────────────────
-
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  pending:   { bg: color.haze,      text: color.mute },
-  invited:   { bg: color.haze,      text: color.mute },
-  accepted:  { bg: '#DCFCE7',       text: '#16A34A' },
-  friends:   { bg: '#DCFCE7',       text: '#16A34A' },
-  member:    { bg: '#DCFCE7',       text: '#16A34A' },
+  pending:   { bg: color.haze,        text: color.mute },
+  invited:   { bg: color.haze,        text: color.mute },
+  accepted:  { bg: '#DCFCE7',         text: '#16A34A' },
+  friends:   { bg: '#DCFCE7',         text: '#16A34A' },
+  member:    { bg: '#DCFCE7',         text: '#16A34A' },
+  going:     { bg: '#DCFCE7',         text: '#16A34A' },
+  maybe:     { bg: '#FEF9C3',         text: '#A16207' },
   declined:  { bg: color.paperRaised, text: color.mute },
   cancelled: { bg: color.paperRaised, text: color.mute },
 };
@@ -58,8 +51,6 @@ function StatusChip({ status }: { status: string }) {
     </View>
   );
 }
-
-// ── Skeleton row ──────────────────────────────────────────────────────────────
 
 function SkeletonRow() {
   return (
@@ -75,8 +66,6 @@ function SkeletonRow() {
   );
 }
 
-// ── Avatar ────────────────────────────────────────────────────────────────────
-
 function Avatar({ url, name }: { url?: string | null; name?: string | null }) {
   if (url) return <Image source={{ uri: url }} style={styles.avatar} />;
   return (
@@ -86,16 +75,13 @@ function Avatar({ url, name }: { url?: string | null; name?: string | null }) {
   );
 }
 
-// ── Type icon ─────────────────────────────────────────────────────────────────
-
 function TypeIcon({ type }: { type: string }) {
   if (type === 'friend_request') return <UserPlus size={18} color={color.deep} />;
   if (type === 'circle_invite')  return <Users size={18} color={color.signal} />;
   if (type === 'trip_invite')    return <Plane size={18} color={color.signal} />;
+  if (type === 'meetup_invite')  return <CalendarClock size={18} color={color.signal} />;
   return <MessageCircle size={18} color={color.signal} />;
 }
-
-// ── Description ───────────────────────────────────────────────────────────────
 
 function describeItem(item: InboxItem, direction: 'incoming' | 'outgoing'): string {
   const who = item.actor?.name ?? item.actor?.handle ?? 'Someone';
@@ -111,8 +97,6 @@ function describeItem(item: InboxItem, direction: 'incoming' | 'outgoing'): stri
   return '';
 }
 
-// ── Actor meta row ────────────────────────────────────────────────────────────
-
 function ActorMeta({ handle, createdAt }: { handle?: string | null; createdAt: string }) {
   return (
     <Text style={styles.meta}>
@@ -120,8 +104,6 @@ function ActorMeta({ handle, createdAt }: { handle?: string | null; createdAt: s
     </Text>
   );
 }
-
-// ── Action buttons ────────────────────────────────────────────────────────────
 
 function ActionRow({ children }: { children: React.ReactNode }) {
   return <View style={styles.actionsRow}>{children}</View>;
@@ -143,6 +125,63 @@ function DeclineBtn({ label = 'Decline', onPress, busy }: { label?: string; onPr
   );
 }
 
+// ── Meetup RSVP row ───────────────────────────────────────────────────────────
+
+function MeetupInviteRow({
+  invite,
+  busy,
+  onRsvp,
+}: {
+  invite: MeetupInvite;
+  busy: boolean;
+  onRsvp: (status: 'going' | 'maybe' | 'declined') => void;
+}) {
+  const m = invite.meetup;
+  const creator = invite.creator;
+  const isPending = invite.status === 'pending';
+
+  return (
+    <View style={styles.row}>
+      <View style={styles.iconBadge}><TypeIcon type="meetup_invite" /></View>
+      <View style={[styles.avatar, styles.avatarFallback]}>
+        <Text style={styles.avatarInitial}>{((creator?.name ?? creator?.handle ?? '?')[0]).toUpperCase()}</Text>
+      </View>
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={styles.rowText}>
+          <Text style={{ fontWeight: '700' }}>{creator?.name ?? 'Someone'}</Text>
+          {' invited you to a meetup'}
+        </Text>
+        {m ? (
+          <Pressable onPress={() => router.push(`/meetup/${m.id}` as any)}>
+            <Text style={styles.meetupTitle} numberOfLines={1}>{m.title}</Text>
+            {m.locationName && <Text style={styles.meetupMeta}>📍 {m.locationName}</Text>}
+            {m.approximateDate && <Text style={styles.meetupMeta}>🗓 {m.approximateDate}{m.timeBlock ? ` · ${m.timeBlock}` : ''}</Text>}
+          </Pressable>
+        ) : null}
+        <Text style={styles.meta}>{relativeTime(invite.invitedAt)}</Text>
+        {isPending ? (
+          <ActionRow>
+            <Pressable style={[styles.acceptBtn, busy && styles.btnDim]} disabled={busy} onPress={() => onRsvp('going')}>
+              {busy ? <ActivityIndicator size="small" color="#fff" /> : null}
+              <Text style={styles.acceptBtnText}>✅ Going</Text>
+            </Pressable>
+            <Pressable style={[styles.maybeBtn, busy && styles.btnDim]} disabled={busy} onPress={() => onRsvp('maybe')}>
+              <Text style={styles.maybeBtnText}>🤔 Maybe</Text>
+            </Pressable>
+            <Pressable style={[styles.declineBtn, busy && styles.btnDim]} disabled={busy} onPress={() => onRsvp('declined')}>
+              <Text style={styles.declineBtnText}>Can't go</Text>
+            </Pressable>
+          </ActionRow>
+        ) : (
+          <View style={{ marginTop: 2 }}>
+            <StatusChip status={invite.status} />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function Notifications() {
@@ -153,17 +192,24 @@ export default function Notifications() {
   const [actioning, setActioning] = useState<string | null>(null);
   const everLoaded = useRef(false);
 
+  const [meetupInvites, setMeetupInvites] = useState<MeetupInvite[]>([]);
+
+  const loadMeetupInvites = useCallback(async () => {
+    const res = await getMyMeetupInvites();
+    if (res.ok && res.data) setMeetupInvites(res.data.invites);
+  }, []);
+
   useFocusEffect(useCallback(() => {
     requests.reload();
     msgReqs.reload();
-  }, [requests.reload, msgReqs.reload]));
+    loadMeetupInvites();
+  }, [requests.reload, msgReqs.reload, loadMeetupInvites]));
 
   const loading = requests.loading || msgReqs.loading;
   const error = requests.error || msgReqs.error;
   if (!loading) everLoaded.current = true;
   const showSkeleton = loading && !everLoaded.current;
 
-  // Perform an action then silently reload
   async function doAction(id: string, fn: () => Promise<any>, reloadMsgs = false) {
     setActioning(id);
     try {
@@ -175,9 +221,17 @@ export default function Notifications() {
     }
   }
 
-  // ── Incoming tab ────────────────────────────────────────────────────────────
-  // Shows ALL incoming items regardless of status so history is visible.
-  // Action buttons only appear on pending/invited items.
+  async function handleMeetupRsvp(invite: MeetupInvite, status: 'going' | 'maybe' | 'declined') {
+    const key = `meetup_${invite.meetupId}_${status}`;
+    setActioning(key);
+    const res = await rsvpMeetup(invite.meetupId, status);
+    if (res.ok) {
+      setMeetupInvites((prev) =>
+        prev.map((i) => i.meetupId === invite.meetupId ? { ...i, status } : i)
+      );
+    }
+    setActioning(null);
+  }
 
   function renderIncoming() {
     const msgItems = msgReqs.data
@@ -188,7 +242,24 @@ export default function Notifications() {
 
     const all = [...msgItems, ...socialItems];
 
-    if (all.length === 0) {
+    const meetupSection = meetupInvites.length > 0 ? (
+      <View key="meetup_section">
+        <View style={styles.sectionLabel}>
+          <CalendarClock size={12} color={color.mute} />
+          <Text style={styles.sectionLabelText}>Meetup Invites</Text>
+        </View>
+        {meetupInvites.map((inv) => (
+          <MeetupInviteRow
+            key={inv.inviteId}
+            invite={inv}
+            busy={actioning?.startsWith(`meetup_${inv.meetupId}`) ?? false}
+            onRsvp={(status) => handleMeetupRsvp(inv, status)}
+          />
+        ))}
+      </View>
+    ) : null;
+
+    if (all.length === 0 && !meetupSection) {
       return (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyText}>All caught up! No pending requests.</Text>
@@ -196,50 +267,58 @@ export default function Notifications() {
       );
     }
 
-    return all.map(({ id, type, item }) => {
-      const actor = type === 'message_request' ? (item as any).sender : (item as InboxItem).actor;
-      const status = type === 'message_request' ? (item as any).status : (item as InboxItem).status;
-      const isPending = status === 'pending' || status === 'invited';
-      const busy = actioning === id;
-      const createdAt = (item as any).createdAt ?? '';
-
-      return (
-        <View key={id} style={styles.row}>
-          <View style={styles.iconBadge}><TypeIcon type={type} /></View>
-          <Avatar url={actor?.avatarUrl} name={actor?.name} />
-          <View style={{ flex: 1, gap: 3 }}>
-            <Text style={styles.rowText}>
-              {type === 'message_request'
-                ? <><Text style={{ fontWeight: '700' }}>{actor?.name ?? 'Someone'}</Text>{' wants to message you'}</>
-                : describeItem(item as InboxItem, 'incoming')}
-            </Text>
-            <ActorMeta handle={actor?.handle} createdAt={createdAt} />
-            {type === 'message_request' && (item as any).previewText ? (
-              <Text style={styles.preview} numberOfLines={2}>"{(item as any).previewText}"</Text>
-            ) : null}
-            {isPending ? (
-              <ActionRow>
-                <AcceptBtn busy={busy} onPress={() => {
-                  if (type === 'message_request') doAction(id, () => msgReqs.accept(id), true);
-                  else doAction(id, () => acceptRequest((item as InboxItem).type, id));
-                }} />
-                <DeclineBtn busy={busy} onPress={() => {
-                  if (type === 'message_request') doAction(id, () => msgReqs.decline(id), true);
-                  else doAction(id, () => declineRequest((item as InboxItem).type, id));
-                }} />
-              </ActionRow>
-            ) : (
-              <View style={{ marginTop: 2 }}>
-                <StatusChip status={status} />
-              </View>
-            )}
+    return (
+      <>
+        {meetupSection}
+        {all.length > 0 && meetupSection && (
+          <View style={styles.sectionLabel}>
+            <Text style={styles.sectionLabelText}>Social Requests</Text>
           </View>
-        </View>
-      );
-    });
-  }
+        )}
+        {all.map(({ id, type, item }) => {
+          const actor = type === 'message_request' ? (item as any).sender : (item as InboxItem).actor;
+          const status = type === 'message_request' ? (item as any).status : (item as InboxItem).status;
+          const isPending = status === 'pending' || status === 'invited';
+          const busy = actioning === id;
+          const createdAt = (item as any).createdAt ?? '';
 
-  // ── Outgoing tab ────────────────────────────────────────────────────────────
+          return (
+            <View key={id} style={styles.row}>
+              <View style={styles.iconBadge}><TypeIcon type={type} /></View>
+              <Avatar url={actor?.avatarUrl} name={actor?.name} />
+              <View style={{ flex: 1, gap: 3 }}>
+                <Text style={styles.rowText}>
+                  {type === 'message_request'
+                    ? <><Text style={{ fontWeight: '700' }}>{actor?.name ?? 'Someone'}</Text>{' wants to message you'}</>
+                    : describeItem(item as InboxItem, 'incoming')}
+                </Text>
+                <ActorMeta handle={actor?.handle} createdAt={createdAt} />
+                {type === 'message_request' && (item as any).previewText ? (
+                  <Text style={styles.preview} numberOfLines={2}>"{(item as any).previewText}"</Text>
+                ) : null}
+                {isPending ? (
+                  <ActionRow>
+                    <AcceptBtn busy={busy} onPress={() => {
+                      if (type === 'message_request') doAction(id, () => msgReqs.accept(id), true);
+                      else doAction(id, () => acceptRequest((item as InboxItem).type, id));
+                    }} />
+                    <DeclineBtn busy={busy} onPress={() => {
+                      if (type === 'message_request') doAction(id, () => msgReqs.decline(id), true);
+                      else doAction(id, () => declineRequest((item as InboxItem).type, id));
+                    }} />
+                  </ActionRow>
+                ) : (
+                  <View style={{ marginTop: 2 }}>
+                    <StatusChip status={status} />
+                  </View>
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </>
+    );
+  }
 
   function renderOutgoing() {
     if (requests.outgoing.length === 0) {
@@ -262,7 +341,6 @@ export default function Notifications() {
             <ActorMeta handle={item.actor?.handle} createdAt={item.createdAt} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 }}>
               <StatusChip status={item.status} />
-              {/* Cancel available for all pending outgoing types */}
               {isPending && item.type === 'friend_request' && (
                 <DeclineBtn label="Cancel" busy={busy} onPress={() =>
                   doAction(item.id, () => cancelRequest('friend_request', item.id))
@@ -273,7 +351,6 @@ export default function Notifications() {
                   doAction(item.id, () => cancelRequest('circle_invite', item.id))
                 } />
               )}
-              {/* Owner cancels a trip invite: compound id = tripId|inviteeId */}
               {isPending && item.type === 'trip_invite' && item.id.includes('|') && (
                 <DeclineBtn label="Cancel invite" busy={busy} onPress={() => {
                   const [tripId, inviteeId] = item.id.split('|');
@@ -289,8 +366,6 @@ export default function Notifications() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-
-      {/* ── Header ── */}
       <View style={[styles.head, { paddingTop: insets.top + space.md }]}>
         <Text style={styles.title}>Inbox</Text>
         <View style={{ flex: 1 }} />
@@ -299,7 +374,6 @@ export default function Notifications() {
         </Pressable>
       </View>
 
-      {/* ── Tab switcher ── */}
       <View style={styles.tabs}>
         {(['incoming', 'outgoing'] as TabKind[]).map((tab) => (
           <Pressable
@@ -314,7 +388,6 @@ export default function Notifications() {
         ))}
       </View>
 
-      {/* ── Content ── */}
       {showSkeleton ? (
         <ScrollView contentContainerStyle={styles.list}>
           <SkeletonRow />
@@ -324,7 +397,7 @@ export default function Notifications() {
       ) : error && !everLoaded.current ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>Couldn't load requests.</Text>
-          <Pressable style={styles.retryBtn} onPress={() => { requests.reload(); msgReqs.reload(); }}>
+          <Pressable style={styles.retryBtn} onPress={() => { requests.reload(); msgReqs.reload(); loadMeetupInvites(); }}>
             <Text style={styles.retryBtnText}>Retry</Text>
           </Pressable>
         </View>
@@ -333,7 +406,6 @@ export default function Notifications() {
           {activeTab === 'incoming' ? renderIncoming() : renderOutgoing()}
         </ScrollView>
       )}
-
     </View>
   );
 }
@@ -380,6 +452,10 @@ const styles = StyleSheet.create({
     borderColor: color.signal,
   },
   retryBtnText: { ...t.stamp, color: color.signal },
+  sectionLabel: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: space.sm },
+  sectionLabelText: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' },
+  meetupTitle: { ...t.bodyStrong, color: color.signal, fontWeight: '700', fontSize: 13, marginTop: 2 },
+  meetupMeta: { ...t.small, color: color.mute, fontSize: 11 },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -409,14 +485,26 @@ const styles = StyleSheet.create({
   rowText: { ...t.body, color: color.ink, flex: 1 },
   meta: { ...t.small, color: color.mute },
   preview: { ...t.small, color: color.mute, fontStyle: 'italic' },
-  actionsRow: { flexDirection: 'row', gap: space.sm, marginTop: 4 },
+  actionsRow: { flexDirection: 'row', gap: space.sm, marginTop: 4, flexWrap: 'wrap' },
   acceptBtn: {
     paddingVertical: 7,
     paddingHorizontal: space.lg,
     backgroundColor: color.signal,
     borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   acceptBtnText: { ...t.stamp, color: '#fff' },
+  maybeBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: space.lg,
+    borderWidth: 1,
+    borderColor: '#A16207',
+    borderRadius: 999,
+    backgroundColor: '#FEF9C3',
+  },
+  maybeBtnText: { ...t.stamp, color: '#A16207' },
   declineBtn: {
     paddingVertical: 7,
     paddingHorizontal: space.lg,

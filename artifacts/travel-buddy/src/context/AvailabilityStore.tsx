@@ -1,14 +1,13 @@
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import type { Availability, Weekday, TimeBlock, TripWindow } from '../types/models';
 import { mockAvailability } from '../data/events';
-
-/**
- * Availability session store. Seeded from mockAvailability; edits live in memory
- * for the session (NOT backend-persisted). Pulse ordering + status chips read from
- * here via useAvailability(), so edits propagate live.
- *
- * TO MIGRATE: replace seed + setter bodies with GET/PUT /me/availability.
- */
+import {
+  getMyAvailability,
+  patchMyAvailability,
+  patchMyQuickStatus,
+  type QuickStatus,
+} from '../services/availability';
+import { useSession } from './SessionContext';
 
 interface AvailabilityContextValue {
   availability: Availability;
@@ -18,7 +17,12 @@ interface AvailabilityContextValue {
   setOpenToMeet: (v: boolean) => void;
   addTripWindow: (w: TripWindow) => void;
   removeTripWindow: (id: string) => void;
-  save: () => Promise<void>;   // session: no-op persist (honest); API PUT later
+  save: () => Promise<void>;
+  saveError: string | null;
+  saving: boolean;
+  quickStatus: QuickStatus | null;
+  quickStatusExpiresAt: string | null;
+  setQuickStatus: (status: QuickStatus) => Promise<void>;
 }
 
 const AvailabilityContext = createContext<AvailabilityContextValue | null>(null);
@@ -26,16 +30,40 @@ const AvailabilityContext = createContext<AvailabilityContextValue | null>(null)
 const EMPTY: Availability = { weekly: { days: {} }, trips: [], openToMeet: false };
 
 export function AvailabilityProvider({ children }: { children: React.ReactNode }) {
+  const { configured, isAuthed } = useSession();
   const [availability, setAvailability] = useState<Availability>(
     (mockAvailability as Availability) ?? EMPTY,
   );
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [quickStatus, setQuickStatusState] = useState<QuickStatus | null>(null);
+  const [quickStatusExpiresAt, setQuickStatusExpiresAt] = useState<string | null>(null);
+
+  // Load from backend on mount when authenticated
+  useEffect(() => {
+    if (!configured || !isAuthed) return;
+    getMyAvailability().then((res) => {
+      if (res.ok && res.data) {
+        const d = res.data;
+        setAvailability({
+          weekly: { days: d.weeklyDays as Partial<Record<Weekday, TimeBlock[]>> },
+          trips: [],
+          openToMeet: d.openToMeet,
+        });
+        if (d.quickStatus) {
+          setQuickStatusState(d.quickStatus.status as QuickStatus);
+          setQuickStatusExpiresAt(d.quickStatus.expiresAt);
+        }
+      }
+    });
+  }, [configured, isAuthed]);
 
   const toggleBlock = useCallback((day: Weekday, block: TimeBlock) => {
     setAvailability((prev) => {
       const days = { ...(prev.weekly?.days ?? {}) };
       const cur = new Set(days[day] ?? []);
       if (cur.has(block)) cur.delete(block); else cur.add(block);
-      days[day] = Array.from(cur);
+      days[day] = Array.from(cur) as TimeBlock[];
       return { ...prev, weekly: { days } };
     });
   }, []);
@@ -61,12 +89,36 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const save = useCallback(async () => {
-    // session-only: state already updated. TODO(backend): PUT /me/availability
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await patchMyAvailability({
+        weeklyDays: availability.weekly?.days,
+        openToMeet: availability.openToMeet,
+      });
+      if (!res.ok) setSaveError(res.message ?? 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [availability]);
+
+  const setQuickStatus = useCallback(async (status: QuickStatus) => {
+    const res = await patchMyQuickStatus(status);
+    if (res.ok && res.data) {
+      setQuickStatusState(res.data.status as QuickStatus);
+      setQuickStatusExpiresAt(res.data.expiresAt);
+    }
   }, []);
 
   const value = useMemo(
-    () => ({ availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet, addTripWindow, removeTripWindow, save }),
-    [availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet, addTripWindow, removeTripWindow, save],
+    () => ({
+      availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet,
+      addTripWindow, removeTripWindow, save, saveError, saving,
+      quickStatus, quickStatusExpiresAt, setQuickStatus,
+    }),
+    [availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet,
+     addTripWindow, removeTripWindow, save, saveError, saving,
+     quickStatus, quickStatusExpiresAt, setQuickStatus],
   );
 
   return <AvailabilityContext.Provider value={value}>{children}</AvailabilityContext.Provider>;
@@ -80,7 +132,8 @@ export function useAvailabilityStore(): AvailabilityContextValue {
       availability: (mockAvailability as Availability) ?? EMPTY,
       toggleBlock: () => {}, applyWeekly: () => {}, clearWeekly: () => {},
       setOpenToMeet: () => {}, addTripWindow: () => {}, removeTripWindow: () => {},
-      save: async () => {},
+      save: async () => {}, saveError: null, saving: false,
+      quickStatus: null, quickStatusExpiresAt: null, setQuickStatus: async () => {},
     };
   }
   return ctx;

@@ -189,13 +189,14 @@ router.get("/me/requests/count", async (req, res) => {
   if (!auth) return;
   const { client: sc, user } = auth;
 
-  const [{ data: frRows }, { data: ciRows }, { data: tiRows }] = await Promise.all([
+  const [{ data: frRows }, { data: ciRows }, { data: tiRows }, { data: miRows }] = await Promise.all([
     sc.from("friend_requests").select("id").eq("recipient_id", user.id).eq("status", "pending"),
     sc.from("circle_invites").select("id").eq("recipient_id", user.id).eq("status", "pending"),
     sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("role", "invited"),
+    sc.from("meetup_invites").select("id").eq("user_id", user.id).eq("status", "pending"),
   ]);
 
-  const count = (frRows ?? []).length + (ciRows ?? []).length + (tiRows ?? []).length;
+  const count = (frRows ?? []).length + (ciRows ?? []).length + (tiRows ?? []).length + (miRows ?? []).length;
   res.status(200).json({ count });
 });
 

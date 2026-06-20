@@ -12,6 +12,8 @@ import messagingRouter from "./messaging";
 import requestsRouter from "./requests";
 import planRouter from "./plan";
 import groupChatRouter from "./groupChat";
+import availabilityRouter from "./availability";
+import meetupsRouter from "./meetups";
 
 const router: IRouter = Router();
 
@@ -28,5 +30,7 @@ router.use(messagingRouter);
 router.use(requestsRouter);
 router.use(planRouter);
 router.use(groupChatRouter);
+router.use(availabilityRouter);
+router.use(meetupsRouter);
 
 export default router;

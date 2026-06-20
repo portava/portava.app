@@ -8,6 +8,7 @@ import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripMapPreview, TripSafety, TripPostsSection,
 } from '../../src/components/TripPage2';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
+import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip } from '../../src/hooks/useBackend';
@@ -99,6 +100,7 @@ export default function TripDetail() {
           tripStartDate={realTrip?.startDate ?? undefined}
           tripEndDate={realTrip?.endDate ?? undefined}
         />
+        {live && trip.id ? <TripAvailabilitySection tripId={trip.id} /> : null}
         <SavedIdeas ideas={trip.savedIdeas} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />

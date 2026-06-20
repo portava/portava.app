@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { CalendarClock, Check, Plus, Trash2, MapPin, Sparkles } from 'lucide-react-native';
+import { CalendarClock, Check, Plus, Trash2, MapPin, Sparkles, Zap } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { useAvailabilityStore } from '../src/context/AvailabilityStore';
 import { resolveStatus, STATUS_LABEL } from '../src/lib/availability';
 import type { Weekday, TimeBlock } from '../src/types/models';
+import type { QuickStatus } from '../src/services/availability';
 import { color, space, radius, type as t, shadow, layout } from '../src/theme/tokens';
 
 const DAYS: { key: Weekday; label: string }[] = [
@@ -27,6 +28,13 @@ const PRESETS: { label: string; build: () => Partial<Record<Weekday, TimeBlock[]
   { label: 'Flexible', build: () => Object.fromEntries(DAYS.map((d) => [d.key, ['morning','afternoon','evening','late'] as TimeBlock[]])) },
 ];
 
+const QUICK_PILLS: { key: QuickStatus; label: string; emoji: string }[] = [
+  { key: 'free_now',     label: 'Free now',      emoji: '🟢' },
+  { key: 'free_tonight', label: 'Free tonight',  emoji: '🌙' },
+  { key: 'open_to_plans',label: 'Open to plans', emoji: '✨' },
+  { key: 'busy',         label: 'Busy',          emoji: '🔴' },
+];
+
 function summarize(days: Partial<Record<Weekday, TimeBlock[]>>): string {
   const active = DAYS.filter((d) => (days[d.key]?.length ?? 0) > 0);
   if (active.length === 0) return 'No weekly availability set yet.';
@@ -36,16 +44,28 @@ function summarize(days: Partial<Record<Weekday, TimeBlock[]>>): string {
 }
 
 export default function AvailabilityScreen() {
-  const { availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet, removeTripWindow, save } = useAvailabilityStore();
+  const {
+    availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet, removeTripWindow,
+    save, saving, saveError, quickStatus, setQuickStatus,
+  } = useAvailabilityStore();
   const days = availability.weekly?.days ?? {};
   const [saved, setSaved] = useState(false);
+  const [settingQuick, setSettingQuick] = useState<QuickStatus | null>(null);
 
   const status = resolveStatus(availability, new Date().toISOString(), 'cebu');
 
-  function onSave() {
-    save();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
+  async function onSave() {
+    await save();
+    if (!saveError) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+    }
+  }
+
+  async function onQuickPill(key: QuickStatus) {
+    setSettingQuick(key);
+    await setQuickStatus(key);
+    setSettingQuick(null);
   }
 
   return (
@@ -64,12 +84,41 @@ export default function AvailabilityScreen() {
             <View style={[s.knob, availability.openToMeet && s.knobOn]} />
           </Pressable>
         </View>
-        <Text style={s.toggleHint}>{availability.openToMeet ? 'Open to meet — shown on your Passport.' : 'Turn on “Open to meet” to let travelers know you’re around.'}</Text>
+        <Text style={s.toggleHint}>{availability.openToMeet ? 'Open to meet — shown on your Passport.' : 'Turn on "Open to meet" to let travelers know you\'re around.'}</Text>
+
+        {/* Quick status pills */}
+        <View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.sm }}>
+            <Zap size={13} color={color.signal} fill={color.signal} />
+            <Text style={s.h2}>Quick status</Text>
+          </View>
+          <Text style={s.sub}>Tap to set a status that expires automatically.</Text>
+          <View style={s.quickRow}>
+            {QUICK_PILLS.map((p) => {
+              const isActive = quickStatus === p.key;
+              const isLoading = settingQuick === p.key;
+              return (
+                <Pressable
+                  key={p.key}
+                  style={[s.quickPill, isActive && s.quickPillActive]}
+                  onPress={() => onQuickPill(p.key)}
+                  disabled={settingQuick !== null}
+                >
+                  {isLoading
+                    ? <ActivityIndicator size="small" color={isActive ? color.onInk : color.signal} />
+                    : <Text style={s.quickPillEmoji}>{p.emoji}</Text>
+                  }
+                  <Text style={[s.quickPillText, isActive && s.quickPillTextActive]}>{p.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         {/* Weekly rhythm */}
         <View>
           <Text style={s.h2}>Weekly rhythm</Text>
-          <Text style={s.sub}>Tap to mark when you’re usually free. Approximate — not exact scheduling.</Text>
+          <Text style={s.sub}>Tap to mark when you're usually free. Approximate — not exact scheduling.</Text>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.presets}>
             {PRESETS.map((p) => (
@@ -118,11 +167,11 @@ export default function AvailabilityScreen() {
               <Plus size={14} color={color.signal} /><Text style={s.addTripText}>Add</Text>
             </Pressable>
           </View>
-          <Text style={s.sub}>Availability tied to a trip’s city + dates — overrides your weekly rhythm while you’re there.</Text>
+          <Text style={s.sub}>Availability tied to a trip's city + dates — overrides your weekly rhythm while you're there.</Text>
 
           {availability.trips.length === 0 ? (
             <View style={s.tripEmpty}>
-              <Text style={s.tripEmptyText}>No trip windows yet. Add one when you’re planning a trip — e.g. “Cebu, Jun 20–27, evenings.”</Text>
+              <Text style={s.tripEmptyText}>No trip windows yet. Add one when you're planning a trip — e.g. "Cebu, Jun 20–27, evenings."</Text>
             </View>
           ) : (
             <View style={{ gap: space.sm }}>
@@ -141,14 +190,17 @@ export default function AvailabilityScreen() {
         </View>
 
         {/* Save */}
+        {saveError ? <Text style={s.errorText}>{saveError}</Text> : null}
         <View style={s.saveRow}>
           <Pressable style={s.cancel} onPress={() => router.back()}><Text style={s.cancelText}>Cancel</Text></Pressable>
-          <Pressable style={s.save} onPress={onSave}>
-            {saved ? <Check size={16} color={color.onInk} /> : null}
-            <Text style={s.saveText}>{saved ? 'Saved' : 'Save'}</Text>
+          <Pressable style={[s.save, saving && { opacity: 0.6 }]} onPress={onSave} disabled={saving}>
+            {saving
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : saved ? <Check size={16} color={color.onInk} /> : null
+            }
+            <Text style={s.saveText}>{saved ? 'Saved!' : 'Save'}</Text>
           </Pressable>
         </View>
-        <Text style={s.note}>Saved for this session. Backend sync coming — your availability already shapes Pulse suggestions.</Text>
       </ScrollView>
     </View>
   );
@@ -167,6 +219,13 @@ const s = StyleSheet.create({
 
   h2: { ...t.title, color: color.ink, fontSize: 18 },
   sub: { ...t.small, color: color.mute, marginTop: 2, marginBottom: space.md },
+
+  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  quickPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm + 2, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, minHeight: 40 },
+  quickPillActive: { backgroundColor: color.signal, borderColor: color.signal },
+  quickPillEmoji: { fontSize: 14 },
+  quickPillText: { ...t.small, fontWeight: '700', color: color.ink },
+  quickPillTextActive: { color: color.onInk },
 
   presets: { gap: space.sm, paddingBottom: space.md },
   preset: { paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
@@ -196,10 +255,10 @@ const s = StyleSheet.create({
   tripCity: { ...t.bodyStrong, color: color.ink, textTransform: 'capitalize' },
   tripMeta: { ...t.small, color: color.mute, fontSize: 11 },
 
+  errorText: { ...t.small, color: '#DC2626', textAlign: 'center' },
   saveRow: { flexDirection: 'row', gap: space.md },
   cancel: { flex: 1, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center' },
   cancelText: { ...t.bodyStrong, color: color.ink },
   save: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
   saveText: { ...t.bodyStrong, color: color.onInk },
-  note: { ...t.small, color: color.faint, fontSize: 11, textAlign: 'center' },
 });

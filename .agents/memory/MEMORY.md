@@ -3,3 +3,4 @@
 - [Follow backend API shape](follow-backend-shape.md) — all follow/profile endpoint shapes; GET /api/users/:userId is the single Passport-load call
 - [Friend requests + circle/trip bridges](friends-backend-shape.md) — privacy constraints, endpoint catalog, normalized pair, migration pattern
 - [Telegraph chat suggestions](telegraph-chat-suggestions.md) — inline intent-on-GET pattern, privacy verdict rules, rate-limit design, fake-client test pattern
+- [Meetup + availability API patterns](meetup-availability-patterns.md) — invalid_payload → HTTP 400; tests go in src/test/ (not src/routes/); import specific router not full app; circle response key is circleId not circleOwnerId
