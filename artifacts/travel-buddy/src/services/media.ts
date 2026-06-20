@@ -126,6 +126,11 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
 
   if (!apiRes.ok) {
     const body = await apiRes.json().catch(() => ({}));
+    // 401 means the session is invalid (expired, revoked, or user deleted).
+    // Surface it as 'unauthenticated' so the composer can redirect to sign-in.
+    if (apiRes.status === 401) {
+      return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Session expired — please sign in again.' };
+    }
     return {
       ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
       message: (body as any)?.message ?? `Upload failed (HTTP ${apiRes.status})`,

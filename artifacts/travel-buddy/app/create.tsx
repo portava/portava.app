@@ -12,6 +12,7 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { usePostActions } from '../src/hooks/usePosts';
 import type { PostVisibility } from '../src/services/posts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../src/services/media';
+import { useSession } from '../src/context/SessionContext';
 import { getCurrentGps, reverseGeocode } from '../src/services/location';
 
 const CATS: PostCategory[] = ['hotel','food','nightlife','beach','activity','transport','airport','visa','safety','tip','question'];
@@ -37,6 +38,7 @@ export default function Create() {
   const [gpsBusy, setGpsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { create, submitting } = usePostActions();
+  const { signOut } = useSession();
 
   const hasMedia = !!media;
   const canShare = hasMedia && !submitting; // media REQUIRED before submit
@@ -93,6 +95,11 @@ export default function Create() {
     // 1) Upload media first. If it fails, do NOT create the post.
     const up = await uploadMedia(media as PickedMedia);
     if (!up.ok || !up.url) {
+      if (up.errorKind === 'unauthenticated') {
+        await signOut();
+        router.replace('/(auth)/sign-in');
+        return;
+      }
       setError(up.message ?? 'Media upload failed. Your post was not created.');
       return;
     }
@@ -124,8 +131,13 @@ export default function Create() {
     const res = await create({ ...base, ...locationFields });
     if (res.ok) { router.back(); return; }
 
+    if (res.errorKind === 'unauthenticated') {
+      await signOut();
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
     const messages: Record<string, string> = {
-      unauthenticated: 'Please sign in to post.',
       network_unreachable: 'Network unavailable. Try again.',
       invalid_payload: 'Please check your post and try again.',
       config_error: 'Posting is not available right now.',
