@@ -35,11 +35,17 @@ export function PassportHero({
   isOwner,
   onMenuPress,
   onAvatarPress,
+  isFollowing,
+  followLoading,
+  onFollowPress,
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
   onMenuPress?: () => void;
   onAvatarPress?: () => void;
+  isFollowing?: boolean;
+  followLoading?: boolean;
+  onFollowPress?: () => void;
 }) {
   const displayName = ('displayName' in profile ? profile.displayName : null) ?? profile.avatarUrl ?? 'Traveler';
   const name = ('name' in profile && profile.name) ? profile.name : null;
@@ -69,9 +75,16 @@ export function PassportHero({
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
         ) : !isOwner ? (
-          <View style={styles.followBtn}>
-            <Text style={styles.followText}>+ Follow</Text>
-          </View>
+          <Pressable
+            onPress={onFollowPress}
+            hitSlop={8}
+            disabled={followLoading}
+            style={[styles.followBtn, isFollowing && styles.followBtnActive]}
+          >
+            <Text style={[styles.followText, isFollowing && styles.followTextActive]}>
+              {followLoading ? '…' : isFollowing ? 'Following' : '+ Follow'}
+            </Text>
+          </Pressable>
         ) : null}
       </View>
       <View style={styles.topDivider} />
@@ -164,7 +177,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.ink, borderRadius: radius.pill,
     paddingHorizontal: space.md, paddingVertical: 5,
   },
+  followBtnActive: { backgroundColor: color.ink },
   followText: { ...t.small, color: color.ink, fontWeight: '700' },
+  followTextActive: { color: color.onInk },
 
   identityRow: { flexDirection: 'row', gap: space.md },
 

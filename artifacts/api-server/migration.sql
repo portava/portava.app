@@ -47,6 +47,25 @@ CREATE INDEX IF NOT EXISTS passport_postcards_user_pinned_idx
 -- Bucket name: profile-media
 -- Public: true (avatars are public URLs)
 
+-- 3b. user_follows table (social graph)
+CREATE TABLE IF NOT EXISTS user_follows (
+  follower_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  following_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (follower_id, following_id)
+);
+CREATE INDEX IF NOT EXISTS user_follows_following_id_idx ON user_follows (following_id);
+ALTER TABLE user_follows ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Follows are viewable by authenticated users" ON user_follows;
+CREATE POLICY "Follows are viewable by authenticated users" ON user_follows
+  FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Users can insert own follows" ON user_follows;
+CREATE POLICY "Users can insert own follows" ON user_follows
+  FOR INSERT WITH CHECK (auth.uid() = follower_id);
+DROP POLICY IF EXISTS "Users can delete own follows" ON user_follows;
+CREATE POLICY "Users can delete own follows" ON user_follows
+  FOR DELETE USING (auth.uid() = follower_id);
+
 -- 4. RLS policies for profiles
 -- Allow users to read public profiles
 DROP POLICY IF EXISTS "Public profiles are viewable" ON profiles;

@@ -4,8 +4,9 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft } from 'lucide-react-native';
+import { ArrowLeft, Users } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
+import { useFollow } from '../../src/hooks/useFollow';
 import { PassportHero } from '../../src/components/PassportHero';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
@@ -25,6 +26,7 @@ const TABS: { key: Tab; label: string }[] = [
 export default function PublicPassportScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { profile, postcards, loading, error, isPrivate, notFound } = usePublicPassport(username ?? '');
+  const follow = useFollow(profile?.id ?? null);
   const [tab, setTab] = useState<Tab>('postcards');
   const insets = useSafeAreaInsets();
 
@@ -68,6 +70,9 @@ export default function PublicPassportScreen() {
 
     if (!profile) return null;
 
+    const countries = new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
+    const cities = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
+
     return (
       <ScrollView
         style={{ flex: 1, backgroundColor: color.paper }}
@@ -77,24 +82,38 @@ export default function PublicPassportScreen() {
         <PassportHero
           profile={profile}
           isOwner={false}
+          isFollowing={follow.isFollowing}
+          followLoading={follow.loading || follow.toggling}
+          onFollowPress={follow.toggle}
         />
 
-        {/* Compact stats */}
+        {/* Stats row: postcards, countries, cities + followers */}
         <View style={styles.statsRow}>
           {[
             { n: postcards.length, label: 'Postcards' },
-            { n: new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size, label: 'Countries' },
-            { n: new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size, label: 'Cities' },
+            { n: countries, label: 'Countries' },
+            { n: cities, label: 'Cities' },
+            { n: follow.followersCount, label: 'Followers' },
           ].map((item, i, arr) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
               <View style={styles.statsCell}>
-                <Text style={styles.statsN}>{item.n}</Text>
+                <Text style={styles.statsN}>{follow.loading && item.label === 'Followers' ? '—' : item.n}</Text>
                 <Text style={styles.statsL}>{item.label}</Text>
               </View>
             </React.Fragment>
           ))}
         </View>
+
+        {/* Following pill */}
+        {follow.followingCount > 0 && (
+          <View style={styles.followingPill}>
+            <Users size={12} color={color.mute} />
+            <Text style={styles.followingText}>
+              Following {follow.followingCount} {follow.followingCount === 1 ? 'traveler' : 'travelers'}
+            </Text>
+          </View>
+        )}
 
         {/* Tab bar */}
         <ScrollView
@@ -171,6 +190,15 @@ const styles = StyleSheet.create({
   statsDivider: { width: 1, height: 28, backgroundColor: color.haze },
   statsN: { ...t.heading, color: color.ink, fontSize: 18 },
   statsL: { fontFamily: 'Courier', fontSize: 9, color: color.mute, fontWeight: '700' },
+
+  followingPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    marginHorizontal: space.lg, marginTop: space.sm,
+    paddingVertical: 6, paddingHorizontal: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: color.haze, alignSelf: 'flex-start',
+  },
+  followingText: { ...t.small, color: color.mute, fontSize: 12 },
 
   tabBarWrap: { marginTop: space.md },
   tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },

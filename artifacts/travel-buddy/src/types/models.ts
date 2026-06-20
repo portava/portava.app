@@ -411,6 +411,10 @@ export interface PublicProfile {
   verified: boolean;
   passportVisibility: 'public' | 'private';
   createdAt: ISODate | null;
+  followersCount?: number;
+  followingCount?: number;
+  isFollowing?: boolean;
+  isOwnProfile?: boolean;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
