@@ -180,6 +180,24 @@ router.post("/meetups", async (req, res) => {
       candidateIds = candidateIds.filter((id) => eligible.has(id));
     }
 
+    // Plain meetup: only mutual friends of the creator may be invited
+    if (!b.tripId && !b.circleOwnerId && candidateIds.length > 0) {
+      const orParts = candidateIds.flatMap((id) => [
+        `and(user_a.eq.${user.id},user_b.eq.${id})`,
+        `and(user_b.eq.${user.id},user_a.eq.${id})`,
+      ]).join(",");
+      const { data: friendships } = await client
+        .from("user_friendships")
+        .select("user_a, user_b")
+        .or(orParts);
+      const friendSet = new Set(
+        (friendships ?? [])
+          .flatMap((f: any) => [f.user_a as string, f.user_b as string])
+          .filter((id) => id !== user.id),
+      );
+      candidateIds = candidateIds.filter((id) => friendSet.has(id));
+    }
+
     const inviteRows = candidateIds.map((uid) => ({ meetup_id: meetupId, user_id: uid }));
     if (inviteRows.length > 0) {
       const { error: iErr } = await client
@@ -429,6 +447,26 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
     ]);
     ineligible = candidateIds.filter((id) => !eligibleSet.has(id));
     candidateIds = candidateIds.filter((id) => eligibleSet.has(id));
+  } else {
+    // Plain meetup (no trip/circle scope): only mutual friends of the creator may be invited
+    const creatorId = (meetup as any).creator_id as string;
+    if (candidateIds.length > 0) {
+      const orParts = candidateIds.flatMap((id) => [
+        `and(user_a.eq.${creatorId},user_b.eq.${id})`,
+        `and(user_b.eq.${creatorId},user_a.eq.${id})`,
+      ]).join(",");
+      const { data: friendships } = await client
+        .from("user_friendships")
+        .select("user_a, user_b")
+        .or(orParts);
+      const friendSet = new Set(
+        (friendships ?? [])
+          .flatMap((f: any) => [f.user_a as string, f.user_b as string])
+          .filter((id) => id !== creatorId),
+      );
+      ineligible = candidateIds.filter((id) => !friendSet.has(id));
+      candidateIds = candidateIds.filter((id) => friendSet.has(id));
+    }
   }
 
   if (candidateIds.length === 0 && ineligible.length > 0) {
@@ -519,6 +557,16 @@ router.post("/meetups/:meetupId/time-options", async (req, res) => {
   const parsed = TimeOptionSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const b = parsed.data;
+
+  // Enforce server-side max of 5 time options per meetup
+  const { count: existingCount } = await client
+    .from("meetup_time_options")
+    .select("*", { count: "exact", head: true })
+    .eq("meetup_id", meetupId);
+  if ((existingCount ?? 0) >= 5) {
+    sendError(res, "invalid_payload", "Maximum 5 time options allowed per meetup");
+    return;
+  }
 
   const { data: option, error } = await client
     .from("meetup_time_options")
