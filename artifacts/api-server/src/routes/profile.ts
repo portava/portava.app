@@ -1,0 +1,261 @@
+import { Router } from "express";
+import { z } from "zod";
+import { requireUser, sendError } from "../lib/http";
+
+const router = Router();
+
+const AVATAR_BUCKET = "profile-media";
+const ALLOWED_AVATAR_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5 MB
+
+const RESERVED_USERNAMES = new Set([
+  "admin", "support", "system", "travelbuddy", "passport", "official",
+  "root", "api", "settings", "login", "signup", "help", "me", "user",
+  "users", "null", "undefined", "about", "terms", "privacy",
+]);
+
+const USERNAME_RE = /^[a-z0-9_.]{3,24}$/;
+
+function validateUsername(u: string): { valid: boolean; reason?: string } {
+  if (!USERNAME_RE.test(u)) {
+    return { valid: false, reason: "Username must be 3-24 chars, lowercase letters/numbers/underscores/periods only" };
+  }
+  if (RESERVED_USERNAMES.has(u)) {
+    return { valid: false, reason: "That username is reserved" };
+  }
+  return { valid: true };
+}
+
+const PROFILE_COLUMNS =
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at";
+
+function mapProfile(r: any) {
+  return {
+    id: r.id,
+    handle: r.handle ?? null,
+    name: r.name ?? null,
+    displayName: r.display_name ?? r.name ?? null,
+    username: r.username ?? null,
+    bio: r.bio ?? null,
+    avatarUrl: r.avatar_url ?? null,
+    homeCity: r.home_city ?? null,
+    homeCountry: r.home_country ?? null,
+    currentCity: r.current_city ?? null,
+    travelStyle: r.travel_style ?? null,
+    interests: r.interests ?? [],
+    verified: r.verified ?? false,
+    openToMeet: r.open_to_meet ?? false,
+    isPrivate: r.is_private ?? false,
+    passportVisibility: r.passport_visibility ?? "public",
+    coverPhotoUrl: r.cover_photo_url ?? null,
+    usernameUpdatedAt: r.username_updated_at ?? null,
+    createdAt: r.created_at ?? null,
+  };
+}
+
+/* ===========================================================================
+ * GET /me/profile — full own profile
+ * ===========================================================================
+ */
+router.get("/me/profile", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data, error } = await client
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load own profile");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!data) {
+    sendError(res, "not_found", "Profile not found");
+    return;
+  }
+  res.status(200).json(mapProfile(data));
+});
+
+/* ===========================================================================
+ * PATCH /me/profile — update own profile
+ * ===========================================================================
+ * User identity always from auth token — never from body.
+ */
+const patchProfileSchema = z.object({
+  displayName: z.string().min(1).max(60).optional(),
+  username: z.string().optional(),
+  bio: z.string().max(300).optional(),
+  homeCity: z.string().max(100).optional(),
+  homeCountry: z.string().max(100).optional(),
+  interests: z.array(z.string().max(50)).max(20).optional(),
+  passportVisibility: z.enum(["public", "private"]).optional(),
+  avatarUrl: z.string().url().optional(),
+  travelStyle: z.string().max(50).optional(),
+  openToMeet: z.boolean().optional(),
+});
+
+router.patch("/me/profile", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = patchProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const p = parsed.data;
+
+  const row: Record<string, unknown> = { updated_by: user.id };
+
+  if (p.displayName !== undefined) row.display_name = p.displayName;
+  if (p.bio !== undefined) row.bio = p.bio;
+  if (p.homeCity !== undefined) row.home_city = p.homeCity;
+  if (p.homeCountry !== undefined) row.home_country = p.homeCountry;
+  if (p.interests !== undefined) row.interests = p.interests;
+  if (p.passportVisibility !== undefined) row.passport_visibility = p.passportVisibility;
+  if (p.avatarUrl !== undefined) row.avatar_url = p.avatarUrl;
+  if (p.travelStyle !== undefined) row.travel_style = p.travelStyle;
+  if (p.openToMeet !== undefined) row.open_to_meet = p.openToMeet;
+
+  if (p.username !== undefined) {
+    const v = validateUsername(p.username);
+    if (!v.valid) {
+      sendError(res, "invalid_payload", v.reason ?? "Invalid username");
+      return;
+    }
+    const { data: existing } = await client
+      .from("profiles")
+      .select("id")
+      .eq("username", p.username)
+      .neq("id", user.id)
+      .maybeSingle();
+    if (existing) {
+      sendError(res, "invalid_payload", "Username is already taken");
+      return;
+    }
+    row.username = p.username;
+    row.username_updated_at = new Date().toISOString();
+  }
+
+  if (Object.keys(row).length <= 1) {
+    sendError(res, "invalid_payload", "At least one field must be provided");
+    return;
+  }
+
+  const { data, error } = await client
+    .from("profiles")
+    .update(row)
+    .eq("id", user.id)
+    .select(PROFILE_COLUMNS)
+    .single();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to update profile");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(200).json(mapProfile(data));
+});
+
+/* ===========================================================================
+ * GET /users/check-username — check username availability
+ * ===========================================================================
+ */
+router.get("/users/check-username", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const username = String(req.query.username ?? "").toLowerCase().trim();
+  if (!username) {
+    res.status(200).json({ available: false, reason: "Username is required" });
+    return;
+  }
+
+  const v = validateUsername(username);
+  if (!v.valid) {
+    res.status(200).json({ available: false, reason: v.reason });
+    return;
+  }
+
+  const { data } = await client
+    .from("profiles")
+    .select("id")
+    .eq("username", username)
+    .neq("id", user.id)
+    .maybeSingle();
+
+  if (data) {
+    res.status(200).json({ available: false, reason: "Username is already taken" });
+    return;
+  }
+  res.status(200).json({ available: true });
+});
+
+/* ===========================================================================
+ * POST /me/avatar/upload — upload avatar image
+ * ===========================================================================
+ * Accepts raw binary body, Content-Type = MIME. ≤5 MB. jpeg/png/webp only.
+ * Uploads to profile-media bucket at avatars/{userId}/{uuid}.{ext}.
+ * Returns { url }. Does NOT update avatar_url on the profile row —
+ * caller must follow up with PATCH /me/profile { avatarUrl }.
+ */
+router.post(
+  "/me/avatar/upload",
+  (req, res, next) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
+    req.on("error", next);
+  },
+  async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+
+    const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    const ext = ALLOWED_AVATAR_MIME[mimeType];
+    if (!ext) {
+      sendError(res, "invalid_payload", `Unsupported avatar type: ${mimeType}. Use jpeg, png, or webp.`);
+      return;
+    }
+    const rawBody: Buffer = (req as any).rawBody;
+    if (!rawBody || rawBody.length === 0) {
+      sendError(res, "invalid_payload", "Empty file body");
+      return;
+    }
+    if (rawBody.length > MAX_AVATAR_BYTES) {
+      sendError(res, "invalid_payload", `Avatar too large (${Math.round(rawBody.length / 1024 / 1024)}MB; max 5MB)`);
+      return;
+    }
+
+    const { randomUUID } = await import("crypto");
+    const uuid = randomUUID();
+    const path = `avatars/${user.id}/${uuid}.${ext}`;
+
+    const { error } = await client.storage
+      .from(AVATAR_BUCKET)
+      .upload(path, rawBody, { contentType: mimeType, upsert: true });
+
+    if (error) {
+      req.log.error({ err: error, path }, "Avatar upload failed");
+      sendError(res, "db_error", `Upload failed: ${error.message}`);
+      return;
+    }
+
+    const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    res.status(201).json({ url: urlData.publicUrl, path });
+  },
+);
+
+export default router;

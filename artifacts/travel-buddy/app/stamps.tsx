@@ -29,12 +29,12 @@ const REASON: Record<StampKind, string> = {
 };
 
 export default function StampsPage() {
-  const { data } = usePassport();
+  const { postcards } = usePassport();
   const [filter, setFilter] = useState('All');
   const [selected, setSelected] = useState<PassportStamp | null>(null);
-  const stamps = data?.stamps ?? [];
+  const stamps: PassportStamp[] = [];
   const active = FILTERS.find((f) => f.label === filter);
-  const shown = active?.kind ? stamps.filter((s) => s.kind === active.kind) : stamps;
+  const shown = active?.kind ? stamps.filter((s: PassportStamp) => s.kind === active.kind) : stamps;
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>

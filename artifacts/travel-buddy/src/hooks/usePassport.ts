@@ -1,31 +1,80 @@
 /**
- * usePassport — data seam for the Passport screen.
- * Today: returns mock data synchronously. Later: swap the body for a fetch to
- * the backend (auth'd) without changing the screen. Shape is the contract.
+ * usePassport — loads the owner's full passport data.
+ * Calls GET /api/me/profile + GET /api/me/passport/postcards in parallel.
+ * Falls back to mock data if backend is not configured.
  */
-import { useState, useEffect } from 'react';
-import type { PassportData } from '../types/models';
+import { useState, useEffect, useCallback } from 'react';
+import type { OwnProfile, PassportPostcard } from '../types/models';
+import { getMyProfile, getMyPassportPostcards } from '../services/profile';
+import { isSupabaseConfigured } from '../lib/supabase';
 import { mockPassport } from '../data/passport';
 
-interface PassportState {
-  data: PassportData | null;
+export interface PassportState {
+  profile: OwnProfile | null;
+  postcards: PassportPostcard[];
   loading: boolean;
   error: string | null;
+  reload: () => void;
 }
 
 export function usePassport(): PassportState {
-  const [state, setState] = useState<PassportState>({
-    data: null, loading: true, error: null,
-  });
+  const [profile, setProfile] = useState<OwnProfile | null>(null);
+  const [postcards, setPostcards] = useState<PassportPostcard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
-    // TODO(backend): replace with GET /me/passport. Keep the same PassportData shape.
     let alive = true;
-    const id = setTimeout(() => {
-      if (alive) setState({ data: mockPassport, loading: false, error: null });
-    }, 0);
-    return () => { alive = false; clearTimeout(id); };
-  }, []);
+    setLoading(true);
+    setError(null);
 
-  return state;
+    if (!isSupabaseConfigured) {
+      // No backend: return mock data so UI still works.
+      const mock = mockPassport;
+      const mockProfile: OwnProfile = {
+        id: mock.user.id,
+        handle: mock.user.handle,
+        name: mock.user.name,
+        displayName: mock.user.name,
+        username: mock.user.handle,
+        bio: mock.user.bio ?? null,
+        avatarUrl: mock.user.avatarUrl,
+        homeCity: mock.user.homeCity,
+        homeCountry: mock.user.homeCountry,
+        currentCity: mock.user.currentCity ?? null,
+        travelStyle: mock.user.travelStyle,
+        interests: mock.user.interests,
+        verified: mock.user.verified,
+        openToMeet: mock.user.openToMeet,
+        isPrivate: mock.user.isPrivate,
+        passportVisibility: 'public',
+        coverPhotoUrl: null,
+        usernameUpdatedAt: null,
+        createdAt: '2026-01-01T00:00:00Z',
+      };
+      setTimeout(() => {
+        if (alive) { setProfile(mockProfile); setPostcards([]); setLoading(false); }
+      }, 0);
+      return () => { alive = false; };
+    }
+
+    Promise.all([getMyProfile(), getMyPassportPostcards()]).then(([pRes, pcRes]) => {
+      if (!alive) return;
+      if (pRes.ok && pRes.data) setProfile(pRes.data as OwnProfile);
+      else setError(pRes.message ?? 'Could not load profile');
+      setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
+      setLoading(false);
+    }).catch(() => {
+      if (!alive) return;
+      setError('Failed to load passport');
+      setLoading(false);
+    });
+
+    return () => { alive = false; };
+  }, [tick]);
+
+  return { profile, postcards, loading, error, reload };
 }

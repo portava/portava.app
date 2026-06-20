@@ -274,9 +274,79 @@ export interface PassportData {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
+ * Passport Postcard — a post on the user's passport wall.
+ * Postcard rows live in `passport_postcards` table.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+export type PostcardStatus = 'active' | 'removed_from_passport' | 'deleted';
+export type PostcardVisibility = 'public' | 'private' | 'trip_only';
+
+export interface PassportPostcard {
+  id: ID;
+  postId: ID;
+  mediaUrl: string | null;
+  caption: string | null;
+  locationName: string | null;
+  locationCity: string | null;
+  locationCountry: string | null;
+  locationVerified: boolean;
+  stampEligible: boolean;
+  stampReason?: string | null;
+  verificationMethod?: string | null;
+  visibility: PostcardVisibility;
+  status: PostcardStatus;
+  pinnedAt: ISODate | null;
+  note: string | null;
+  createdAt: ISODate;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Public Passport — what a public viewer sees for a user.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+export interface PublicProfile {
+  id: ID;
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+  homeCity: string | null;
+  homeCountry: string | null;
+  travelStyle: string | null;
+  interests: string[];
+  verified: boolean;
+  passportVisibility: 'public' | 'private';
+  createdAt: ISODate | null;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Own full profile (returned by GET /me/profile).
+ * ─────────────────────────────────────────────────────────────────────── */
+
+export interface OwnProfile {
+  id: ID;
+  handle: string | null;
+  name: string | null;
+  displayName: string | null;
+  username: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+  homeCity: string | null;
+  homeCountry: string | null;
+  currentCity: string | null;
+  travelStyle: string | null;
+  interests: string[];
+  verified: boolean;
+  openToMeet: boolean;
+  isPrivate: boolean;
+  passportVisibility: 'public' | 'private';
+  coverPhotoUrl: string | null;
+  usernameUpdatedAt: ISODate | null;
+  createdAt: ISODate | null;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
  * Availability + City events (Pulse/Discovery utility layer).
- * Deterministic filtering now; scoring fields present but NULL until a real
- * backend ranking exists. Never fabricate scores.
  * ─────────────────────────────────────────────────────────────────────── */
 
 export type TimeBlock = 'morning' | 'afternoon' | 'evening' | 'late';
@@ -309,7 +379,7 @@ export type AvailabilityStatus =
 export interface Availability {
   weekly?: WeeklyAvailability;
   trips: TripWindow[];
-  /** user’s explicit toggle; independent of computed windows */
+  /** user's explicit toggle; independent of computed windows */
   openToMeet: boolean;
   /** strict mode (future): only show in-availability items in Pulse */
   strict?: boolean;
@@ -353,9 +423,7 @@ export interface PulseBuckets {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Travel Knowledge Layer (provisional seed). Every record carries source +
- * status + verified so the UI NEVER presents hand-seed data as truth.
- * Later: replace/validate via OSM, Wikidata, GeoNames + attribution.
+ * Travel Knowledge Layer (provisional seed).
  * ─────────────────────────────────────────────────────────────────────── */
 
 export type KnowledgeSource = 'seed' | 'osm' | 'wikidata' | 'geonames';
@@ -365,10 +433,10 @@ export interface CityKnowledge {
   citySlug: string;
   city: string;
   country: string;
-  knownFor: string[];      // soft, provisional — render as "Known for"
+  knownFor: string[];
   vibeTags: string[];
   popularAreas: string[];
-  categories: Interest[];   // dominant travel categories
+  categories: Interest[];
   source: KnowledgeSource;
   status: KnowledgeStatus;
   verified: boolean;
@@ -377,18 +445,15 @@ export interface CityKnowledge {
 
 /** Visual motif for a stamp — resolved from city, else category. Level-1 art. */
 export interface StampMotif {
-  /** lucide icon name resolved in component; kept as key for portability */
   iconKey: string;
-  accent: string;          // hex accent for this stamp
-  frame: 'oval' | 'rect';  // one of two reusable frame styles
-  caption?: string;        // tiny "known for" tag, e.g. "DIVING"
-  provisional: boolean;    // drives "Starter city notes" label
+  accent: string;
+  frame: 'oval' | 'rect';
+  caption?: string;
+  provisional: boolean;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Trip command center (Trip Page). Extends the base Trip with the fields the
- * spec needs. All optional/nullable so existing mock trips remain valid and
- * missing backend data degrades to honest empty states.
+ * Trip command center (Trip Page).
  * ─────────────────────────────────────────────────────────────────────── */
 
 export type TripStatus = 'planning' | 'upcoming' | 'active' | 'completed' | 'cancelled';
@@ -398,7 +463,7 @@ export type SafetyStatus = 'ok' | 'checkin_due' | 'safe_return_active' | 'unknow
 export interface SavedIdea {
   id: ID;
   name: string;
-  category: string;        // Food / Nightlife / Nature / ...
+  category: string;
   neighborhood: string;
   imageUrl?: string;
   source: 'discovery' | 'post' | 'plan' | 'gem';
@@ -408,14 +473,14 @@ export type TimelineItemKind = 'plan' | 'saved' | 'free' | 'checkin';
 export interface TimelineItem {
   id: ID;
   kind: TimelineItemKind;
-  time?: string;           // "7:00 PM"
+  time?: string;
   title: string;
   place?: string;
   attendeeCount?: number;
 }
 export interface TimelineDay {
-  dateLabel: string;       // "TODAY", "SAT"
-  dateSub: string;         // "Jun 20"
+  dateLabel: string;
+  dateSub: string;
   iso: ISODate;
   items: TimelineItem[];
 }
@@ -433,11 +498,11 @@ export interface TripDetail {
   nights: number;
   status: TripStatus;
   visibility: TripVisibility;
-  travelStyle: string;       // "Solo Traveler"
+  travelStyle: string;
   openToMeet: boolean;
-  availabilityLabel?: string; // "Evenings + Weekends"
+  availabilityLabel?: string;
   coverUrl: string;
-  progress: number;          // 0..100
+  progress: number;
   progressSteps: TripProgressStep[];
   nextUpPlanId?: ID | null;
   timeline: TimelineDay[];
@@ -446,8 +511,7 @@ export interface TripDetail {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
- * Pulse Wall — unified typed feed item. One shape renders many card types.
- * Real content populates the wall; seeded/editorial items are labeled.
+ * Pulse Wall — unified typed feed item.
  * ─────────────────────────────────────────────────────────────────────── */
 
 export type PulseItemType =
@@ -467,35 +531,33 @@ export interface PulseFeedItem {
   type: PulseItemType;
   city: string;
   neighborhood?: string;
-  author?: PulseAuthor;        // absent for compass/city_note/safety
+  author?: PulseAuthor;
   createdAt: ISODate;
-  timeAgo?: string;            // display convenience
+  timeAgo?: string;
   visibility?: 'public' | 'circle' | 'private';
   tags: string[];
   mediaUrl?: string;
   source: PulseSource;
-  isProvisional?: boolean;     // seed/city_note -> show provisional label
-  isEditorial?: boolean;       // editorial inspiration -> label as such
+  isProvisional?: boolean;
+  isEditorial?: boolean;
 
-  // type-specific (all optional; renderer reads what it needs)
-  caption?: string;            // post
-  question?: string;           // question
-  replyCount?: number;         // question
-  likeCount?: number;          // post
-  commentCount?: number;       // post
-  title?: string;              // plan / itinerary / gem
-  time?: string;               // plan
-  host?: PulseAuthor;          // plan
-  attendeeCount?: number;      // plan
-  availabilityMatch?: boolean; // plan -> "Fits your time" badge
-  steps?: string[];            // itinerary
-  estimate?: string;           // itinerary ("~5 hrs")
-  blurb?: string;              // hidden gem ("why special"), city note
-  activityText?: string;       // circle activity
-  participants?: PulseAuthor[];// circle activity avatars
-  reason?: string;             // compass suggestion (explicit, no fake score)
+  caption?: string;
+  question?: string;
+  replyCount?: number;
+  likeCount?: number;
+  commentCount?: number;
+  title?: string;
+  time?: string;
+  host?: PulseAuthor;
+  attendeeCount?: number;
+  availabilityMatch?: boolean;
+  steps?: string[];
+  estimate?: string;
+  blurb?: string;
+  activityText?: string;
+  participants?: PulseAuthor[];
+  reason?: string;
 
-  // future scoring — optional/null, never fabricated
   availabilityScore?: number | null;
   recommendationReason?: string | null;
 
@@ -511,9 +573,7 @@ export const PULSE_FILTERS = [
 export type PulseFilter = typeof PULSE_FILTERS[number];
 
 /* ───────────────────────────────────────────────────────────────────────
- * Attachments — linking a source item (place/gem/post/itinerary/...) to a
- * target (trip/plan). SESSION persistence only this pass (in-memory store);
- * backend migration contract documented in src/services/attachments.ts.
+ * Attachments
  * ─────────────────────────────────────────────────────────────────────── */
 
 export type AttachSourceType =
@@ -535,7 +595,7 @@ export interface Attachment {
   targetTitle: string;
   createdAt: ISODate;
   notes?: string;
-  persistence: 'session';   // honest: not backend-persisted this pass
+  persistence: 'session';
 }
 
 /** What a card passes to the selector — the source item being attached. */
@@ -554,6 +614,6 @@ export interface AttachTarget {
   id: ID;
   type: AttachTargetType;
   title: string;
-  subtitle?: string;          // dates / time / city
+  subtitle?: string;
   group: 'active' | 'upcoming' | 'planning' | 'trip_plans' | 'open' | 'draft';
 }

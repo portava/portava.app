@@ -8,9 +8,9 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 
 /** Circle page — Travel Circle (buddies) + Met Travelers (crossed paths). */
 export default function Circle() {
-  const { data } = usePassport();
+  const { profile } = usePassport();
   const [tab, setTab] = useState<'circle' | 'met'>('circle');
-  const buddies = data?.buddies ?? [];
+  const buddies: any[] = [];
   const met = [...buddies].reverse();
   const list = tab === 'circle' ? buddies : met;
 

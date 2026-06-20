@@ -1,10 +1,8 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
-import Svg, { Path, Defs, Pattern, Rect, Circle, G } from 'react-native-svg';
-import { Plane, MapPin, User as UserIcon, ShieldCheck, Pencil, UsersRound } from 'lucide-react-native';
-import type { User } from '../types/models';
-import { Chip } from './ui';
+import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
+import { Plane, MapPin, MoreHorizontal, Camera } from 'lucide-react-native';
+import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
@@ -15,153 +13,129 @@ const INTEREST_LABEL: Record<string, string> = {
   business: 'Business', dating: 'Social', events: 'Events',
 };
 
-/** Guilloche + watermark seal behind the profile photo — passport security feel. */
 function PhotoBackdrop() {
   return (
-    <Svg style={StyleSheet.absoluteFill} viewBox="0 0 160 200" pointerEvents="none">
+    <Svg style={StyleSheet.absoluteFill} viewBox="0 0 120 120" pointerEvents="none">
       <Defs>
-        <Pattern id="wave" width="20" height="20" patternUnits="userSpaceOnUse">
+        <Pattern id="wave2" width="20" height="20" patternUnits="userSpaceOnUse">
           <Path d="M0,10 Q5,2 10,10 T20,10" stroke={color.deep} strokeWidth="0.4" fill="none" opacity="0.18" />
         </Pattern>
       </Defs>
-      <Rect x="0" y="0" width="160" height="200" fill="url(#wave)" />
-      {/* concentric guilloche rings */}
-      {[34, 28, 22, 16].map((r) => (
-        <Circle key={r} cx="80" cy="70" r={r} stroke={color.deep} strokeWidth="0.5" fill="none" opacity="0.16" />
+      <Rect x="0" y="0" width="120" height="120" fill="url(#wave2)" />
+      {[28, 22, 16].map((r) => (
+        <Circle key={r} cx="60" cy="60" r={r} stroke={color.deep} strokeWidth="0.5" fill="none" opacity="0.16" />
       ))}
     </Svg>
   );
 }
 
-/** ID-photo crop marks at the four corners of the photo frame. */
-function CropMarks() {
-  const mark = (style: any) => <View style={[styles.crop, style]} />;
-  return (
-    <>
-      {mark(styles.cropTL)}{mark(styles.cropTR)}
-      {mark(styles.cropBL)}{mark(styles.cropBR)}
-    </>
-  );
-}
-
+/** Clean passport hero card — avatar, display name, username, bio (2 lines), home, up to 3 interests. */
 export function PassportHero({
-  user,
-  trustScore,
-  passId = 'TB-2026-0001',
+  profile,
+  isOwner,
+  onMenuPress,
+  onAvatarPress,
 }: {
-  user: User;
-  trustScore: number;
-  passId?: string;
+  profile: OwnProfile | PublicProfile;
+  isOwner: boolean;
+  onMenuPress?: () => void;
+  onAvatarPress?: () => void;
 }) {
-  const interests = user.interests ?? [];
+  const displayName = ('displayName' in profile ? profile.displayName : null) ?? profile.avatarUrl ?? 'Traveler';
+  const name = ('name' in profile && profile.name) ? profile.name : null;
+  const resolvedName = displayName || name || 'Traveler';
+  const username = 'username' in profile ? profile.username : null;
+  const bio = profile.bio;
+  const homeCity = profile.homeCity;
+  const homeCountry = profile.homeCountry;
+  const interests = profile.interests ?? [];
+  const shown = interests.slice(0, 3);
+  const extra = interests.length - 3;
+  const avatarUrl = profile.avatarUrl;
+
   return (
     <View style={styles.card}>
-      {/* document texture backdrop — behind everything in the hero */}
       <PassportHeroBackdrop />
-      {/* top-right entry ink stamp */}
       <View style={styles.inkStamp}><PassportInkStamp rotate={-8} /></View>
-      {/* top passport label row */}
+
+      {/* Top label */}
       <View style={styles.topRow}>
         <View style={styles.brandRow}>
-          <Plane size={18} color={color.ink} />
-          <View>
-            <Text style={styles.brand}>TRAVEL BUDDY PASSPORT</Text>
-            <Text style={styles.brandSub}>SOCIAL TRAVEL ID</Text>
+          <Plane size={16} color={color.ink} />
+          <Text style={styles.brand}>TRAVEL BUDDY PASSPORT</Text>
+        </View>
+        {isOwner && onMenuPress ? (
+          <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuBtn}>
+            <MoreHorizontal size={20} color={color.ink} />
+          </Pressable>
+        ) : !isOwner ? (
+          <View style={styles.followBtn}>
+            <Text style={styles.followText}>+ Follow</Text>
           </View>
-        </View>
-        <View style={styles.passIdWrap}>
-          <Text style={styles.passId}>PASS ID: {passId}</Text>
-        </View>
+        ) : null}
       </View>
       <View style={styles.topDivider} />
 
-      {/* main identity area */}
+      {/* Identity row */}
       <View style={styles.identityRow}>
-        {/* photo with document frame + backdrop + crop marks */}
-        <View style={styles.photoBox}>
-          {/* large subtle TB monogram behind the photo */}
-          <PassportMonogramWatermark size={150} />
+        {/* Avatar */}
+        <Pressable
+          style={styles.photoBox}
+          onPress={isOwner && onAvatarPress ? onAvatarPress : undefined}
+          disabled={!isOwner || !onAvatarPress}
+        >
+          <PassportMonogramWatermark size={130} />
           <PhotoBackdrop />
           <View style={styles.photoFrame}>
-            <Image source={{ uri: user.avatarUrl }} style={styles.photo} />
-            <CropMarks />
-          </View>
-          {/* ink stamp overlapping lower-left corner of the photo */}
-          <View style={styles.overlapStamp} pointerEvents="none">
-            <View style={styles.overlapRing}>
-              <Text style={styles.overlapText}>VERIFIED</Text>
-              <Text style={styles.overlapSub}>TRAVELER</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* details */}
-        <View style={styles.details}>
-          <View style={styles.nameRow}>
-            <Text style={styles.name}>{user.name}</Text>
-            <View style={styles.trustChip}>
-              <ShieldCheck size={13} color={color.signal} />
-              <Text style={styles.trustText}>Trust {trustScore}</Text>
-            </View>
-          </View>
-
-          <View style={styles.metaRow}>
-            <MapPin size={14} color={color.deep} />
-            <Text style={styles.location}>{user.homeCity}, {user.homeCountry}</Text>
-          </View>
-
-          <View style={styles.metaRow}>
-            <UserIcon size={14} color={color.ink} />
-            <Text style={styles.status}>
-              {user.travelStyle === 'solo' ? 'Solo Traveler' : user.travelStyle}
-            </Text>
-            {user.openToMeet && (
-              <>
-                <Text style={styles.dot}>·</Text>
-                <View style={styles.liveDot} />
-                <Text style={styles.status}>Open to Meet</Text>
-              </>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.photo} />
+            ) : (
+              <View style={[styles.photo, styles.photoEmpty]}>
+                <Text style={{ fontSize: 36 }}>👤</Text>
+              </View>
             )}
           </View>
+          {isOwner && (
+            <View style={styles.cameraOverlay} pointerEvents="none">
+              <Camera size={14} color={color.onInk} />
+            </View>
+          )}
+        </Pressable>
 
-          {/* PRESERVED buttons */}
-          <View style={styles.buttons}>
-            <Pressable style={styles.primaryBtn} onPress={() => { /* open to meet toggle */ }}>
-              <UsersRound size={16} color={color.onInk} />
-              <Text style={styles.primaryText}>Open to Meet</Text>
-            </Pressable>
-            <Pressable style={styles.editBtn} onPress={() => router.push('/(tabs)/discovery')}>
-              <Pencil size={15} color={color.ink} />
-              <Text style={styles.editText}>Edit</Text>
-            </Pressable>
-          </View>
+        {/* Details */}
+        <View style={styles.details}>
+          <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
+          {username ? <Text style={styles.handle}>@{username}</Text> : null}
+          {bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
+          {(homeCity || homeCountry) ? (
+            <View style={styles.locRow}>
+              <MapPin size={12} color={color.deep} />
+              <Text style={styles.loc} numberOfLines={1}>
+                {[homeCity, homeCountry].filter(Boolean).join(', ')}
+              </Text>
+            </View>
+          ) : null}
+          {shown.length > 0 && (
+            <View style={styles.interests}>
+              {shown.map((i) => (
+                <View key={i} style={styles.chip}>
+                  <Text style={styles.chipText}>{INTEREST_LABEL[i] ?? i}</Text>
+                </View>
+              ))}
+              {extra > 0 && (
+                <View style={styles.chip}>
+                  <Text style={styles.chipText}>+{extra}</Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
       </View>
 
-      {/* bio */}
-      {user.bio ? (
-        <Text style={styles.bio}>“{user.bio}”</Text>
-      ) : (
-        <Text style={styles.bioEmpty}>Add a short travel bio.</Text>
-      )}
-
-      {/* interests */}
-      <View style={styles.interestsHead}>
-        <Text style={styles.interestsLabel}>INTERESTS</Text>
-        <Plane size={11} color={color.signal} />
-      </View>
-      {interests.length ? (
-        <View style={styles.interests}>
-          {interests.slice(0, 8).map((i) => <Chip key={i} label={INTEREST_LABEL[i] ?? i} />)}
-        </View>
-      ) : (
-        <Text style={styles.bioEmpty}>Add interests so travelers know your vibe.</Text>
-      )}
-
-      {/* MRZ microtext divider */}
+      {/* MRZ strip */}
       <View style={styles.mrzRow}>
         <Text style={styles.mrzChevron}>‹‹‹‹‹</Text>
-        <Text style={styles.mrz}>TRAVEL BUDDY · VERIFIED TRAVEL ID · SOCIAL PASSPORT</Text>
+        <Text style={styles.mrz} numberOfLines={1}>TRAVEL BUDDY · VERIFIED TRAVEL ID · SOCIAL PASSPORT</Text>
         <Text style={styles.mrzChevron}>›››››</Text>
       </View>
     </View>
@@ -172,69 +146,61 @@ const styles = StyleSheet.create({
   card: {
     margin: space.lg,
     borderRadius: radius.lg,
-    backgroundColor: '#FBFAF6', // ivory paper
+    backgroundColor: '#FBFAF6',
     borderWidth: 1.5,
     borderColor: color.haze,
     padding: space.lg,
     overflow: 'hidden',
     ...shadow.card,
   },
-  inkStamp: { position: 'absolute', top: 56, right: 14, zIndex: 1 },
-  overlapStamp: { position: 'absolute', bottom: 2, left: -2, zIndex: 3 },
-  overlapRing: {
-    width: 52, height: 52, borderRadius: 26, borderWidth: 1.5, borderColor: color.signal,
-    alignItems: 'center', justifyContent: 'center', opacity: 0.5,
-    transform: [{ rotate: '-12deg' }], backgroundColor: 'rgba(250,249,246,0.4)',
-  },
-  overlapText: { fontFamily: 'Courier', fontSize: 8, fontWeight: '700', color: color.signal, letterSpacing: 0.5 },
-  overlapSub: { fontFamily: 'Courier', fontSize: 6.5, fontWeight: '700', color: color.signal, letterSpacing: 1 },
-  topRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  inkStamp: { position: 'absolute', top: 50, right: 12, zIndex: 1 },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  brand: { ...t.bodyStrong, color: color.ink, letterSpacing: 0.5, fontSize: 14 },
-  brandSub: { fontFamily: 'Courier', fontSize: 9, color: color.deep, letterSpacing: 1.5, marginTop: 1 },
-  passIdWrap: {},
-  passId: { fontFamily: 'Courier', fontSize: 10, color: color.deep, fontWeight: '700', letterSpacing: 0.5 },
+  brand: { ...t.bodyStrong, color: color.ink, letterSpacing: 0.5, fontSize: 13 },
   topDivider: { height: 1, backgroundColor: color.haze, marginVertical: space.md },
 
-  identityRow: { flexDirection: 'row', gap: space.lg },
-  photoBox: { width: 120, height: 150, alignItems: 'center', justifyContent: 'center' },
+  menuBtn: { padding: 4 },
+  followBtn: {
+    borderWidth: 1, borderColor: color.ink, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 5,
+  },
+  followText: { ...t.small, color: color.ink, fontWeight: '700' },
+
+  identityRow: { flexDirection: 'row', gap: space.md },
+
+  photoBox: { width: 110, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
   photoFrame: {
-    width: 104, height: 132, borderRadius: 6, borderWidth: 2, borderColor: color.paper,
+    width: 96, height: 110,
+    borderRadius: 8, borderWidth: 2, borderColor: color.paper,
     backgroundColor: color.haze, overflow: 'hidden', ...shadow.card,
   },
   photo: { width: '100%', height: '100%' },
-  crop: { position: 'absolute', width: 14, height: 14, borderColor: color.deep },
-  cropTL: { top: 4, left: 4, borderTopWidth: 2, borderLeftWidth: 2 },
-  cropTR: { top: 4, right: 4, borderTopWidth: 2, borderRightWidth: 2 },
-  cropBL: { bottom: 4, left: 4, borderBottomWidth: 2, borderLeftWidth: 2 },
-  cropBR: { bottom: 4, right: 4, borderBottomWidth: 2, borderRightWidth: 2 },
+  photoEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },
+  cameraOverlay: {
+    position: 'absolute', bottom: 4, right: 4,
+    backgroundColor: color.ink, borderRadius: 12, padding: 5,
+    borderWidth: 1.5, borderColor: color.paper,
+  },
 
-  details: { flex: 1, gap: space.sm },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
-  name: { ...t.hero, color: color.ink, fontSize: 30 },
-  trustChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 3 },
-  trustText: { ...t.small, fontWeight: '800', color: color.signal },
+  details: { flex: 1, gap: 6 },
+  name: { ...t.heading, color: color.ink, fontSize: 22, lineHeight: 28 },
+  handle: { ...t.small, color: color.mute, fontFamily: 'Courier', fontSize: 12 },
+  bio: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 18 },
+  locRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  loc: { ...t.small, color: color.deep, fontWeight: '600', flex: 1, fontSize: 12 },
+  interests: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 2 },
+  chip: {
+    backgroundColor: color.paperRaised, borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: color.haze,
+  },
+  chipText: { fontSize: 11, color: color.ink, fontWeight: '600' },
 
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  location: { ...t.bodyStrong, color: color.ink },
-  status: { ...t.body, color: color.ink, fontWeight: '600' },
-  dot: { color: color.faint, marginHorizontal: 2 },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.success },
-
-  buttons: { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
-  primaryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.md },
-  primaryText: { ...t.bodyStrong, color: color.onInk },
-  editBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.md, backgroundColor: color.paper },
-  editText: { ...t.bodyStrong, color: color.ink },
-
-  bio: { ...t.body, color: color.ink, fontStyle: 'italic', marginTop: space.lg },
-  bioEmpty: { ...t.body, color: color.faint, marginTop: space.sm },
-
-  interestsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: space.lg },
-  interestsLabel: { fontFamily: 'Courier', fontSize: 11, color: color.deep, letterSpacing: 2, fontWeight: '700' },
-  interests: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md, justifyContent: 'center' },
-
-  mrzRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm, marginTop: space.lg, paddingTop: space.md, borderTopWidth: 1, borderTopColor: color.haze },
-  mrz: { fontFamily: 'Courier', fontSize: 9, color: color.deep, letterSpacing: 1, fontWeight: '700' },
+  mrzRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: space.sm, marginTop: space.md, paddingTop: space.md,
+    borderTopWidth: 1, borderTopColor: color.haze,
+  },
+  mrz: { fontFamily: 'Courier', fontSize: 9, color: color.deep, letterSpacing: 1, fontWeight: '700', flex: 1, textAlign: 'center' },
   mrzChevron: { fontFamily: 'Courier', fontSize: 9, color: color.faint },
 });
