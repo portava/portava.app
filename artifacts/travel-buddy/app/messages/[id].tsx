@@ -21,8 +21,8 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
-import { getMeetup } from '../../src/services/meetups';
-import type { MeetupCounts } from '../../src/services/meetups';
+import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
+import type { MeetupCounts, RsvpStatus } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
@@ -60,17 +60,66 @@ function parseMeetupCard(
   return null;
 }
 
+type RsvpAction = 'going' | 'maybe' | 'declined';
+
+const RSVP_BTNS: { key: RsvpAction; label: string; emoji: string }[] = [
+  { key: 'going',    label: 'Going', emoji: '✅' },
+  { key: 'maybe',   label: 'Maybe', emoji: '🤔' },
+  { key: 'declined', label: "Can't", emoji: '❌' },
+];
+
 function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
+  const { isAuthed } = useSession();
   const [counts, setCounts] = useState<MeetupCounts | null>(null);
+  const [myRsvp, setMyRsvp] = useState<RsvpStatus | null>(null);
+  const [rsvping, setRsvping] = useState<RsvpAction | null>(null);
+  const [isCancelled, setIsCancelled] = useState(false);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
-      if (res.ok && res.data) setCounts(res.data.counts);
+      if (res.ok && res.data) {
+        setCounts(res.data.counts);
+        setMyRsvp(res.data.myRsvp ?? null);
+        setIsCancelled(res.data.status === 'cancelled');
+      }
     });
   }, [payload.meetupId]);
 
+  async function handleRsvp(status: RsvpAction) {
+    if (rsvping) return;
+    const prev = myRsvp;
+    const prevCounts = counts;
+    // Optimistic update
+    setMyRsvp(status);
+    if (counts) {
+      const next = { ...counts };
+      if (prev === 'going') next.going = Math.max(0, next.going - 1);
+      else if (prev === 'maybe') next.maybe = Math.max(0, next.maybe - 1);
+      else if (prev === 'declined') next.declined = Math.max(0, next.declined - 1);
+      else next.pending = Math.max(0, next.pending - 1);
+      if (status === 'going') next.going++;
+      else if (status === 'maybe') next.maybe++;
+      else if (status === 'declined') next.declined++;
+      setCounts(next);
+    }
+    setRsvping(status);
+    const res = await rsvpMeetup(payload.meetupId, status);
+    setRsvping(null);
+    if (res.ok && res.data) {
+      setMyRsvp(res.data.status);
+      setCounts(res.data.counts);
+    } else {
+      setMyRsvp(prev);
+      setCounts(prevCounts);
+      Alert.alert('Error', res.message ?? 'Could not RSVP');
+    }
+  }
+
   const when = [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
-  const rsvpLabel = counts ? `${counts.going} going · ${counts.maybe} maybe` : null;
+  const rsvpLabel = counts
+    ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
+    : null;
+  const showRsvpButtons = isAuthed && !isCancelled;
 
   return (
     <Pressable
@@ -100,10 +149,34 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       {payload.plannedByName ? (
         <Text style={mc.plannedBy} numberOfLines={1}>{payload.plannedByName} planned this</Text>
       ) : null}
-      <View style={mc.footer}>
-        <Text style={[mc.see, mine && mc.seeMine]}>Tap to RSVP or vote on a time</Text>
-        <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.signal} />
-      </View>
+
+      {showRsvpButtons ? (
+        <View style={mc.rsvpRow}>
+          {RSVP_BTNS.map((opt) => {
+            const isActive = myRsvp === opt.key;
+            const isBusy = rsvping === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                style={[mc.rsvpBtn, isActive && mc.rsvpBtnActive]}
+                onPress={() => handleRsvp(opt.key)}
+                disabled={rsvping !== null}
+              >
+                {isBusy
+                  ? <ActivityIndicator size="small" color={isActive ? color.onInk : color.signal} style={{ width: 14, height: 14 }} />
+                  : <Text style={mc.rsvpEmoji}>{opt.emoji}</Text>
+                }
+                <Text style={[mc.rsvpLabel, isActive && mc.rsvpLabelActive]}>{opt.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : (
+        <View style={mc.footer}>
+          <Text style={[mc.see, mine && mc.seeMine]}>Tap to view meetup</Text>
+          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.signal} />
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -122,6 +195,12 @@ const mc = StyleSheet.create({
   footer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   see: { ...t.small, color: color.signal, fontSize: 11 },
   seeMine: { color: color.signal },
+  rsvpRow: { flexDirection: 'row', gap: 5, marginTop: 6 },
+  rsvpBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 5, paddingHorizontal: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, minWidth: 0 },
+  rsvpBtnActive: { backgroundColor: color.signal, borderColor: color.signal },
+  rsvpEmoji: { fontSize: 11 },
+  rsvpLabel: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 10 },
+  rsvpLabelActive: { color: color.onInk },
 });
 
 // ── Message bubble ────────────────────────────────────────────────────────────
