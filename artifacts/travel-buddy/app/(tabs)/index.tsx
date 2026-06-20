@@ -36,7 +36,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     tags: [],
     mediaUrl: p.mediaUrls[0],
     caption: p.content,
-    source: 'post',
+    source: 'user',
     visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
   };
 }

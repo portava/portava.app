@@ -100,9 +100,11 @@ function isNetworkError(e: unknown): boolean {
 }
 
 /**
- * Upload a local file URI to Supabase Storage (post-media bucket).
- * Returns the public URL on success, or a PostResult error on failure.
- * Upload uses the authenticated client so the user's session is respected.
+ * Upload a local file URI by proxying through the API server (POST /api/media/upload).
+ * The API server uses the service-role key to upload to Supabase Storage, bypassing
+ * storage RLS. The client never touches the service-role key; it sends its Bearer token.
+ *
+ * Returns the public URL on success.
  */
 export async function uploadPostMedia(
   localUri: string,
@@ -111,25 +113,48 @@ export async function uploadPostMedia(
   if (!isSupabaseConfigured) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.user) {
-    return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+  if (!apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'API base URL not set' };
   }
+
+  const token = await freshToken();
+  if (!token) {
+    return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in to upload media' };
+  }
+
   try {
-    const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'jpg';
-    const path = `${session.user.id}/${Date.now()}.${ext}`;
-    const response = await fetch(localUri);
-    const blob = await response.blob();
-    const { error } = await supabase.storage
-      .from('post-media')
-      .upload(path, blob, { contentType: mimeType, upsert: false });
-    if (error) {
-      return { ok: false, data: null, errorKind: 'upload_failed', message: error.message };
+    // Fetch the local file as a blob (works on both web and React Native with Expo)
+    const fileRes = await fetch(localUri);
+    if (!fileRes.ok) {
+      return { ok: false, data: null, errorKind: 'upload_failed', message: `Could not read local file (${fileRes.status})` };
     }
-    const { data: urlData } = supabase.storage.from('post-media').getPublicUrl(path);
-    return { ok: true, data: urlData.publicUrl };
+    const blob = await fileRes.blob();
+
+    // POST raw binary to our API server — it proxies to Supabase Storage with service role
+    const res = await fetch(`${apiBase()}/api/media/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': mimeType,
+        'Authorization': `Bearer ${token}`,
+      },
+      body: blob,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = body?.message ?? `Upload failed (HTTP ${res.status})`;
+      return { ok: false, data: null, errorKind: 'upload_failed', message: msg };
+    }
+
+    const body = await res.json();
+    if (!body?.url) {
+      return { ok: false, data: null, errorKind: 'upload_failed', message: 'Server returned no URL' };
+    }
+    return { ok: true, data: body.url };
   } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+    if (isNetworkError(e)) {
+      return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+    }
     return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Upload failed' };
   }
 }

@@ -1,0 +1,133 @@
+Continue from the interrupted post-media build. Do not restart the whole task.
+
+Problem:
+The agent stopped with “AI services are temporarily unavailable,” and the app now says “could not upload.”
+
+Goal:
+Fix post media upload end-to-end and make the real post appear inside the Pulse Wall cards.
+
+First: diagnose exact upload failure.
+Replace the generic “could not upload” handling with logging/display of:
+- error.message
+- error.statusCode if present
+- bucket name
+- file path
+- mime type
+- file size if available
+- whether user/session exists
+
+Do not leave only a generic toast.
+
+Required behavior:
+- Media is required before submit.
+- User selects image/video.
+- App uploads media successfully.
+- API creates post with media URL/path.
+- Pulse feed refetches.
+- New post appears alongside Pulse Wall cards, not in a separate real-posts section.
+
+Storage:
+Verify Supabase bucket:
+- bucket name: post-media
+- for public Pulse posts, either make bucket public OR create signed-read flow
+- recommended for now: public bucket for Pulse media, with restricted authenticated upload policy
+
+Storage upload policy:
+Authenticated users can upload only to their own folder.
+
+Policy rule:
+- bucket_id = 'post-media'
+- INSERT allowed for authenticated users only
+- object name must start with auth.uid() + '/'
+- SELECT/read allowed for public media if bucket is public
+- UPDATE/DELETE only owner/admin if implemented
+
+Path format:
+post-media/{userId}/{uuid}.{ext}
+
+Do not allow client to upload to random paths.
+
+Mobile upload:
+Expo/ImagePicker returns local file URIs. Supabase upload needs a Blob/File-style body.
+
+Use this style:
+1. Pick media with image picker.
+2. Get asset.uri.
+3. Convert to blob:
+
+const response = await fetch(asset.uri);
+const blob = await response.blob();
+
+4. Upload blob:
+
+await supabase.storage
+  .from("post-media")
+  .upload(path, blob, {
+    contentType: asset.mimeType ?? "image/jpeg",
+    upsert: false,
+  });
+
+5. Get public URL only after upload succeeds:
+
+const { data } = supabase.storage
+  .from("post-media")
+  .getPublicUrl(path);
+
+6. Then call POST /api/posts with:
+- body/content
+- visibility
+- trip_id nullable
+- media_urls: [publicUrl]
+- media_type: image/video
+
+Important:
+Do not create the post if media upload fails.
+Do not fake media URLs.
+Do not submit with an empty media array.
+
+Backend:
+Verify posts schema/route supports media:
+- media_urls or media array exists
+- create schema requires at least one media item
+- response PostRow includes media
+- GET /api/posts returns media
+- GET /api/trips/:tripId/posts returns media
+- Pulse mapping receives media
+
+If the DB column is missing, add migration.
+If migration cannot be run, stop and report that clearly.
+
+Pulse integration:
+Real posts must appear inside the existing Pulse Wall feed cards.
+
+Do not render real posts in a separate “Real Posts” section anymore.
+
+Map PostRow into PulseFeedItem safely:
+- id
+- kind/type: post or pulse_post
+- author
+- avatar fallback
+- content/body
+- media/image
+- createdAt
+- visibility
+- trip label if present
+- source: real_post
+
+Keep mock Pulse cards too, but merge them with real posts in the same feed array.
+Sort by createdAt descending if both have timestamps.
+
+Tests/checks:
+1. Submit button disabled or blocked until media selected.
+2. Upload with no session fails clearly.
+3. Upload with session succeeds.
+4. Bad storage policy shows exact error, not generic toast.
+5. Post is not created if upload fails.
+6. Post is created after upload succeeds.
+7. GET /api/posts returns media.
+8. Pulse Wall shows the new real post alongside mock cards.
+9. Private/trip_only posts do not leak into global feed.
+10. No service-role key is exposed to mobile/frontend.
+
+Important:
+The previous AI-services interruption means the API rebuild and storage policy may not have completed. Verify both before testing upload.

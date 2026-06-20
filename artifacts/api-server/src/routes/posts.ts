@@ -10,8 +10,80 @@ import {
   updatePostSchema,
   listPostsQuerySchema,
 } from "../lib/postSchemas";
+import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
+
+const STORAGE_BUCKET = "post-media";
+const ALLOWED_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+};
+
+/* ===========================================================================
+ * POST /media/upload  — authenticated media upload (server proxies to Storage)
+ * ===========================================================================
+ * Accepts raw binary body (Content-Type must be an allowed MIME type).
+ * The service-role client bypasses Supabase Storage RLS so no bucket policy
+ * is needed. Files are stored at post-media/{userId}/{timestamp}.{ext}.
+ * Returns { url } — the public URL of the uploaded file.
+ */
+router.post(
+  "/media/upload",
+  // parse raw binary body for this route only (up to 15 MB)
+  (req, res, next) => {
+    let chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      (req as any).rawBody = Buffer.concat(chunks);
+      next();
+    });
+    req.on("error", next);
+  },
+  async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    const ext = ALLOWED_MIME[mimeType];
+    if (!ext) {
+      sendError(res, "invalid_payload", `Unsupported media type: ${mimeType}. Allowed: ${Object.keys(ALLOWED_MIME).join(", ")}`);
+      return;
+    }
+
+    const rawBody: Buffer = (req as any).rawBody;
+    if (!rawBody || rawBody.length === 0) {
+      sendError(res, "invalid_payload", "Empty file body");
+      return;
+    }
+
+    const path = `${user.id}/${Date.now()}.${ext}`;
+    const client = getServiceClient();
+    if (!client) {
+      sendError(res, "server_not_configured", "Storage not configured");
+      return;
+    }
+
+    const { error } = await client.storage
+      .from(STORAGE_BUCKET)
+      .upload(path, rawBody, { contentType: mimeType, upsert: false });
+
+    if (error) {
+      req.log.error({ err: error, path }, "Storage upload failed");
+      sendError(res, "db_error", `Upload failed: ${error.message}`);
+      return;
+    }
+
+    const { data: urlData } = client.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+    res.status(201).json({ url: urlData.publicUrl, path });
+  },
+);
 
 // Columns returned to clients. profiles!author_id joins the author's profile row.
 const POST_COLUMNS =
