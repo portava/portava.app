@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
+  Image,
   FlatList,
   TextInput,
   Pressable,
@@ -22,7 +23,7 @@ import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestio
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
-import type { MeetupCounts, RsvpStatus } from '../../src/services/meetups';
+import type { MeetupCounts, MeetupCreator, RsvpStatus } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
@@ -68,12 +69,27 @@ const RSVP_BTNS: { key: RsvpAction; label: string; emoji: string }[] = [
   { key: 'declined', label: "Can't", emoji: '❌' },
 ];
 
+function CreatorAvatar({ creator }: { creator: MeetupCreator | null }) {
+  const size = 20;
+  if (creator?.avatarUrl) {
+    return <Image source={{ uri: creator.avatarUrl }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }} />;
+  }
+  const initial = creator?.displayName?.charAt(0)?.toUpperCase() ?? '?';
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.signal + '33', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontSize: 10, fontWeight: '700', color: color.signal }}>{initial}</Text>
+    </View>
+  );
+}
+
 function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
   const { isAuthed } = useSession();
   const [counts, setCounts] = useState<MeetupCounts | null>(null);
   const [myRsvp, setMyRsvp] = useState<RsvpStatus | null>(null);
   const [rsvping, setRsvping] = useState<RsvpAction | null>(null);
   const [isCancelled, setIsCancelled] = useState(false);
+  // undefined = still loading; null = loaded but creator not found
+  const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
@@ -81,6 +97,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setCounts(res.data.counts);
         setMyRsvp(res.data.myRsvp ?? null);
         setIsCancelled(res.data.status === 'cancelled');
+        setCreator(res.data.creator ?? null);
       }
     });
   }, [payload.meetupId]);
@@ -130,6 +147,17 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         <View style={mc.icon}><CalendarClock size={14} color={color.signal} /></View>
         <Text style={mc.label}>Meetup</Text>
       </View>
+
+      {/* Creator row — shown once getMeetup() resolves */}
+      {creator !== undefined ? (
+        <View style={mc.creatorRow}>
+          <CreatorAvatar creator={creator} />
+          <Text style={mc.creatorText} numberOfLines={1}>
+            {creator?.displayName ?? 'Someone'} planned a meetup
+          </Text>
+        </View>
+      ) : null}
+
       <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
       {payload.locationName ? (
         <View style={mc.metaRow}>
@@ -145,9 +173,6 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         <View style={mc.metaRow}>
           <Text style={mc.meta}>👋 {rsvpLabel}</Text>
         </View>
-      ) : null}
-      {payload.plannedByName ? (
-        <Text style={mc.plannedBy} numberOfLines={1}>{payload.plannedByName} planned this</Text>
       ) : null}
 
       {showRsvpButtons ? (
@@ -191,7 +216,8 @@ const mc = StyleSheet.create({
   titleMine: { color: color.ink },
   metaRow: { flexDirection: 'row', alignItems: 'center' },
   meta: { ...t.small, color: color.mute, fontSize: 11 },
-  plannedBy: { ...t.small, color: color.faint, fontSize: 10, fontStyle: 'italic' },
+  creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  creatorText: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   see: { ...t.small, color: color.signal, fontSize: 11 },
   seeMine: { color: color.signal },

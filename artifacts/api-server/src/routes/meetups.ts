@@ -20,6 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -292,6 +293,24 @@ router.get("/meetups/:meetupId", async (req, res) => {
 
   const isCreator = meetup.creator_id === user.id;
 
+  // Fetch creator profile (service client bypasses RLS for cross-user reads)
+  let creator: { id: string; displayName: string | null; avatarUrl: string | null } | null = null;
+  const sc = getServiceClient();
+  if (sc) {
+    const { data: creatorProfile } = await sc
+      .from("profiles")
+      .select("id, name, avatar_url")
+      .eq("id", meetup.creator_id)
+      .maybeSingle();
+    if (creatorProfile) {
+      creator = {
+        id:          (creatorProfile as any).id as string,
+        displayName: (creatorProfile as any).name as string | null ?? null,
+        avatarUrl:   (creatorProfile as any).avatar_url as string | null ?? null,
+      };
+    }
+  }
+
   res.json({
     id:              meetup.id,
     creatorId:       meetup.creator_id,
@@ -313,6 +332,7 @@ router.get("/meetups/:meetupId", async (req, res) => {
     counts,
     myRsvp:          (myInvite as any)?.status ?? null,
     isCreator,
+    creator,
     timeOptions:     (options ?? []).map((o: any) => ({
       id:            o.id,
       proposedDate:  o.proposed_date,

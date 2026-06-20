@@ -45,11 +45,18 @@ export interface MeetupTimeOption {
 
 export interface MeetupCounts { going: number; maybe: number; declined: number; pending: number; }
 
+export interface MeetupCreator {
+  id: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
 export interface MeetupDetail extends MeetupSummary {
   counts: MeetupCounts;
   myRsvp: RsvpStatus | null;
   isCreator: boolean;
   timeOptions: MeetupTimeOption[];
+  creator: MeetupCreator | null;
 }
 
 export interface MeetupInvite {
