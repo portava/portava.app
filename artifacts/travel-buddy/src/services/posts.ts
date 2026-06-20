@@ -13,6 +13,13 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 export type PostVisibility = 'public' | 'trip_only' | 'private';
 export type PostStatus = 'active' | 'hidden' | 'reported' | 'deleted';
 
+export interface PostAuthor {
+  id: string;
+  handle: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
 export interface PostRow {
   id: string;
   authorId: string;
@@ -23,6 +30,10 @@ export interface PostRow {
   status: PostStatus;
   createdAt: string;
   updatedAt: string;
+  locationName?: string | null;
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  author?: PostAuthor | null;
 }
 
 export type PostErrorKind =
@@ -53,6 +64,12 @@ function mapPost(r: any): PostRow {
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    locationName: r.location_name ?? null,
+    locationCity: r.location_city ?? null,
+    locationCountry: r.location_country ?? null,
+    author: r.author
+      ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null }
+      : null,
   };
 }
 
@@ -165,6 +182,32 @@ export async function listGlobalPosts(opts?: { limit?: number; before?: string }
 
   try {
     const res = await fetch(`${apiBase()}/api/posts${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PostRow[]>(res.status, body);
+    }
+    const body = await res.json();
+    return { ok: true, data: (body.posts ?? []).map(mapPost) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Following feed: public standalone posts from users the caller follows. */
+export async function listFollowingFeed(opts?: { limit?: number; before?: string }): Promise<PostResult<PostRow[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  const params = new URLSearchParams({ feed: 'following' });
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.before) params.set('before', opts.before);
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {

@@ -202,31 +202,109 @@ router.post("/posts", async (req, res) => {
   res.status(201).json({ ...(data as any), postcard });
 });
 
+// Safe public location labels (no GPS coordinates).
+const FOLLOWING_POST_COLUMNS =
+  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
+  "location_name, location_city, location_country";
+
 /* ===========================================================================
- * GET /posts  — global feed: active PUBLIC STANDALONE posts only
+ * GET /posts  — global feed OR following feed
  * ===========================================================================
- * Deliberately excludes trip_only and private and trip-attached posts so no
- * private/trip content can leak into the global feed. (Trip feeds have their
- * own endpoint below.) Auth required so we can attribute/se the reader, but the
- * feed itself is public-standalone content.
+ * feed=global (default): active PUBLIC STANDALONE posts for all users.
+ * feed=following: public standalone posts from users the caller follows only.
+ *
+ * Hard privacy rules enforced at the query level for BOTH modes:
+ *   - visibility = "public" only (never trip_only or private)
+ *   - trip_id IS NULL (standalone only — no trip content leaks)
+ *   - status = "active" (no deleted/hidden/reported posts)
+ *   - never returns user_gps_lat/lng (not in any SELECT column list)
+ * Auth required for both modes.
  */
 router.get("/posts", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { client } = auth;
+  const { client, user } = auth;
 
   const parsed = listPostsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
     return;
   }
-  const { limit, before } = parsed.data;
+  const { limit, before, feed } = parsed.data;
 
+  // ── Following feed ────────────────────────────────────────────────────────
+  if (feed === "following") {
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+    // Step 1: who does this user follow?
+    const { data: followRows, error: followErr } = await sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", user.id);
+    if (followErr) {
+      req.log.error({ err: followErr }, "Failed to load following list for feed");
+      sendError(res, "db_error", followErr.message);
+      return;
+    }
+    const followingIds: string[] = (followRows ?? []).map((r: any) => r.following_id);
+    if (followingIds.length === 0) {
+      res.status(200).json({ posts: [], feed: "following" });
+      return;
+    }
+
+    // Step 2: public standalone active posts from followed users only.
+    let q = sc
+      .from("posts")
+      .select(FOLLOWING_POST_COLUMNS)
+      .in("author_id", followingIds)
+      .is("trip_id", null)
+      .eq("visibility", "public")
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (before) q = q.lt("created_at", before);
+
+    const { data: postRows, error: postErr } = await q;
+    if (postErr) {
+      req.log.error({ err: postErr }, "Failed to load following feed posts");
+      sendError(res, "db_error", postErr.message);
+      return;
+    }
+    const posts: any[] = postRows ?? [];
+
+    // Step 3: batch-fetch author profiles (one query for all unique authors).
+    const authorIds = [...new Set(posts.map((p) => p.author_id))];
+    let profileMap: Record<string, any> = {};
+    if (authorIds.length > 0) {
+      const { data: profiles } = await sc
+        .from("profiles")
+        .select("id, handle, name, avatar_url")
+        .in("id", authorIds);
+      for (const p of profiles ?? []) profileMap[p.id] = p;
+    }
+
+    // Step 4: merge author into each post; never expose raw DB profile fields.
+    const merged = posts.map((p) => {
+      const pr = profileMap[p.author_id];
+      return {
+        ...p,
+        author: pr
+          ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
+          : null,
+      };
+    });
+
+    res.status(200).json({ posts: merged, feed: "following" });
+    return;
+  }
+
+  // ── Global feed (default) ─────────────────────────────────────────────────
   let q = client
     .from("posts")
     .select(POST_COLUMNS)
-    .is("trip_id", null) // standalone only
-    .eq("visibility", "public") // public only — no trip_only/private leakage
+    .is("trip_id", null)
+    .eq("visibility", "public")
     .eq("status", "active")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -238,7 +316,7 @@ router.get("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  res.status(200).json({ posts: data ?? [] });
+  res.status(200).json({ posts: data ?? [], feed: "global" });
 });
 
 /* ===========================================================================

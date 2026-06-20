@@ -7,6 +7,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   listGlobalPosts,
+  listFollowingFeed,
   listTripPosts,
   createPost,
   updatePost,
@@ -33,6 +34,24 @@ export function useGlobalFeed() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  return { data, loading, error, reload };
+}
+
+/** Following feed — public posts from followed users only. */
+export function useFollowingFeed() {
+  const [data, setData] = useState<PostRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const res = await listFollowingFeed({ limit: 20 });
+    if (res.ok) setData(res.data ?? []);
+    else setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
+    setLoading(false);
+  }, []);
 
   return { data, loading, error, reload };
 }

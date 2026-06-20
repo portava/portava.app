@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { posts as editorialPosts, me } from '../../src/data/cebu';
 import { pulseFeed } from '../../src/data/pulseFeed';
@@ -11,7 +11,7 @@ import { PulseFilterSheet, PulseCreateMenu, PulseFAB } from '../../src/component
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
-import { useGlobalFeed } from '../../src/hooks/usePosts';
+import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import { filterPulseFeed } from '../../src/lib/recommend';
 import { PULSE_FILTERS } from '../../src/types/models';
@@ -22,19 +22,26 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 const CURRENT_CITY = 'cebu';
 
+type FeedMode = 'forYou' | 'following';
+
 /** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
 function postRowToFeedItem(p: PostRow): PulseFeedItem {
   return {
     id: p.id,
     type: 'post',
-    city: 'Cebu',
-    author: { id: p.authorId, name: 'Traveler', avatarUrl: '' },
+    city: p.locationCity ?? 'Traveler Post',
+    author: {
+      id: p.authorId,
+      name: p.author?.name ?? 'Traveler',
+      avatarUrl: p.author?.avatarUrl ?? '',
+    },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
     tags: [],
     mediaUrl: p.mediaUrls[0],
     caption: p.content,
     source: 'user',
+    neighborhood: p.locationName ?? undefined,
     visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
   };
 }
@@ -50,24 +57,31 @@ function timeAgo(iso: string): string {
 }
 
 export default function Pulse() {
+  const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { buckets, status } = useCityPulse({ currentCitySlug: CURRENT_CITY, interests: me.interests });
 
-  // Real backend posts — refetch on screen focus so newly created posts appear immediately.
   const realFeed = useGlobalFeed();
+  const followingFeed = useFollowingFeed();
+
   useFocusEffect(
     useCallback(() => {
       realFeed.reload();
-    }, [realFeed.reload]),
+      if (feedMode === 'following') followingFeed.reload();
+    }, [realFeed.reload, followingFeed.reload, feedMode]),
   );
+
+  // When switching to Following, load it on first activation.
+  const handleFeedMode = useCallback((mode: FeedMode) => {
+    setFeedMode(mode);
+    if (mode === 'following') followingFeed.reload();
+  }, [followingFeed.reload]);
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
 
-  // Merge real posts (prepended) with mock feed, then filter.
-  // Only posts with at least one media URL appear on the Pulse Wall.
   const realItems = useMemo<PulseFeedItem[]>(
     () => (realFeed.data ?? [])
       .filter((p) => p.mediaUrls.length > 0)
@@ -75,14 +89,19 @@ export default function Pulse() {
     [realFeed.data],
   );
   const mockFeed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
-  const feed = useMemo<PulseFeedItem[]>(() => {
-    // When filtering by Posts, show only real + mock posts. Otherwise prepend real posts.
+  const forYouFeed = useMemo<PulseFeedItem[]>(() => {
     const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
       : realItems.filter(() => false);
     return [...filteredReal, ...mockFeed];
   }, [realItems, mockFeed, active]);
 
+  const followingItems = useMemo<PulseFeedItem[]>(
+    () => (followingFeed.data ?? []).map(postRowToFeedItem),
+    [followingFeed.data],
+  );
+
+  const feed = feedMode === 'following' ? followingItems : forYouFeed;
   const filterCount = active.filter((f) => f !== 'All').length;
 
   function toggleQuick(f: PulseFilter) {
@@ -125,31 +144,83 @@ export default function Pulse() {
       {/* When you're flexible */}
       <FlexibleStrip events={buckets.flexible} />
 
-      {/* Pulse Wall title + quick filter chips */}
+      {/* Pulse Wall — feed mode toggle + quick filters */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
-      <FlatList
-        data={QUICK_FILTERS}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyExtractor={(x) => x}
-        contentContainerStyle={styles.filterRow}
-        renderItem={({ item }) => (
-          <Chip label={item} active={active.includes(item)} onPress={() => toggleQuick(item)} />
-        )}
-      />
+
+      {/* For You / Following toggle */}
+      <View style={styles.modeRow}>
+        <Pressable
+          style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
+          onPress={() => handleFeedMode('forYou')}
+        >
+          <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
+          onPress={() => handleFeedMode('following')}
+        >
+          <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
+        </Pressable>
+      </View>
+
+      {/* Quick filter chips — only visible in For You mode */}
+      {feedMode === 'forYou' && (
+        <FlatList
+          data={QUICK_FILTERS}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(x) => x}
+          contentContainerStyle={styles.filterRow}
+          renderItem={({ item }) => (
+            <Chip label={item} active={active.includes(item)} onPress={() => toggleQuick(item)} />
+          )}
+        />
+      )}
+    </View>
+  );
+
+  const FollowingEmpty = (
+    <View style={styles.followingEmpty}>
+      <Text style={styles.followingEmptyTitle}>Follow travelers to see their public posts here.</Text>
+      <Pressable style={styles.exploreBtn} onPress={() => router.push('/(tabs)/discovery')}>
+        <Text style={styles.exploreBtnText}>Explore travelers</Text>
+      </Pressable>
+    </View>
+  );
+
+  const FollowingError = (
+    <View style={styles.followingEmpty}>
+      <Text style={styles.followingEmptyTitle}>Couldn't load your Following feed.</Text>
+      <Pressable style={styles.exploreBtn} onPress={() => followingFeed.reload()}>
+        <Text style={styles.exploreBtnText}>Retry</Text>
+      </Pressable>
     </View>
   );
 
   const Footer = (
     <View>
-      {feed.length === 0 ? (
-        <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
-      ) : null}
-      {/* Editorial inspiration — labeled separately, not live activity */}
-      <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
-      {editorialPosts.slice(0, 3).map((p) => (
-        <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
-      ))}
+      {feedMode === 'following' ? (
+        followingFeed.loading ? (
+          <View style={styles.loadingWrap}><ActivityIndicator size="large" color={color.signal} /></View>
+        ) : followingFeed.error ? (
+          FollowingError
+        ) : followingItems.length === 0 ? (
+          FollowingEmpty
+        ) : null
+      ) : (
+        feed.length === 0 ? (
+          <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
+        ) : null
+      )}
+      {/* Editorial inspiration — shown only in For You mode */}
+      {feedMode === 'forYou' && (
+        <>
+          <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
+          {editorialPosts.slice(0, 3).map((p) => (
+            <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
+          ))}
+        </>
+      )}
     </View>
   );
 
@@ -176,6 +247,13 @@ export default function Pulse() {
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
+            onRefresh={feedMode === 'following' ? followingFeed.reload : realFeed.reload}
+            tintColor={color.signal}
+          />
+        }
       />
 
       <PulseFAB onPress={() => setCreateOpen(true)} />
@@ -202,6 +280,16 @@ const styles = StyleSheet.create({
   emptyTitle: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, marginTop: 4 },
   wallTitle: { ...t.title, color: color.ink, fontSize: 20, paddingHorizontal: space.lg, marginTop: space.xxl, marginBottom: space.md },
+  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, marginBottom: space.md, borderRadius: 12, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: 3, gap: 3 },
+  modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  modeBtnActive: { backgroundColor: color.paper, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+  modeBtnText: { ...t.bodyStrong, fontSize: 14, color: color.mute },
+  modeBtnTextActive: { color: color.ink },
   filterRow: { gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.md },
   inspoLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, paddingHorizontal: space.lg, marginTop: space.xxl, marginBottom: space.md },
+  followingEmpty: { marginHorizontal: space.lg, marginTop: space.xl, padding: space.xl, borderRadius: 16, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, alignItems: 'center', gap: space.md },
+  followingEmptyTitle: { ...t.body, color: color.deep, textAlign: 'center', lineHeight: 22 },
+  exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
+  exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
+  loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
 });

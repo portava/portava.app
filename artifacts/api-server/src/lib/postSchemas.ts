@@ -97,9 +97,10 @@ export const updatePostSchema = z
   });
 export type UpdatePostInput = z.infer<typeof updatePostSchema>;
 
-/** Query params for the global feed. */
+/** Query params for the global or following feed. */
 export const listPostsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
   before: z.string().datetime().optional(), // cursor: created_at < before
+  feed: z.enum(["global", "following"]).optional().default("global"),
 });
 export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
