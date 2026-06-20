@@ -1,0 +1,458 @@
+Next task: Build Telegraph inside Messages/Chat.
+
+Goal:
+Add Telegraph smart recommendation cards directly inside direct messages, trip chat, and circle chat so users can turn conversations into plans without leaving the chat.
+
+Core product rule:
+Telegraph should help users move from conversation → suggestion → meetup → trip plan.
+
+Telegraph should never:
+- auto-send messages without user confirmation
+- auto-create meetups without confirmation
+- auto-add items to trip plan without confirmation
+- expose private data
+- expose exact GPS
+- expose trip/circle/private content to unauthorized users
+
+SECTION 1 — Telegraph chat surfaces
+
+Add Telegraph suggestions to:
+
+1. Direct message threads
+- suggest places/activities when users discuss going out
+- suggest meetup creation
+- suggest Add-to-Plan if both users share a trip
+
+2. Trip group chat
+- suggest meetups
+- suggest places near trip destination
+- suggest filling itinerary gaps
+- suggest Add-to-Plan
+
+3. Circle group chat
+- suggest meetup ideas
+- suggest activity ideas based on shared availability
+- suggest places if location context is safe
+
+Do not put Telegraph cards in chats where the user has no permission.
+
+SECTION 2 — Chat intent detection
+
+Create lightweight intent detection for chat messages.
+
+Detect planning signals:
+- “what should we do”
+- “where should we eat”
+- “let’s meet”
+- “tonight”
+- “this weekend”
+- “club”
+- “bar”
+- “restaurant”
+- “beach”
+- “activity”
+- “free”
+- “available”
+- “add this”
+- “put it on the plan”
+- “meet at”
+
+Intent types:
+- find_place
+- suggest_activity
+- create_meetup
+- add_to_plan
+- time_poll
+- availability_match
+- nightlife
+- food
+- attraction
+- beach
+- transport
+- general_plan
+
+Rules:
+- intent detection should be helpful, not spammy
+- do not trigger on every message
+- require confidence threshold
+- allow user to dismiss suggestions
+
+SECTION 3 — Telegraph chat recommendation card
+
+Create a compact chat card.
+
+Card fields:
+- title
+- short reason
+- category
+- suggested time if available
+- location if available
+- primary action
+- secondary action
+- dismiss
+
+Actions:
+- Add to Plan
+- Create Meetup
+- Start Time Poll
+- View Place
+- Save
+- Dismiss
+
+Example:
+“Telegraph suggestion”
+“Dinner in Ximending”
+“Matches your food + nightlife interests and Friday night is open.”
+Buttons:
+- Add to Plan
+- Create Meetup
+- Dismiss
+
+SECTION 4 — Trip chat behavior
+
+In trip chat, Telegraph can use:
+- trip destination
+- trip dates
+- trip plan gaps
+- accepted trip members
+- shared trip availability
+- public discovery places
+- trip preferences
+- current chat intent
+
+Trip chat recommendations:
+- “You have Friday night open — add nightlife?”
+- “Three members are free Saturday afternoon — create meetup?”
+- “This restaurant is near your planned bar — add dinner before?”
+- “This place matches your group’s interests.”
+
+Actions:
+- Add to trip plan
+- Create meetup
+- Start time poll
+- Dismiss
+
+Rules:
+- only accepted trip members can receive trip chat Telegraph suggestions
+- do not use trip data for non-members
+- pending invite users cannot see trip Telegraph context
+
+SECTION 5 — Circle chat behavior
+
+In circle chat, Telegraph can use:
+- accepted circle members only
+- shared availability
+- safe profile interests
+- current chat intent
+- public place/activity data
+
+Circle chat recommendations:
+- “Two people are free tonight — create meetup?”
+- “You all like nightlife — suggest lounge options?”
+- “Start a time poll?”
+
+Rules:
+- circle data visible only to accepted circle members
+- do not expose live-map status
+- do not expose exact GPS
+- do not expose private availability unless shared with circle
+
+SECTION 6 — Direct message behavior
+
+In direct messages, Telegraph can suggest:
+- create meetup
+- share place
+- add to shared trip plan if both users are accepted members of the same trip
+- start time poll
+- use message request safe behavior
+
+Rules:
+- follow alone does not grant trip/circle context
+- friend alone does not grant trip/circle context
+- direct chat does not expose private trips unless both are accepted members
+- if no shared trip exists, Add to Plan should ask user to choose own trip, not expose the other user’s trips
+
+SECTION 7 — Privacy resolver
+
+Before showing Telegraph card in chat, run a privacy resolver.
+
+TelegraphChatPrivacyVerdict:
+- canUseTripContext
+- canUseCircleContext
+- canUseAvailability
+- canUseLocation
+- canShowRecommendation
+- reason
+
+Rules:
+- use trip context only for accepted trip members
+- use circle context only for accepted circle members
+- use availability only if shared with viewer/context
+- use location only if safe and permitted
+- never expose exact GPS
+- never reveal private trip/circle membership through a recommendation
+
+SECTION 8 — Message safety
+
+Telegraph suggestions should not become normal user messages unless user sends them.
+
+System cards:
+- should be clearly marked as Telegraph
+- should not pretend to be a user message
+- should not notify everyone unless designed to do so
+
+Suggested approach:
+- show Telegraph cards locally to eligible users
+- if user acts on it, create real meetup/plan item/chat system card
+
+Example:
+Telegraph card appears:
+“Create meetup Friday at 8?”
+
+User taps Create Meetup.
+Then system posts:
+“Andre proposed a meetup: Dinner Friday at 8 PM.”
+
+SECTION 9 — Add-to-Plan from chat
+
+When user taps Add to Plan:
+- verify user is accepted trip member if adding to group trip
+- choose trip if not in trip chat
+- choose day/time optional
+- confirm
+- create trip_plan_item
+- post optional system card to trip chat
+- mark Telegraph recommendation acted_on_at
+
+Rules:
+- no auto-add
+- no duplicate plan item
+- no non-member plan access
+
+SECTION 10 — Create Meetup from chat
+
+When user taps Create Meetup:
+- open meetup creation sheet
+- prefill title/time/location if available
+- choose invitees
+- confirm
+- create meetup
+- post meetup card into chat
+- optionally add to trip plan
+
+Rules:
+- no auto-create
+- invites require RSVP
+- no private availability leak
+- no exact GPS leak
+
+SECTION 11 — Start Time Poll from chat
+
+Add simple time poll card.
+
+Actions:
+- Start Time Poll
+- choose time options
+- users vote yes/maybe/no
+- organizer confirms time
+- optional create meetup from winning time
+
+Rules:
+- trip poll visible only to accepted trip members
+- circle poll visible only to accepted circle members
+- direct poll visible only to thread members
+
+SECTION 12 — Telegraph chat settings
+
+Allow users to control Telegraph in chat.
+
+Settings:
+- show Telegraph suggestions: on/off
+- show suggestions in direct messages: on/off
+- show suggestions in trip chats: on/off
+- show suggestions in circle chats: on/off
+
+Default:
+- on for trip/circle chats
+- on but quiet for direct messages
+
+Do not spam:
+- max suggestions per thread per hour
+- cooldown after dismissal
+- avoid repeating same recommendation
+
+SECTION 13 — Recommendation persistence
+
+Store Telegraph chat recommendations or events.
+
+telegraph_chat_suggestions:
+- id
+- thread_id
+- user_id
+- trip_id nullable
+- circle_id nullable
+- source_message_id nullable
+- intent_type
+- recommendation_id nullable
+- title
+- reason
+- action_type
+- status: shown / dismissed / acted_on / expired
+- created_at
+- expires_at
+- acted_on_at nullable
+- dismissed_at nullable
+
+Rules:
+- suggestions can be user-specific
+- do not show one user’s private suggestion to others unless action creates shared item
+- dismissed suggestions should not repeat immediately
+
+SECTION 14 — API endpoints
+
+Suggested:
+- GET /api/threads/:threadId/telegraph/suggestions
+- POST /api/threads/:threadId/telegraph/suggestions/:id/dismiss
+- POST /api/threads/:threadId/telegraph/suggestions/:id/add-to-plan
+- POST /api/threads/:threadId/telegraph/suggestions/:id/create-meetup
+- POST /api/threads/:threadId/telegraph/suggestions/:id/start-poll
+- PATCH /api/me/telegraph-chat-settings
+
+Security:
+- resolve current user from auth token
+- verify thread membership
+- verify trip/circle access if using those contexts
+- never trust client user_id
+- never expose service-role key
+
+SECTION 15 — UI placement
+
+Chat UI:
+- suggestions can appear between messages as compact cards
+- or above composer as “Telegraph suggestion”
+- or inside a collapsible suggestion tray
+
+Preferred first pass:
+Use compact suggestion tray above composer.
+
+Reason:
+Less clutter than inserting cards between every message.
+
+Suggestion tray:
+- one or two cards max
+- dismiss button
+- primary action
+
+SECTION 16 — Empty/loading/error states
+
+Do not show anything when there are no suggestions.
+
+Loading:
+- no heavy spinner needed
+- suggestions can appear when ready
+
+Error:
+- fail silently or small retry in tray
+- do not break chat if Telegraph fails
+
+SECTION 17 — Tests
+
+Backend tests:
+1. Trip chat Telegraph suggestions require accepted trip membership.
+2. Pending trip invite cannot receive trip-context suggestions.
+3. Circle chat suggestions require accepted circle membership.
+4. Direct message suggestion does not expose private trips.
+5. Shared trip context only used when both users are accepted trip members.
+6. Availability context only used if shared.
+7. Exact GPS is not returned.
+8. Private trip details are not returned.
+9. Dismissed suggestion does not immediately repeat.
+10. Add-to-Plan from suggestion creates plan item only with permission.
+11. Create Meetup from suggestion requires confirmation and permissions.
+12. Time Poll from suggestion respects thread membership.
+13. Non-thread member cannot fetch suggestions.
+
+UI tests:
+14. Suggestion tray renders in trip chat.
+15. Suggestion tray renders in circle chat.
+16. Suggestion tray renders in direct message when appropriate.
+17. Dismiss works.
+18. Add to Plan action opens confirmation.
+19. Create Meetup action opens sheet.
+20. Time Poll action opens poll sheet.
+21. Mobile has no horizontal overflow.
+22. Chat still works if Telegraph fails.
+
+Privacy tests:
+23. Telegraph chat card does not expose exact GPS.
+24. Telegraph chat card does not expose private Passport.
+25. Telegraph chat card does not expose private posts.
+26. Telegraph chat card does not expose trip_only content to non-members.
+27. Telegraph chat card does not expose private availability.
+28. service-role/internal fields not returned.
+
+Regression:
+29. Direct messaging still works.
+30. Trip chat still works.
+31. Circle chat still works.
+32. Message translation still works if built.
+33. Trip Plan still works.
+34. Meetups still work.
+
+SECTION 18 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- Telegraph chat suggestion tests
+- chat permission tests
+- trip membership tests
+- circle membership tests
+- add-to-plan integration tests
+- meetup integration tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- trip chat shows suggestion from plan gap
+- pending trip invite cannot see trip suggestion
+- circle chat shows meetup suggestion only to members
+- direct message does not expose private trip
+- Add to Plan works
+- Create Meetup works
+- Dismiss works
+- mobile chat remains clean
+
+SECTION 19 — Acceptance criteria
+
+This task is complete when:
+1. Telegraph suggestions appear inside eligible chats.
+2. Suggestions are privacy-safe.
+3. Suggestions can become Add-to-Plan actions.
+4. Suggestions can become Meetups.
+5. Suggestions can start Time Polls.
+6. Dismiss/cooldown works.
+7. Chat does not break if Telegraph fails.
+8. Trip/circle/direct permissions are respected.
+9. No private/exact data leaks.
+10. Mobile UI is clean.
+11. Tests pass.
+
+Hard boundaries:
+- Do not auto-send messages.
+- Do not auto-create meetups.
+- Do not auto-add to plan.
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose private Passport/posts.
+- Do not expose private trip/circle data.
+- Do not expose private availability.
+- Do not show trip context to non-members.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break messaging.
+- Do not break trip/circle chat.
+- Do not break Trip Plan.
+- Do not break Meetups.

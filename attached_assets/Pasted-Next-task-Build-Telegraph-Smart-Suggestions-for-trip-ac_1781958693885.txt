@@ -1,0 +1,550 @@
+Next task: Build Telegraph Smart Suggestions for trip/activity recommendations.
+
+Goal:
+Add an in-app recommendation system called Telegraph that recommends activities, places, meetups, and plan ideas based on the user’s trip, profile, interests, availability, location settings, and social context.
+
+Core product rule:
+Telegraph should help users discover what to do next and make it easy to add suggestions into their trip plan.
+
+Telegraph should recommend:
+- activities
+- restaurants
+- nightlife
+- beaches
+- attractions
+- hidden gems
+- meetups
+- trip plan ideas
+- nearby public events if data exists
+- public group trips/activities if available
+
+Telegraph should not expose:
+- private trips
+- private posts
+- trip_only content to non-members
+- live location
+- exact GPS
+- private availability
+- circle data
+- private Passport data
+
+SECTION 1 — Telegraph definition
+
+Telegraph is the recommendation/message intelligence layer inside Travel Buddy.
+
+It can appear in:
+- trip detail
+- trip plan
+- discovery map
+- Pulse
+- Passport
+- trip/circle chat
+- home screen
+- request inbox later
+
+Telegraph should feel like:
+“Here are smart things to do based on your trip and preferences.”
+
+Not:
+“Random ads or generic recommendations.”
+
+SECTION 2 — Recommendation inputs
+
+Telegraph should use available context:
+
+User profile:
+- interests
+- travel style
+- languages
+- home base if useful
+- public Passport signals
+- saved places
+- past postcard categories
+
+Trip context:
+- destination
+- trip dates
+- trip members
+- trip plan items
+- unscheduled time
+- current itinerary gaps
+- trip visibility
+- trip preferences if available
+
+Availability:
+- user availability
+- trip member availability overlap
+- meetup times
+- quick status like free tonight
+
+Social context:
+- followed travelers’ public recommendations
+- friends’ public postcards if allowed
+- trip members’ public/shared preferences
+- group chat meetup ideas
+
+Location context:
+- destination city
+- current city if user allows
+- nearby discovery places
+- safe approximate location
+- never exact GPS unless user explicitly allows and it stays private/safe
+
+Content context:
+- public posts
+- public postcards
+- public places
+- public activities
+- verified/trusted traveler ratings
+- saved items
+
+SECTION 3 — Recommendation types
+
+Create recommendation types:
+
+1. Activity
+Example:
+“Sunset beach walk near Mactan”
+
+2. Food/restaurant
+Example:
+“Seafood dinner near your hotel area”
+
+3. Nightlife
+Example:
+“Hip-hop lounge in Ximending tonight”
+
+4. Attraction
+Example:
+“Temple visit before dinner”
+
+5. Meetup
+Example:
+“Two trip members are free Friday night — suggest dinner meetup”
+
+6. Plan gap filler
+Example:
+“You have Saturday afternoon open — add a beach club or city walk”
+
+7. Social recommendation
+Example:
+“Three travelers saved this place”
+
+8. Passport-inspired recommendation
+Example:
+“You’ve posted a lot of nightlife memories — here are nightlife picks near this trip”
+
+9. Weather/time-aware recommendation later
+Example:
+“Rain likely tonight — indoor lounge instead of beach plan”
+
+SECTION 4 — Recommendation object
+
+Create:
+TelegraphRecommendation
+
+Fields:
+- id
+- user_id
+- trip_id nullable
+- source_type: place / activity / meetup / post / postcard / plan_gap / social / manual
+- source_id nullable
+- title
+- description
+- category
+- location_name nullable
+- city nullable
+- country nullable
+- approximate_lat nullable
+- approximate_lng nullable
+- reason
+- confidence
+- relevance_score
+- privacy_tier: public / trip / private
+- suggested_time nullable
+- suggested_day nullable
+- action_type: add_to_plan / save / create_meetup / view_place / invite
+- created_at
+- expires_at nullable
+- dismissed_at nullable
+- acted_on_at nullable
+
+Important:
+Recommendation object should be display-safe.
+Do not include private fields in public response.
+
+SECTION 5 — Telegraph engine
+
+Create:
+TelegraphRecommendationEngine
+
+Inputs:
+- current user
+- trip context if present
+- profile/interests
+- plan gaps
+- availability
+- public discovery data
+- public social data
+- privacy rules
+
+Output:
+- ranked recommendations
+- reason for each recommendation
+- suggested action
+- privacy-safe payload
+
+Scoring factors:
+- interest match
+- trip destination match
+- time fit
+- availability fit
+- plan gap fit
+- social proof
+- distance/location fit if safe
+- category diversity
+- freshness
+- weather/news/event fit later
+
+SECTION 6 — Recommendation rules
+
+Telegraph should:
+- recommend a mix of categories
+- avoid repeating items already in plan
+- avoid suggesting dismissed items again too soon
+- prioritize suggestions that fit open trip windows
+- recommend meetups when members’ availability overlaps
+- recommend nearby places only with safe location rules
+- explain why recommendation appears
+
+Telegraph should not:
+- suggest private places from other users
+- expose exact user locations
+- use trip_only data outside trip members
+- use private Passport data for public recommendation
+- recommend impossible timing
+- spam too many suggestions
+- act without user confirmation
+
+SECTION 7 — UI placement
+
+Add Telegraph suggestions to:
+
+1. Trip Plan
+Section:
+“Suggested for your trip”
+- cards with Add to Plan
+- Dismiss
+- View details
+
+2. Trip Detail
+Section:
+“Telegraph picks”
+- compact carousel/list
+
+3. Discovery Map
+When viewing a place:
+- “Recommended because it matches your nightlife interests”
+- Add to Plan
+
+4. Trip/Circle Chat
+Suggestion card:
+“Telegraph found a meetup window Friday night”
+Actions:
+- Create meetup
+- Add to plan
+- Dismiss
+
+5. Home/Pulse later
+“Recommended near your upcoming trip”
+
+Do not clutter Passport profile.
+Passport can influence recommendations, but Telegraph cards should mostly live in trip/discovery/plan/chat.
+
+SECTION 8 — Recommendation card
+
+Card should show:
+- title
+- category
+- location
+- short reason
+- suggested time if any
+- confidence/relevance label if useful
+- primary action
+- dismiss action
+
+Primary actions:
+- Add to Plan
+- Save
+- Create Meetup
+- View
+- Invite
+
+Example card:
+“Dinner in Ximending”
+“Matches your nightlife + food interests. Friday night is open on your trip plan.”
+Buttons:
+- Add to Plan
+- Dismiss
+
+SECTION 9 — Add-to-Plan integration
+
+Telegraph recommendations must connect to Trip Plan Builder.
+
+Action:
+Add to Plan
+
+Flow:
+- tap Add to Plan
+- choose trip if not already inside trip
+- choose day/time optional
+- confirm
+- create trip_plan_item with source_type recommendation/place/activity/meetup
+- mark recommendation acted_on_at
+- show toast
+
+Rules:
+- do not duplicate existing plan item
+- if source already in trip plan, show “Already in plan”
+- do not add to trip if user is not accepted trip member
+- respect trip plan permissions
+
+SECTION 10 — Meetup integration
+
+Telegraph can suggest meetups when:
+- trip members have overlapping availability
+- circle members are free
+- chat has planning intent
+- open trip gap exists
+
+Flow:
+- Telegraph suggestion: “Create meetup”
+- prefill title/time/location if available
+- user confirms
+- create meetup
+- optionally add to trip plan
+- post compact card to trip/circle chat
+
+Rules:
+- never auto-create meetup without confirmation
+- invited users must RSVP
+- no private availability leak
+
+SECTION 11 — Privacy
+
+Telegraph must use a privacy resolver before returning suggestions.
+
+Privacy rules:
+- public suggestions can use public data only
+- trip suggestions can use trip data only for accepted members
+- circle suggestions can use circle data only for accepted members
+- availability suggestions only use availability shared with that viewer
+- public profile/passport data can influence only if visible
+- exact GPS never exposed
+- private notes never exposed
+- private trip details never exposed to non-members
+
+SECTION 12 — API endpoints
+
+Suggested endpoints:
+- GET /api/telegraph/recommendations
+- GET /api/trips/:tripId/telegraph/recommendations
+- POST /api/telegraph/recommendations/:id/dismiss
+- POST /api/telegraph/recommendations/:id/add-to-plan
+- POST /api/telegraph/recommendations/:id/create-meetup
+- POST /api/telegraph/refresh
+
+Optional:
+- GET /api/telegraph/recommendations?surface=trip_plan
+- GET /api/telegraph/recommendations?surface=chat
+- GET /api/telegraph/recommendations?surface=discovery
+
+Security:
+- resolve user from auth token
+- never trust client user_id
+- verify trip membership before trip recommendations
+- verify circle membership before circle recommendations
+- never expose service-role key
+
+SECTION 13 — Reason text
+
+Each recommendation should explain itself clearly.
+
+Reason examples:
+- “Matches your nightlife interests.”
+- “Your Friday night is open.”
+- “This is near your planned dinner.”
+- “Two trip members are free around this time.”
+- “You saved similar beach spots.”
+- “Popular with travelers in this area.”
+- “Fits your trip plan gap on Saturday afternoon.”
+
+Avoid creepy reasons:
+- do not say exact hidden location
+- do not expose private user data
+- do not say “because we tracked you”
+- do not reveal another user’s private availability
+
+SECTION 14 — Dismiss/save behavior
+
+Users can:
+- dismiss recommendation
+- save recommendation
+- add to plan
+- create meetup
+- view details
+
+Dismiss:
+- hides recommendation
+- prevents immediate repeat
+- logs feedback
+
+Save:
+- adds to saved items if save system exists
+- otherwise leave TODO
+
+Feedback fields:
+- dismissed_at
+- dismiss_reason optional
+- acted_on_at
+- action_taken
+
+SECTION 15 — Diversity and anti-spam
+
+Telegraph should not flood users.
+
+Rules:
+- max 5–8 recommendations per surface
+- mix categories
+- do not show the same item repeatedly
+- do not show dismissed items immediately
+- do not recommend already-planned items
+- prioritize useful timing/context over generic lists
+
+SECTION 16 — Mobile layout
+
+Mobile requirements:
+- suggestion cards fit 390/430px
+- no horizontal overflow
+- carousel/list scrolls smoothly
+- actions easy to tap
+- Add-to-Plan bottom sheet works
+- Create Meetup sheet works
+- Dismiss action not accidental
+
+Desktop:
+- can show wider cards/grid
+- preserve website layout
+
+SECTION 17 — Empty/loading/error states
+
+Empty:
+“No suggestions yet. Add interests or trip dates to get better picks.”
+
+Trip empty:
+“No trip suggestions yet. Add places or availability to improve recommendations.”
+
+Loading:
+- suggestion skeleton cards
+
+Error:
+“Couldn’t load suggestions. Try again.”
+
+SECTION 18 — Tests
+
+Backend tests:
+1. User receives recommendations based on public-safe data.
+2. Trip recommendation requires accepted trip membership.
+3. Pending invite cannot fetch trip recommendations.
+4. Non-member cannot fetch private trip recommendations.
+5. Recommendation does not expose exact GPS.
+6. Recommendation does not expose private Passport data.
+7. Recommendation does not expose private availability.
+8. Dismiss hides recommendation.
+9. Add-to-Plan creates trip plan item.
+10. Add-to-Plan blocks non-member.
+11. Duplicate Add-to-Plan is blocked/idempotent.
+12. Create Meetup requires confirmation and permissions.
+13. Recommendation reason does not reveal private data.
+14. Dismissed recommendation not returned immediately.
+15. Already planned item not recommended again.
+
+UI tests:
+16. Telegraph section renders on Trip Plan.
+17. Recommendation card displays title/category/reason.
+18. Add to Plan button works.
+19. Dismiss button works.
+20. Create Meetup button works if recommendation type supports it.
+21. Empty state works.
+22. Loading state works.
+23. Error retry works.
+24. Mobile 390/430 has no overflow.
+25. Desktop layout works.
+
+Privacy tests:
+26. Exact GPS not returned.
+27. Private posts not used for unauthorized suggestions.
+28. trip_only content not shown to non-members.
+29. Circle data not shown to non-circle members.
+30. service-role/internal fields not returned.
+
+Regression:
+31. Trip Plan still works.
+32. Add-to-Plan still works.
+33. Meetups still work.
+34. Trip chat still works.
+35. Passport still works.
+
+SECTION 19 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- Telegraph recommendation tests
+- trip membership permission tests
+- add-to-plan integration tests
+- meetup integration tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- user with interests gets suggestions
+- user without interests gets empty/helpful state
+- trip member gets trip recommendations
+- pending/non-member cannot fetch private trip recommendations
+- Add to Plan works
+- Create Meetup works
+- Dismiss works
+- no exact/private data leaks
+- mobile cards clean
+
+SECTION 20 — Acceptance criteria
+
+This task is complete when:
+1. Telegraph recommendations appear in trip/plan surfaces.
+2. Recommendations are ranked and reasoned.
+3. Add to Plan works from recommendation.
+4. Create Meetup works where appropriate.
+5. Dismiss works.
+6. Recommendations do not repeat dismissed/planned items.
+7. Trip recommendations respect membership.
+8. Private data/exact GPS does not leak.
+9. Mobile UI is clean.
+10. Tests pass.
+
+Hard boundaries:
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose private Passport/posts.
+- Do not expose trip_only data to non-members.
+- Do not expose private availability.
+- Do not auto-create meetups.
+- Do not auto-add items to plan without user confirmation.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Trip Plan.
+- Do not break Meetups.
+- Do not break Chat.
+- Do not break Passport.

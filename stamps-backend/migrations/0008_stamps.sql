@@ -7,6 +7,14 @@
 --   * The server decides verification (verifyLocation() in locationVerify.ts).
 --   * No client-supplied flag is accepted for stamp_eligible or location_verified.
 --   * Revisiting a city increments check_in_count; does NOT create a new stamp.
+--
+-- SECURITY:
+--   * upsert_city_stamp is callable ONLY by service_role / postgres (DB superuser).
+--   * Execution is revoked from PUBLIC, anon, and authenticated so PostgREST
+--     cannot expose the function as a callable RPC endpoint.
+--   * A current_user guard inside the function provides defense-in-depth: even
+--     if the REVOKE is somehow bypassed, authenticated clients still cannot mint
+--     stamps for arbitrary user_ids.
 -- ============================================================================
 
 -- ============================================================================
@@ -37,20 +45,29 @@ create index if not exists idx_stamps_city    on stamps(location_city);
 
 alter table stamps enable row level security;
 
+-- Anyone can read stamps (labels only — no GPS in this table).
 drop policy if exists stamps_select on stamps;
 create policy stamps_select on stamps for select
-  using (true);  -- stamps are public (label only, no GPS in this table)
+  using (true);
 
+-- All writes blocked for client-facing roles; only service role inserts/updates
+-- via the upsert_city_stamp function below.
 drop policy if exists stamps_insert on stamps;
 create policy stamps_insert on stamps for insert
-  with check (false);  -- only API server (service role) writes stamps
+  with check (false);
 
 drop policy if exists stamps_update on stamps;
 create policy stamps_update on stamps for update
-  using (false);  -- only API server (service role) updates stamps
+  using (false);
 
 -- ============================================================================
 -- upsert_city_stamp — atomic increment, safe against concurrent check-ins
+--
+-- SECURITY MODEL:
+--   SECURITY DEFINER lets the function bypass RLS on the stamps table so it can
+--   write on behalf of any user — but only when called as service_role/postgres.
+--   The REVOKE below + current_user guard ensure no client-facing role can call
+--   this directly via PostgREST RPC or any other channel.
 -- ============================================================================
 create or replace function upsert_city_stamp(
   p_user_id         uuid,
@@ -61,11 +78,18 @@ create or replace function upsert_city_stamp(
   p_postcard_id     uuid
 ) returns uuid
 language plpgsql
-security definer  -- runs as superuser so it can bypass RLS on stamps
+security definer
+set search_path = public
 as $$
 declare
   v_id uuid;
 begin
+  -- Defense-in-depth: reject calls from any client-facing role even if the
+  -- REVOKE statements below are somehow circumvented.
+  if current_user not in ('service_role', 'postgres', 'supabase_admin') then
+    raise exception 'upsert_city_stamp: permission denied — must be called by service_role';
+  end if;
+
   insert into stamps (
     user_id, kind, label, sublabel,
     location_city, location_country,
@@ -88,3 +112,18 @@ begin
   return v_id;
 end;
 $$;
+
+-- ============================================================================
+-- Lock down execution: revoke from all client-facing roles.
+-- PostgREST exposes functions to anon/authenticated; revoking here prevents
+-- the function from appearing as a callable RPC endpoint entirely.
+-- service_role retains EXECUTE (it is superuser-equivalent and bypasses REVOKE).
+-- ============================================================================
+revoke all on function upsert_city_stamp(uuid, text, text, text, text, uuid)
+  from public;
+
+revoke all on function upsert_city_stamp(uuid, text, text, text, text, uuid)
+  from anon;
+
+revoke all on function upsert_city_stamp(uuid, text, text, text, text, uuid)
+  from authenticated;
