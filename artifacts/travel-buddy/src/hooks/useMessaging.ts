@@ -145,10 +145,10 @@ export function useThreadMessages(threadId: string | null) {
   }, [reload]);
 
   const send = useCallback(
-    async (body: string) => {
+    async (body: string, opts?: { msgType?: string; subtype?: string }) => {
       if (!threadId || !body.trim()) return;
       setSending(true);
-      const res = await sendMessage(threadId, body.trim());
+      const res = await sendMessage(threadId, body.trim(), opts);
       if (res.ok && res.data) {
         setMessages((prev) => [...prev, res.data as Message]);
       }

@@ -123,6 +123,8 @@ export interface Message {
   translationStatus: TranslationStatusValue | null;
   translationLabel: string | null;
   canShowOriginal: boolean;
+  msgType: string;
+  subtype: string | null;
 }
 
 export type MsgErrorKind =
@@ -344,8 +346,9 @@ export async function getThreadMessages(
 export async function sendMessage(
   threadId: string,
   body: string,
+  opts?: { msgType?: string; subtype?: string },
 ): Promise<MsgResult<Message>> {
-  return apiPost(`/api/threads/${threadId}/messages`, { body });
+  return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
 }
 
 export async function retryTranslation(

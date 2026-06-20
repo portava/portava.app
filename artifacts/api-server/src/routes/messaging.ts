@@ -769,7 +769,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let query = sc
     .from('messages')
-    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
+    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -845,6 +845,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       translationStatus: display.translationStatus,
       translationLabel: display.translationLabel,
       canShowOriginal: display.canShowOriginal,
+      msgType: (m.msg_type as string) ?? 'text',
+      subtype: (m.subtype as string | null) ?? null,
     };
   });
 
@@ -867,6 +869,10 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
   if (!body) { sendError(res, 'invalid_payload', 'body is required'); return; }
   if (body.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
+
+  const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';
+  const msgType = msgTypeRaw === 'system' ? 'system' : 'text';
+  const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;
 
   const { data: membership } = await client
     .from('message_thread_members')
@@ -894,8 +900,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   const { data: msg, error: msgErr } = await sc
     .from('messages')
-    .insert({ thread_id: threadId, sender_id: user.id, body, created_at: now })
-    .select('id, thread_id, sender_id, body, created_at')
+    .insert({ thread_id: threadId, sender_id: user.id, body, created_at: now, msg_type: msgType, subtype })
+    .select('id, thread_id, sender_id, body, created_at, msg_type, subtype')
     .single();
 
   if (msgErr || !msg) {
@@ -928,6 +934,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     translationStatus: null,
     translationLabel: null,
     canShowOriginal: false,
+    msgType: m.msg_type ?? 'text',
+    subtype: m.subtype ?? null,
   });
 
   // Fire-and-forget: translate in background (does not block the response).

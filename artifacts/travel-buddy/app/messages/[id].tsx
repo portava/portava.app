@@ -21,6 +21,8 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
+import { getMeetup } from '../../src/services/meetups';
+import type { MeetupCounts } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
@@ -40,17 +42,36 @@ interface MeetupCardPayload {
   plannedByName?: string;
 }
 
-function parseMeetupCard(body: string): MeetupCardPayload | null {
+function parseMeetupCard(
+  body: string,
+  msg?: Pick<Message, 'msgType' | 'subtype'>,
+): MeetupCardPayload | null {
   if (!body.startsWith('{')) return null;
   try {
     const obj = JSON.parse(body);
+    // Primary: structured system message with meetup subtype
+    if (msg?.msgType === 'system' && msg?.subtype === 'meetup') {
+      if (obj.meetupId && obj.title) return { type: 'meetup_card', ...obj } as MeetupCardPayload;
+      return null;
+    }
+    // Legacy fallback: JSON body with explicit type field
     if (obj.type === 'meetup_card' && obj.meetupId && obj.title) return obj as MeetupCardPayload;
   } catch { /* ignore */ }
   return null;
 }
 
 function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
+  const [counts, setCounts] = useState<MeetupCounts | null>(null);
+
+  useEffect(() => {
+    getMeetup(payload.meetupId).then((res) => {
+      if (res.ok && res.data) setCounts(res.data.counts);
+    });
+  }, [payload.meetupId]);
+
   const when = [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
+  const rsvpLabel = counts ? `${counts.going} going · ${counts.maybe} maybe` : null;
+
   return (
     <Pressable
       style={[mc.card, mine && mc.cardMine]}
@@ -69,6 +90,11 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       {when ? (
         <View style={mc.metaRow}>
           <Text style={mc.meta}>🗓 {when}</Text>
+        </View>
+      ) : null}
+      {rsvpLabel ? (
+        <View style={mc.metaRow}>
+          <Text style={mc.meta}>👋 {rsvpLabel}</Text>
         </View>
       ) : null}
       {payload.plannedByName ? (
@@ -131,7 +157,7 @@ function MessageBubble({
   }
 
   // Meetup card — special rendering
-  const meetupPayload = parseMeetupCard(item.body ?? '');
+  const meetupPayload = parseMeetupCard(item.body ?? '', item);
   if (meetupPayload) {
     return <MeetupCard payload={meetupPayload} mine={mine} />;
   }
@@ -294,22 +320,19 @@ export default function TelegraphThread() {
     });
   }, []);
 
-  // Permission gate: accepted trip members only (circles + DMs always pass)
+  // Permission gate: accepted thread members only (DMs always pass; trip/circle
+  // check message_thread_members — only accepted members are in the thread).
   useEffect(() => {
     if (threadType === 'direct') { setIsAcceptedMember(true); return; }
-    if (threadType === 'circle') { setIsAcceptedMember(true); return; }
-    if (threadType === 'trip' && contextId && userId) {
-      supabase.from('trip_members')
-        .select('role')
-        .eq('trip_id', contextId)
-        .eq('user_id', userId)
-        .in('role', ['owner', 'member'])
-        .maybeSingle()
-        .then(({ data }) => setIsAcceptedMember(Boolean(data)));
-    } else {
-      setIsAcceptedMember(false);
-    }
-  }, [threadType, contextId, userId]);
+    if (!id || !userId) return;
+    supabase.from('message_thread_members')
+      .select('user_id')
+      .eq('thread_id', id)
+      .eq('user_id', userId)
+      .is('left_at', null)
+      .maybeSingle()
+      .then(({ data }) => setIsAcceptedMember(Boolean(data)));
+  }, [id, threadType, userId]);
 
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
   const defaultShowOriginal = langSettings?.show_original_messages ?? false;
@@ -534,7 +557,7 @@ export default function TelegraphThread() {
                 approximateDate: meetup.approximateDate ?? undefined,
                 timeBlock: meetup.timeBlock ?? undefined,
                 plannedByName,
-              }));
+              }), { msgType: 'system', subtype: 'meetup' });
             }
           }}
         />
