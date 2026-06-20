@@ -67,11 +67,11 @@ export interface ThreadOtherMember {
 
 export interface ThreadSummary {
   id: string;
-  status: string;
   threadType: 'direct' | 'trip' | 'circle';
   tripId: string | null;
   circleOwnerId: string | null;
   title: string | null;
+  status: string;
   lastMessageAt: string | null;
   createdAt: string;
   mutedAt: string | null;
@@ -91,6 +91,18 @@ export interface GroupChatResult {
   title: string | null;
   tripId: string | null;
   circleOwnerId: string | null;
+}
+
+export interface GroupThread {
+  id: string;
+  threadType: 'trip' | 'circle';
+  tripId?: string | null;
+  circleOwnerId?: string | null;
+  title: string;
+  status: string;
+  lastMessageAt: string | null;
+  createdAt: string | null;
+  memberAccess: 'active' | 'removed';
 }
 
 export interface Message {
@@ -288,16 +300,36 @@ export async function openTripChat(
   return apiGet(`/api/trips/${tripId}/chat`);
 }
 
-/**
- * Get (or create) the group chat thread for a trusted circle.
- * circleOwnerId is the user whose circle this belongs to.
- * The caller must be the owner or an accepted circle member.
- */
 export async function openCircleChat(
   circleOwnerId: string,
 ): Promise<MsgResult<GroupChatResult>> {
   return apiGet(`/api/circles/${circleOwnerId}/chat`);
 }
+
+export async function getTripChat(
+  tripId: string,
+): Promise<MsgResult<{ thread: GroupThread; messages: Message[] }>> {
+  return apiGet(`/api/trips/${tripId}/chat`);
+}
+
+export async function getCircleChat(
+  circleOwnerId: string,
+): Promise<MsgResult<{ thread: GroupThread; messages: Message[] }>> {
+  return apiGet(`/api/circles/${circleOwnerId}/chat`);
+}
+
+export async function syncTripChat(
+  tripId: string,
+): Promise<MsgResult<{ status: string; threadId: string }>> {
+  return apiPost(`/api/trips/${tripId}/chat/sync`);
+}
+
+export async function syncCircleChat(
+  circleOwnerId: string,
+): Promise<MsgResult<{ status: string; threadId: string }>> {
+  return apiPost(`/api/circles/${circleOwnerId}/chat/sync`);
+}
+
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
@@ -320,4 +352,30 @@ export async function retryTranslation(
   messageId: string,
 ): Promise<MsgResult<{ status: string; messageId: string }>> {
   return apiPost(`/api/messages/${messageId}/translate/retry`);
+}
+
+export async function editMessage(
+  messageId: string,
+  body: string,
+): Promise<MsgResult<{ id: string; threadId: string; body: string; editedAt: string }>> {
+  return apiPatch(`/api/messages/${messageId}`, { body });
+}
+
+export async function deleteMessage(
+  messageId: string,
+): Promise<MsgResult<{ id: string; deleted: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/messages/${messageId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
 }

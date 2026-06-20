@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { router } from 'expo-router';
-import { MessageSquare } from 'lucide-react-native';
+import { MessageCircle } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { openCircleChat } from '../src/services/messaging';
@@ -9,13 +9,13 @@ import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 export default function Circle() {
+  const { userId } = useSession();
   const [tab, setTab] = useState<'circle' | 'followers'>('circle');
   const [following, setFollowing] = useState<FollowUser[]>([]);
   const [followers, setFollowers] = useState<FollowUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
-  const { userId } = useSession();
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -46,6 +46,22 @@ export default function Circle() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Circle" back />
+
+      {/* Circle Chat button — visible to the circle owner for their own circle */}
+      {userId ? (
+        <Pressable
+          style={styles.chatBtn}
+          onPress={() => router.push(`/circle-chat?ownerId=${userId}` as any)}
+        >
+          <View style={{ position: 'relative' }}>
+            <MessageCircle size={15} color={color.onInk} />
+            {/* Unread badge placeholder — replace with real count when thread API exposes unreadCount */}
+            <View style={styles.unreadDot} />
+          </View>
+          <Text style={styles.chatBtnText}>Circle Chat</Text>
+        </Pressable>
+      ) : null}
+
       <View style={styles.tabBar}>
         <Pressable style={[styles.tab, tab === 'circle' && styles.tabActive]} onPress={() => setTab('circle')}>
           <Text style={[styles.tabText, tab === 'circle' && styles.tabTextActive]}>
@@ -67,7 +83,7 @@ export default function Circle() {
         >
           {chatLoading
             ? <ActivityIndicator size="small" color={color.onInk} />
-            : <MessageSquare size={16} color={color.onInk} />
+            : <MessageCircle size={16} color={color.onInk} />
           }
           <Text style={styles.chatBannerText}>Circle Group Chat</Text>
           <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
@@ -122,6 +138,9 @@ export default function Circle() {
 }
 
 const styles = StyleSheet.create({
+  chatBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, paddingVertical: space.sm + 2, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: color.signal },
+  chatBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
+  unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.onInk },
   tabBar: { flexDirection: 'row', gap: space.sm, margin: space.lg, marginBottom: 0, padding: 4, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill },
   tab: { flex: 1, paddingVertical: space.sm, borderRadius: radius.pill, alignItems: 'center' },
   tabActive: { backgroundColor: color.ink },

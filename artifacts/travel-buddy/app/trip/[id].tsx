@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageSquare } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle } from 'lucide-react-native';
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripMapPreview, TripSafety, TripPostsSection,
@@ -70,7 +70,12 @@ export default function TripDetail() {
           >
             {chatLoading
               ? <ActivityIndicator size="small" color={color.signal} />
-              : <MessageSquare size={15} color={color.signal} />
+              : (
+                <View style={{ position: 'relative' }}>
+                  <MessageCircle size={15} color={color.signal} />
+                  <View style={styles.unreadDot} />
+                </View>
+              )
             }
             <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
           </Pressable>
@@ -114,6 +119,7 @@ const styles = StyleSheet.create({
   topBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
   topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
 });
 
 function TripMapPlaceholder() {

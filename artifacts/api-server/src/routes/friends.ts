@@ -9,7 +9,7 @@ import {
   isUuid,
 } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
-import { syncCircleChatMembers } from "../services/groupChatSync.js";
+import { syncCircleChatMembers } from "../lib/chatSync";
 
 const router = Router();
 
@@ -452,7 +452,7 @@ router.post("/circle-invites/:inviteId/accept", async (req, res) => {
   if (cmErr) req.log.error({ err: cmErr }, "circle_memberships upsert failed after invite accept");
 
   // Fire-and-forget: sync group chat membership for this circle.
-  syncCircleChatMembers(sc, (inv as any).owner_id).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));
+  syncCircleChatMembers((inv as any).owner_id, sc).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));
 
   res.status(200).json({ status: "accepted", ownerId: (inv as any).owner_id });
 });
@@ -483,6 +483,45 @@ router.post("/circle-invites/:inviteId/decline", async (req, res) => {
   await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", inviteId);
 
   res.status(200).json({ status: "declined" });
+});
+
+/* ===========================================================================
+ * DELETE /circles/:circleOwnerId/members/:memberId
+ * Only the circle owner may remove an accepted member.
+ * Immediately sets left_at on the member's chat thread row via sync.
+ * ===========================================================================
+ */
+router.delete("/circles/:circleOwnerId/members/:memberId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+
+  const { circleOwnerId, memberId } = req.params;
+  if (!isUuid(circleOwnerId)) { sendError(res, "invalid_payload", "Invalid circleOwnerId"); return; }
+  if (!isUuid(memberId)) { sendError(res, "invalid_payload", "Invalid memberId"); return; }
+
+  if (user.id !== circleOwnerId) {
+    sendError(res, "forbidden", "Only the circle owner may remove members"); return;
+  }
+  if (memberId === circleOwnerId) {
+    sendError(res, "invalid_payload", "Cannot remove yourself from your own circle"); return;
+  }
+
+  const { data: membership } = await sc
+    .from("circle_memberships")
+    .select("member_id")
+    .eq("owner_id", circleOwnerId)
+    .eq("member_id", memberId)
+    .maybeSingle();
+
+  if (!membership) { sendError(res, "not_found", "Membership not found"); return; }
+
+  await sc.from("circle_memberships").delete().eq("owner_id", circleOwnerId).eq("member_id", memberId);
+
+  res.status(200).json({ status: "removed", memberId });
+
+  // Immediately revoke chat access by syncing — sets left_at for the removed member.
+  syncCircleChatMembers(circleOwnerId, sc).catch(() => {});
 });
 
 export default router;

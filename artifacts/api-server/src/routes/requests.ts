@@ -416,4 +416,42 @@ router.post("/me/requests/trip_invite/:tripId/cancel", async (req, res) => {
   res.status(200).json({ status: "cancelled", tripId, inviteeId });
 });
 
+/* =============================================================================
+ * POST /trips/:tripId/remove-member
+ * Body: { memberId: string }
+ * Only the trip owner may remove an accepted member.
+ * Immediately sets left_at on the member's chat thread row via sync.
+ * =============================================================================
+ */
+router.post("/trips/:tripId/remove-member", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+  const { tripId } = req.params;
+  const { memberId } = req.body ?? {};
+
+  if (!isUuid(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  if (!memberId || !isUuid(memberId)) { sendError(res, "invalid_payload", "memberId must be a valid UUID"); return; }
+
+  if (memberId === user.id) { sendError(res, "invalid_payload", "Cannot remove yourself"); return; }
+
+  const { data: ownerRow } = await sc
+    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  if (!ownerRow || ownerRow.role !== "owner") {
+    sendError(res, "forbidden", "Only the trip owner may remove members"); return;
+  }
+
+  const { data: memberRow } = await sc
+    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", memberId).maybeSingle();
+  if (!memberRow) { sendError(res, "not_found", "Member not found on this trip"); return; }
+  if (memberRow.role === "owner") { sendError(res, "invalid_payload", "Cannot remove the trip owner"); return; }
+
+  await sc.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", memberId);
+  res.status(200).json({ status: "removed", tripId, memberId });
+
+  // Immediately revoke chat access by syncing — sets left_at for the removed member.
+  const { syncTripChatMembers } = await import("../lib/chatSync.js");
+  syncTripChatMembers(tripId, sc).catch(() => {});
+});
+
 export default router;

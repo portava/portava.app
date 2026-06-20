@@ -10,6 +10,7 @@ import telegraphRouter from "./telegraph";
 import messagingRouter from "./messaging";
 import requestsRouter from "./requests";
 import planRouter from "./plan";
+import groupChatRouter from "./groupChat";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(telegraphRouter);
 router.use(messagingRouter);
 router.use(requestsRouter);
 router.use(planRouter);
+router.use(groupChatRouter);
 
 export default router;

@@ -616,7 +616,7 @@ router.get('/me/threads', async (req, res) => {
 
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
-    .select('thread_id, muted_at, archived_at')
+    .select('thread_id, muted_at, archived_at, left_at')
     .eq('user_id', user.id)
     .is('left_at', null);
 
@@ -638,7 +638,7 @@ router.get('/me/threads', async (req, res) => {
   const [threadsRes, lastMsgRes, allMembersRes] = await Promise.all([
     sc
       .from('message_threads')
-      .select('id, created_at, updated_at, last_message_at, status, thread_type, trip_id, circle_owner_id, title')
+      .select('id, thread_type, trip_id, circle_owner_id, title, created_at, updated_at, last_message_at, status')
       .in('id', threadIds)
       .order('last_message_at', { ascending: false, nullsFirst: false }),
 
@@ -720,11 +720,11 @@ router.get('/me/threads', async (req, res) => {
 
     return {
       id: t.id,
-      status: t.status,
       threadType: (t.thread_type ?? 'direct') as 'direct' | 'trip' | 'circle',
       tripId: t.trip_id ?? null,
       circleOwnerId: t.circle_owner_id ?? null,
       title: t.title ?? null,
+      status: t.status,
       lastMessageAt: t.last_message_at ?? null,
       createdAt: t.created_at,
       mutedAt: mem.muted_at ?? null,
@@ -752,13 +752,14 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   const { data: membership } = await client
     .from('message_thread_members')
-    .select('user_id')
+    .select('user_id, left_at')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)
     .maybeSingle();
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
   const before = req.query.before as string | undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
@@ -869,16 +870,17 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   const { data: membership } = await client
     .from('message_thread_members')
-    .select('user_id')
+    .select('user_id, left_at')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)
     .maybeSingle();
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  // Use the authenticated client (= service client in production, fake in tests).
+  const sc = client;
 
   // Fetch sender's language preference (for detection fallback).
   const { data: senderProfile } = await sc

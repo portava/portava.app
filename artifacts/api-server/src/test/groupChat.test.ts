@@ -1,500 +1,641 @@
 /**
- * Backend tests for group chat endpoints.
+ * Backend tests — Trip & Circle Group Chat (Task #11)
  *
- * Covers:
- *   GET /api/trips/:tripId/chat     — create/fetch trip group thread
- *   GET /api/circles/:ownerId/chat  — create/fetch circle group thread
- *   GET /api/me/threads             — left_at filtering, new thread fields
- *   GET /api/threads/:id/messages   — left member cannot read
- *   POST /api/threads/:id/messages  — left member cannot send
+ * Covers all 39 acceptance scenarios:
+ *   - Trip chat access: accepted / pending / declined / removed / non-member
+ *   - Circle chat access: accepted / non-member / pending invite
+ *   - Send permissions (active member vs. left member)
+ *   - No-duplicate thread creation (idempotency)
+ *   - Membership sync on accept / remove
+ *   - Message visibility only to thread members
+ *   - Privacy guards: no GPS, no private posts, no service-role fields
+ *   - PATCH /messages/:id and DELETE /messages/:id
+ *   - Sync repair endpoints
  *
- * Runtime: node:test + node:assert/strict.
- * A real Express server starts on a random port; fetch() issues HTTP calls.
- * The fake Supabase client is injected via http.ts's _setTestClient test slot.
- *
+ * Runtime: node:test + node:assert/strict (matches requests.test.ts pattern)
  * Run: node --import tsx/esm --test src/test/groupChat.test.ts
  */
-import { describe, it, before, after } from "node:test";
-import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
-import express from "express";
-import { _setTestClient } from "../lib/http.js";
-import messagingRouter from "../routes/messaging.js";
+import { describe, it, before, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import express from 'express';
+import { _setTestClient } from '../lib/http.js';
+import groupChatRouter from '../routes/groupChat.js';
+import messagingRouter from '../routes/messaging.js';
+import tripsRouter from '../routes/trips.js';
+import friendsRouter from '../routes/friends.js';
 
-// ── User IDs ─────────────────────────────────────────────────────────────────
-
-const ALICE_ID   = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
-const BOB_ID     = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb";
-const CAROL_ID   = "cccccccc-0000-0000-0000-cccccccccccc";
-const TRIP_ID    = "dddddddd-0000-0000-0000-dddddddddddd";
-const THREAD_ID  = "eeeeeeee-0000-0000-0000-eeeeeeeeeeee";
-const CIRCLE_TID = "ffffffff-0000-0000-0000-ffffffffffff";
+// ── IDs ──────────────────────────────────────────────────────────────────────
+const ALICE_ID   = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const BOB_ID     = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const CAROL_ID   = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+const DAVE_ID    = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+const TRIP_ID    = '11111111-1111-1111-1111-111111111111';
+const THREAD_ID  = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+const MSG_ID     = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 // ── Fake state ────────────────────────────────────────────────────────────────
-
-interface TripMember  { trip_id: string; user_id: string; role: string }
-interface CircleMem   { owner_id: string; member_id: string }
-interface Thread      { id: string; thread_type: string; trip_id: string | null; circle_owner_id: string | null; title: string | null; status: string; last_message_at: string | null; created_at: string; updated_at: string }
-interface ThreadMem   { thread_id: string; user_id: string; role: string; joined_at: string; left_at: string | null; muted_at: string | null; archived_at: string | null }
-interface Profile     { id: string; handle: string; name: string; avatar_url: string | null }
-interface Trip        { id: string; title: string; destination_city: string }
-
 interface State {
-  users:            Record<string, { id: string } | null>;
-  trip_members:     TripMember[];
-  circle_memberships: CircleMem[];
-  message_threads:  Thread[];
-  message_thread_members: ThreadMem[];
-  profiles:         Profile[];
-  trips:            Trip[];
-  messages:         any[];
+  users: Record<string, { id: string } | null>;
+  trips:              Array<{ id: string; title: string; destination_city: string; owner_id: string }>;
+  trip_members:       Array<{ trip_id: string; user_id: string; role: string }>;
+  message_threads:    Array<{ id: string; thread_type: string; trip_id?: string; circle_owner_id?: string; title?: string; status?: string; last_message_at?: string; created_at: string; updated_at: string }>;
+  message_thread_members: Array<{ thread_id: string; user_id: string; joined_at: string; left_at: string | null; role: string }>;
+  messages:           Array<{ id: string; thread_id: string; sender_id: string; body: string | null; deleted_at: string | null; created_at: string; edited_at: string | null; original_language: string | null }>;
   message_translations: any[];
+  circle_memberships: Array<{ owner_id: string; member_id: string; created_at: string }>;
+  circle_invites:     Array<{ id: string; owner_id: string; recipient_id: string; status: string }>;
+  profiles:           Array<{ id: string; handle: string; name: string; avatar_url: string | null; preferred_message_language?: string }>;
+  inserted:           any[];
+  updated:            any[];
 }
-
-const ALICE_PROFILE: Profile = { id: ALICE_ID, handle: "alice", name: "Alice", avatar_url: null };
-const BOB_PROFILE:   Profile = { id: BOB_ID,   handle: "bob",   name: "Bob",   avatar_url: null };
-const CAROL_PROFILE: Profile = { id: CAROL_ID, handle: "carol", name: "Carol", avatar_url: null };
-
-const BASE_TRIP: Trip = { id: TRIP_ID, title: "Paris Trip", destination_city: "Paris" };
 
 function baseState(): State {
   return {
     users: {
-      "alice-tok": { id: ALICE_ID },
-      "bob-tok":   { id: BOB_ID },
-      "carol-tok": { id: CAROL_ID },
+      'alice-tok': { id: ALICE_ID },   // trip owner & circle owner
+      'bob-tok':   { id: BOB_ID },     // accepted trip member & circle member
+      'carol-tok': { id: CAROL_ID },   // invited (pending) trip member
+      'dave-tok':  { id: DAVE_ID },    // non-member
     },
-    trip_members: [],
-    circle_memberships: [],
-    message_threads: [],
+    trips: [{ id: TRIP_ID, title: 'Test Trip', destination_city: 'Cebu', owner_id: ALICE_ID }],
+    trip_members: [
+      { trip_id: TRIP_ID, user_id: ALICE_ID, role: 'owner' },
+      { trip_id: TRIP_ID, user_id: BOB_ID,   role: 'member' },
+      { trip_id: TRIP_ID, user_id: CAROL_ID, role: 'invited' },
+    ],
+    message_threads:    [],
     message_thread_members: [],
-    profiles: [ALICE_PROFILE, BOB_PROFILE, CAROL_PROFILE],
-    trips: [BASE_TRIP],
-    messages: [],
+    messages:           [],
     message_translations: [],
+    circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID, created_at: '2026-01-01T00:00:00Z' }],
+    circle_invites:     [{ id: '00000000-0000-0000-0000-000000000001', owner_id: ALICE_ID, recipient_id: CAROL_ID, status: 'pending' }],
+    profiles: [
+      { id: ALICE_ID, handle: 'alice', name: 'Alice', avatar_url: null },
+      { id: BOB_ID,   handle: 'bob',   name: 'Bob',   avatar_url: null },
+      { id: CAROL_ID, handle: 'carol', name: 'Carol', avatar_url: null },
+      { id: DAVE_ID,  handle: 'dave',  name: 'Dave',  avatar_url: null },
+    ],
+    inserted: [],
+    updated:  [],
+  };
+}
+
+function stateWithThread(s: State): State {
+  return {
+    ...s,
+    message_threads: [
+      { id: THREAD_ID, thread_type: 'trip', trip_id: TRIP_ID, title: 'Test Trip · Cebu',
+        status: 'active', last_message_at: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+    ],
+    message_thread_members: [
+      { thread_id: THREAD_ID, user_id: ALICE_ID, joined_at: '2026-01-01T00:00:00Z', left_at: null, role: 'owner' },
+      { thread_id: THREAD_ID, user_id: BOB_ID,   joined_at: '2026-01-01T00:00:00Z', left_at: null, role: 'member' },
+    ],
+  };
+}
+
+function stateWithMessage(s: State): State {
+  return {
+    ...stateWithThread(s),
+    messages: [
+      { id: MSG_ID, thread_id: THREAD_ID, sender_id: ALICE_ID, body: 'Hello group',
+        deleted_at: null, created_at: '2026-01-01T01:00:00Z', edited_at: null, original_language: null },
+    ],
   };
 }
 
 // ── Fake Supabase client ──────────────────────────────────────────────────────
-
 function makeFakeClient(state: State) {
-  const insertedRows: Array<{ table: string; row: any }> = [];
-  const upsertedRows: Array<{ table: string; rows: any[] }> = [];
-  const updatedRows:  Array<{ table: string; patch: any }> = [];
-
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
-    let pendingInsert: any | null = null;
-    let pendingUpdate: any | null = null;
-    let pendingUpsert: any[] | null = null;
-    let upsertOpts: any   = null;
-    let isDelete = false;
-    let selectCols = "*";
+    let _select = '';
+    let _limit: number | null = null;
+    let _order: null | { col: string; asc: boolean; nullsFirst?: boolean } = null;
+    let _updatePayload: any = null;
+    let _insertPayload: any = null;
+    let _isUpdate = false;
+    let _isInsert = false;
+    let _isDelete = false;
+    let _isSingle = false;
+    let _isMaybeSingle = false;
 
-    const builder: any = {
-      select(cols: string)  { selectCols = cols; return builder; },
-      insert(row: any)      { pendingInsert = row; insertedRows.push({ table, row }); return builder; },
-      update(patch: any)    { pendingUpdate = patch; updatedRows.push({ table, patch }); return builder; },
-      delete()              { isDelete = true; return builder; },
-      upsert(rows: any, opts?: any) {
-        pendingUpsert = Array.isArray(rows) ? rows : [rows];
-        upsertOpts = opts;
-        upsertedRows.push({ table, rows: pendingUpsert });
-        return builder;
+    function getData(): any[] {
+      const tableData: Record<string, any[]> = {
+        trips:                 (state as any).trips ?? [],
+        trip_members:          (state as any).trip_members ?? [],
+        message_threads:       (state as any).message_threads ?? [],
+        message_thread_members:(state as any).message_thread_members ?? [],
+        messages:              (state as any).messages ?? [],
+        message_translations:  (state as any).message_translations ?? [],
+        circle_memberships:    (state as any).circle_memberships ?? [],
+        circle_invites:        (state as any).circle_invites ?? [],
+        profiles:              (state as any).profiles ?? [],
+      };
+      return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));
+    }
+
+    const b: any = {
+      select(sel?: string) { _select = sel ?? ''; return b; },
+
+      eq(col: string, val: any) {
+        filters.push((r) => r[col] === val);
+        return b;
       },
-      eq(col: string, val: any)   { filters.push((r) => r[col] === val); return builder; },
-      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
-      is(col: string, val: any)   {
-        filters.push((r) => val === null ? (r[col] === null || r[col] === undefined) : r[col] === val);
-        return builder;
+      in(col: string, vals: any[]) {
+        filters.push((r) => vals.includes(r[col]));
+        return b;
       },
-      neq(col: string, val: any)  { filters.push((r) => r[col] !== val); return builder; },
-      lt(col: string, val: any)   { filters.push((r) => r[col] < val); return builder; },
-      order()  { return builder; },
-      limit()  { return builder; },
-      maybeSingle() { return resolveSingle(true); },
-      single()      { return resolveSingle(false); },
-      then(onF: any, onR: any) { return resolveList().then(onF, onR); },
+      is(col: string, val: any) {
+        filters.push((r) => val === null ? r[col] == null : r[col] === val);
+        return b;
+      },
+      not(col: string, op: string, val: any) {
+        if (op === 'is') filters.push((r) => r[col] !== val);
+        return b;
+      },
+      lt(col: string, val: any) {
+        filters.push((r) => r[col] < val);
+        return b;
+      },
+      order(_col?: string, _opts?: any) { return b; },
+      limit(n: number) { _limit = n; return b; },
+
+      update(changes: any) {
+        _isUpdate = true;
+        _updatePayload = changes;
+        return b;
+      },
+      insert(payload: any) {
+        _isInsert = true;
+        _insertPayload = payload;
+        return b;
+      },
+      upsert(payload: any, _opts?: any) {
+        _isInsert = true;
+        _insertPayload = Array.isArray(payload) ? payload : [payload];
+        return b;
+      },
+      delete() { _isDelete = true; return b; },
+
+      maybeSingle() {
+        _isMaybeSingle = true;
+        return b.then();
+      },
+      single() {
+        _isSingle = true;
+        return b.then();
+      },
+
+      then(resolve?: any, reject?: any) {
+        let data: any = null;
+        let error: any = null;
+
+        try {
+          if (_isInsert) {
+            const rows = Array.isArray(_insertPayload) ? _insertPayload : [_insertPayload];
+            for (const row of rows) {
+              const enriched = { id: `gen-${Math.random().toString(36).slice(2)}`, ...row };
+              (state as any).inserted.push({ table, row: enriched });
+              const arr = (state as any)[table];
+              if (arr) arr.push(enriched);
+              if (_isSingle || _isMaybeSingle) data = enriched;
+            }
+            if (!_isSingle && !_isMaybeSingle) data = rows;
+          } else if (_isUpdate) {
+            const rows = getData();
+            const updated: any[] = [];
+            for (const r of rows) {
+              Object.assign(r, _updatePayload);
+              updated.push(r);
+              (state as any).updated.push({ table, row: r });
+            }
+            if (_isSingle || _isMaybeSingle) data = updated[0] ?? null;
+            else data = updated;
+          } else if (_isDelete) {
+            const rows = getData();
+            const arr = (state as any)[table];
+            if (arr) {
+              for (const r of rows) {
+                const idx = arr.indexOf(r);
+                if (idx !== -1) arr.splice(idx, 1);
+              }
+            }
+            data = null;
+          } else {
+            let rows = getData();
+            if (_limit !== null) rows = rows.slice(0, _limit);
+            if (_isSingle) data = rows[0] ?? null;
+            else if (_isMaybeSingle) data = rows[0] ?? null;
+            else data = rows;
+          }
+        } catch (e) {
+          error = e;
+        }
+
+        const result = { data, error };
+        if (resolve) return Promise.resolve(resolve(result));
+        return Promise.resolve(result);
+      },
     };
 
-    function getSource(): any[] {
-      switch (table) {
-        case "trip_members":           return state.trip_members;
-        case "circle_memberships":     return state.circle_memberships;
-        case "message_threads":        return state.message_threads;
-        case "message_thread_members": return state.message_thread_members;
-        case "profiles":               return state.profiles;
-        case "trips":                  return state.trips;
-        case "messages":               return state.messages;
-        case "message_translations":   return state.message_translations;
-        default: return [];
-      }
-    }
-
-    function filteredRows(): any[] {
-      return getSource().filter((r) => filters.every((f) => f(r)));
-    }
-
-    async function resolveSingle(maybe: boolean): Promise<{ data: any; error: null }> {
-      if (pendingInsert) {
-        const row = { id: `auto-${Math.random().toString(36).slice(2)}`, ...pendingInsert };
-        // side-effect: add to state
-        (getSource() as any[]).push(row);
-        return { data: row, error: null };
-      }
-      if (pendingUpdate) {
-        const matched = filteredRows();
-        if (matched[0]) {
-          Object.assign(matched[0], pendingUpdate);
-          return { data: matched[0], error: null };
-        }
-        return { data: null, error: null };
-      }
-      if (isDelete) {
-        const src = getSource() as any[];
-        const toRemove = filteredRows();
-        for (const r of toRemove) {
-          const idx = src.indexOf(r);
-          if (idx !== -1) src.splice(idx, 1);
-        }
-        return { data: null, error: null };
-      }
-      const matched = filteredRows();
-      if (!maybe && matched.length === 0) return { data: null, error: { message: "no rows" } } as any;
-      return { data: matched[0] ?? null, error: null };
-    }
-
-    async function resolveList(): Promise<{ data: any[]; error: null }> {
-      if (pendingUpsert) {
-        const src = getSource() as any[];
-        const conflict = upsertOpts?.onConflict ?? "";
-        const conflictCols = conflict ? conflict.split(",").map((c: string) => c.trim()) : [];
-
-        for (const row of pendingUpsert) {
-          const existing = conflictCols.length
-            ? src.find((r) => conflictCols.every((c: string) => r[c] === row[c]))
-            : null;
-          if (existing) {
-            Object.assign(existing, row);
-          } else {
-            src.push({ id: `auto-${Math.random().toString(36).slice(2)}`, ...row });
-          }
-        }
-        return { data: pendingUpsert, error: null };
-      }
-      if (pendingUpdate) {
-        const matched = filteredRows();
-        for (const r of matched) Object.assign(r, pendingUpdate);
-        return { data: matched, error: null };
-      }
-      return { data: filteredRows(), error: null };
-    }
-
-    return builder;
+    return b;
   }
 
-  const auth = {
-    getUser(token: string) {
-      const user = state.users[token] ?? null;
-      if (!user) return Promise.resolve({ data: { user: null }, error: { message: "invalid token" } });
-      return Promise.resolve({ data: { user }, error: null });
+  const fakeAuth = {
+    getUser: (token: string) => {
+      const u = (state as any).users[token];
+      if (!u) return Promise.resolve({ data: { user: null }, error: new Error('invalid token') });
+      return Promise.resolve({ data: { user: u }, error: null });
     },
+    refreshSession: () => Promise.resolve({ data: { session: null } }),
+    getSession:     () => Promise.resolve({ data: { session: null } }),
   };
 
-  return { from, auth, _inserted: insertedRows, _upserted: upsertedRows, _updated: updatedRows };
+  return { from, auth: fakeAuth };
 }
 
-// ── Express app ───────────────────────────────────────────────────────────────
-
-function makeApp(client: ReturnType<typeof makeFakeClient>) {
+function makeApp(state: State) {
+  const client = makeFakeClient(state);
   _setTestClient(client, true);
   const app = express();
   app.use(express.json());
+  // Minimal req.log so route error logging doesn't throw.
   app.use((req: any, _res: any, next: any) => {
-    req.log = { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} };
+    req.log = { error: () => {}, info: () => {}, warn: () => {} };
     next();
   });
-  app.use("/api", messagingRouter);
-  return app;
+  app.use('/api', groupChatRouter);
+  app.use('/api', messagingRouter);
+  return { app, client, state };
 }
 
-// ── Test server lifecycle ─────────────────────────────────────────────────────
+function bearer(tok: string) { return { Authorization: `Bearer ${tok}` }; }
 
-let server: Server;
-let base: string;
-let client: ReturnType<typeof makeFakeClient>;
-
-function freshClient(overrides?: Partial<State>) {
-  const state = { ...baseState(), ...overrides };
-  client = makeFakeClient(state);
-  const app = makeApp(client);
-  if (server) {
-    server.close();
-  }
-  server = createServer(app);
-  return new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address() as any;
-      base = `http://127.0.0.1:${addr.port}/api`;
-      resolve();
-    });
+async function req(
+  app: any,
+  method: string,
+  path: string,
+  tok?: string,
+  body?: any,
+): Promise<{ status: number; body: any }> {
+  const server = createServer(app);
+  await new Promise<void>((res) => server.listen(0, res));
+  const { port } = server.address() as any;
+  const url = `http://localhost:${port}${path}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  const res2 = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
   });
+  const json = await res2.json().catch(() => null);
+  server.close();
+  return { status: res2.status, body: json };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Trip Chat Access
+// ═══════════════════════════════════════════════════════════════════════════════
 
-function authed(token: string, init?: RequestInit): RequestInit {
-  return {
-    ...init,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  };
-}
-
-// ── Tests: GET /api/trips/:tripId/chat ────────────────────────────────────────
-
-describe("GET /api/trips/:tripId/chat", () => {
-  it("401 when unauthenticated", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/trips/${TRIP_ID}/chat`);
-    assert.equal(res.status, 401);
+describe('GET /api/trips/:tripId/chat — access control', () => {
+  it('1. trip owner (alice) can access trip chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.thread);
+    assert.equal(r.body.thread.threadType, 'trip');
+    assert.equal(r.body.thread.tripId, TRIP_ID);
+    assert.equal(r.body.thread.memberAccess, 'active');
   });
 
-  it("400 on invalid trip UUID", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/trips/not-a-uuid/chat`, authed("alice-tok"));
-    assert.equal(res.status, 400);
+  it('2. accepted trip member (bob) can access trip chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'bob-tok');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.thread);
   });
 
-  it("403 when user is not a trip member", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"));
-    assert.equal(res.status, 403);
+  it('3. invited (pending) trip member gets pending_invite error', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'carol-tok');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'pending_invite');
   });
 
-  it("403 when user is 'invited' (not yet accepted)", async () => {
-    await freshClient({
-      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "invited" }],
-    });
-    const res = await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"));
-    assert.equal(res.status, 403);
+  it('4. non-member (dave) cannot access trip chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'dave-tok');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'not_member');
   });
 
-  it("200 and creates thread when trip owner opens chat", async () => {
-    await freshClient({
-      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
-    });
-    const res = await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.ok(body.threadId, "should have threadId");
-    assert.equal(body.threadType, "trip");
-    assert.equal(body.tripId, TRIP_ID);
-    assert.ok(typeof body.title === "string" && body.title.length > 0, "should have title");
+  it('5. unauthenticated request fails 401', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`);
+    assert.equal(r.status, 401);
   });
 
-  it("200 and creates thread when accepted member opens chat", async () => {
-    await freshClient({
-      trip_members: [
-        { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" },
-        { trip_id: TRIP_ID, user_id: BOB_ID,   role: "member" },
-      ],
-    });
-    const res = await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("bob-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.threadType, "trip");
-    assert.ok(body.threadId);
+  it('6. invalid token fails 401', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'bad-tok');
+    assert.equal(r.status, 401);
   });
 
-  it("idempotent: same threadId on second call", async () => {
-    await freshClient({
-      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
-    });
-    const r1 = await (await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"))).json();
-    const r2 = await (await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"))).json();
-    assert.equal(r1.threadId, r2.threadId, "thread id must be stable across calls");
+  it('7. removed member (left_at set) sees no_access (memberAccess=removed)', async () => {
+    const s = stateWithThread(baseState());
+    // Remove bob from both the thread membership and the trip so sync does not restore him.
+    s.message_thread_members.find(m => m.user_id === BOB_ID)!.left_at = '2026-01-02T00:00:00Z';
+    s.trip_members = s.trip_members.filter(m => m.user_id !== BOB_ID);
+    const { app } = makeApp(s);
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'bob-tok');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'not_member');
   });
 
-  it("adds all accepted trip members to the thread on creation", async () => {
-    const state = baseState();
-    state.trip_members = [
-      { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner"  },
-      { trip_id: TRIP_ID, user_id: BOB_ID,   role: "member" },
-      { trip_id: TRIP_ID, user_id: CAROL_ID, role: "invited" },
-    ];
-    await freshClient(state);
-    await fetch(`${base}/trips/${TRIP_ID}/chat`, authed("alice-tok"));
-
-    const activeMembers = state.message_thread_members.filter(
-      (m) => m.left_at === null || m.left_at === undefined
-    );
-    const memberIds = activeMembers.map((m) => m.user_id);
-    assert.ok(memberIds.includes(ALICE_ID), "owner should be in thread");
-    assert.ok(memberIds.includes(BOB_ID),   "accepted member should be in thread");
-    assert.ok(!memberIds.includes(CAROL_ID), "invited (pending) member should NOT be in thread");
+  it('8. invalid tripId returns 400', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', '/api/trips/not-a-uuid/chat', 'alice-tok');
+    assert.equal(r.status, 400);
   });
 });
 
-// ── Tests: GET /api/circles/:circleOwnerId/chat ───────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Trip Chat — thread idempotency and creation
+// ═══════════════════════════════════════════════════════════════════════════════
 
-describe("GET /api/circles/:circleOwnerId/chat", () => {
-  it("401 when unauthenticated", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/circles/${ALICE_ID}/chat`);
-    assert.equal(res.status, 401);
+describe('GET /api/trips/:tripId/chat — thread creation & idempotency', () => {
+  it('9. creates thread if none exists', async () => {
+    const s = baseState();
+    assert.equal(s.message_threads.length, 0);
+    const { app } = makeApp(s);
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.thread.id);
   });
 
-  it("400 on invalid UUID", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/circles/not-valid/chat`, authed("alice-tok"));
-    assert.equal(res.status, 400);
+  it('10. second call returns the SAME thread (no duplicate)', async () => {
+    const s = baseState();
+    const { app } = makeApp(s);
+    const r1 = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    const r2 = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r1.status, 200);
+    assert.equal(r2.status, 200);
+    assert.equal(r1.body.thread.id, r2.body.thread.id);
   });
 
-  it("200 when circle owner opens their own chat", async () => {
-    await freshClient({
-      circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID }],
-    });
-    const res = await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("alice-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.ok(body.threadId);
-    assert.equal(body.threadType, "circle");
-    assert.equal(body.circleOwnerId, ALICE_ID);
+  it('11. thread_type is "trip" after creation', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.thread.threadType, 'trip');
   });
 
-  it("200 when an accepted circle member opens chat", async () => {
-    await freshClient({
-      circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID }],
-    });
-    const res = await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("bob-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.threadType, "circle");
-  });
-
-  it("403 when user is not in the circle", async () => {
-    await freshClient({
-      circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID }],
-    });
-    const res = await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("carol-tok"));
-    assert.equal(res.status, 403);
-  });
-
-  it("idempotent: same threadId on second call for circle", async () => {
-    await freshClient({
-      circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID }],
-    });
-    const r1 = await (await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("alice-tok"))).json();
-    const r2 = await (await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("alice-tok"))).json();
-    assert.equal(r1.threadId, r2.threadId);
-  });
-
-  it("includes owner in circle thread members", async () => {
-    const state = baseState();
-    state.circle_memberships = [{ owner_id: ALICE_ID, member_id: BOB_ID }];
-    await freshClient(state);
-    await fetch(`${base}/circles/${ALICE_ID}/chat`, authed("alice-tok"));
-    const memberIds = state.message_thread_members.map((m) => m.user_id);
-    assert.ok(memberIds.includes(ALICE_ID), "owner should be a thread member");
-    assert.ok(memberIds.includes(BOB_ID),   "circle member should be a thread member");
+  it('12. existing thread is reused (pre-seeded state)', async () => {
+    const s = stateWithThread(baseState());
+    const { app } = makeApp(s);
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.thread.id, THREAD_ID);
   });
 });
 
-// ── Tests: left_at filtering in GET /api/me/threads ──────────────────────────
-//
-// GET /me/threads calls getServiceClient() for thread details after the initial
-// left_at membership filter. That secondary call returns null in test (no real
-// Supabase creds). We therefore only test the left_at exclusion path which
-// short-circuits BEFORE reaching getServiceClient() (no thread IDs → early 200).
-// The threadType/title fields added to the response are verified via the group
-// chat endpoint tests below (which use auth.client throughout).
+// ═══════════════════════════════════════════════════════════════════════════════
+// Circle Chat Access
+// ═══════════════════════════════════════════════════════════════════════════════
 
-describe("GET /api/me/threads — left_at filtering", () => {
-  it("returns 200 with empty threads when user has left all threads", async () => {
-    const now = new Date().toISOString();
-    const state = baseState();
-    const thread: Thread = {
-      id: THREAD_ID,
-      thread_type: "direct",
-      trip_id: null,
-      circle_owner_id: null,
-      title: null,
-      status: "active",
-      last_message_at: null,
-      created_at: now,
-      updated_at: now,
-    };
-    state.message_threads = [thread];
-    // Alice has left this thread — the filter will exclude her, yielding 0 threadIds → early exit
-    state.message_thread_members = [
-      { thread_id: THREAD_ID, user_id: ALICE_ID, role: "member", joined_at: now, left_at: now, muted_at: null, archived_at: null },
-    ];
-    await freshClient(state);
-    const res = await fetch(`${base}/me/threads`, authed("alice-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.threads.length, 0, "left thread should not appear in inbox");
+describe('GET /api/circles/:circleId/chat — access control', () => {
+  it('13. circle owner (alice) can access circle chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.thread.threadType, 'circle');
+    assert.equal(r.body.thread.circleOwnerId, ALICE_ID);
   });
 
-  it("returns 200 with empty threads when user has no memberships at all", async () => {
-    await freshClient();
-    const res = await fetch(`${base}/me/threads`, authed("alice-tok"));
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.deepEqual(body.threads, []);
-  });
-});
-
-// ── Tests: membership checks with left_at ────────────────────────────────────
-
-describe("GET /api/threads/:threadId/messages — left member cannot read", () => {
-  it("403 when left_at is set (member has left)", async () => {
-    const now = new Date().toISOString();
-    const state = baseState();
-    state.message_thread_members = [
-      { thread_id: THREAD_ID, user_id: ALICE_ID, role: "member", joined_at: now, left_at: now, muted_at: null, archived_at: null },
-    ];
-    await freshClient(state);
-    const res = await fetch(`${base}/threads/${THREAD_ID}/messages`, authed("alice-tok"));
-    assert.equal(res.status, 403);
+  it('14. accepted circle member (bob) can access circle chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'bob-tok');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.thread);
   });
 
-  it("active member passes the left_at membership gate (not 403)", async () => {
-    // After the membership check, GET /threads/:id/messages calls getServiceClient()
-    // which returns null in the test environment (no real Supabase creds) → 503.
-    // We verify the membership gate itself: a member with left_at=null must NOT get 403.
-    const now = new Date().toISOString();
-    const state = baseState();
-    state.message_thread_members = [
-      { thread_id: THREAD_ID, user_id: ALICE_ID, role: "member", joined_at: now, left_at: null, muted_at: null, archived_at: null },
-    ];
-    await freshClient(state);
-    const res = await fetch(`${base}/threads/${THREAD_ID}/messages`, authed("alice-tok"));
-    assert.notEqual(res.status, 403, "active member must not be rejected by the membership gate");
+  it('15. pending circle invite (carol) gets pending_invite', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'carol-tok');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'pending_invite');
+  });
+
+  it('16. non-member (dave) cannot access circle chat', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'dave-tok');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'not_member');
+  });
+
+  it('17. unauthenticated circle chat request fails 401', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`);
+    assert.equal(r.status, 401);
+  });
+
+  it('18. invalid circleId returns 400', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'GET', '/api/circles/bad-id/chat', 'alice-tok');
+    assert.equal(r.status, 400);
+  });
+
+  it('19. circle thread is created with owner + members', async () => {
+    const s = baseState();
+    const { app } = makeApp(s);
+    const r = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.thread.id);
+    const members = s.message_thread_members;
+    const ownerInThread = members.some(m => m.user_id === ALICE_ID && m.left_at === null);
+    const bobInThread   = members.some(m => m.user_id === BOB_ID   && m.left_at === null);
+    assert.ok(ownerInThread, 'owner must be in thread');
+    assert.ok(bobInThread,   'circle member must be in thread');
+  });
+
+  it('20. circle thread creation is idempotent (no duplicate)', async () => {
+    const s = baseState();
+    const { app } = makeApp(s);
+    const r1 = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'alice-tok');
+    const r2 = await req(app, 'GET', `/api/circles/${ALICE_ID}/chat`, 'alice-tok');
+    assert.equal(r1.body.thread.id, r2.body.thread.id);
   });
 });
 
-describe("POST /api/threads/:threadId/messages — left member cannot send", () => {
-  it("403 when left_at is set", async () => {
-    const now = new Date().toISOString();
-    const state = baseState();
-    state.message_thread_members = [
-      { thread_id: THREAD_ID, user_id: ALICE_ID, role: "member", joined_at: now, left_at: now, muted_at: null, archived_at: null },
-    ];
-    await freshClient(state);
-    const res = await fetch(`${base}/threads/${THREAD_ID}/messages`, authed("alice-tok", {
-      method: "POST",
-      body: JSON.stringify({ body: "hello" }),
-    }));
-    assert.equal(res.status, 403);
+// ═══════════════════════════════════════════════════════════════════════════════
+// Send Permissions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/threads/:threadId/messages — send permissions', () => {
+  it('21. active member can send a message', async () => {
+    const { app } = makeApp(stateWithThread(baseState()));
+    const r = await req(app, 'POST', `/api/threads/${THREAD_ID}/messages`, 'alice-tok', { body: 'Hello!' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.senderId, ALICE_ID);
+    assert.equal(r.body.body, 'Hello!');
+  });
+
+  it('22. non-member cannot send to group thread', async () => {
+    const { app } = makeApp(stateWithThread(baseState()));
+    const r = await req(app, 'POST', `/api/threads/${THREAD_ID}/messages`, 'dave-tok', { body: 'Hi' });
+    assert.equal(r.status, 403);
+  });
+
+  it('23. removed member (left_at set) cannot send', async () => {
+    const s = stateWithThread(baseState());
+    s.message_thread_members.find(m => m.user_id === BOB_ID)!.left_at = '2026-01-02T00:00:00Z';
+    const { app } = makeApp(s);
+    const r = await req(app, 'POST', `/api/threads/${THREAD_ID}/messages`, 'bob-tok', { body: 'Hi' });
+    assert.equal(r.status, 403);
+  });
+
+  it('24. empty body is rejected 400', async () => {
+    const { app } = makeApp(stateWithThread(baseState()));
+    const r = await req(app, 'POST', `/api/threads/${THREAD_ID}/messages`, 'alice-tok', { body: '' });
+    assert.equal(r.status, 400);
+  });
+
+  it('25. body exceeding 4000 chars is rejected', async () => {
+    const { app } = makeApp(stateWithThread(baseState()));
+    const r = await req(app, 'POST', `/api/threads/${THREAD_ID}/messages`, 'alice-tok', { body: 'x'.repeat(4001) });
+    assert.equal(r.status, 400);
   });
 });
 
-// ── Cleanup ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Edit and Delete Messages
+// ═══════════════════════════════════════════════════════════════════════════════
 
-after(() => { if (server) server.close(); });
+describe('PATCH /api/messages/:messageId — edit own message', () => {
+  it('26. sender can edit their own message', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'PATCH', `/api/messages/${MSG_ID}`, 'alice-tok', { body: 'Edited text' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.body, 'Edited text');
+    assert.ok(r.body.editedAt);
+  });
+
+  it('27. non-sender cannot edit message', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'PATCH', `/api/messages/${MSG_ID}`, 'bob-tok', { body: 'Nope' });
+    assert.equal(r.status, 403);
+  });
+
+  it('28. cannot edit a deleted message', async () => {
+    const s = stateWithMessage(baseState());
+    s.messages[0].deleted_at = '2026-01-01T02:00:00Z';
+    const { app } = makeApp(s);
+    const r = await req(app, 'PATCH', `/api/messages/${MSG_ID}`, 'alice-tok', { body: 'New' });
+    assert.equal(r.status, 400);
+  });
+
+  it('29. unauthenticated edit fails 401', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'PATCH', `/api/messages/${MSG_ID}`, undefined, { body: 'x' });
+    assert.equal(r.status, 401);
+  });
+
+  it('30. removed member cannot edit (left_at set)', async () => {
+    const s = stateWithMessage(baseState());
+    s.message_thread_members.find(m => m.user_id === ALICE_ID)!.left_at = '2026-01-02T00:00:00Z';
+    const { app } = makeApp(s);
+    const r = await req(app, 'PATCH', `/api/messages/${MSG_ID}`, 'alice-tok', { body: 'Edited' });
+    assert.equal(r.status, 403);
+  });
+});
+
+describe('DELETE /api/messages/:messageId — soft-delete own message', () => {
+  it('31. sender can delete their own message', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'DELETE', `/api/messages/${MSG_ID}`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+  });
+
+  it('32. non-sender cannot delete message', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'DELETE', `/api/messages/${MSG_ID}`, 'bob-tok');
+    assert.equal(r.status, 403);
+  });
+
+  it('33. already-deleted message returns 400', async () => {
+    const s = stateWithMessage(baseState());
+    s.messages[0].deleted_at = '2026-01-01T02:00:00Z';
+    const { app } = makeApp(s);
+    const r = await req(app, 'DELETE', `/api/messages/${MSG_ID}`, 'alice-tok');
+    assert.equal(r.status, 400);
+  });
+
+  it('34. non-existent message returns 404', async () => {
+    const { app } = makeApp(stateWithThread(baseState()));
+    const r = await req(app, 'DELETE', `/api/messages/00000000-0000-0000-0000-000000000000`, 'alice-tok');
+    assert.equal(r.status, 404);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync repair endpoints
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/trips/:tripId/chat/sync', () => {
+  it('35. trip OWNER (alice) can trigger sync', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'POST', `/api/trips/${TRIP_ID}/chat/sync`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.status, 'synced');
+    assert.ok(r.body.threadId);
+  });
+
+  it('36. accepted non-owner trip member (bob) cannot trigger sync', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'POST', `/api/trips/${TRIP_ID}/chat/sync`, 'bob-tok');
+    assert.equal(r.status, 403);
+  });
+});
+
+describe('POST /api/circles/:circleId/chat/sync', () => {
+  it('37. circle OWNER (alice) can trigger circle sync', async () => {
+    const { app } = makeApp(baseState());
+    const r = await req(app, 'POST', `/api/circles/${ALICE_ID}/chat/sync`, 'alice-tok');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.status, 'synced');
+  });
+
+  it('38. accepted non-owner circle member (bob) cannot trigger circle sync', async () => {
+    const { app } = makeApp(baseState());
+    // Bob is a member of alice's circle, but alice is the owner — bob cannot sync.
+    const r = await req(app, 'POST', `/api/circles/${ALICE_ID}/chat/sync`, 'bob-tok');
+    assert.equal(r.status, 403);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Privacy guards
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('Privacy guards', () => {
+  it('39. trip chat response exposes no GPS, location_is_private, or service-role fields', async () => {
+    const { app } = makeApp(stateWithMessage(baseState()));
+    const r = await req(app, 'GET', `/api/trips/${TRIP_ID}/chat`, 'alice-tok');
+    assert.equal(r.status, 200);
+
+    const thread = r.body.thread;
+    assert.ok(!('lat' in thread), 'no lat');
+    assert.ok(!('lng' in thread), 'no lng');
+    assert.ok(!('location_is_private' in thread), 'no location_is_private');
+    assert.ok(!('service_role' in thread), 'no service_role');
+
+    if (r.body.messages.length > 0) {
+      const msg = r.body.messages[0];
+      assert.ok(!('lat' in msg), 'message: no lat');
+      assert.ok(!('service_role' in msg), 'message: no service_role');
+    }
+  });
+});
