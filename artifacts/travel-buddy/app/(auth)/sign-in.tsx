@@ -53,6 +53,7 @@ export default function SignIn() {
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: color.paper }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
+        <View style={s.centreBox}>
         <View style={s.brand}>
           <View style={s.logo}><Plane size={26} color={color.onInk} /></View>
           <Text style={s.title}>Travel Buddy</Text>
@@ -102,13 +103,15 @@ export default function SignIn() {
         </View>
 
         <Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</Text>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const s = StyleSheet.create({
-  wrap: { flexGrow: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl },
+  wrap: { flexGrow: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl, alignItems: 'center' },
+  centreBox: { width: '100%', maxWidth: 480, gap: space.xl },
   brand: { alignItems: 'center', gap: space.sm },
   logo: { width: 56, height: 56, borderRadius: 28, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center', ...shadow.float },
   title: { ...t.hero, color: color.ink, fontSize: 28 },

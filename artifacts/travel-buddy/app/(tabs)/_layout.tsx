@@ -1,9 +1,57 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
-import { Tabs, router } from 'expo-router';
+import { Tabs, router, usePathname, Link } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
+import { useIsDesktop } from '../../src/hooks/useBreakpoint';
+
+const NAV_ITEMS = [
+  { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
+  { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
+  { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
+  { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
+] as const;
+
+function DesktopSidebar() {
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
+      {/* Brand */}
+      <View style={styles.brand}>
+        <View style={styles.brandIcon}><Plane size={18} color={color.onInk} /></View>
+        <Text style={styles.brandName}>Travel Buddy</Text>
+      </View>
+
+      {/* Nav links */}
+      <View style={styles.navLinks}>
+        {NAV_ITEMS.map(({ href, label, icon: Icon, match }) => {
+          const active = match.some((m) => pathname === m || pathname.startsWith(m + '/'));
+          return (
+            <Pressable
+              key={href}
+              style={[styles.navItem, active && styles.navItemActive]}
+              onPress={() => router.push(href as any)}
+            >
+              <Icon size={20} color={active ? color.signal : color.mute} />
+              <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={{ flex: 1 }} />
+
+      {/* Compose button */}
+      <Pressable style={styles.composeBtn} onPress={() => router.push('/create')}>
+        <Plus size={18} color={color.onInk} />
+        <Text style={styles.composeBtnText}>New Post</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 /** Center vermilion passport-stamp create button. */
 function StampButton() {
@@ -24,14 +72,18 @@ function StampButton() {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  return (
+  const isDesktop = useIsDesktop();
+
+  const tabs = (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarShowLabel: true,
+        tabBarShowLabel: !isDesktop,
         tabBarActiveTintColor: color.ink,
         tabBarInactiveTintColor: color.faint,
-        tabBarStyle: [styles.bar, { height: 58 + insets.bottom, paddingBottom: insets.bottom }],
+        tabBarStyle: isDesktop
+          ? { display: 'none' }
+          : [styles.bar, { height: 58 + insets.bottom, paddingBottom: insets.bottom }],
         tabBarLabelStyle: styles.label,
       }}
     >
@@ -53,7 +105,7 @@ export default function TabLayout() {
         name="create-tab"
         options={{
           title: '',
-          tabBarButton: () => <StampButton />,
+          tabBarButton: () => (isDesktop ? <View style={{ width: 0 }} /> : <StampButton />),
         }}
         listeners={{ tabPress: (e) => { e.preventDefault(); router.push('/create'); } }}
       />
@@ -71,13 +123,102 @@ export default function TabLayout() {
           tabBarIcon: ({ color: c }) => <User size={22} color={c} />,
         }}
       />
-      {/* AI chat lives off-tab, reachable from headers/cards */}
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
     </Tabs>
   );
+
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopShell}>
+        <DesktopSidebar />
+        <View style={styles.desktopContent}>{tabs}</View>
+      </View>
+    );
+  }
+
+  return tabs;
 }
 
+const SIDEBAR_WIDTH = 220;
+
 const styles = StyleSheet.create({
+  /* ── Desktop shell ── */
+  desktopShell: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: color.paper,
+  },
+  desktopContent: {
+    flex: 1,
+    maxWidth: 720,
+  },
+  /* ── Sidebar ── */
+  sidebar: {
+    width: SIDEBAR_WIDTH,
+    backgroundColor: color.paperRaised,
+    borderRightWidth: 1,
+    borderRightColor: color.haze,
+    paddingHorizontal: space.lg,
+    gap: space.xl,
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  brandIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandName: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontWeight: '800',
+  },
+  navLinks: {
+    gap: space.xs,
+  },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: 10,
+  },
+  navItemActive: {
+    backgroundColor: color.paper,
+  },
+  navLabel: {
+    ...t.body,
+    color: color.mute,
+    fontWeight: '500',
+  },
+  navLabelActive: {
+    color: color.ink,
+    fontWeight: '700',
+  },
+  composeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    backgroundColor: color.signal,
+    borderRadius: 12,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    ...shadow.card,
+  },
+  composeBtnText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+    fontWeight: '700',
+  },
+  /* ── Mobile tab bar ── */
   bar: {
     backgroundColor: color.paperRaised,
     borderTopWidth: 1,

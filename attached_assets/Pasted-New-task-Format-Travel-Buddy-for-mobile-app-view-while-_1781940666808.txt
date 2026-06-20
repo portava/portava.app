@@ -1,0 +1,136 @@
+New task: Format Travel Buddy for mobile app view while preserving website/desktop view.
+
+Goal:
+Travel Buddy should have a responsive layout that works as:
+1. Website/Desktop view
+2. Mobile app view
+
+Since we are previewing inside the app/Replit mobile-sized preview, the default preview experience should look like a real mobile app, not a squeezed desktop website.
+
+Important:
+Do not remove the desktop/website layout.
+Add responsive mobile formatting using breakpoints.
+
+Mobile-first requirements:
+- App should fit cleanly on phone width.
+- No horizontal scrolling.
+- No clipped buttons.
+- No overlapping cards.
+- No desktop sidebar forced onto mobile.
+- No tiny unreadable text.
+- Bottom navigation should be used on mobile if available.
+- Header should be compact.
+- Cards should stack vertically.
+- Forms/composer should fit the screen.
+- Pulse feed should look like a mobile social feed.
+- Trip pages should look like mobile app screens.
+- Map/discovery views should fit mobile height.
+- Modals should become bottom sheets or full-screen panels on mobile.
+- Buttons should be thumb-friendly.
+
+Responsive layout rules:
+Desktop/tablet:
+- Keep website layout
+- Sidebar/nav can remain
+- Wider cards/grids allowed
+- Multi-column layouts allowed
+
+Mobile:
+- Use single-column layout
+- Use bottom tab navigation or compact mobile nav
+- Hide/collapse desktop sidebar
+- Use sticky mobile header where useful
+- Use full-width cards
+- Use mobile-safe padding
+- Keep important actions visible
+- Use safe-area padding for iPhone-style screens
+
+Breakpoints:
+Use sensible breakpoints:
+- mobile: <= 767px
+- tablet: 768px–1023px
+- desktop: >= 1024px
+
+Surfaces to format for mobile:
+1. Pulse / Pulse Wall
+2. Post composer
+3. Create post screen
+4. Trip detail page
+5. Trip feed
+6. Discovery map
+7. Plan/itinerary screen
+8. Messages
+9. Profile/settings
+10. Login/signup
+11. Navigation shell
+
+Pulse mobile requirements:
+- Real posts and Pulse Wall cards should appear in one vertical feed.
+- Media should scale full width.
+- Text should wrap correctly.
+- Composer button should be easy to tap.
+- Cards should have consistent spacing.
+- No separate desktop-looking sections on mobile.
+
+Post composer mobile requirements:
+- Media is required before submit.
+- Image/video picker button should be obvious.
+- Preview selected media before upload.
+- Submit button should stay reachable.
+- Errors should be visible and readable.
+- Keyboard should not cover the submit button if possible.
+
+Trip mobile requirements:
+- Trip header compact.
+- Tabs/sections should be horizontally scrollable or stacked.
+- Add-to-plan actions should be clear.
+- Discovery map should have bottom-sheet details for selected pins.
+- Itinerary cards should stack.
+
+Navigation:
+Desktop:
+- Keep existing website/sidebar navigation.
+
+Mobile:
+- Use bottom nav or compact mobile nav.
+- Suggested mobile nav items:
+  - Pulse
+  - Trips
+  - Map
+  - Messages
+  - Profile
+
+If existing routes differ, adapt to existing names.
+
+Implementation approach:
+1. Audit current layout components and identify desktop-only assumptions.
+2. Add responsive classes/styles instead of rewriting everything.
+3. Create shared mobile layout primitives if useful:
+   - MobileShell
+   - MobileHeader
+   - BottomNav
+   - MobileCard
+   - MobileBottomSheet
+4. Preserve existing data wiring and API calls.
+5. Do not replace real backend work with mock-only UI.
+6. Do not remove existing desktop website layout.
+
+Testing:
+1. Test at 390px width.
+2. Test at 430px width.
+3. Test at 768px width.
+4. Test desktop width.
+5. Confirm no horizontal scroll on mobile.
+6. Confirm Pulse feed renders correctly on mobile.
+7. Confirm create post flow works on mobile.
+8. Confirm media picker/upload UI fits mobile.
+9. Confirm trip page fits mobile.
+10. Confirm navigation works on mobile and desktop.
+11. Confirm desktop website layout still works.
+
+Hard boundary:
+Do not break backend API wiring.
+Do not remove desktop website view.
+Do not remove existing Pulse/Trip functionality.
+Do not hide errors.
+Do not use fake data where real API is already wired.
