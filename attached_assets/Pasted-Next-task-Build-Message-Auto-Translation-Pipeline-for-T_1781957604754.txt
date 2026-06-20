@@ -1,0 +1,456 @@
+Next task: Build Message Auto-Translation Pipeline for Travel Buddy.
+
+Goal:
+When users message each other in different default languages, the message should automatically translate into the recipient’s preferred language before it appears in their inbox/thread, while preserving the original message.
+
+Example:
+- Sender writes Spanish.
+- Recipient’s default language is English.
+- Recipient sees English translation by default.
+- Recipient can tap “Show original” to see Spanish.
+
+Reverse example:
+- English sender messages Spanish recipient.
+- Spanish recipient sees Spanish translation.
+- Original English is preserved.
+
+Core product rule:
+Translation improves communication, but it must not change privacy rules.
+Only messages that the recipient is allowed to receive should be translated.
+
+Translation must happen after:
+- message permission check
+- thread access check
+- message request acceptance if required
+- block/privacy checks
+
+Do not translate or send messages to users who are not allowed to receive them.
+
+SECTION 1 — Language preference model
+
+Add user language settings.
+
+Suggested fields:
+profiles or user_settings:
+- default_language
+- preferred_message_language
+- auto_translate_messages boolean
+- show_original_messages boolean
+- translation_updated_at
+
+Default:
+- default_language can come from device/app locale if available
+- preferred_message_language defaults to default_language
+- auto_translate_messages = true
+- show_original_messages = true or false based on UI preference
+
+Supported language values:
+Use ISO language codes:
+- en
+- es
+- fr
+- pt
+- ja
+- ko
+- zh
+- th
+- vi
+- tl
+- id
+- ar
+- etc.
+
+Do not hardcode only English/Spanish.
+The system should be language-agnostic.
+
+SECTION 2 — Message storage model
+
+Preserve original message always.
+
+messages:
+- id
+- thread_id
+- sender_id
+- original_body
+- original_language
+- created_at
+- edited_at
+- deleted_at
+
+message_translations:
+- id
+- message_id
+- recipient_id
+- source_language
+- target_language
+- translated_body
+- provider
+- status: pending / translated / failed / skipped
+- error_message nullable
+- created_at
+- updated_at
+
+Alternative:
+If existing schema prefers JSON:
+messages:
+- original_body
+- original_language
+- translations_json
+
+But recommended:
+Use separate message_translations table so each recipient can have their own target language.
+
+Rules:
+- never overwrite original_body with translated text
+- each recipient gets translation to their preferred language
+- if sender and recipient language match, skip translation
+- if language detection fails, show original and mark translation failed/skipped
+- if translation provider fails, deliver original with “translation unavailable”
+- do not block message delivery only because translation failed
+
+SECTION 3 — Language detection
+
+When a message is created:
+- detect source language
+- use sender’s default language as fallback
+- allow provider language detection if available
+- store original_language
+
+Rules:
+- if message is short/ambiguous, detection may be uncertain
+- if uncertain, fallback to sender preference
+- mark detection confidence if provider supports it
+- do not pretend certainty
+
+Fields optional:
+- language_detection_confidence
+- language_detection_source: provider / user_default / device_locale / unknown
+
+SECTION 4 — Translation pipeline
+
+Flow:
+
+1. Sender sends message.
+2. Backend verifies sender can message recipient/thread.
+3. Backend saves original message.
+4. Backend determines recipient preferred language.
+5. Backend determines original/source language.
+6. If source language == target language:
+   - create translation status skipped
+   - recipient sees original
+7. If different:
+   - send original_body to translation provider
+   - save translated_body
+   - recipient sees translated body by default
+8. UI allows “Show original.”
+9. Sender sees their original message unless they choose to view translation.
+
+Important:
+Message must not appear in a recipient inbox if permission fails.
+Translation must not bypass message requests.
+
+SECTION 5 — Translation provider abstraction
+
+Create provider interface:
+
+TranslationProvider:
+- providerName
+- detectLanguage(text)
+- translateText(text, sourceLanguage, targetLanguage)
+
+Provider-ready design:
+- OpenAI
+- Google Translate
+- DeepL
+- Azure Translator
+- mock/dev provider
+
+Do not hardwire one provider throughout the app.
+Use an adapter layer.
+
+TranslationProviderResult:
+- translatedText
+- sourceLanguage
+- targetLanguage
+- confidence optional
+- provider
+- rawStatus
+- error optional
+
+Environment/config:
+- TRANSLATION_PROVIDER
+- TRANSLATION_API_KEY if needed
+- TRANSLATION_ENABLED
+- TRANSLATION_TIMEOUT_MS
+
+Security:
+- never expose provider API key to frontend
+- provider calls happen server-side
+- log errors safely without storing secrets
+
+SECTION 6 — Privacy and safety
+
+Translation must respect privacy.
+
+Rules:
+- do not translate blocked messages
+- do not translate messages to unauthorized recipients
+- do not expose messages to external provider unless translation is enabled
+- if using external provider, document that message text is sent to translation provider
+- if user disables auto-translation, show original only
+- do not translate deleted messages
+- do not translate private thread messages for non-members
+- do not leak message content in logs
+
+Logs should include:
+- message_id
+- translation status
+- source/target language
+- provider
+- error code
+
+Logs should not include:
+- full message body
+- secrets
+- auth tokens
+- service-role key
+
+SECTION 7 — UI behavior in chat thread
+
+Each message bubble should choose display text:
+
+For recipient:
+- if translation exists and auto_translate on:
+  - show translated_body
+  - show small label: “Translated from Spanish”
+  - provide “Show original”
+- if translation skipped:
+  - show original
+- if translation failed:
+  - show original
+  - show small label: “Translation unavailable”
+  - optional retry button if owner/recipient
+
+For sender:
+- show original by default
+- optionally show “View translation” if translated for recipient
+
+Message bubble labels:
+- “Translated”
+- “Show original”
+- “Show translation”
+- “Translation unavailable”
+- “Original language: Spanish”
+
+Do not clutter every message too heavily.
+Use subtle labels.
+
+SECTION 8 — Inbox/thread previews
+
+Inbox preview should show recipient-facing text.
+
+For recipient:
+- preview should show translated text if available
+- if translation pending, show original or “Translating…”
+- if failed, show original
+
+For sender:
+- preview should show original text they sent
+
+SECTION 9 — Message requests and translation
+
+If a message request includes a preview message:
+- save original preview
+- translate preview for recipient if permitted
+- recipient sees translated preview if available
+- “Show original” available after opening request if supported
+
+Important:
+Do not translate message requests that are blocked or not delivered.
+
+SECTION 10 — Editing messages
+
+If sender edits a message:
+- update original_body
+- update edited_at
+- invalidate old translations
+- regenerate translations for recipients
+- show edited label
+
+Translation status after edit:
+- pending
+- translated
+- failed
+- skipped
+
+Rules:
+- do not keep stale translation after original changes
+- preserve edit audit if existing product supports it
+
+SECTION 11 — Deleting messages
+
+If sender deletes message:
+- hide original and translation
+- show deleted placeholder if product supports it
+- do not keep translation visible
+- do not translate deleted messages
+
+SECTION 12 — Group/trip chat readiness
+
+If threads can have multiple recipients later:
+- create one translation per recipient language
+- avoid duplicate provider calls for same target language where possible
+- cache by message_id + target_language if safe
+- do not expose one user’s preferences to others
+
+For now:
+- direct messages first
+- group/trip readiness in schema if easy
+
+SECTION 13 — Caching and cost control
+
+Add safeguards:
+- max message length for translation
+- timeout
+- retry limit
+- provider error handling
+- deduplicate same text/source/target if safe
+- do not repeatedly translate unchanged messages
+- background retry optional
+
+Suggested:
+- max translation chars: 5,000 or configurable
+- timeout: 8–15 seconds
+- retries: 1–2
+
+If translation times out:
+- deliver original
+- mark translation failed/pending retry
+- allow retry later
+
+SECTION 14 — Backend/API
+
+Suggested endpoints:
+- GET /api/me/language-settings
+- PATCH /api/me/language-settings
+- POST /api/messages/:messageId/translate/retry
+- GET /api/threads/:threadId/messages should return display-ready message fields for current user
+
+Message response should include:
+- id
+- sender_id
+- display_body
+- original_body only if user is allowed to view original
+- display_language
+- original_language
+- translated: true/false
+- translation_status
+- translation_label
+- can_show_original
+- created_at
+- edited_at
+
+Do not return other recipients’ translation preferences.
+
+SECTION 15 — Tests
+
+Permission/privacy tests:
+1. Unauthorized message is not saved or translated.
+2. Blocked sender cannot trigger translation.
+3. Non-thread member cannot read original or translated body.
+4. Translation does not expose messages to unauthorized users.
+5. Deleted messages do not show translation.
+6. Logs do not include full message body.
+7. Provider API key is not exposed to frontend.
+
+Language tests:
+8. Spanish to English translates for English recipient.
+9. English to Spanish translates for Spanish recipient.
+10. Same-language message skips translation.
+11. Unknown language falls back safely.
+12. Short ambiguous message does not crash.
+13. User with auto_translate off sees original only.
+14. User can show original.
+
+Pipeline tests:
+15. Message saves original_body.
+16. Translation row created per recipient.
+17. Translation failure still delivers original.
+18. Translation timeout does not block message delivery.
+19. Edited message invalidates old translation.
+20. Edited message regenerates translation.
+21. Deleted message hides translation.
+
+UI tests:
+22. Recipient sees translated message by default.
+23. Recipient can tap Show original.
+24. Sender sees original by default.
+25. Inbox preview uses recipient-facing translation.
+26. Translation failed label appears.
+27. Translation pending state appears cleanly.
+28. Mobile message bubble does not overflow.
+29. Long translated text wraps correctly.
+
+Message request tests:
+30. Message request preview translates for recipient.
+31. Declined/blocked request does not create active translated thread.
+32. Accepted request shows translated first message if needed.
+
+SECTION 16 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- message permission tests
+- message request tests
+- translation provider adapter tests
+- message translation pipeline tests
+- chat UI tests
+- inbox preview tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- English user messages Spanish user
+- Spanish user sees Spanish
+- Spanish user can show original English
+- Spanish user messages English user
+- English user sees English
+- English user can show original Spanish
+- same-language message skips translation
+- translation provider failure delivers original
+- edited message retranslates
+- deleted message hides translation
+- message request preview translates
+- blocked user cannot trigger translation
+
+SECTION 17 — Acceptance criteria
+
+This task is complete when:
+1. Users have language settings.
+2. Messages preserve original text.
+3. Messages translate to recipient preferred language.
+4. Recipient sees translated text by default when languages differ.
+5. Recipient can show original.
+6. Same-language messages skip translation.
+7. Translation failure does not block delivery.
+8. Unauthorized/blocked messages do not translate.
+9. Message request previews support translation.
+10. Inbox previews use recipient-facing text.
+11. Translation provider is server-side only.
+12. Mobile chat layout remains clean.
+13. Tests pass.
+
+Hard boundaries:
+- Do not overwrite original messages.
+- Do not translate unauthorized messages.
+- Do not bypass messaging permission resolver.
+- Do not expose provider API keys.
+- Do not expose service-role key.
+- Do not log full message bodies.
+- Do not leak messages to non-thread members.
+- Do not break message requests.
+- Do not break Request Inbox.
+- Do not break Passport/Profile.

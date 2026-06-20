@@ -223,4 +223,76 @@ router.get("/users/:userId", async (req, res) => {
   });
 });
 
+/* ===========================================================================
+ * GET /users/by-handle/:handle  — look up a public profile by handle
+ * ===========================================================================
+ * Same response shape as GET /users/:userId. Handle lookup is case-insensitive.
+ * Used by the profile page which routes by handle, not UUID.
+ */
+router.get("/users/by-handle/:handle", async (req, res) => {
+  const handle = req.params.handle?.toLowerCase().trim();
+  if (!handle) { sendError(res, "invalid_payload", "handle is required"); return; }
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+
+  const { getServiceClient } = await import("../lib/supabase");
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  let callerId: string | null = null;
+  if (token) {
+    const { data } = await sc.auth.getUser(token);
+    callerId = data?.user?.id ?? null;
+  }
+
+  const profileRes = await sc
+    .from("profiles")
+    .select(PUBLIC_PASSPORT_FIELDS)
+    .ilike("handle", handle)
+    .maybeSingle();
+
+  if (profileRes.error || !profileRes.data) {
+    sendError(res, "not_found", "User not found");
+    return;
+  }
+
+  const target = (profileRes.data as any).id;
+
+  const [followersRes, followingRes] = await Promise.all([
+    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
+    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
+  ]);
+
+  let isFollowing = false;
+  if (callerId && callerId !== target) {
+    const { data: edge } = await sc
+      .from("user_follows").select("follower_id")
+      .eq("follower_id", callerId).eq("following_id", target).maybeSingle();
+    isFollowing = Boolean(edge);
+  }
+
+  const p = profileRes.data as any;
+  res.status(200).json({
+    id: p.id,
+    handle: p.handle,
+    name: p.name,
+    avatarUrl: p.avatar_url ?? null,
+    bio: p.bio ?? null,
+    homeCity: p.home_city ?? null,
+    homeCountry: p.home_country ?? null,
+    currentCity: p.current_city ?? null,
+    travelStyle: p.travel_style ?? null,
+    interests: p.interests ?? [],
+    verified: p.verified ?? false,
+    openToMeet: p.open_to_meet ?? false,
+    isPrivate: p.is_private ?? false,
+    memberSince: p.created_at,
+    followersCount: followersRes.count ?? 0,
+    followingCount: followingRes.count ?? 0,
+    isFollowing,
+    isOwnProfile: callerId === target,
+  });
+});
+
 export default router;

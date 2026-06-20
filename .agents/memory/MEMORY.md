@@ -1,3 +1,4 @@
 - [Posts backend apply](posts-backend-apply.md) — vitest/supertest blocked by firewall; use node:test shim + tsx symlinks; inject fake client via http.ts test slot instead of vi.doMock
 - [pnpm firewall blocks](pnpm-firewall.md) — Replit package firewall (403) blocks tarballs not in content store even if in lockfile; workaround: symlink from node_modules/.pnpm virtual store
 - [Follow backend API shape](follow-backend-shape.md) — all follow/profile endpoint shapes; GET /api/users/:userId is the single Passport-load call
+- [Friend requests + circle/trip bridges](friends-backend-shape.md) — privacy constraints, endpoint catalog, normalized pair, migration pattern

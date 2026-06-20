@@ -1,0 +1,375 @@
+Next task: Build Notifications + Request Inbox for Travel Buddy.
+
+Goal:
+Create one clean inbox where users can manage:
+- friend requests
+- trusted circle invites
+- trip invites
+- follow-related notifications if needed
+- post/passport interaction notifications later
+
+Core product rule:
+Requests and invites should not be scattered across the app.
+Users need one place to review, accept, decline, cancel, and understand pending social/travel access requests.
+
+This inbox should support future notification types, but Phase 1 should focus on:
+- friend requests
+- circle invites
+- trip invites
+
+SECTION 1 — Notification/request center model
+
+Create a unified Request Inbox UI.
+
+Request types:
+- friend_request
+- circle_invite
+- trip_invite
+
+Optional later:
+- follow
+- post_like
+- comment
+- postcard_reaction
+- passport_report_status
+- trip_join_request
+- message_request
+
+Each inbox item should show:
+- requester/inviter avatar
+- requester/inviter display name
+- @username
+- request type
+- target name if applicable
+  - circle name
+  - trip name
+- message/summary
+- created time
+- status
+- action buttons
+
+Statuses:
+- pending
+- accepted
+- declined
+- cancelled
+- expired
+
+SECTION 2 — UI location
+
+Add Request Inbox entry point in:
+- main notifications icon if one exists
+- Profile/Passport settings if no notification icon exists
+- mobile menu/bottom-nav accessible area if appropriate
+
+Suggested label:
+“Requests”
+
+Badge:
+- show count of pending requests
+- no badge if count is zero
+- count should include friend requests + circle invites + trip invites
+
+Mobile:
+- request inbox opens as full screen or modal screen
+- action buttons easy to tap
+- no horizontal overflow
+
+Desktop:
+- can be a dropdown, modal, or page depending on existing layout
+
+SECTION 3 — Friend request inbox behavior
+
+Incoming friend request item:
+- “@user wants to be friends”
+- Accept
+- Decline
+
+Outgoing friend request item:
+- “Friend request sent to @user”
+- Cancel
+
+On Accept:
+- create friendship
+- request status becomes accepted
+- UI updates to Friends
+
+On Decline:
+- request status becomes declined
+- no friendship created
+
+On Cancel:
+- request status becomes cancelled
+- no friendship created
+
+Security:
+- only recipient can accept/decline
+- only requester can cancel
+- friendship does not create circle_memberships
+- friendship does not create trip_members
+- friendship does not grant live-map access
+
+SECTION 4 — Circle invite inbox behavior
+
+Circle invite item:
+- “@user invited you to their trusted circle”
+- Accept
+- Decline
+
+On Accept:
+- create circle_memberships row using existing trusted circle rules
+- status becomes accepted
+
+On Decline:
+- no circle_memberships created
+- status becomes declined
+
+Security:
+- only recipient can accept/decline
+- no membership until accepted
+- do not expose other circle members unless rules allow
+- circle membership may unlock whatever existing circle privacy/live-map rules already define, but only after explicit acceptance
+
+SECTION 5 — Trip invite inbox behavior
+
+Trip invite item:
+- “@user invited you to [Trip Name]”
+- Accept
+- Decline
+
+On Accept:
+- create trip membership using existing trip member rules
+- status becomes accepted
+
+On Decline:
+- no trip membership created
+- status becomes declined
+
+Security:
+- only recipient can accept/decline
+- no trip_members row until accepted
+- do not expose private trip details before acceptance beyond safe invite preview
+- do not leak trip members to non-members
+
+Safe invite preview:
+- trip name
+- city/country if public/safe
+- date range if safe
+- inviter name
+
+SECTION 6 — Backend/API
+
+Use existing friend/circle/trip request tables if created.
+If not, add unified notification view over existing request tables.
+
+Recommended endpoint:
+- GET /api/me/requests
+- GET /api/me/requests/count
+- POST /api/requests/:type/:id/accept
+- POST /api/requests/:type/:id/decline
+- POST /api/requests/:type/:id/cancel
+
+Or use type-specific endpoints if already created:
+- friend request endpoints
+- circle invite endpoints
+- trip invite endpoints
+
+Important:
+Do not duplicate business logic.
+The unified inbox can call existing accept/decline handlers internally.
+
+Server must:
+- resolve user from auth token
+- return only requests involving current user
+- prevent accepting someone else’s request
+- prevent cancelling someone else’s outgoing request
+- never expose service-role key
+- never expose private trip/circle data beyond safe preview
+
+SECTION 7 — Notification badge
+
+Add pending count.
+
+Count includes:
+- incoming pending friend requests
+- incoming pending circle invites
+- incoming pending trip invites
+
+Optional:
+- outgoing pending requests can show in inbox, but should not count as “needs action” unless desired
+
+Badge should update when:
+- request received
+- request accepted
+- request declined
+- request cancelled
+- user refreshes
+
+SECTION 8 — Request item states
+
+Pending incoming:
+- Accept
+- Decline
+
+Pending outgoing:
+- Cancel
+
+Accepted:
+- show “Accepted”
+- no action buttons
+
+Declined:
+- show “Declined”
+- no action buttons
+
+Cancelled:
+- show “Cancelled”
+- no action buttons
+
+Expired:
+- show “Expired”
+- no action buttons
+
+SECTION 9 — Empty/loading/error states
+
+Empty state:
+“No requests right now.”
+
+Loading:
+- skeleton request rows
+
+Error:
+- “Couldn’t load requests”
+- Retry button
+
+No broken/null text:
+- no undefined
+- no NaN
+- no raw IDs unless in debug/admin
+
+SECTION 10 — Privacy rules
+
+Request inbox must not leak:
+- exact GPS
+- private posts
+- private Passport content
+- private trip details before acceptance
+- trip member list before acceptance
+- circle member list before acceptance
+- live location
+- service-role data
+
+Friend request:
+- social only
+- no sensitive access
+
+Circle invite:
+- sensitive access only after accepted circle membership
+
+Trip invite:
+- trip access only after accepted trip membership
+
+SECTION 11 — Tests
+
+Backend tests:
+1. User sees only their incoming friend requests.
+2. User sees only their outgoing friend requests.
+3. User cannot see unrelated requests.
+4. Recipient can accept friend request.
+5. Non-recipient cannot accept friend request.
+6. Requester can cancel outgoing request.
+7. Non-requester cannot cancel outgoing request.
+8. Accepted friend request creates friendship only.
+9. Accepted friend request does not create circle_memberships.
+10. Accepted friend request does not create trip_members.
+11. User sees incoming circle invite.
+12. Accepting circle invite creates circle_memberships.
+13. Declining circle invite creates no membership.
+14. Non-recipient cannot accept circle invite.
+15. User sees incoming trip invite.
+16. Accepting trip invite creates trip_members.
+17. Declining trip invite creates no trip membership.
+18. Non-recipient cannot accept trip invite.
+19. Pending count includes incoming pending requests.
+20. Pending count updates after accept/decline/cancel.
+
+Privacy tests:
+21. Request inbox does not expose exact GPS.
+22. Request inbox does not expose private posts.
+23. Trip invite preview does not expose private trip member list.
+24. Circle invite preview does not expose circle member list.
+25. No service-role/internal fields returned.
+
+UI tests:
+26. Requests entry point is visible.
+27. Pending badge displays correct count.
+28. Empty state works.
+29. Loading skeleton works.
+30. Error retry works.
+31. Friend request accept works.
+32. Friend request decline works.
+33. Outgoing friend request cancel works.
+34. Circle invite accept/decline works if implemented.
+35. Trip invite accept/decline works if implemented.
+36. Mobile has no horizontal overflow.
+37. Desktop request UI works.
+
+SECTION 12 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- request inbox API tests
+- friend request tests
+- circle invite tests
+- trip invite tests
+- privacy/RLS tests
+- notification badge tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A sends friend request to User B
+- User B sees request in inbox
+- User B accepts
+- count updates
+- friendship exists
+- no circle/trip membership created
+- User A invites User B to circle
+- User B sees circle invite
+- membership appears only after accept
+- User A invites User B to trip
+- User B sees trip invite
+- trip membership appears only after accept
+- unrelated User C cannot see/accept requests
+
+SECTION 13 — Acceptance criteria
+
+This task is complete when:
+1. User has one request inbox.
+2. Friend requests appear and can be accepted/declined/cancelled.
+3. Circle invites appear and can be accepted/declined if circle bridge exists.
+4. Trip invites appear and can be accepted/declined if trip invite bridge exists.
+5. Pending badge count works.
+6. Empty/loading/error states work.
+7. Request actions are protected server-side.
+8. No private/trip/circle/live-location data leaks.
+9. Mobile UI is clean.
+10. Desktop UI still works.
+11. Tests pass.
+
+Hard boundaries:
+- Do not grant circle access from friendship.
+- Do not grant trip access from friendship.
+- Do not create circle_memberships until circle invite accepted.
+- Do not create trip_members until trip invite accepted.
+- Do not expose exact GPS.
+- Do not expose private posts/passports.
+- Do not expose trip member lists before acceptance.
+- Do not expose circle member lists before acceptance.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Follow UI.
+- Do not break Passport.
+- Do not break Pulse.

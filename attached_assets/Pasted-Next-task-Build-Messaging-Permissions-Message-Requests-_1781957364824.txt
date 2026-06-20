@@ -1,0 +1,411 @@
+Next task: Build Messaging Permissions + Message Requests for Travel Buddy.
+
+Goal:
+Create a safe messaging permission system that controls who can message whom, where message requests land, and how messages connect to friends/follows/trips/circles without creating privacy leaks.
+
+Core product rule:
+Messaging is its own permission layer.
+Follow does not automatically grant messaging access unless product setting allows it.
+Friendship can make messaging easier, but it should still respect user privacy settings.
+Trip/circle membership can allow messaging only if explicitly supported by that context.
+
+Relationship model:
+- Follow = public discovery
+- Friend = mutual social connection
+- Circle = trusted privacy/live-map access
+- Trip member = trip-specific travel access
+- Messaging permission = communication access
+
+Hard rule:
+Do not let messaging unlock:
+- private posts
+- private Passport
+- trip_only posts
+- live location
+- exact GPS
+- circle access
+- trip access
+
+SECTION 1 — Messaging privacy settings
+
+Add user messaging settings.
+
+Suggested fields:
+profiles or user_settings:
+- message_privacy: everyone / followers / following / friends / trip_members / no_one
+- allow_message_requests boolean
+- allow_trip_member_messages boolean
+- allow_circle_member_messages boolean
+- message_language_preference if translation system exists later
+- updated_at
+
+Default recommended:
+- message_privacy = friends
+- allow_message_requests = true
+- allow_trip_member_messages = true
+- allow_circle_member_messages = true
+
+Reason:
+This keeps users safe while still allowing travel coordination.
+
+SECTION 2 — Message permission resolver
+
+Create a shared backend resolver:
+
+canMessage(senderId, recipientId)
+
+Inputs:
+- sender
+- recipient
+- follow relationship
+- friendship status
+- trip membership overlap
+- circle membership if relevant
+- block status if blocking exists
+- recipient messaging privacy settings
+- existing accepted message thread if any
+
+Output:
+MessagePermissionVerdict:
+- allowed: true/false
+- requires_request: true/false
+- reason
+- relationship_context:
+  - friend
+  - follower
+  - following
+  - shared_trip
+  - shared_circle
+  - public_request
+  - blocked
+  - disabled
+- safe_message
+
+Rules:
+- blocked users cannot message
+- user cannot message themselves
+- if recipient has message_privacy=no_one, block unless existing allowed system rule says otherwise
+- if message_privacy=friends, friends can message directly
+- if not allowed directly and allow_message_requests=true, create message request instead of direct inbox delivery
+- if allow_message_requests=false, block
+- shared trip members can message if allow_trip_member_messages=true
+- shared circle members can message if allow_circle_member_messages=true
+
+SECTION 3 — Message request model
+
+Create message request layer.
+
+Suggested table:
+message_requests:
+- id
+- sender_id
+- recipient_id
+- status: pending / accepted / declined / blocked / cancelled
+- preview_text
+- created_at
+- responded_at
+- updated_at
+
+Constraints:
+- sender_id != recipient_id
+- prevent duplicate pending requests
+- only sender can cancel own request
+- only recipient can accept/decline
+- request does not create friendship
+- request does not create follow
+- request does not create circle/trip membership
+
+When accepted:
+- create or unlock message thread
+- status accepted
+- future messages can go to inbox unless recipient changes settings/block
+
+When declined:
+- no thread access
+- optionally prevent duplicate request for cooldown period
+
+SECTION 4 — Message thread access
+
+Create or update message thread permission rules.
+
+Message threads should only be accessible to participants.
+
+Thread model if needed:
+message_threads:
+- id
+- created_at
+- updated_at
+- last_message_at
+- status
+
+message_thread_members:
+- thread_id
+- user_id
+- role
+- joined_at
+- muted_at nullable
+- archived_at nullable
+
+messages:
+- id
+- thread_id
+- sender_id
+- body
+- translated_body_json optional later
+- original_language optional later
+- created_at
+- edited_at nullable
+- deleted_at nullable
+
+Rules:
+- only thread members can read messages
+- only sender can edit/delete own message if supported
+- deleted message should render safely
+- no exact GPS/private data included unless user intentionally sends it
+
+SECTION 5 — Request Inbox integration
+
+Message requests should appear in the unified Request Inbox.
+
+Request type:
+- message_request
+
+Inbox item:
+“@user wants to message you”
+
+Actions:
+- Accept
+- Decline
+- Block if blocking exists
+
+On accept:
+- unlock/create thread
+- allow sender and recipient to message
+
+On decline:
+- no thread access
+- request marked declined
+
+Pending count:
+- include incoming pending message requests
+
+SECTION 6 — Messaging UI behavior
+
+When User A tries to message User B:
+
+If direct messaging allowed:
+- open chat thread
+
+If message request required:
+- show composer for first request message
+- submit creates message_request
+- show “Message request sent”
+
+If messaging blocked:
+- show clear message:
+“This user isn’t accepting messages right now.”
+
+If blocked:
+- do not allow message
+- do not reveal excessive block details if privacy-sensitive
+
+Public profile/Passport:
+- show Message button only when appropriate
+- if message requires request, button can say “Message” but flow creates request
+- owner does not see Message button on own profile
+
+SECTION 7 — Trip and circle messaging
+
+Shared trip:
+- trip members can message each other if allow_trip_member_messages=true
+- do not expose full trip details outside accepted membership
+- if removed from trip, future messaging depends on thread state/settings
+
+Shared circle:
+- circle members can message if allow_circle_member_messages=true
+- circle access must already be accepted
+- circle membership is not created by messaging
+
+Important:
+Messaging a user does not invite them to a trip or circle.
+Trip/circle invite remains separate.
+
+SECTION 8 — Follow/friend behavior
+
+Follow:
+- does not automatically allow direct messaging unless recipient setting allows followers/everyone
+- can allow message request if enabled
+
+Friend:
+- can allow direct messaging if message_privacy=friends
+- friendship does not grant private Passport/live location/trip/circle access
+
+SECTION 9 — Blocking compatibility
+
+If blocking exists:
+- blocked users cannot send message requests
+- blocked users cannot send messages
+- blocked users cannot see message button
+- existing threads can be hidden/locked after block
+- block should cancel pending message requests if product chooses
+
+If blocking does not exist:
+- leave clean TODO
+- do not fake block behavior
+
+SECTION 10 — Translation-ready foundation
+
+Prepare for later auto-translation feature without building full translation now unless already scoped.
+
+Add optional fields:
+- sender_original_language
+- recipient_language
+- translated_body
+- translation_provider
+- translation_status
+- translation_error
+
+Hard rule for later:
+- preserve original message
+- show translated message to recipient based on language preference
+- allow “show original”
+- do not translate before moderation/privacy checks
+- do not expose messages to external provider without privacy decision
+
+For now:
+- keep schema/provider-ready fields optional
+- do not block messaging on translation
+
+SECTION 11 — Backend/API
+
+Suggested endpoints:
+- GET /api/me/message-settings
+- PATCH /api/me/message-settings
+- GET /api/users/:userId/message-permission
+- POST /api/users/:userId/message-request
+- POST /api/message-requests/:requestId/accept
+- POST /api/message-requests/:requestId/decline
+- POST /api/message-requests/:requestId/cancel
+- GET /api/me/message-requests
+- GET /api/me/threads
+- GET /api/threads/:threadId/messages
+- POST /api/threads/:threadId/messages
+- POST /api/users/:userId/messages if direct create/open is supported
+
+Security:
+- resolve current user from auth token
+- never trust client sender_id
+- user cannot read threads they are not a member of
+- user cannot accept another user’s message request
+- user cannot create message request from someone else
+- service-role key never exposed
+
+SECTION 12 — Tests
+
+Permission tests:
+1. User cannot message self.
+2. Blocked user cannot message if blocking exists.
+3. friends privacy allows friends to message directly.
+4. non-friend requires message request if allowed.
+5. non-friend blocked if allow_message_requests=false.
+6. shared trip member can message if setting enabled.
+7. shared circle member can message if setting enabled.
+8. follow alone does not grant direct messaging unless setting allows it.
+
+Message request tests:
+9. User can send message request.
+10. Duplicate pending request blocked/idempotent.
+11. Recipient can accept request.
+12. Non-recipient cannot accept request.
+13. Recipient can decline request.
+14. Sender can cancel request.
+15. Accepted request creates/unlocks thread.
+16. Declined request does not create thread.
+17. Message request appears in Request Inbox.
+18. Pending request count updates.
+
+Thread tests:
+19. Thread members can read messages.
+20. Non-members cannot read messages.
+21. Sender can send message to allowed thread.
+22. Non-member cannot send to thread.
+23. Deleted message renders safely if delete supported.
+
+Privacy tests:
+24. Messaging does not expose private Passport.
+25. Messaging does not expose private posts.
+26. Messaging does not expose trip_only posts.
+27. Messaging does not expose live location.
+28. Messaging does not expose exact GPS.
+29. Messaging does not create circle_memberships.
+30. Messaging does not create trip_members.
+31. Messaging does not expose service-role/internal fields.
+
+UI tests:
+32. Message button appears on public profile when appropriate.
+33. Owner does not see Message button on own profile.
+34. Direct message opens chat when allowed.
+35. Message request flow shows sent state.
+36. Blocked/disabled messaging shows clean message.
+37. Request Inbox shows message request.
+38. Accept opens/unlocks thread.
+39. Decline hides/updates request.
+40. Mobile layout has no horizontal overflow.
+
+SECTION 13 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- message permission tests
+- message request API tests
+- thread access tests
+- Request Inbox tests
+- privacy/RLS tests
+- Passport/Profile render tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A tries to message User B as non-friend
+- message request created
+- User B sees request in inbox
+- User B accepts
+- thread opens
+- User A and B can message
+- User C cannot read thread
+- User A follows User B but does not gain private access
+- User A becomes friends with User B and direct messaging works if settings allow
+- shared trip/circle messaging follows settings
+- private/trip/live/GPS data remains hidden
+
+SECTION 14 — Acceptance criteria
+
+This task is complete when:
+1. Messaging permission resolver exists.
+2. Users have message privacy settings.
+3. Message requests work.
+4. Message requests appear in Request Inbox.
+5. Accepted request unlocks/creates a thread.
+6. Thread access is protected.
+7. Message button works on Passport/Profile.
+8. Follow alone does not grant sensitive access.
+9. Friend/trip/circle messaging respects settings.
+10. No private/trip/live/GPS data leaks.
+11. Mobile UI is clean.
+12. Tests pass.
+
+Hard boundaries:
+- Do not let messaging grant circle access.
+- Do not let messaging grant trip access.
+- Do not expose exact GPS.
+- Do not expose private/trip_only posts.
+- Do not expose private Passport content.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Follow UI.
+- Do not break Friend Requests.
+- Do not break Request Inbox.
+- Do not break Passport.
+- Do not build full translation pipeline yet unless explicitly scoped.
