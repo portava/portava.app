@@ -69,8 +69,11 @@ export default function Pulse() {
   const noFits = fits.length === 0;
 
   // Merge real posts (prepended) with mock feed, then filter.
+  // Only posts with at least one media URL appear on the Pulse Wall.
   const realItems = useMemo<PulseFeedItem[]>(
-    () => (realFeed.data ?? []).map(postRowToFeedItem),
+    () => (realFeed.data ?? [])
+      .filter((p) => p.mediaUrls.length > 0)
+      .map(postRowToFeedItem),
     [realFeed.data],
   );
   const mockFeed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
@@ -78,7 +81,7 @@ export default function Pulse() {
     // When filtering by Posts, show only real + mock posts. Otherwise prepend real posts.
     const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
-      : realItems.filter(() => false); // real posts have type='post'; hide when other filters active
+      : realItems.filter(() => false);
     return [...filteredReal, ...mockFeed];
   }, [realItems, mockFeed, active]);
 

@@ -32,8 +32,8 @@ export default function Create() {
   const { create, submitting } = usePostActions();
 
   const busy = submitting || uploading;
-  // Media is required; caption is optional (but nice to have)
-  const canShare = media !== null && !busy;
+  // Either a caption or media (or both) is required to post
+  const canShare = (caption.trim().length > 0 || media !== null) && !busy;
 
   async function pickMedia() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -58,28 +58,33 @@ export default function Create() {
   }
 
   async function onShare() {
-    if (!canShare || !media) return;
+    if (!canShare) return;
     setError(null);
 
-    // 1. Upload media
-    setUploading(true);
-    const uploadResult = await uploadPostMedia(media.uri, media.mimeType);
-    setUploading(false);
+    let mediaUrls: string[] = [];
 
-    if (!uploadResult.ok) {
-      const msgs: Record<string, string> = {
-        upload_failed: 'Could not upload your photo. Try again.',
-        network_unreachable: 'Network unavailable. Check your connection.',
-        unauthenticated: 'Please sign in to post.',
-        config_error: 'Posting is not available right now.',
-      };
-      setError(msgs[uploadResult.errorKind ?? ''] ?? uploadResult.message ?? 'Upload failed.');
-      return;
+    // 1. Upload media if selected
+    if (media) {
+      setUploading(true);
+      const uploadResult = await uploadPostMedia(media.uri, media.mimeType);
+      setUploading(false);
+
+      if (!uploadResult.ok) {
+        const msgs: Record<string, string> = {
+          upload_failed: 'Could not upload your photo. Try again.',
+          network_unreachable: 'Network unavailable. Check your connection.',
+          unauthenticated: 'Please sign in to post.',
+          config_error: 'Posting is not available right now.',
+        };
+        setError(msgs[uploadResult.errorKind ?? ''] ?? uploadResult.message ?? 'Upload failed.');
+        return;
+      }
+      mediaUrls = [uploadResult.data!];
     }
 
-    // 2. Create post with the uploaded URL
+    // 2. Create post (media optional — text-only posts are valid)
     const content = caption.trim() ? `[${cat}] ${caption.trim()}` : `[${cat}]`;
-    const res = await create({ content, mediaUrls: [uploadResult.data!], visibility: vis });
+    const res = await create({ content, mediaUrls, visibility: vis });
 
     if (res.ok) {
       router.back();
@@ -130,7 +135,7 @@ export default function Create() {
           <Pressable style={styles.mediaPicker} onPress={pickMedia}>
             <ImageIcon size={32} color={color.mute} />
             <Text style={styles.mediaLabel}>Add a photo or video</Text>
-            <Text style={styles.mediaHint}>Required — tap to choose from your library</Text>
+            <Text style={styles.mediaHint}>Optional — posts with media appear on the Pulse Wall</Text>
           </Pressable>
         )}
 
