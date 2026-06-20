@@ -176,14 +176,14 @@ export default function Notifications() {
   }
 
   // ── Incoming tab ────────────────────────────────────────────────────────────
+  // Shows ALL incoming items regardless of status so history is visible.
+  // Action buttons only appear on pending/invited items.
 
   function renderIncoming() {
     const msgItems = msgReqs.data
-      .filter((m: any) => m.status === 'pending')
       .map((m: any) => ({ id: m.requestId as string, type: 'message_request', item: m }));
 
     const socialItems = requests.incoming
-      .filter((r) => r.status === 'pending' || r.status === 'invited')
       .map((r) => ({ id: r.id, type: r.type as string, item: r as InboxItem }));
 
     const all = [...msgItems, ...socialItems];
@@ -198,6 +198,8 @@ export default function Notifications() {
 
     return all.map(({ id, type, item }) => {
       const actor = type === 'message_request' ? (item as any).sender : (item as InboxItem).actor;
+      const status = type === 'message_request' ? (item as any).status : (item as InboxItem).status;
+      const isPending = status === 'pending' || status === 'invited';
       const busy = actioning === id;
       const createdAt = (item as any).createdAt ?? '';
 
@@ -215,16 +217,22 @@ export default function Notifications() {
             {type === 'message_request' && (item as any).previewText ? (
               <Text style={styles.preview} numberOfLines={2}>"{(item as any).previewText}"</Text>
             ) : null}
-            <ActionRow>
-              <AcceptBtn busy={busy} onPress={() => {
-                if (type === 'message_request') doAction(id, () => msgReqs.accept(id), true);
-                else doAction(id, () => acceptRequest((item as InboxItem).type, id));
-              }} />
-              <DeclineBtn busy={busy} onPress={() => {
-                if (type === 'message_request') doAction(id, () => msgReqs.decline(id), true);
-                else doAction(id, () => declineRequest((item as InboxItem).type, id));
-              }} />
-            </ActionRow>
+            {isPending ? (
+              <ActionRow>
+                <AcceptBtn busy={busy} onPress={() => {
+                  if (type === 'message_request') doAction(id, () => msgReqs.accept(id), true);
+                  else doAction(id, () => acceptRequest((item as InboxItem).type, id));
+                }} />
+                <DeclineBtn busy={busy} onPress={() => {
+                  if (type === 'message_request') doAction(id, () => msgReqs.decline(id), true);
+                  else doAction(id, () => declineRequest((item as InboxItem).type, id));
+                }} />
+              </ActionRow>
+            ) : (
+              <View style={{ marginTop: 2 }}>
+                <StatusChip status={status} />
+              </View>
+            )}
           </View>
         </View>
       );
@@ -254,10 +262,15 @@ export default function Notifications() {
             <ActorMeta handle={item.actor?.handle} createdAt={item.createdAt} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 }}>
               <StatusChip status={item.status} />
-              {/* Cancel only available for pending friend requests */}
+              {/* Cancel available for all pending outgoing types */}
               {isPending && item.type === 'friend_request' && (
                 <DeclineBtn label="Cancel" busy={busy} onPress={() =>
                   doAction(item.id, () => cancelRequest('friend_request', item.id))
+                } />
+              )}
+              {isPending && item.type === 'circle_invite' && (
+                <DeclineBtn label="Cancel" busy={busy} onPress={() =>
+                  doAction(item.id, () => cancelRequest('circle_invite', item.id))
                 } />
               )}
               {/* Owner cancels a trip invite: compound id = tripId|inviteeId */}

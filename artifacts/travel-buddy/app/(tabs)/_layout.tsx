@@ -126,6 +126,7 @@ export default function TabLayout() {
           title: 'Pulse',
           tabBarIcon: ({ color: c }) => <Activity size={22} color={c} />,
         }}
+        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="discovery"
@@ -133,6 +134,7 @@ export default function TabLayout() {
           title: 'Explore',
           tabBarIcon: ({ color: c }) => <Compass size={22} color={c} />,
         }}
+        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="create-tab"
@@ -148,6 +150,7 @@ export default function TabLayout() {
           title: 'Trips',
           tabBarIcon: ({ color: c }) => <Map size={22} color={c} />,
         }}
+        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="passport"
@@ -164,6 +167,7 @@ export default function TabLayout() {
             </View>
           ),
         }}
+        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
     </Tabs>

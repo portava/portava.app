@@ -498,6 +498,33 @@ describe("POST /me/requests/circle_invite/:id/accept", () => {
   });
 });
 
+// ── POST /me/requests/circle_invite/:id/cancel ───────────────────────────────
+
+describe("POST /me/requests/circle_invite/:id/cancel", () => {
+  it("owner cancels their outgoing invite → status becomes cancelled", async () => {
+    const state = baseState();
+    state.circle_invites.push({ id: CI_ID, owner_id: ALICE_ID, recipient_id: BOB_ID, status: "pending", created_at: T1 });
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/circle_invite/${CI_ID}/cancel`, "alice-tok");
+      assert.equal(r.status, 200);
+      assert.equal(r.body.status, "cancelled");
+      assert.equal(state.circle_invites[0].status, "cancelled");
+    } finally { await srv.close(); }
+  });
+
+  it("recipient cannot cancel a circle invite they received (403)", async () => {
+    const state = baseState();
+    state.circle_invites.push({ id: CI_ID, owner_id: BOB_ID, recipient_id: ALICE_ID, status: "pending", created_at: T1 });
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/circle_invite/${CI_ID}/cancel`, "alice-tok");
+      assert.equal(r.status, 403);
+      assert.equal(state.circle_invites[0].status, "pending");
+    } finally { await srv.close(); }
+  });
+});
+
 // ── POST /me/requests/circle_invite/:id/decline ──────────────────────────────
 
 describe("POST /me/requests/circle_invite/:id/decline", () => {

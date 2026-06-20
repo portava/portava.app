@@ -131,11 +131,11 @@ export async function declineRequest(type: RequestType, id: string): Promise<Req
 /**
  * Cancel an outgoing request.
  * - friend_request: id = request UUID (requester cancels)
+ * - circle_invite:  id = invite UUID (owner cancels their outgoing invite)
  * - trip_invite:    id = trip UUID, requires inviteeId in body (owner cancels a specific invite)
- * - circle_invite:  no cancel endpoint — owners cannot cancel circle invites
  */
 export async function cancelRequest(
-  type: Extract<RequestType, 'friend_request' | 'trip_invite'>,
+  type: RequestType,
   id: string,
   opts?: { inviteeId?: string },
 ): Promise<RequestResult> {

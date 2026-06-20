@@ -297,6 +297,29 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
 });
 
 /* =============================================================================
+ * POST /me/requests/circle_invite/:id/cancel
+ * Only the owner (sender) may cancel a pending invite.
+ * =============================================================================
+ */
+router.post("/me/requests/circle_invite/:id/cancel", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid invite id"); return; }
+
+  const { data: inv } = await sc.from("circle_invites")
+    .select("id, owner_id, status").eq("id", id).maybeSingle();
+  if (!inv) { sendError(res, "not_found", "Circle invite not found"); return; }
+  if (inv.status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${inv.status}`); return; }
+  if (inv.owner_id !== user.id) { sendError(res, "forbidden", "Only the invite owner may cancel this invite"); return; }
+
+  const now = new Date().toISOString();
+  await sc.from("circle_invites").update({ status: "cancelled", updated_at: now }).eq("id", id);
+  res.status(200).json({ status: "cancelled" });
+});
+
+/* =============================================================================
  * POST /me/requests/circle_invite/:id/decline
  * Only the recipient may decline.
  * =============================================================================
