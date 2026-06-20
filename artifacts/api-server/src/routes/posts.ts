@@ -11,6 +11,7 @@ import {
   listPostsQuerySchema,
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
+import { upsertCityStamp } from "../lib/stampHelper";
 import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
@@ -196,6 +197,20 @@ router.post("/posts", async (req, res) => {
       req.log.error({ err: pc.error }, "Postcard auto-create failed (post still created)");
     } else {
       postcard = pc.data;
+
+      // GPS-verified city stamp: earned only when stamp_eligible=true AND a
+      // city name is present. Best-effort — stamp failure must not affect post.
+      if (verdict.stampEligible && locationCity) {
+        const sc = getServiceClient();
+        if (sc) {
+          await upsertCityStamp(sc, {
+            userId: user.id,
+            locationCity,
+            locationCountry: locationCountry ?? null,
+            postcardId: postcard.id,
+          }, req.log);
+        }
+      }
     }
   }
 

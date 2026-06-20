@@ -1,0 +1,555 @@
+Next task: Build Availability + Meetup Planning for Travel Buddy.
+
+Goal:
+Allow users to share when they are free, coordinate meetups from trip/circle chat, and add accepted meetups into a trip plan.
+
+Core product rule:
+Availability should help people coordinate, but it must not expose sensitive location, live location, private schedules, or trip access without permission.
+
+Relationship model:
+- Follow = public discovery
+- Friend = mutual social connection
+- Circle = trusted privacy/live-map access
+- Trip member = trip-specific access
+- Availability = user-controlled time-sharing
+- Meetup = planned event/invite
+
+Hard rule:
+Availability does not grant:
+- trip membership
+- circle membership
+- live location
+- exact GPS
+- private Passport access
+- private posts
+
+SECTION 1 — Availability types
+
+Support:
+
+1. General weekly availability
+User can set recurring free times.
+
+Example:
+- Monday evening
+- Friday night
+- Saturday afternoon
+
+2. Trip-specific availability
+User can set free time for a specific trip.
+
+Example:
+- “Free in Taipei Friday 8 PM–12 AM”
+- “Available Saturday afternoon during this trip”
+
+3. Quick status availability
+User can mark:
+- Free now
+- Free tonight
+- Free this weekend
+- Busy
+- Open to plans
+
+Do not overbuild calendar-level scheduling yet.
+
+SECTION 2 — Availability privacy
+
+Availability visibility options:
+- private
+- friends
+- trusted circle
+- trip members
+- public limited
+
+Default:
+- private unless user actively shares it
+
+Trip-specific availability:
+- visible only to accepted trip members by default
+
+Circle availability:
+- visible only to accepted circle members
+
+Public limited:
+- can show broad status like “Open to meetups tonight”
+- must not show exact schedule unless user allows it
+
+Rules:
+- exact schedule should not be public by default
+- live location is separate and must not be inferred from availability
+- availability does not expose hotel/address/location
+
+SECTION 3 — Data model
+
+Suggested tables:
+
+user_availability:
+- id
+- user_id
+- scope_type: general / trip / circle / public
+- trip_id nullable
+- circle_id nullable
+- day_of_week nullable
+- date nullable
+- start_time
+- end_time
+- timezone
+- label nullable
+- visibility: private / friends / circle / trip_members / public_limited
+- status: available / busy / tentative
+- created_at
+- updated_at
+
+quick_availability_status:
+- id
+- user_id
+- status: free_now / free_tonight / free_this_weekend / busy / open_to_plans
+- visibility
+- expires_at
+- created_at
+- updated_at
+
+meetups:
+- id
+- creator_id
+- trip_id nullable
+- circle_id nullable
+- title
+- description nullable
+- location_name nullable
+- location_place_id nullable
+- approximate_lat nullable
+- approximate_lng nullable
+- starts_at
+- ends_at nullable
+- timezone
+- visibility: private / trip / circle / invited
+- status: draft / proposed / confirmed / cancelled
+- created_at
+- updated_at
+
+meetup_invites:
+- id
+- meetup_id
+- inviter_id
+- recipient_id
+- status: pending / going / maybe / declined / cancelled
+- created_at
+- responded_at
+
+meetup_time_options:
+- id
+- meetup_id
+- starts_at
+- ends_at
+- timezone
+
+meetup_time_votes:
+- id
+- meetup_id
+- option_id
+- user_id
+- vote: yes / maybe / no
+- created_at
+
+Reuse existing trip plan tables if already built.
+
+SECTION 4 — Weekly availability editor
+
+Build a simple weekly availability editor.
+
+Preferred input:
+Toggle grid:
+- days of week
+- time blocks:
+  - morning
+  - afternoon
+  - evening
+  - night
+
+Example:
+Monday: evening
+Friday: night
+Saturday: afternoon/night
+
+Do not overbuild precise calendar scheduling first.
+
+Later optional:
+- exact start/end time pickers
+- multiple windows per day
+- timezone-aware recurring rules
+
+Mobile:
+- grid must fit 390/430px
+- tap cells to toggle
+- save/cancel
+- clean empty state
+
+SECTION 5 — Trip availability editor
+
+Inside a trip:
+Add “Availability” section.
+
+Trip members can:
+- mark when they are free during trip dates
+- see overlapping availability of accepted trip members
+- propose meetup based on overlap
+
+Trip availability should show:
+- who is free
+- day/time blocks
+- best overlap windows
+- timezone
+- “Create meetup” button
+
+Non-members:
+- cannot see trip availability
+
+Pending invite:
+- cannot see trip availability until accepted
+
+SECTION 6 — Circle availability
+
+Inside trusted circle:
+Members can optionally share availability with circle.
+
+Circle availability should show:
+- quick status
+- recurring availability if shared
+- upcoming free windows if shared
+
+Circle availability must only show to accepted circle members.
+
+SECTION 7 — Meetup creation
+
+Allow users to create a meetup from:
+
+1. Trip chat
+- “Create meetup”
+- title
+- time
+- location
+- invite trip members
+- add to trip plan
+
+2. Circle chat
+- “Create meetup”
+- title
+- time
+- location
+- invite circle members
+
+3. Trip availability overlap
+- create meetup from best matching time window
+
+4. Place/Discovery card later
+- “Plan meetup here”
+
+Meetup fields:
+- title
+- date/time
+- location name
+- description
+- invitees
+- trip/circle link
+- visibility
+
+SECTION 8 — Meetup RSVP
+
+Meetup invite actions:
+- Going
+- Maybe
+- Can’t go
+
+Organizer can see:
+- going count
+- maybe count
+- declined count
+- pending count
+
+Rules:
+- only invited users or trip/circle members can RSVP depending on meetup visibility
+- non-invited public users cannot RSVP to private meetups
+- trip meetups only visible to accepted trip members unless public explicitly later
+
+SECTION 9 — Time poll
+
+Support simple time voting.
+
+Organizer can suggest multiple time options.
+
+Users vote:
+- yes
+- maybe
+- no
+
+UI:
+- show best time
+- show votes
+- allow organizer to confirm final time
+
+Do not overbuild full Doodle-style scheduling in first pass.
+
+SECTION 10 — Add meetup to trip plan
+
+If meetup belongs to a trip:
+- allow “Add to trip plan”
+- create trip plan item using existing trip plan model if available
+- preserve source: meetup_id
+- show in trip itinerary/plan
+
+Rules:
+- only trip owner/admin or allowed members can add to plan
+- do not duplicate plan items
+- if meetup time changes, update linked plan item or show sync warning
+
+SECTION 11 — Chat integration
+
+Trip/circle chat should support meetup cards.
+
+When a meetup is created from chat:
+- post a system card into chat:
+  “Meetup proposed: Dinner in Ximending, Friday 8 PM”
+- users can RSVP from card
+- updates show in chat:
+  “Andre is going”
+  “Time confirmed: Friday 8 PM”
+
+Do not spam chat with every minor change.
+Use compact update cards.
+
+SECTION 12 — Request Inbox integration
+
+Meetup invites should appear in Request Inbox if not already part of trip/circle flow.
+
+Request type:
+- meetup_invite
+
+Actions:
+- Going
+- Maybe
+- Can’t go
+
+Pending badge:
+- include meetup invites if user action is needed
+
+SECTION 13 — Privacy rules
+
+Availability must not expose:
+- exact GPS
+- live location
+- hotel address
+- private trip details to non-members
+- private circle details to non-members
+- private schedule to public
+- hidden profile data
+
+Meetups must not expose:
+- private trip/circle details to outsiders
+- invitee list publicly unless product allows
+- exact GPS unless place is public and user chose it
+
+SECTION 14 — API endpoints
+
+Suggested endpoints:
+
+Availability:
+- GET /api/me/availability
+- PATCH /api/me/availability
+- GET /api/trips/:tripId/availability
+- PATCH /api/trips/:tripId/availability
+- GET /api/circles/:circleId/availability
+- PATCH /api/circles/:circleId/availability
+- PATCH /api/me/quick-availability
+
+Meetups:
+- POST /api/meetups
+- GET /api/meetups/:meetupId
+- PATCH /api/meetups/:meetupId
+- DELETE /api/meetups/:meetupId
+- POST /api/meetups/:meetupId/invites
+- POST /api/meetups/:meetupId/rsvp
+- POST /api/meetups/:meetupId/time-options
+- POST /api/meetups/:meetupId/time-options/:optionId/vote
+- POST /api/meetups/:meetupId/confirm-time
+- POST /api/meetups/:meetupId/add-to-trip-plan
+
+Security:
+- resolve current user from auth token
+- never trust client user_id
+- verify trip/circle membership before reading/writing scoped availability
+- verify meetup visibility before reading
+- verify invite/recipient before RSVP
+- service-role key never exposed
+
+SECTION 15 — UI surfaces
+
+Add UI to:
+
+1. Settings/Profile:
+- general weekly availability
+- quick status
+- visibility controls
+
+2. Trip detail:
+- Availability tab/section
+- overlap view
+- create meetup
+
+3. Trip chat:
+- create meetup button/card
+- RSVP cards
+
+4. Circle page/chat:
+- availability section
+- create meetup
+- RSVP cards
+
+5. Request Inbox:
+- meetup invites
+
+6. Trip plan:
+- meetups added as itinerary items
+
+SECTION 16 — Mobile layout
+
+Mobile requirements:
+- availability grid fits 390px/430px
+- meetup creation sheet is keyboard-safe
+- RSVP cards are easy to tap
+- time poll options readable
+- no horizontal overflow
+- trip chat meetup card compact
+- request inbox item compact
+
+Desktop:
+- keep web layout clean
+- availability can be grid/table
+- meetup modal/card can be wider
+
+SECTION 17 — Empty states
+
+Availability empty:
+“No availability shared yet.”
+
+Trip overlap empty:
+“No matching free time yet.”
+
+Meetups empty:
+“No meetups planned yet.”
+
+Request inbox:
+“No meetup invites right now.”
+
+Chat:
+“Create a meetup to turn this chat into a plan.”
+
+SECTION 18 — Tests
+
+Availability tests:
+1. User can save weekly availability.
+2. User can update weekly availability.
+3. User can set quick availability.
+4. Public cannot see private availability.
+5. Friend/circle/trip visibility works only if relationship allows.
+6. Non-trip member cannot see trip availability.
+7. Pending trip invite cannot see trip availability.
+8. Accepted trip member can see trip availability.
+9. Non-circle member cannot see circle availability.
+10. Accepted circle member can see circle availability.
+
+Meetup tests:
+11. User can create meetup.
+12. Trip member can create trip meetup if allowed.
+13. Non-trip member cannot create trip meetup.
+14. Circle member can create circle meetup if allowed.
+15. Non-circle member cannot create circle meetup.
+16. Invited user can RSVP.
+17. Non-invited user cannot RSVP to private meetup.
+18. Going/maybe/declined counts update.
+19. Time poll voting works.
+20. Confirmed time updates meetup.
+21. Add to trip plan creates plan item.
+22. Add to trip plan does not duplicate item.
+
+Chat/request tests:
+23. Creating meetup from chat posts meetup card.
+24. RSVP from chat card works.
+25. Meetup invite appears in Request Inbox.
+26. RSVP updates Request Inbox count.
+27. Cancelled meetup updates invite state.
+
+Privacy tests:
+28. Availability does not expose exact GPS.
+29. Meetup does not expose live location.
+30. Private trip details hidden from non-members.
+31. Circle details hidden from non-members.
+32. User cannot edit someone else’s availability.
+33. User cannot edit someone else’s meetup unless owner/admin.
+34. service-role/internal fields not returned.
+
+UI tests:
+35. Weekly availability grid renders on mobile.
+36. Trip availability overlap renders.
+37. Meetup creation sheet works.
+38. Time poll UI works.
+39. RSVP buttons work.
+40. Mobile has no horizontal overflow.
+41. Desktop still works.
+
+SECTION 19 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- availability API tests
+- meetup API tests
+- request inbox tests
+- chat card tests
+- trip plan tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A sets general availability
+- User A sets trip availability
+- User B pending trip invite cannot see it
+- User B accepts trip invite and can see trip availability
+- User A creates meetup from trip chat
+- User B sees invite/card
+- User B RSVPs going
+- meetup added to trip plan
+- non-member cannot access meetup/private trip data
+- mobile layout is clean
+
+SECTION 20 — Acceptance criteria
+
+This task is complete when:
+1. Users can set general availability.
+2. Users can set trip-specific availability.
+3. Accepted trip members can view trip availability.
+4. Accepted circle members can view circle availability if implemented.
+5. Users can create meetups from trip/circle chat.
+6. Users can RSVP going/maybe/can’t.
+7. Meetup invites appear in Request Inbox.
+8. Meetup cards appear in chat.
+9. Meetups can be added to trip plan.
+10. Privacy rules prevent schedule/location leaks.
+11. Mobile UI is clean.
+12. Tests pass.
+
+Hard boundaries:
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose hotel/private address.
+- Do not expose trip availability to non-members.
+- Do not expose circle availability to non-members.
+- Do not grant trip/circle membership through availability.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Passport.
+- Do not break Messaging.
+- Do not break Request Inbox.
+- Do not break Trip/Circle Chat.

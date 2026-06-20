@@ -5,7 +5,7 @@
  * do server-side joins/filtering cleanly.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { OwnProfile, PublicProfile, PassportPostcard } from '../types/models';
+import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp } from '../types/models';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -193,6 +193,25 @@ export async function getPublicPostcards(username: string): Promise<ProfileResul
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();
     return { ok: true, data: body.postcards ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}
+
+/* ---------- Own stamps ---------- */
+
+export async function getMyStamps(): Promise<ProfileResult<PassportStamp[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/stamps`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.stamps ?? [] };
   } catch {
     return { ok: true, data: [] };
   }

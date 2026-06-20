@@ -289,4 +289,44 @@ router.patch("/passport/postcards/:id/remove", async (req, res) => {
   res.status(204).send();
 });
 
+/* ===========================================================================
+ * GET /me/stamps  — caller's earned stamps
+ * ===========================================================================
+ * Returns only unlocked stamps (locked=false). Ordered most-recently-earned
+ * first. The response shape matches PassportStamp on the mobile client.
+ */
+router.get("/me/stamps", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { getServiceClient } = await import("../lib/supabase");
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data, error } = await sc
+    .from("stamps")
+    .select("id, kind, label, sublabel, first_earned_at, last_earned_at, check_in_count, locked")
+    .eq("user_id", user.id)
+    .order("first_earned_at", { ascending: false });
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load stamps");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const stamps = (data ?? []).map((r: any) => ({
+    id: r.id,
+    kind: r.kind,
+    label: r.label,
+    sublabel: r.sublabel ?? null,
+    earnedAt: r.first_earned_at,
+    checkInCount: r.check_in_count ?? 1,
+    locked: r.locked ?? false,
+  }));
+
+  res.status(200).json({ stamps });
+});
+
 export default router;

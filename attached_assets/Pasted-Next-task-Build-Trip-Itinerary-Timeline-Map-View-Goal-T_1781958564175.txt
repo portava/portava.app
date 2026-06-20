@@ -1,0 +1,446 @@
+Next task: Build Trip Itinerary Timeline + Map View.
+
+Goal:
+Turn the Trip Plan into a polished itinerary experience with two clear views:
+
+1. Timeline View — day-by-day schedule
+2. Map View — planned places/meetups shown geographically
+
+Core product rule:
+Trip planning should be visual, organized, and mobile-first.
+
+Users should be able to:
+- see their trip plan by day/time
+- see unscheduled items
+- see planned places on a map
+- understand where things are
+- open plan item details
+- move/edit/remove items
+- avoid leaking private/exact location data
+
+SECTION 1 — Trip itinerary views
+
+Inside Trip detail, add itinerary view toggle:
+
+Views:
+- Timeline
+- Map
+
+Default:
+- Timeline
+
+If user last selected Map, optionally remember locally.
+
+Trip tabs/sections can be:
+- Overview
+- Plan
+- Chat
+- Availability
+- Map
+
+If Plan already exists, add Timeline/Map toggle inside Plan.
+
+SECTION 2 — Timeline View
+
+Timeline View should show plan items grouped by:
+
+1. Date/day if trip dates exist
+2. Time if scheduled
+3. Unscheduled section
+
+Layout:
+
+Day header:
+- Day 1
+- date
+- destination/city if available
+
+Scheduled items:
+- time
+- title
+- category
+- location
+- source badge
+- status
+- action menu
+
+Unscheduled:
+- plan items without date/time
+- “Schedule” action
+
+Example:
+Day 1 — Friday, June 20
+8:00 PM — Dinner at West Gate
+10:30 PM — Ximending nightlife
+Unscheduled — Beach club idea
+
+SECTION 3 — Timeline item cards
+
+Each itinerary item card should show:
+- title
+- time
+- category badge
+- location label
+- source type: manual/place/activity/meetup/post/recommendation
+- status: planned/tentative/done/cancelled
+- notes preview
+- owner/member action menu based on permission
+
+Actions:
+- view details
+- edit
+- reschedule
+- move to unscheduled
+- mark done
+- mark tentative
+- remove from plan
+- open source item if linked
+
+SECTION 4 — Time conflict warnings
+
+Add soft conflict detection.
+
+Detect:
+- overlapping scheduled items
+- travel time impossible if distance is large and times too close, if distance data exists
+- duplicate item
+- cancelled meetup still scheduled
+
+Warnings:
+- “Time overlap”
+- “Tight timing”
+- “Duplicate plan item”
+- “Meetup cancelled”
+
+Do not block user unless strict rules already exist.
+Show warning badge.
+
+SECTION 5 — Map View
+
+Map View should show planned items with locations.
+
+Show:
+- pins for plan items
+- selected item bottom sheet/card
+- day filter
+- category filter if easy
+- list/map split if desktop
+
+Map pin should include:
+- title
+- category
+- time if scheduled
+- status
+- source type
+
+Rules:
+- show only plan items with safe public/place coordinates
+- do not expose exact GPS/private user location
+- manual private locations should be approximate or hidden depending visibility
+- no hotel/private address exposed publicly
+- public trip preview must hide private notes and private locations
+
+If no geocoded items:
+Empty state:
+“Add places with locations to see them on the map.”
+
+SECTION 6 — Map privacy
+
+Map must not expose:
+- exact GPS
+- live location
+- hotel/private address
+- private trip notes to non-members
+- member locations
+- private/trip-only content to non-members
+
+For public place cards:
+- okay to show public place coordinates
+
+For manual locations:
+- if private/member-only, show only to accepted trip members
+- public preview should hide or approximate
+
+SECTION 7 — Day and category filters
+
+Add lightweight filters.
+
+Day filter:
+- All
+- Day 1
+- Day 2
+- Day 3
+- Unscheduled
+
+Category filter:
+- All
+- Food
+- Nightlife
+- Beach
+- Activity
+- Meetup
+- Transport
+- Hotel
+- Note
+
+Do not overbuild if layout gets cluttered.
+Mobile can use horizontal chips.
+
+SECTION 8 — Plan item detail sheet
+
+Tapping an item opens detail sheet.
+
+Show:
+- title
+- description/notes
+- category
+- date/time
+- location
+- source link
+- RSVP info if meetup
+- privacy/visibility if owner
+- edit/remove actions if allowed
+
+Mobile:
+- bottom sheet
+Desktop:
+- side panel or modal
+
+SECTION 9 — Route readiness
+
+Do not build full routing yet unless easy.
+
+Prepare for later:
+- order items by time
+- store approximate lat/lng
+- allow future “route this day”
+- allow future walking/driving directions
+
+Leave routing as TODO:
+“Route planning coming later.”
+
+Do not call directions APIs unless already available.
+
+SECTION 10 — Sync with Trip Plan Builder
+
+Timeline and Map must read from same trip_plan_items source.
+
+Rules:
+- adding item appears in Timeline
+- adding place appears on Map if coordinates exist
+- editing time updates Timeline grouping
+- editing location updates Map pin
+- removing item removes from both
+- meetup cancellation updates both
+
+No duplicate state.
+
+SECTION 11 — Permissions
+
+Accepted trip members:
+- can view trip itinerary
+- can interact according to trip permissions
+
+Trip owner/admin:
+- can edit/remove all items
+
+Members:
+- can edit/remove their own items unless settings allow more
+
+Pending invite/non-member:
+- cannot view private trip itinerary
+
+Public preview:
+- only if trip supports public preview
+- must hide private items, private notes, exact GPS, members-only details
+
+SECTION 12 — Mobile layout
+
+Mobile requirements:
+- timeline cards full width
+- day chips horizontally scroll
+- map fits screen
+- selected pin opens bottom sheet
+- no horizontal overflow
+- item action menu easy to tap
+- timeline/map toggle easy to tap
+- works at 390px and 430px
+- tabs do not crowd screen
+
+Desktop:
+- Timeline can be wider
+- Map can show side panel
+- preserve website layout
+
+SECTION 13 — Empty/loading/error states
+
+Timeline empty:
+“No plans yet. Add places, meetups, or activities to build your trip.”
+
+Unscheduled empty:
+“No unscheduled items.”
+
+Map empty:
+“Add places with locations to see them on the map.”
+
+Loading:
+- itinerary skeleton
+- map skeleton
+
+Error:
+“Couldn’t load trip plan. Try again.”
+
+SECTION 14 — Backend/API
+
+Reuse:
+- GET /api/trips/:tripId/plan
+- POST /api/trips/:tripId/plan/items
+- PATCH /api/trips/:tripId/plan/items/:itemId
+- DELETE/PATCH remove
+
+If needed, add:
+- GET /api/trips/:tripId/plan/map
+- GET /api/trips/:tripId/plan/timeline
+
+Preferred:
+Use one plan endpoint that returns enough data for both Timeline and Map.
+
+Response should include:
+- item id
+- title
+- category
+- date/time
+- location label
+- safe coordinates if allowed
+- source type/source id
+- status
+- visibility
+- permission flags for current user
+- warnings/conflicts if computed
+
+Do not return:
+- exact GPS unless safe and authorized
+- private notes to unauthorized viewers
+- internal fields
+- service-role data
+
+SECTION 15 — Conflict computation
+
+Can be frontend or backend.
+
+Compute:
+- duplicate source item
+- overlapping time ranges
+- cancelled linked meetup
+- missing location for map
+- invalid date outside trip range
+
+Return warning flags:
+- time_overlap
+- duplicate
+- cancelled_source
+- missing_location
+- outside_trip_dates
+
+SECTION 16 — Tests
+
+Backend tests:
+1. Accepted trip member can fetch itinerary.
+2. Pending invite cannot fetch itinerary.
+3. Non-member cannot fetch private itinerary.
+4. Owner can see all plan items.
+5. Member sees allowed items.
+6. Public preview hides private items.
+7. Map endpoint does not expose exact GPS.
+8. Private notes hidden from unauthorized users.
+9. Removed items not returned.
+10. Cancelled meetup marks linked item warning.
+11. Duplicate source item warning works.
+12. Time overlap warning works.
+
+UI tests:
+13. Timeline view renders.
+14. Map view renders.
+15. Timeline is default.
+16. Items group by day.
+17. Unscheduled section works.
+18. Day filter works.
+19. Category filter works if implemented.
+20. Item detail sheet opens.
+21. Edit action works if allowed.
+22. Remove action works if allowed.
+23. Map pin opens detail sheet.
+24. Empty timeline state works.
+25. Empty map state works.
+26. Mobile 390/430 has no overflow.
+27. Desktop layout works.
+
+Privacy tests:
+28. Exact GPS not exposed publicly.
+29. Live location not exposed.
+30. Hotel/private address hidden from public preview.
+31. Non-member cannot infer private trip items.
+32. service-role/internal fields not returned.
+
+Regression:
+33. Add-to-Plan still works.
+34. Meetups still sync.
+35. Trip chat still works.
+36. Passport unaffected.
+
+SECTION 17 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- trip plan API tests
+- timeline render tests
+- map render tests
+- permissions/privacy tests
+- meetup sync tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- create trip
+- add scheduled item
+- add unscheduled item
+- add place with location
+- add meetup
+- view Timeline
+- view Map
+- tap map pin
+- edit time
+- remove item
+- verify non-member cannot access
+- verify public preview hides private location
+- verify mobile layout clean
+
+SECTION 18 — Acceptance criteria
+
+This task is complete when:
+1. Trip Plan has Timeline and Map views.
+2. Timeline is default.
+3. Items group by day/time and unscheduled.
+4. Map shows safe plan item pins.
+5. Item detail sheet works.
+6. Edit/remove actions still work.
+7. Time conflict warnings appear.
+8. Privacy rules protect exact/private locations.
+9. Mobile layout is clean.
+10. Desktop layout still works.
+11. Tests pass.
+
+Hard boundaries:
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose hotel/private address publicly.
+- Do not expose private trip details to non-members.
+- Do not let non-members view/edit plans.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Add-to-Plan.
+- Do not break Meetups.
+- Do not break Trip Chat.
+- Do not break Passport.

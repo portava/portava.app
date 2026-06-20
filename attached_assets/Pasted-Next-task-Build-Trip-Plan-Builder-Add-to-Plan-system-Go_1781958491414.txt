@@ -1,0 +1,374 @@
+Next task: Build Trip Plan Builder + Add-to-Plan system.
+
+Goal:
+Create a real trip itinerary/planning system where users can add places, activities, meetups, restaurants, clubs, beaches, events, and notes into an organized trip plan.
+
+Core product rule:
+A trip should have a structured plan, not just scattered saved items.
+
+Users should be able to:
+- add discovery places to a trip plan
+- add meetups to a trip plan
+- add posts/recommendations to a trip plan if appropriate
+- create manual plan items
+- organize plan items by day/time
+- move/reorder items
+- edit/remove plan items
+- see the trip plan on mobile cleanly
+
+SECTION 1 — Trip plan model
+
+Create or reuse trip plan tables.
+
+Suggested table:
+trip_plan_items:
+- id
+- trip_id
+- creator_id
+- source_type: manual / place / activity / meetup / post / recommendation
+- source_id nullable
+- title
+- description nullable
+- location_name nullable
+- location_place_id nullable
+- approximate_lat nullable
+- approximate_lng nullable
+- starts_at nullable
+- ends_at nullable
+- day_date nullable
+- timezone nullable
+- category: food / nightlife / beach / activity / transport / meetup / hotel / note / other
+- status: planned / tentative / done / cancelled
+- visibility: trip / private
+- sort_order
+- created_at
+- updated_at
+- removed_at nullable
+
+Rules:
+- trip_id required
+- creator_id from auth token
+- accepted trip members can create plan items if trip permissions allow
+- non-members cannot see or edit private trip plan
+- pending/declined/removed users cannot access trip plan
+- no exact GPS unless source is public place and safe
+- do not expose private user location
+
+SECTION 2 — Add-to-Plan flow
+
+Add “Add to Plan” action from:
+
+1. Discovery Map place card
+- Add to Plan
+- choose trip
+- choose day/time optional
+- confirm
+
+2. Trip Discovery activity card
+- Add to Plan
+- attach to current trip by default if inside trip
+
+3. Meetup card
+- Add to Trip Plan
+- creates linked plan item
+- avoid duplicate plan item for same meetup
+
+4. Manual trip plan
+- Add custom item
+- title
+- category
+- date/time
+- location optional
+- notes
+
+5. Postcard/post/recommendation later
+- Add to Plan if public/safe and trip member has permission
+
+Preferred first UX:
+Bottom-sheet selector:
+- choose trip
+- choose day optional
+- choose time optional
+- confirm
+- show toast: “Added to trip plan”
+
+If user is already inside a trip:
+- default to active trip
+- still allow changing trip if simple
+
+SECTION 3 — Trip Plan screen
+
+Inside Trip detail page, add Plan tab/section.
+
+Trip Plan should show:
+- day-by-day itinerary
+- unscheduled section
+- plan item cards
+- add item button
+- edit/remove actions
+- category badges
+- time labels
+- location labels
+
+Suggested sections:
+- Today / Day 1 / Day 2 if trip dates exist
+- Unscheduled
+- Completed/Cancelled optional later
+
+Plan item card:
+- title
+- category
+- time
+- location
+- source badge
+- notes/description
+- owner/action menu
+
+Actions:
+- edit
+- move to day/time
+- mark tentative/planned/done
+- remove from plan
+- open source item if linked
+
+SECTION 4 — Reordering and scheduling
+
+Allow simple scheduling first.
+
+Users can:
+- set date
+- set start time
+- set end time optional
+- move item to unscheduled
+- reorder within a day
+
+If drag/drop is hard:
+- use “Move up / Move down” or sort_order update
+- drag/drop can be later
+
+Rules:
+- if no trip dates, show generic plan list + unscheduled
+- if trip has dates, group by day
+- time conflicts should warn but not block unless strict mode later
+
+SECTION 5 — Permissions
+
+Trip owner/admin:
+- can create/edit/remove any trip plan item
+- can reorder plan
+- can confirm tentative items
+
+Accepted trip members:
+- can view trip plan
+- can create items if trip settings allow
+- can edit/remove own items unless owner/admin
+- can RSVP/mark interest if added later
+
+Pending invite:
+- cannot view plan
+
+Non-member:
+- cannot view private trip plan
+
+Public trip:
+- only public-safe plan preview if product supports public trips
+- no private member notes
+- no exact/private location
+
+SECTION 6 — Trip settings for plan permissions
+
+Add if simple:
+trip_settings:
+- members_can_add_plan_items boolean default true
+- members_can_edit_others_items boolean default false
+- plan_visibility: members_only / public_preview
+
+If settings not ready:
+- default to owner/admin full control
+- members can add own items
+- members cannot edit others
+
+SECTION 7 — Meetup integration
+
+When meetup is added to plan:
+- create plan item source_type=meetup
+- source_id=meetup_id
+- sync title/time/location from meetup
+- prevent duplicates for same meetup/trip
+- if meetup time changes, update plan item or show sync warning
+- if meetup cancelled, mark plan item cancelled
+
+Chat meetup card should show:
+- “Added to plan” state
+- “View in Trip Plan”
+
+SECTION 8 — Discovery Map integration
+
+Discovery places/cards should support:
+- Add to Plan
+- Save for later if save exists
+- View details
+- Directions later
+
+When adding from place:
+- source_type=place
+- source_id=place_id
+- copy safe public place info
+- location coordinates approximate/public only
+
+Do not store user live location.
+
+SECTION 9 — Notifications/chat updates
+
+When a plan item is added:
+- optional trip chat system card:
+  “Andre added Dinner at West Gate to the plan.”
+
+When plan item time changes:
+- optional compact update
+
+Do not spam chat.
+Only important changes.
+
+SECTION 10 — UI mobile requirements
+
+Mobile:
+- Plan tab fits 390/430px
+- day chips horizontally scroll if needed
+- item cards full width
+- Add-to-Plan bottom sheet
+- edit item bottom sheet
+- date/time picker mobile-safe
+- no horizontal overflow
+- action menus easy to tap
+
+Desktop:
+- can show calendar/day columns if existing layout supports it
+- preserve website layout
+
+SECTION 11 — Empty states
+
+Trip plan empty:
+“No plans yet. Add places, meetups, or activities to build your trip.”
+
+Unscheduled empty:
+“No unscheduled items.”
+
+Day empty:
+“Nothing planned for this day yet.”
+
+No trip selected in Add-to-Plan:
+“Choose a trip to add this to.”
+
+SECTION 12 — Backend/API
+
+Suggested endpoints:
+- GET /api/trips/:tripId/plan
+- POST /api/trips/:tripId/plan/items
+- PATCH /api/trips/:tripId/plan/items/:itemId
+- DELETE or PATCH /api/trips/:tripId/plan/items/:itemId/remove
+- POST /api/trips/:tripId/plan/items/:itemId/reorder
+- POST /api/meetups/:meetupId/add-to-trip-plan
+- POST /api/places/:placeId/add-to-trip-plan if place API exists
+
+Security:
+- resolve user from auth token
+- verify accepted trip membership before read
+- verify permissions before write
+- never trust client user_id
+- no service-role exposure
+- no private data in public preview
+
+SECTION 13 — Tests
+
+Backend tests:
+1. Accepted trip member can view trip plan.
+2. Pending invite cannot view trip plan.
+3. Non-member cannot view private trip plan.
+4. Trip owner can create plan item.
+5. Accepted member can create own plan item if setting allows.
+6. Non-member cannot create plan item.
+7. Owner can edit/remove any item.
+8. Member can edit/remove own item.
+9. Member cannot edit another member’s item unless setting allows.
+10. Removed trip member loses plan access.
+11. Plan item source_type/source_id saved correctly.
+12. Duplicate meetup plan item is blocked.
+13. Removing plan item does not delete source meetup/place.
+14. Deleting/cancelling meetup updates linked plan item.
+15. Exact GPS/private fields are not exposed.
+
+UI tests:
+16. Trip Plan tab renders.
+17. Empty state renders.
+18. Add custom item works.
+19. Add discovery place to plan works.
+20. Add meetup to plan works.
+21. Plan groups by day.
+22. Unscheduled section works.
+23. Edit item works.
+24. Remove item works.
+25. Reorder/move works if implemented.
+26. Mobile 390/430 has no overflow.
+27. Desktop still works.
+
+Privacy tests:
+28. Non-member cannot see plan.
+29. Pending invite cannot see plan.
+30. Public preview does not show private notes.
+31. Public preview does not expose exact GPS.
+32. service-role/internal fields not returned.
+
+SECTION 14 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- trip plan API tests
+- trip membership permission tests
+- meetup integration tests
+- discovery add-to-plan tests if implemented
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- create trip
+- add manual plan item
+- add discovery place to plan
+- create meetup and add to plan
+- edit day/time
+- remove item
+- non-member cannot view
+- pending invite cannot view
+- accepted member can view
+- mobile layout clean
+
+SECTION 15 — Acceptance criteria
+
+This task is complete when:
+1. Trip detail has a Plan tab/section.
+2. Plan items display grouped by day/unscheduled.
+3. User can add manual item.
+4. User can add meetup to plan.
+5. User can add discovery place/activity to plan if source exists.
+6. User can edit/remove plan items.
+7. Permissions protect trip plan.
+8. Non-members/pending users cannot access private trip plan.
+9. Add-to-Plan bottom sheet works on mobile.
+10. No exact/private location leaks.
+11. Mobile layout is clean.
+12. Tests pass.
+
+Hard boundaries:
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose private trip details to non-members.
+- Do not let non-members edit plans.
+- Do not delete source meetup/place when removing from plan.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break Trip Chat.
+- Do not break Meetups.
+- Do not break Passport.

@@ -29,10 +29,9 @@ const REASON: Record<StampKind, string> = {
 };
 
 export default function StampsPage() {
-  const { postcards } = usePassport();
+  const { stamps } = usePassport();
   const [filter, setFilter] = useState('All');
   const [selected, setSelected] = useState<PassportStamp | null>(null);
-  const stamps: PassportStamp[] = [];
   const active = FILTERS.find((f) => f.label === filter);
   const shown = active?.kind ? stamps.filter((s: PassportStamp) => s.kind === active.kind) : stamps;
 

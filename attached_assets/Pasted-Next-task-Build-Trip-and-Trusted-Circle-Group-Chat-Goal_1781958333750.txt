@@ -1,0 +1,452 @@
+Next task: Build Trip and Trusted Circle Group Chat.
+
+Goal:
+Allow users to chat inside accepted trips and trusted circles, with clear permission rules, safe access, and translation-ready message delivery.
+
+Core product rule:
+Group chat access must come from accepted membership only.
+
+- Trip chat = accepted trip members only
+- Circle chat = accepted circle members only
+- Follow does not grant chat access
+- Friend does not grant trip/circle chat access unless invited and accepted
+- Messaging does not grant trip/circle membership
+- Chat does not expose live location, exact GPS, private posts, or hidden trip/circle data
+
+SECTION 1 — Chat types
+
+Support these thread types:
+
+1. Direct message
+- already handled by messaging permissions/message requests
+
+2. Trip group chat
+- one main chat thread per trip
+- accepted trip members can access
+
+3. Trusted circle group chat
+- one main chat thread per circle
+- accepted circle members can access
+
+Optional later:
+- activity chat
+- plan chat
+- event chat
+- temporary meetup chat
+
+Do not overbuild optional chat types in this pass.
+
+SECTION 2 — Thread model
+
+Use or extend existing message thread model.
+
+message_threads:
+- id
+- thread_type: direct / trip / circle
+- trip_id nullable
+- circle_id nullable
+- title nullable
+- created_at
+- updated_at
+- last_message_at
+- status: active / archived / disabled
+
+message_thread_members:
+- thread_id
+- user_id
+- role: member / owner / admin
+- joined_at
+- left_at nullable
+- muted_at nullable
+- archived_at nullable
+
+messages:
+- id
+- thread_id
+- sender_id
+- original_body
+- original_language
+- created_at
+- edited_at nullable
+- deleted_at nullable
+- metadata_json nullable
+
+message_translations:
+- id
+- message_id
+- recipient_id
+- source_language
+- target_language
+- translated_body
+- provider
+- status: pending / translated / failed / skipped
+- created_at
+- updated_at
+
+Rules:
+- one trip can have one primary group thread
+- one circle can have one primary group thread
+- direct threads remain separate
+- use existing schemas if already created
+
+SECTION 3 — Trip chat permissions
+
+Trip chat access rule:
+Only accepted trip members can read/send messages.
+
+Accepted means:
+- trip_members status = accepted/active
+- invited but not accepted cannot read/send
+- declined/removed/blocked cannot read/send
+
+Trip owner/admin can:
+- view chat
+- moderate if moderation exists
+- remove members through existing trip membership rules
+
+When a user is removed from a trip:
+- remove or disable their thread membership
+- they cannot read new messages
+
+Trip chat must not leak:
+- trip_only posts to non-members
+- trip itinerary details to non-members
+- trip member list to non-members
+- exact GPS
+- live location
+
+SECTION 4 — Circle chat permissions
+
+Circle chat access rule:
+Only accepted circle members can read/send messages.
+
+Accepted means:
+- circle_memberships status = accepted/active
+- pending invite cannot read/send
+- declined/removed/blocked cannot read/send
+
+Circle owner/admin can:
+- view circle chat
+- remove users from circle
+- manage privacy if existing rules support it
+
+When user is removed from circle:
+- remove or disable their thread membership
+- block future access
+
+Circle chat must not leak:
+- live location unless separate live-map rules allow it
+- exact GPS
+- private posts
+- private Passport data
+- circle member list to non-members
+
+SECTION 5 — Auto thread creation
+
+Create group thread automatically when:
+- trip is created, or
+- first accepted member joins, or
+- first user opens trip chat
+
+Use whichever pattern fits existing app.
+
+Rules:
+- do not create duplicate trip threads
+- do not create duplicate circle threads
+- use unique constraint:
+  - unique(thread_type, trip_id) where thread_type='trip'
+  - unique(thread_type, circle_id) where thread_type='circle'
+
+When new member accepts trip/circle invite:
+- add them to the matching group thread
+
+When member is removed:
+- mark left_at or remove thread membership
+
+SECTION 6 — Chat entry points
+
+Trip chat entry:
+- inside Trip detail page
+- button/tab: “Chat”
+- show unread badge if available
+
+Circle chat entry:
+- inside Trusted Circle page/settings
+- button/tab: “Circle Chat”
+- show unread badge if available
+
+Passport/Profile should not automatically expose trip/circle chat.
+
+Request Inbox:
+- accepting trip invite can show CTA: “Open trip chat”
+- accepting circle invite can show CTA: “Open circle chat”
+
+SECTION 7 — Chat UI
+
+Group chat should show:
+- thread title
+- member context
+- message list
+- composer
+- translated message labels if translation system exists
+- loading state
+- empty state
+- error/retry state
+
+Trip chat title:
+- trip name
+- optional destination/date
+
+Circle chat title:
+- circle name or “Trusted Circle”
+
+Message bubble:
+- avatar
+- display name
+- @username optional
+- text
+- translated label if applicable
+- timestamp
+- edited/deleted label if supported
+
+Composer:
+- text input
+- send button
+- disabled if user no longer has access
+- clear error if send fails
+
+SECTION 8 — Translation integration
+
+If message auto-translation exists:
+- group messages should translate per recipient language
+- preserve original_body
+- create translation per recipient or per target language where safe
+- sender sees original by default
+- recipient sees preferred-language translation by default
+- “Show original” available
+
+If translation is not built yet:
+- keep fields compatible
+- do not block chat
+- leave translation as TODO
+
+Rules:
+- do not translate for users who are not thread members
+- do not send unauthorized group messages to provider
+- do not expose one user’s language preference to others
+
+SECTION 9 — Notifications
+
+If notification/request system exists:
+Notify group members when:
+- new group message received
+- they are added to trip/circle chat
+- they are removed from trip/circle chat if product wants
+
+Unread counts:
+- per thread
+- per user
+- reset when opened
+- no unread for sender’s own message
+
+If notifications are not ready:
+- add unread_count foundation or leave TODO
+- do not block chat
+
+SECTION 10 — Group membership sync
+
+Build a sync service:
+
+syncTripChatMembers(tripId)
+- reads accepted trip_members
+- ensures thread exists
+- ensures accepted members are thread_members
+- removes/left_at users no longer accepted
+
+syncCircleChatMembers(circleId)
+- reads accepted circle_memberships
+- ensures thread exists
+- ensures accepted circle members are thread_members
+- removes/left_at users no longer accepted
+
+Run sync when:
+- invite accepted
+- member removed
+- trip/circle deleted/archived
+- owner creates trip/circle
+- manual repair endpoint/admin if needed
+
+SECTION 11 — API endpoints
+
+Suggested endpoints:
+- GET /api/trips/:tripId/chat
+- GET /api/circles/:circleId/chat
+- GET /api/threads/:threadId/messages
+- POST /api/threads/:threadId/messages
+- PATCH /api/messages/:messageId
+- DELETE /api/messages/:messageId
+- GET /api/me/threads
+- POST /api/trips/:tripId/chat/sync if admin/dev only
+- POST /api/circles/:circleId/chat/sync if admin/dev only
+
+Security:
+- user must be authenticated
+- API resolves current user from token
+- user must be thread member to read/send
+- user must be accepted trip/circle member for group chat
+- never trust client-supplied user_id
+- never expose service-role key
+
+SECTION 12 — Privacy rules
+
+Group chat must not expose:
+- exact GPS
+- live location
+- private Passport
+- private posts
+- trip_only posts to non-members
+- trip details to non-members
+- circle member data to non-members
+- service/internal fields
+- message content to non-members
+
+Trip/circle membership grants chat only inside that context.
+Chat does not grant other permissions.
+
+SECTION 13 — Empty states
+
+Trip chat empty:
+“Start the trip conversation.”
+
+Circle chat empty:
+“Start a conversation with your trusted circle.”
+
+No access state:
+“You no longer have access to this chat.”
+
+Pending invite state:
+“Accept the invite to join this chat.”
+
+Error state:
+“Couldn’t load chat. Try again.”
+
+SECTION 14 — Mobile layout
+
+Mobile requirements:
+- chat screen fits 390px and 430px
+- no horizontal overflow
+- composer stays visible above keyboard
+- messages wrap correctly
+- translated text wraps correctly
+- thread title does not overflow
+- action buttons are easy to tap
+- loading/empty/error states clean
+
+Desktop:
+- preserve web layout
+- optional two-column thread list/message view if existing
+- do not break existing messages UI
+
+SECTION 15 — Tests
+
+Backend tests:
+1. Accepted trip member can open trip chat.
+2. Pending trip invite cannot open trip chat.
+3. Declined trip invite cannot open trip chat.
+4. Removed trip member cannot open trip chat.
+5. Non-member cannot open trip chat.
+6. Accepted trip member can send message.
+7. Non-member cannot send message.
+8. Accepted circle member can open circle chat.
+9. Pending circle invite cannot open circle chat.
+10. Removed circle member cannot open circle chat.
+11. Non-member cannot open circle chat.
+12. Accepted circle member can send message.
+13. Non-member cannot send message.
+14. Trip chat thread is not duplicated.
+15. Circle chat thread is not duplicated.
+16. Accepting trip invite adds thread membership.
+17. Removing trip member removes/disables thread membership.
+18. Accepting circle invite adds thread membership.
+19. Removing circle member removes/disables thread membership.
+20. Thread messages are visible only to thread members.
+
+Privacy tests:
+21. Non-member cannot read group messages.
+22. Non-member cannot infer private trip details from chat endpoint.
+23. Non-member cannot infer circle member list from chat endpoint.
+24. Exact GPS is not exposed.
+25. Live location is not exposed.
+26. Private posts are not exposed.
+27. service-role/internal fields are not returned.
+
+Translation tests if translation exists:
+28. Group message preserves original.
+29. Group message translates per recipient language.
+30. Non-member does not get translation row.
+31. Translation failure does not block delivery.
+
+UI tests:
+32. Trip detail shows Chat entry.
+33. Circle page shows Circle Chat entry.
+34. Chat empty state works.
+35. Message send works.
+36. Removed user sees no-access state.
+37. Mobile layout has no horizontal overflow.
+38. Keyboard-safe composer works.
+39. Desktop chat still works.
+
+SECTION 16 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- chat permission tests
+- trip membership tests
+- circle membership tests
+- thread access tests
+- translation integration tests if available
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A creates trip
+- User B pending invite cannot open trip chat
+- User B accepts trip invite
+- User B can open trip chat
+- User B sends message
+- User C non-member cannot access
+- User B removed from trip loses access
+- repeat same flow for circle chat
+- exact GPS/private data not exposed
+- mobile composer works
+
+SECTION 17 — Acceptance criteria
+
+This task is complete when:
+1. Trip group chat works for accepted trip members only.
+2. Circle group chat works for accepted circle members only.
+3. Pending/declined/removed/non-members cannot access.
+4. Group messages are protected by thread membership.
+5. Accepting invite adds chat membership.
+6. Removing member removes/disables chat access.
+7. Translation-ready message shape is preserved.
+8. No private/trip/live/GPS data leaks.
+9. Mobile chat layout is clean.
+10. Desktop layout still works.
+11. Tests pass.
+
+Hard boundaries:
+- Do not grant trip chat access without accepted trip membership.
+- Do not grant circle chat access without accepted circle membership.
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose private Passport/posts.
+- Do not expose trip/circle data to non-members.
+- Do not expose service-role key.
+- Do not weaken RLS/access rules.
+- Do not break direct messaging.
+- Do not break Request Inbox.
+- Do not break Passport.

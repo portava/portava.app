@@ -30,7 +30,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export default function PassportScreen() {
-  const { profile, postcards, loading, error, reload } = usePassport();
+  const { profile, postcards, stamps, loading, error, reload } = usePassport();
   const [tab, setTab] = useState<Tab>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -113,7 +113,7 @@ export default function PassportScreen() {
     <PassportContent
       profile={profile}
       postcards={localPostcards}
-      stamps={mockPassport.stamps}
+      stamps={stamps}
       trips={trips}
       tab={tab}
       setTab={setTab}
