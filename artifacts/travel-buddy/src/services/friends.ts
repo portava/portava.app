@@ -134,6 +134,14 @@ export async function getMyFriends(): Promise<FriendResult<{ friends: FriendRow[
   return apiGet('/api/me/friends');
 }
 
+export async function getTripMembers(tripId: string): Promise<FriendResult<{ members: FriendUser[] }>> {
+  return apiGet(`/api/trips/${encodeURIComponent(tripId)}/members`);
+}
+
+export async function getCircleMembers(circleOwnerId: string): Promise<FriendResult<{ members: FriendUser[] }>> {
+  return apiGet(`/api/circles/${encodeURIComponent(circleOwnerId)}/members`);
+}
+
 // ── Profile lookup ───────────────────────────────────────────────────────────
 
 export async function getProfileByHandle(handle: string): Promise<FriendResult<any>> {

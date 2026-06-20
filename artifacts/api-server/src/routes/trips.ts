@@ -69,6 +69,53 @@ router.post("/trips", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /trips/:tripId/members  — list accepted trip members (for invite picker)
+ * ===========================================================================
+ * Returns profiles of all accepted members (role = owner|member), excluding
+ * the caller. Caller must be an accepted trip member themselves.
+ */
+router.get("/trips/:tripId/members", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const ok = await isAcceptedTripMember(client, tripId, user.id);
+  if (!ok) { sendError(res, "forbidden", "Not a trip member"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows } = await sc
+    .from("trip_members")
+    .select("user_id")
+    .eq("trip_id", tripId)
+    .in("role", ["owner", "member"]);
+
+  const memberIds = (rows ?? [])
+    .map((r: any) => r.user_id as string)
+    .filter((id) => id !== user.id);
+
+  if (memberIds.length === 0) { res.status(200).json({ members: [] }); return; }
+
+  const { data: profiles } = await sc
+    .from("profiles")
+    .select("id, handle, name, avatar_url")
+    .in("id", memberIds);
+
+  res.status(200).json({
+    members: (profiles ?? []).map((p: any) => ({
+      id: p.id as string,
+      handle: p.handle as string,
+      name: p.name as string,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+    })),
+  });
+});
+
+/* ===========================================================================
  * POST /trips/:tripId/invite  — trip owner invites a user
  * ===========================================================================
  * Reuses the existing trip_members table with role='invited'.

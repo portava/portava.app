@@ -322,6 +322,61 @@ router.get("/me/friends", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /circles/:circleOwnerId/members  — list circle members (for invite picker)
+ * ===========================================================================
+ * Returns profiles of all circle members, excluding the caller.
+ * Caller must be the owner or a member of this circle.
+ */
+router.get("/circles/:circleOwnerId/members", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { circleOwnerId } = req.params;
+  if (!isUuid(circleOwnerId)) { sendError(res, "invalid_payload", "Invalid circle owner id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const isOwner = user.id === circleOwnerId;
+  if (!isOwner) {
+    const { data: mem } = await sc
+      .from("circle_memberships")
+      .select("member_id")
+      .eq("owner_id", circleOwnerId)
+      .eq("member_id", user.id)
+      .maybeSingle();
+    if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
+  }
+
+  const { data: memberships } = await sc
+    .from("circle_memberships")
+    .select("member_id")
+    .eq("owner_id", circleOwnerId);
+
+  const memberIds = (memberships ?? [])
+    .map((m: any) => m.member_id as string)
+    .concat(!isOwner ? [circleOwnerId] : [])
+    .filter((id) => id !== user.id);
+
+  if (memberIds.length === 0) { res.status(200).json({ members: [] }); return; }
+
+  const { data: profiles } = await sc
+    .from("profiles")
+    .select("id, handle, name, avatar_url")
+    .in("id", memberIds);
+
+  res.status(200).json({
+    members: (profiles ?? []).map((p: any) => ({
+      id: p.id as string,
+      handle: p.handle as string,
+      name: p.name as string,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+    })),
+  });
+});
+
+/* ===========================================================================
  * GET /users/:userId/friend-status
  * ===========================================================================
  * Returns: none | outgoing_pending | incoming_pending | friends | self
