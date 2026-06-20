@@ -195,6 +195,63 @@ const ReorderSchema = z.object({
   sortOrder: z.number().int(),
 });
 
+// ── Conflict detection helper ─────────────────────────────────────────────────
+
+function computeWarnings(
+  items: any[],
+  tripStartDate: string | null | undefined,
+  tripEndDate: string | null | undefined,
+): Map<string, string[]> {
+  const warnMap = new Map<string, string[]>();
+  for (const item of items) warnMap.set(item.id, []);
+
+  // 1. Duplicate source_id across active items
+  const sourceCount = new Map<string, number>();
+  for (const item of items) {
+    if (item.source_id) sourceCount.set(item.source_id, (sourceCount.get(item.source_id) ?? 0) + 1);
+  }
+  for (const item of items) {
+    if (item.source_id && (sourceCount.get(item.source_id) ?? 0) > 1) {
+      warnMap.get(item.id)!.push("duplicate");
+    }
+  }
+
+  // 2. Time overlap: items on same day_date with starts_at within 30 min of each other
+  const byDay = new Map<string, any[]>();
+  for (const item of items) {
+    if (item.day_date && item.starts_at) {
+      if (!byDay.has(item.day_date)) byDay.set(item.day_date, []);
+      byDay.get(item.day_date)!.push(item);
+    }
+  }
+  for (const dayItems of byDay.values()) {
+    for (let i = 0; i < dayItems.length; i++) {
+      for (let j = i + 1; j < dayItems.length; j++) {
+        const a = dayItems[i], b = dayItems[j];
+        const diff = Math.abs(new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+        if (diff < 30 * 60 * 1000) {
+          if (!warnMap.get(a.id)!.includes("time_overlap")) warnMap.get(a.id)!.push("time_overlap");
+          if (!warnMap.get(b.id)!.includes("time_overlap")) warnMap.get(b.id)!.push("time_overlap");
+        }
+      }
+    }
+  }
+
+  // 3. Outside trip dates
+  if (tripStartDate && tripEndDate) {
+    const start = new Date(tripStartDate + "T00:00:00Z").getTime();
+    const end   = new Date(tripEndDate   + "T23:59:59Z").getTime();
+    for (const item of items) {
+      if (item.day_date) {
+        const ms = new Date(item.day_date + "T00:00:00Z").getTime();
+        if (ms < start || ms > end) warnMap.get(item.id)!.push("outside_trip_dates");
+      }
+    }
+  }
+
+  return warnMap;
+}
+
 // ── GET /trips/:tripId/plan ───────────────────────────────────────────────────
 
 router.get("/trips/:tripId/plan", async (req, res) => {
@@ -208,6 +265,11 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view the plan"); return; }
 
+  // Fetch trip dates for outside_trip_dates warning (graceful if missing)
+  const { data: trip } = await client.from("trips").select("start_date,end_date").eq("id", tripId).maybeSingle();
+  const tripStartDate = (trip as any)?.start_date ?? null;
+  const tripEndDate   = (trip as any)?.end_date   ?? null;
+
   const { data, error } = await client
     .from("trip_plan_items")
     .select("*")
@@ -219,7 +281,40 @@ router.get("/trips/:tripId/plan", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ items: (data ?? []).map(toCamel) });
+  const rows = data ?? [];
+  const warnMap = computeWarnings(rows, tripStartDate, tripEndDate);
+
+  res.json({ items: rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })) });
+});
+
+// ── GET /trips/:tripId/plan/map — only items with safe public coordinates ──────
+
+router.get("/trips/:tripId/plan/map", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { tripId } = req.params;
+  if (!UUID.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const member = await isAcceptedTripMember(client, tripId, user.id);
+  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view the map"); return; }
+
+  const { data, error } = await client
+    .from("trip_plan_items")
+    .select("*")
+    .eq("trip_id", tripId)
+    .is("removed_at", null)
+    .order("sort_order", { ascending: true });
+
+  if (error) { req.log.error({ err: error }, "get trip plan map"); sendError(res, "db_error", error.message); return; }
+
+  // Only items with safe public coordinates
+  const mapItems = (data ?? [])
+    .filter((row) => !row.location_is_private && row.lat != null && row.lng != null)
+    .map((row) => toCamel(row, {}));
+
+  res.json({ items: mapItems });
 });
 
 // ── POST /trips/:tripId/plan/items ────────────────────────────────────────────

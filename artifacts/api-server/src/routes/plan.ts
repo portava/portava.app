@@ -144,7 +144,9 @@ router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
 
 // ── snake_case → camelCase row mapper ────────────────────────────────────────
 
-function toCamel(row: Record<string, any>) {
+function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnings?: string[] } = {}) {
+  const locationIsPrivate = row.location_is_private ?? true;
+  const exposeCoords = !opts.stripCoords && !locationIsPrivate;
   return {
     id: row.id,
     tripId: row.trip_id,
@@ -161,6 +163,10 @@ function toCamel(row: Record<string, any>) {
     notes: row.notes ?? null,
     sortOrder: row.sort_order,
     visibility: row.visibility,
+    lat: exposeCoords ? (row.lat ?? null) : null,
+    lng: exposeCoords ? (row.lng ?? null) : null,
+    locationIsPrivate,
+    warnings: opts.warnings ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

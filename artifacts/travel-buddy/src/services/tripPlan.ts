@@ -59,6 +59,14 @@ export async function fetchTripPlan(tripId: string): Promise<TripPlanItem[]> {
   return json.items as TripPlanItem[];
 }
 
+export async function fetchTripPlanMap(tripId: string): Promise<TripPlanItem[]> {
+  if (!isSupabaseConfigured) return [];
+  const res = await authedFetch(planUrl(tripId, 'map'));
+  if (!res.ok) throw new Error(`fetchTripPlanMap ${res.status}`);
+  const json = await res.json();
+  return json.items as TripPlanItem[];
+}
+
 export async function createPlanItem(
   tripId: string,
   payload: CreatePlanItemPayload,

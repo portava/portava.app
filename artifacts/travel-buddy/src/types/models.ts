@@ -740,6 +740,11 @@ export type TripPlanSourceType =
   | 'place'
   | 'meetup';
 
+export type PlanItemWarning =
+  | 'time_overlap'
+  | 'duplicate'
+  | 'outside_trip_dates';
+
 export interface TripPlanItem {
   id: ID;
   tripId: ID;
@@ -756,6 +761,13 @@ export interface TripPlanItem {
   notes: string | null;
   sortOrder: number;
   visibility: 'members' | 'public';
+  /** Public-safe latitude. null when locationIsPrivate=true or not set. */
+  lat: number | null;
+  /** Public-safe longitude. null when locationIsPrivate=true or not set. */
+  lng: number | null;
+  locationIsPrivate: boolean;
+  /** Advisory warnings computed server-side. Does not block mutations. */
+  warnings: PlanItemWarning[];
   createdAt: ISODate;
   updatedAt: ISODate;
 }
