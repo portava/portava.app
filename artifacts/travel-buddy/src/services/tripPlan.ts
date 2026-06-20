@@ -35,6 +35,9 @@ export interface CreatePlanItemPayload {
   startsAt?: string;
   endsAt?: string;
   locationName?: string;
+  lat?: number | null;
+  lng?: number | null;
+  locationIsPrivate?: boolean;
   notes?: string;
   sortOrder?: number;
 }
@@ -47,6 +50,9 @@ export interface UpdatePlanItemPayload {
   startsAt?: string | null;
   endsAt?: string | null;
   locationName?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  locationIsPrivate?: boolean;
   notes?: string | null;
   sortOrder?: number;
 }
@@ -105,6 +111,16 @@ export async function removePlanItem(tripId: string, itemId: string): Promise<vo
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message ?? `removePlanItem ${res.status}`);
+  }
+}
+
+export async function deletePlanItem(tripId: string, itemId: string): Promise<void> {
+  const res = await authedFetch(planUrl(tripId, 'items', itemId), {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 204) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message ?? `deletePlanItem ${res.status}`);
   }
 }
 

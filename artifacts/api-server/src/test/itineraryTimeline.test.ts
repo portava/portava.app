@@ -49,11 +49,14 @@ interface Item {
   lat?: number | null; lng?: number | null; location_is_private?: boolean;
 }
 
+interface Meetup { id: string; status: string }
+
 interface State {
   users:           Record<string, { id: string } | null>;
   trips:           Trip[];
   trip_members:    TM[];
   trip_plan_items: Item[];
+  meetups:         Meetup[];
 }
 
 function baseState(): State {
@@ -68,6 +71,7 @@ function baseState(): State {
     ],
     trip_members:    [],
     trip_plan_items: [],
+    meetups:         [],
   };
 }
 
@@ -238,7 +242,14 @@ function makeItem(overrides: Partial<Item> & { id: string }): Item {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("Itinerary timeline + map — 12 scenarios", () => {
+async function deleteReq(port: number, path: string, token?: string) {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "DELETE", headers });
+  return { status: res.status, body: res.status === 204 ? null : await res.json().catch(() => null) };
+}
+
+describe("Itinerary timeline + map — 15 scenarios", () => {
 
   it("1. Non-member gets 403 on GET /plan", async () => {
     const s = withMembers({});
@@ -404,6 +415,60 @@ describe("Itinerary timeline + map — 12 scenarios", () => {
       "bob-tok", { title: "Bob hijacks" });
     await close();
     assert.equal(r.status, 403, "member must not be able to edit another member's item");
+  });
+
+  it("13. missing_location warning: item has location_name but no coordinates", async () => {
+    const s = withMembers({ [ALICE_ID]: "owner" });
+    s.trip_plan_items.push(
+      makeItem({ id: ITEM_ID_A, title: "Eiffel Tower", location_name: "Eiffel Tower, Paris", lat: null, lng: null }),
+      makeItem({ id: ITEM_ID_B, title: "Louvre",       location_name: "Louvre Museum",        lat: 48.860, lng: 2.337, location_is_private: false }),
+    );
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    await close();
+    assert.equal(r.status, 200);
+    const items: any[] = r.body.items;
+    const noCoord = items.find((i: any) => i.title === "Eiffel Tower");
+    const withCoord = items.find((i: any) => i.title === "Louvre");
+    assert.ok(noCoord.warnings.includes("missing_location"),
+      "item with location_name but no lat/lng must have missing_location warning");
+    assert.ok(!withCoord.warnings.includes("missing_location"),
+      "item with coordinates must NOT have missing_location warning");
+  });
+
+  it("14. cancelled_source warning: meetup-sourced item from a cancelled meetup", async () => {
+    const MEETUP_ID = "mmmmmmm0-1111-0000-0000-000000000001";
+    const s = withMembers({ [ALICE_ID]: "owner" });
+    s.meetups.push({ id: MEETUP_ID, status: "cancelled" });
+    s.trip_plan_items.push(
+      makeItem({ id: ITEM_ID_A, title: "Cancelled meetup event",
+                 source_type: "meetup", source_id: MEETUP_ID }),
+      makeItem({ id: ITEM_ID_B, title: "Regular item", source_type: "manual" }),
+    );
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    await close();
+    assert.equal(r.status, 200);
+    const items: any[] = r.body.items;
+    const sourced = items.find((i: any) => i.title === "Cancelled meetup event");
+    const regular = items.find((i: any) => i.title === "Regular item");
+    assert.ok(sourced.warnings.includes("cancelled_source"),
+      "item sourced from cancelled meetup must have cancelled_source warning");
+    assert.ok(!regular.warnings.includes("cancelled_source"),
+      "manual item must NOT have cancelled_source warning");
+  });
+
+  it("15. DELETE /plan/items/:itemId removes item (204)", async () => {
+    const s = withMembers({ [ALICE_ID]: "owner" });
+    s.trip_plan_items.push(
+      makeItem({ id: ITEM_ID_A, title: "To delete", creator_id: ALICE_ID }),
+    );
+    const { port, close } = await startServer(s);
+    const del = await deleteReq(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_A}`, "alice-tok");
+    const plan = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    await close();
+    assert.equal(del.status, 204, "DELETE must return 204");
+    assert.equal(plan.body.items.length, 0, "deleted item must not appear in plan");
   });
 
 });

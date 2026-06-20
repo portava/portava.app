@@ -5,7 +5,7 @@
  * maps are configured.
  */
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../../types/models';
 import { color, space, radius, type as t } from '../../theme/tokens';
@@ -29,6 +29,7 @@ export interface MapViewProps {
   items: TripPlanItem[];
   onItemPress: (item: TripPlanItem) => void;
   selectedDay: string;
+  loading?: boolean;
 }
 
 // ── Pin list card (fallback when item has no coordinates) ─────────────────────
@@ -110,10 +111,18 @@ function CoordMap({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ItineraryMapView({ items, onItemPress, selectedDay }: MapViewProps) {
+export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: MapViewProps) {
   const filtered = selectedDay === 'all' ? items : items.filter((i) => i.dayDate === selectedDay);
   const coordItems = filtered.filter((i) => i.lat != null && i.lng != null);
   const noCoordItems = filtered.filter((i) => i.lat == null || i.lng == null);
+
+  if (loading) {
+    return (
+      <View style={mv.empty}>
+        <ActivityIndicator color={color.signal} />
+      </View>
+    );
+  }
 
   if (filtered.length === 0) {
     return (

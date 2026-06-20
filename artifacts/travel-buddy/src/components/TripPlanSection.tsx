@@ -1,11 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import { Plus, Lock, Map as MapIcon, List } from 'lucide-react-native';
+import { Plus, Lock, Map as MapIcon, List, RotateCcw } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
-import { fetchTripPlan } from '../services/tripPlan';
+import { fetchTripPlan, fetchTripPlanMap } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { AddToPlanSheet } from './AddToPlanSheet';
 import { TimelineView, type DayBucket } from './itinerary/TimelineView';
@@ -188,12 +189,33 @@ export function TripPlanSection({
 }) {
   const [items, setItems] = useState<TripPlanItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mapItems, setMapItems] = useState<TripPlanItem[]>([]);
+  const [mapLoading, setMapLoading] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [activeDay, setActiveDay] = useState<string>('all');
   const [activeCat, setActiveCat] = useState<TripPlanCategory | 'all'>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [detailItem, setDetailItem] = useState<TripPlanItem | null>(null);
+
+  // Persist view mode per-trip
+  useEffect(() => {
+    AsyncStorage.getItem(`tripPlanMode:${tripId}`)
+      .then((v) => { if (v === 'timeline' || v === 'map') setViewMode(v); })
+      .catch(() => {});
+  }, [tripId]);
+
+  const loadMap = useCallback(async () => {
+    setMapLoading(true);
+    try {
+      const data = await fetchTripPlanMap(tripId);
+      setMapItems(data);
+    } catch {
+      // Map is advisory — silently ignore errors
+    } finally {
+      setMapLoading(false);
+    }
+  }, [tripId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,6 +234,12 @@ export function TripPlanSection({
   }, [tripId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const handleViewModeChange = useCallback((m: ViewMode) => {
+    setViewMode(m);
+    AsyncStorage.setItem(`tripPlanMode:${tripId}`, m).catch(() => {});
+    if (m === 'map' && mapItems.length === 0 && !mapLoading) loadMap();
+  }, [tripId, mapItems.length, mapLoading, loadMap]);
 
   const handleAdded = useCallback((item: TripPlanItem) => {
     setItems((prev) => [...prev, item]);
@@ -250,13 +278,18 @@ export function TripPlanSection({
         <Text style={ps.title}>Trip Plan</Text>
         <View style={{ flex: 1 }} />
         {!accessDenied && hasContent && (
-          <ViewToggle mode={viewMode} onChange={setViewMode} />
+          <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
         )}
         {!accessDenied && (
-          <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
-            <Plus size={15} color={color.onInk} />
-            <Text style={ps.addBtnText}>Add</Text>
-          </Pressable>
+          <>
+            <Pressable style={ps.refreshBtn} onPress={load} hitSlop={8}>
+              <RotateCcw size={15} color={color.mute} />
+            </Pressable>
+            <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
+              <Plus size={15} color={color.onInk} />
+              <Text style={ps.addBtnText}>Add</Text>
+            </Pressable>
+          </>
         )}
       </View>
 
@@ -303,9 +336,12 @@ export function TripPlanSection({
 
       {!loading && !accessDenied && hasContent && viewMode === 'map' && (
         <ItineraryMapView
-          items={filteredItems}
+          items={mapItems.length > 0
+            ? mapItems.filter((item) => activeCat === 'all' || item.category === activeCat)
+            : filteredItems.filter((item) => item.lat != null && item.lng != null && !item.locationIsPrivate)}
           onItemPress={setDetailItem}
           selectedDay={activeDay}
+          loading={mapLoading}
         />
       )}
 
@@ -342,6 +378,7 @@ const ps = StyleSheet.create({
   wrap:       { marginTop: space.lg },
   head:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, marginBottom: space.sm, gap: 8 },
   title:      { ...t.title, color: color.ink, fontSize: 20 },
+  refreshBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
   addBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
   addBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
   empty:      { padding: space.lg, alignItems: 'center', gap: 8, paddingVertical: 40 },

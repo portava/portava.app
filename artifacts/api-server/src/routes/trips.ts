@@ -166,29 +166,35 @@ const STATUSES   = ["confirmed","tentative","done","cancelled"] as const;
 const SOURCE_TYPES = ["manual","place","meetup"] as const;
 
 const CreatePlanItemSchema = z.object({
-  title:        z.string().min(1).max(200),
-  category:     z.enum(CATEGORIES).default("activity"),
-  status:       z.enum(STATUSES).default("tentative"),
-  sourceType:   z.enum(SOURCE_TYPES).default("manual"),
-  sourceId:     z.string().optional(),
-  dayDate:      z.string().optional(),
-  startsAt:     z.string().optional(),
-  endsAt:       z.string().optional(),
-  locationName: z.string().max(300).optional(),
-  notes:        z.string().max(1000).optional(),
-  sortOrder:    z.number().int().default(0),
+  title:             z.string().min(1).max(200),
+  category:          z.enum(CATEGORIES).default("activity"),
+  status:            z.enum(STATUSES).default("tentative"),
+  sourceType:        z.enum(SOURCE_TYPES).default("manual"),
+  sourceId:          z.string().optional(),
+  dayDate:           z.string().optional(),
+  startsAt:          z.string().optional(),
+  endsAt:            z.string().optional(),
+  locationName:      z.string().max(300).optional(),
+  lat:               z.number().nullable().optional(),
+  lng:               z.number().nullable().optional(),
+  locationIsPrivate: z.boolean().default(false),
+  notes:             z.string().max(1000).optional(),
+  sortOrder:         z.number().int().default(0),
 });
 
 const UpdatePlanItemSchema = z.object({
-  title:        z.string().min(1).max(200).optional(),
-  category:     z.enum(CATEGORIES).optional(),
-  status:       z.enum(STATUSES).optional(),
-  dayDate:      z.string().nullable().optional(),
-  startsAt:     z.string().nullable().optional(),
-  endsAt:       z.string().nullable().optional(),
-  locationName: z.string().max(300).nullable().optional(),
-  notes:        z.string().max(1000).nullable().optional(),
-  sortOrder:    z.number().int().optional(),
+  title:             z.string().min(1).max(200).optional(),
+  category:          z.enum(CATEGORIES).optional(),
+  status:            z.enum(STATUSES).optional(),
+  dayDate:           z.string().nullable().optional(),
+  startsAt:          z.string().nullable().optional(),
+  endsAt:            z.string().nullable().optional(),
+  locationName:      z.string().max(300).nullable().optional(),
+  lat:               z.number().nullable().optional(),
+  lng:               z.number().nullable().optional(),
+  locationIsPrivate: z.boolean().optional(),
+  notes:             z.string().max(1000).nullable().optional(),
+  sortOrder:         z.number().int().optional(),
 });
 
 const ReorderSchema = z.object({
@@ -201,6 +207,7 @@ function computeWarnings(
   items: any[],
   tripStartDate: string | null | undefined,
   tripEndDate: string | null | undefined,
+  cancelledMeetupIds: Set<string> = new Set(),
 ): Map<string, string[]> {
   const warnMap = new Map<string, string[]>();
   for (const item of items) warnMap.set(item.id, []);
@@ -216,7 +223,7 @@ function computeWarnings(
     }
   }
 
-  // 2. Time overlap: items on same day_date with starts_at within 30 min of each other
+  // 2. Time overlap: items on same day with truly overlapping time windows (not just start proximity)
   const byDay = new Map<string, any[]>();
   for (const item of items) {
     if (item.day_date && item.starts_at) {
@@ -228,8 +235,12 @@ function computeWarnings(
     for (let i = 0; i < dayItems.length; i++) {
       for (let j = i + 1; j < dayItems.length; j++) {
         const a = dayItems[i], b = dayItems[j];
-        const diff = Math.abs(new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
-        if (diff < 30 * 60 * 1000) {
+        const aStart = new Date(a.starts_at).getTime();
+        const bStart = new Date(b.starts_at).getTime();
+        // Default 1-hour duration when ends_at is absent
+        const aEnd = a.ends_at ? new Date(a.ends_at).getTime() : aStart + 3_600_000;
+        const bEnd = b.ends_at ? new Date(b.ends_at).getTime() : bStart + 3_600_000;
+        if (aStart < bEnd && bStart < aEnd) {
           if (!warnMap.get(a.id)!.includes("time_overlap")) warnMap.get(a.id)!.push("time_overlap");
           if (!warnMap.get(b.id)!.includes("time_overlap")) warnMap.get(b.id)!.push("time_overlap");
         }
@@ -246,6 +257,20 @@ function computeWarnings(
         const ms = new Date(item.day_date + "T00:00:00Z").getTime();
         if (ms < start || ms > end) warnMap.get(item.id)!.push("outside_trip_dates");
       }
+    }
+  }
+
+  // 4. Missing location: has a location name but no coordinates (can't appear on map)
+  for (const item of items) {
+    if (item.location_name && (item.lat == null || item.lng == null)) {
+      warnMap.get(item.id)!.push("missing_location");
+    }
+  }
+
+  // 5. Cancelled source: meetup-sourced item from a cancelled meetup
+  for (const item of items) {
+    if (item.source_type === "meetup" && item.source_id && cancelledMeetupIds.has(item.source_id)) {
+      warnMap.get(item.id)!.push("cancelled_source");
     }
   }
 
@@ -282,7 +307,23 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
   const rows = data ?? [];
-  const warnMap = computeWarnings(rows, tripStartDate, tripEndDate);
+
+  // Fetch cancelled meetup IDs for cancelled_source advisory warning
+  const meetupSourceIds = rows
+    .filter((i) => i.source_type === "meetup" && i.source_id)
+    .map((i) => i.source_id as string);
+  const cancelledMeetupIds = new Set<string>();
+  if (meetupSourceIds.length > 0) {
+    const { data: meetups } = await client
+      .from("meetups")
+      .select("id, status")
+      .in("id", meetupSourceIds);
+    for (const m of (meetups ?? [])) {
+      if ((m as any).status === "cancelled") cancelledMeetupIds.add(m.id);
+    }
+  }
+
+  const warnMap = computeWarnings(rows, tripStartDate, tripEndDate, cancelledMeetupIds);
 
   res.json({ items: rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })) });
 });
@@ -350,20 +391,23 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({
-      trip_id:       tripId,
-      creator_id:    user.id,   // always from token
-      title:         b.title,
-      category:      b.category,
-      status:        b.status,
-      source_type:   b.sourceType,
-      source_id:     b.sourceId ?? null,
-      day_date:      b.dayDate ?? null,
-      starts_at:     b.startsAt ?? null,
-      ends_at:       b.endsAt ?? null,
-      location_name: b.locationName ?? null,
-      notes:         b.notes ?? null,
-      sort_order:    b.sortOrder,
-      visibility:    "members",
+      trip_id:             tripId,
+      creator_id:          user.id,   // always from token
+      title:               b.title,
+      category:            b.category,
+      status:              b.status,
+      source_type:         b.sourceType,
+      source_id:           b.sourceId ?? null,
+      day_date:            b.dayDate ?? null,
+      starts_at:           b.startsAt ?? null,
+      ends_at:             b.endsAt ?? null,
+      location_name:       b.locationName ?? null,
+      lat:                 b.lat ?? null,
+      lng:                 b.lng ?? null,
+      location_is_private: b.locationIsPrivate ?? false,
+      notes:               b.notes ?? null,
+      sort_order:          b.sortOrder,
+      visibility:          "members",
     })
     .select("*")
     .single();
@@ -413,15 +457,18 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   }
 
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
-  if (patch.title        !== undefined) dbPatch.title         = patch.title;
-  if (patch.category     !== undefined) dbPatch.category      = patch.category;
-  if (patch.status       !== undefined) dbPatch.status        = patch.status;
-  if (patch.dayDate      !== undefined) dbPatch.day_date      = patch.dayDate;
-  if (patch.startsAt     !== undefined) dbPatch.starts_at     = patch.startsAt;
-  if (patch.endsAt       !== undefined) dbPatch.ends_at       = patch.endsAt;
-  if (patch.locationName !== undefined) dbPatch.location_name = patch.locationName;
-  if (patch.notes        !== undefined) dbPatch.notes         = patch.notes;
-  if (patch.sortOrder    !== undefined) dbPatch.sort_order    = patch.sortOrder;
+  if (patch.title             !== undefined) dbPatch.title               = patch.title;
+  if (patch.category          !== undefined) dbPatch.category            = patch.category;
+  if (patch.status            !== undefined) dbPatch.status              = patch.status;
+  if (patch.dayDate           !== undefined) dbPatch.day_date            = patch.dayDate;
+  if (patch.startsAt          !== undefined) dbPatch.starts_at           = patch.startsAt;
+  if (patch.endsAt            !== undefined) dbPatch.ends_at             = patch.endsAt;
+  if (patch.locationName      !== undefined) dbPatch.location_name       = patch.locationName;
+  if (patch.lat               !== undefined) dbPatch.lat                 = patch.lat;
+  if (patch.lng               !== undefined) dbPatch.lng                 = patch.lng;
+  if (patch.locationIsPrivate !== undefined) dbPatch.location_is_private = patch.locationIsPrivate;
+  if (patch.notes             !== undefined) dbPatch.notes               = patch.notes;
+  if (patch.sortOrder         !== undefined) dbPatch.sort_order          = patch.sortOrder;
 
   const { data: updated, error } = await client
     .from("trip_plan_items")
@@ -477,6 +524,49 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   if (error) { req.log.error({ err: error }, "remove plan item"); sendError(res, "db_error", error.message); return; }
 
   res.json({ status: "removed", itemId });
+});
+
+// ── DELETE /trips/:tripId/plan/items/:itemId — REST soft-delete ───────────────
+
+router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { tripId, itemId } = req.params;
+  if (!UUID.test(tripId) || !UUID.test(itemId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const { data: item } = await client
+    .from("trip_plan_items")
+    .select("creator_id")
+    .eq("id", itemId)
+    .eq("trip_id", tripId)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (!item) { sendError(res, "not_found", "Plan item not found"); return; }
+
+  const { data: membership } = await client
+    .from("trip_members")
+    .select("role")
+    .eq("trip_id", tripId)
+    .eq("user_id", user.id)
+    .in("role", ["owner", "member"])
+    .maybeSingle();
+  if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
+
+  const role = (membership as any)?.role ?? "member";
+  if (role !== "owner" && (item as any).creator_id !== user.id) {
+    sendError(res, "forbidden", "You can only remove your own plan items"); return;
+  }
+
+  const { error } = await client
+    .from("trip_plan_items")
+    .update({ removed_at: new Date().toISOString() })
+    .eq("id", itemId);
+
+  if (error) { req.log.error({ err: error }, "delete plan item"); sendError(res, "db_error", error.message); return; }
+
+  res.status(204).send();
 });
 
 // ── POST /trips/:tripId/plan/items/:itemId/reorder — owner/admin only ─────────
