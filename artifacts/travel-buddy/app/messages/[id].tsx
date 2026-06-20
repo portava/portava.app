@@ -11,15 +11,15 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, MapPin, ArrowRight } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
+import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
@@ -239,79 +239,6 @@ function AddToPlanSheet({
   );
 }
 
-// ── Create Meetup sheet ───────────────────────────────────────────────────────
-
-function CreateMeetupSheet({
-  visible,
-  prefill,
-  onClose,
-  onConfirm,
-}: {
-  visible: boolean;
-  prefill: MeetupPrefill | null;
-  onClose: () => void;
-  onConfirm: (title: string, location: string) => void;
-}) {
-  const [title, setTitle] = useState('');
-  const [location, setLocation] = useState('');
-
-  useEffect(() => {
-    if (prefill) {
-      setTitle(prefill.title);
-      setLocation(prefill.location);
-    }
-  }, [prefill]);
-
-  if (!prefill) return null;
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={sheetStyles.overlay} onPress={onClose} />
-      <View style={sheetStyles.sheet}>
-        <View style={sheetStyles.handle} />
-        <Text style={sheetStyles.title}>Create Meetup</Text>
-
-        <Text style={sheetStyles.sectionLabel}>Title</Text>
-        <TextInput
-          style={sheetStyles.input}
-          value={title}
-          onChangeText={setTitle}
-          placeholder="Meetup title"
-          placeholderTextColor={color.faint}
-        />
-
-        <Text style={sheetStyles.sectionLabel}>Location</Text>
-        <TextInput
-          style={sheetStyles.input}
-          value={location}
-          onChangeText={setLocation}
-          placeholder="Where?"
-          placeholderTextColor={color.faint}
-        />
-
-        {prefill.suggestedTime && (
-          <Text style={sheetStyles.hint}>Suggested time: {prefill.suggestedTime}</Text>
-        )}
-
-        <Pressable
-          style={sheetStyles.confirmBtn}
-          onPress={() => {
-            if (!title.trim()) {
-              Alert.alert('Add a title', 'Please enter a title for the meetup.');
-              return;
-            }
-            onConfirm(title.trim(), location.trim());
-          }}
-        >
-          <Text style={sheetStyles.confirmLabel}>Create Meetup</Text>
-        </Pressable>
-        <Pressable style={sheetStyles.cancelBtn} onPress={onClose}>
-          <Text style={sheetStyles.cancelLabel}>Cancel</Text>
-        </Pressable>
-      </View>
-    </Modal>
-  );
-}
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
@@ -514,16 +441,16 @@ export default function TelegraphThread() {
         </Pressable>
       </View>
 
-      {/* Create Meetup sheet */}
-      <CreateMeetupSheet
-        visible={!!meetupPrefill}
-        prefill={meetupPrefill}
-        onClose={() => setMeetupPrefill(null)}
-        onConfirm={(t, l) => {
-          setMeetupPrefill(null);
-          Alert.alert('Meetup created!', `"${t}" at ${l || 'TBD'}`);
-        }}
-      />
+      {/* Create Meetup sheet — real creation via MeetupCreationSheet */}
+      {meetupPrefill && (
+        <MeetupCreationSheet
+          tripId={meetupPrefill.tripId ?? undefined}
+          initialTitle={meetupPrefill.title}
+          initialLocation={meetupPrefill.location}
+          onDismiss={() => setMeetupPrefill(null)}
+          onCreated={() => setMeetupPrefill(null)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }

@@ -28,12 +28,15 @@ interface Props {
   circleOwnerId?: string;
   onCreated?: (meetup: MeetupSummary) => void;
   onDismiss: () => void;
+  /** Optional prefill from Telegraph suggestion */
+  initialTitle?: string;
+  initialLocation?: string;
 }
 
-export function MeetupCreationSheet({ tripId, circleOwnerId, onCreated, onDismiss }: Props) {
-  const [title, setTitle] = useState('');
+export function MeetupCreationSheet({ tripId, circleOwnerId, onCreated, onDismiss, initialTitle, initialLocation }: Props) {
+  const [title, setTitle] = useState(initialTitle ?? '');
   const [description, setDescription] = useState('');
-  const [locationName, setLocationName] = useState('');
+  const [locationName, setLocationName] = useState(initialLocation ?? '');
   const [approximateDate, setApproximateDate] = useState(''); // YYYY-MM-DD
   const [timeBlock, setTimeBlock] = useState<TimeBlock | null>(null);
   const [saving, setSaving] = useState(false);
