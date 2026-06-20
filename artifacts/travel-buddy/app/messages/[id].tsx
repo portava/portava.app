@@ -20,6 +20,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
+import { supabase } from '../../src/lib/supabase';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
@@ -33,6 +34,10 @@ interface MeetupCardPayload {
   type: 'meetup_card';
   meetupId: string;
   title: string;
+  locationName?: string;
+  timeBlock?: string;
+  approximateDate?: string;
+  plannedByName?: string;
 }
 
 function parseMeetupCard(body: string): MeetupCardPayload | null {
@@ -45,6 +50,7 @@ function parseMeetupCard(body: string): MeetupCardPayload | null {
 }
 
 function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
+  const when = [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
   return (
     <Pressable
       style={[mc.card, mine && mc.cardMine]}
@@ -55,6 +61,19 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         <Text style={mc.label}>Meetup</Text>
       </View>
       <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
+      {payload.locationName ? (
+        <View style={mc.metaRow}>
+          <Text style={mc.meta} numberOfLines={1}>📍 {payload.locationName}</Text>
+        </View>
+      ) : null}
+      {when ? (
+        <View style={mc.metaRow}>
+          <Text style={mc.meta}>🗓 {when}</Text>
+        </View>
+      ) : null}
+      {payload.plannedByName ? (
+        <Text style={mc.plannedBy} numberOfLines={1}>{payload.plannedByName} planned this</Text>
+      ) : null}
       <View style={mc.footer}>
         <Text style={[mc.see, mine && mc.seeMine]}>Tap to RSVP or vote on a time</Text>
         <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.signal} />
@@ -64,14 +83,17 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
 }
 
 const mc = StyleSheet.create({
-  card: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 260 },
+  card: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 280 },
   cardMine: { backgroundColor: color.signal + '22', borderColor: color.signal + '55' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   icon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
   label: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
   title: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   titleMine: { color: color.ink },
-  footer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaRow: { flexDirection: 'row', alignItems: 'center' },
+  meta: { ...t.small, color: color.mute, fontSize: 11 },
+  plannedBy: { ...t.small, color: color.faint, fontSize: 10, fontStyle: 'italic' },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   see: { ...t.small, color: color.signal, fontSize: 11 },
   seeMine: { color: color.signal },
 });
@@ -259,7 +281,35 @@ export default function TelegraphThread() {
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
+  const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
+  const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const listRef = useRef<FlatList>(null);
+
+  // Resolve display name once (for the planned-by label in meetup cards)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const meta = data?.user?.user_metadata as Record<string, unknown> | undefined;
+      const name = (meta?.full_name ?? meta?.name ?? data?.user?.email) as string | undefined;
+      if (name) setPlannedByName(name);
+    });
+  }, []);
+
+  // Permission gate: accepted trip members only (circles + DMs always pass)
+  useEffect(() => {
+    if (threadType === 'direct') { setIsAcceptedMember(true); return; }
+    if (threadType === 'circle') { setIsAcceptedMember(true); return; }
+    if (threadType === 'trip' && contextId && userId) {
+      supabase.from('trip_members')
+        .select('role')
+        .eq('trip_id', contextId)
+        .eq('user_id', userId)
+        .in('role', ['owner', 'member'])
+        .maybeSingle()
+        .then(({ data }) => setIsAcceptedMember(Boolean(data)));
+    } else {
+      setIsAcceptedMember(false);
+    }
+  }, [threadType, contextId, userId]);
 
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
   const defaultShowOriginal = langSettings?.show_original_messages ?? false;
@@ -435,10 +485,12 @@ export default function TelegraphThread() {
       )}
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        {/* Plan meetup button — group chats get context pre-filled, DMs get unscoped */}
-        <Pressable style={styles.planMeetupBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
-          <CalendarClock size={18} color={color.signal} />
-        </Pressable>
+        {/* Plan meetup button — only accepted trip/circle members; DMs always shown unscoped */}
+        {isAcceptedMember && (
+          <Pressable style={styles.planMeetupBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
+            <CalendarClock size={18} color={color.signal} />
+          </Pressable>
+        )}
 
         <TextInput
           style={styles.inputField}
@@ -474,7 +526,15 @@ export default function TelegraphThread() {
           onDismiss={() => setMeetupSheetCtx(null)}
           onCreated={(meetup) => {
             if (id) {
-              send(JSON.stringify({ type: 'meetup_card', meetupId: meetup.id, title: meetup.title }));
+              send(JSON.stringify({
+                type: 'meetup_card',
+                meetupId: meetup.id,
+                title: meetup.title,
+                locationName: meetup.locationName ?? undefined,
+                approximateDate: meetup.approximateDate ?? undefined,
+                timeBlock: meetup.timeBlock ?? undefined,
+                plannedByName,
+              }));
             }
           }}
         />

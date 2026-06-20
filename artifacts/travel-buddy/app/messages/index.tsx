@@ -23,6 +23,8 @@ function navigateToThread(item: ThreadSummary) {
     ? (item.title ?? '')
     : (item.otherMembers[0]?.name ?? '');
   const params = new URLSearchParams({ title, threadType: item.threadType });
+  if (item.tripId) params.set('contextId', item.tripId);
+  else if (item.circleOwnerId) params.set('contextId', item.circleOwnerId);
   router.push(`/messages/${item.id}?${params.toString()}`);
 }
 
