@@ -285,8 +285,39 @@ export default function MeetupScreen() {
           </View>
         ) : null}
 
-        {/* Time poll */}
-        {meetup.timeOptions.length > 0 ? (
+        {/* Time: single proposed → skip voting, show direct RSVP prompt */}
+        {meetup.timeOptions.length === 1 && !meetup.timeOptions[0].confirmed && !isCancelled ? (
+          <View style={s.card}>
+            <Text style={s.sectionTitle}>Proposed Time</Text>
+            <View style={s.optionCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <CalendarClock size={14} color={color.signal} />
+                <Text style={s.optionDate}>{relDate(meetup.timeOptions[0].proposedDate)}</Text>
+                {meetup.timeOptions[0].timeBlock && (
+                  <Text style={s.optionBlock}>
+                    {BLOCK_LABELS[meetup.timeOptions[0].timeBlock] ?? meetup.timeOptions[0].timeBlock}
+                  </Text>
+                )}
+              </View>
+              {meetup.timeOptions[0].label ? <Text style={s.optionLabel}>{meetup.timeOptions[0].label}</Text> : null}
+              <Text style={s.voteHint}>Use the RSVP section above to confirm attendance</Text>
+            </View>
+            {meetup.isCreator && (
+              <Pressable
+                style={[s.confirmBtn, { alignSelf: 'flex-end', marginTop: 4 }]}
+                onPress={() => handleConfirmTime(meetup.timeOptions[0].id)}
+                disabled={!!actioning}
+              >
+                {actioning === `confirm_${meetup.timeOptions[0].id}`
+                  ? <ActivityIndicator size="small" color="#16A34A" />
+                  : <Check size={12} color="#16A34A" />
+                }
+                <Text style={s.confirmBtnText}>Confirm time</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : meetup.timeOptions.length > 0 ? (
+          /* Multiple options (or already confirmed): show full voting poll */
           <View style={s.card}>
             <Text style={s.sectionTitle}>Time Poll</Text>
             {meetup.timeOptions.map((opt) => (
@@ -411,6 +442,7 @@ const s = StyleSheet.create({
   voteBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   confirmBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: '#16A34A', marginLeft: 'auto' },
   confirmBtnText: { ...t.small, color: '#16A34A', fontWeight: '700', fontSize: 11 },
+  voteHint: { ...t.small, color: color.faint, fontSize: 11, marginTop: 4 },
 
   addPlanBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
   addPlanBtnText: { ...t.bodyStrong, color: color.onInk },

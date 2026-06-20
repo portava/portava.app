@@ -646,7 +646,7 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
   const { meetupId } = req.params;
   if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
 
-  const { data: meetup } = await client.from("meetups").select("creator_id, status").eq("id", meetupId).maybeSingle();
+  const { data: meetup } = await client.from("meetups").select("creator_id, status, title, trip_id, circle_owner_id").eq("id", meetupId).maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
   if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can confirm the time"); return; }
   if ((meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Meetup is cancelled"); return; }
@@ -677,6 +677,17 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "confirm time"); sendError(res, "db_error", error.message); return; }
+
+  // Notify invitees via the trip/circle chat thread (best-effort)
+  await postConfirmTimeSystemMessage(
+    client,
+    meetupId,
+    (meetup as any).title as string,
+    (meetup as any).trip_id as string | null,
+    (meetup as any).circle_owner_id as string | null,
+    user.id,
+    startsAt,
+  ).catch(() => {});
 
   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
 });
@@ -799,6 +810,51 @@ async function createMeetupInboxItems(
   // reads pending meetup_invites from GET /api/me/meetup-invites.
   // No separate inbox table row required — the count endpoint is extended.
   void meetupId; void title; void userIds; void creatorId;
+}
+
+async function postConfirmTimeSystemMessage(
+  client: any,
+  meetupId: string,
+  title: string,
+  tripId: string | null,
+  circleOwnerId: string | null,
+  creatorId: string,
+  startsAt: string,
+): Promise<void> {
+  let threadId: string | null = null;
+  if (tripId) {
+    const { data: thread } = await client
+      .from("message_threads")
+      .select("id")
+      .eq("trip_id", tripId)
+      .eq("thread_type", "trip")
+      .maybeSingle();
+    threadId = (thread as any)?.id ?? null;
+  } else if (circleOwnerId) {
+    const { data: thread } = await client
+      .from("message_threads")
+      .select("id")
+      .eq("circle_owner_id", circleOwnerId)
+      .eq("thread_type", "circle")
+      .maybeSingle();
+    threadId = (thread as any)?.id ?? null;
+  }
+  if (!threadId) return;
+
+  const confirmedDate = new Date(startsAt).toLocaleDateString("en-US", {
+    weekday: "short", month: "short", day: "numeric",
+  });
+  const body = JSON.stringify({
+    type: "meetup_confirmed",
+    meetupId,
+    title,
+    startsAt,
+    text: `✅ Time confirmed for "${title}": ${confirmedDate}`,
+  });
+
+  await client
+    .from("messages")
+    .insert({ thread_id: threadId, sender_id: creatorId, body, msg_type: "system", subtype: "meetup" });
 }
 
 async function postMeetupSystemMessage(
