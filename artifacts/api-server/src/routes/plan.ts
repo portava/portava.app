@@ -142,11 +142,27 @@ router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
   res.status(201).json(toCamel(item));
 });
 
+// ── Viewer-based privacy filter ───────────────────────────────────────────────
+
+export function filterPlanItemForViewer(row: Record<string, any>): {
+  lat: number | null;
+  lng: number | null;
+  locationIsPrivate: boolean;
+} {
+  const locationIsPrivate = row.location_is_private ?? true;
+  return {
+    lat: locationIsPrivate ? null : (row.lat ?? null),
+    lng: locationIsPrivate ? null : (row.lng ?? null),
+    locationIsPrivate,
+  };
+}
+
 // ── snake_case → camelCase row mapper ────────────────────────────────────────
 
 function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnings?: string[] } = {}) {
-  const locationIsPrivate = row.location_is_private ?? true;
-  const exposeCoords = !opts.stripCoords && !locationIsPrivate;
+  const coords = opts.stripCoords
+    ? { lat: null, lng: null, locationIsPrivate: row.location_is_private ?? true }
+    : filterPlanItemForViewer(row);
   return {
     id: row.id,
     tripId: row.trip_id,
@@ -163,9 +179,7 @@ function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnin
     notes: row.notes ?? null,
     sortOrder: row.sort_order,
     visibility: row.visibility,
-    lat: exposeCoords ? (row.lat ?? null) : null,
-    lng: exposeCoords ? (row.lng ?? null) : null,
-    locationIsPrivate,
+    ...coords,
     warnings: opts.warnings ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,

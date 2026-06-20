@@ -743,7 +743,9 @@ export type TripPlanSourceType =
 export type PlanItemWarning =
   | 'time_overlap'
   | 'duplicate'
-  | 'outside_trip_dates';
+  | 'outside_trip_dates'
+  | 'missing_location'
+  | 'cancelled_source';
 
 export interface TripPlanItem {
   id: ID;

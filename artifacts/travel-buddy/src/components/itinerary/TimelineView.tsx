@@ -66,6 +66,8 @@ const WARN_SHORT: Record<string, string> = {
   time_overlap:       '⚡ Conflict',
   duplicate:          '🔁 Duplicate',
   outside_trip_dates: '📅 Off-schedule',
+  missing_location:   '📍 No location',
+  cancelled_source:   '🚫 Cancelled',
 };
 
 function WarningBadges({ warnings }: { warnings: string[] }) {

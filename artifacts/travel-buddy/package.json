@@ -7,11 +7,13 @@
     "dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
-    "lucide-react-native": "^0.544.0"
+    "lucide-react-native": "^0.544.0",
+    "react-native-maps": "^1.27.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

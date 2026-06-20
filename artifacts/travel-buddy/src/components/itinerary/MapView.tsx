@@ -1,17 +1,15 @@
 /**
- * MapView — shows plan items with public GPS coordinates on a styled map.
- * react-native-maps is not currently installed; this uses a React Native
- * View-based placeholder that will be replaced with MapView when native
- * maps are configured.
+ * MapView — shows plan items with GPS coordinates on a native map via react-native-maps.
+ * Items without coordinates are shown in a fallback list below the map.
  */
-import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, useWindowDimensions, ActivityIndicator } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import RNMapView, { Marker } from 'react-native-maps';
 import { MapPin, Navigation } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../../types/models';
 import { color, space, radius, type as t } from '../../theme/tokens';
-import type { PlanItemSheetProps } from './PlanItemSheet';
 
-// ── Category colours ──────────────────────────────────────────────────────────
+// ── Category pin colours ──────────────────────────────────────────────────────
 
 const CAT_PIN: Record<TripPlanCategory, string> = {
   accommodation: '#3A7CA5',
@@ -32,14 +30,27 @@ export interface MapViewProps {
   loading?: boolean;
 }
 
-// ── Pin list card (fallback when item has no coordinates) ─────────────────────
+// ── Region helper ─────────────────────────────────────────────────────────────
 
-function PinListCard({
-  item, onPress,
-}: {
-  item: TripPlanItem;
-  onPress: () => void;
-}) {
+function computeRegion(items: TripPlanItem[]) {
+  if (items.length === 0) return null;
+  const lats = items.map((i) => i.lat!);
+  const lngs = items.map((i) => i.lng!);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const latDelta = Math.max((maxLat - minLat) * 1.5, 0.04);
+  const lngDelta = Math.max((maxLng - minLng) * 1.5, 0.04);
+  return {
+    latitude:      (minLat + maxLat) / 2,
+    longitude:     (minLng + maxLng) / 2,
+    latitudeDelta: latDelta,
+    longitudeDelta: lngDelta,
+  };
+}
+
+// ── Pin list card (fallback for items without coordinates) ────────────────────
+
+function PinListCard({ item, onPress }: { item: TripPlanItem; onPress: () => void }) {
   const pinColor = CAT_PIN[item.category] ?? '#888';
   return (
     <Pressable style={pl.card} onPress={onPress}>
@@ -53,59 +64,6 @@ function PinListCard({
         )}
       </View>
     </Pressable>
-  );
-}
-
-// ── Pseudo-map canvas (items with coordinates) ────────────────────────────────
-
-function CoordMap({
-  coordItems, onItemPress,
-}: {
-  coordItems: TripPlanItem[];
-  onItemPress: (item: TripPlanItem) => void;
-}) {
-  const { width } = useWindowDimensions();
-  const canvasW = width - space.lg * 2;
-  const canvasH = 260;
-
-  // Normalize lat/lng to canvas space
-  const lats = coordItems.map((i) => i.lat!);
-  const lngs = coordItems.map((i) => i.lng!);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const latRange = maxLat - minLat || 0.01;
-  const lngRange = maxLng - minLng || 0.01;
-
-  const toCanvas = (lat: number, lng: number) => ({
-    x: ((lng - minLng) / lngRange) * (canvasW - 40) + 20,
-    y: (1 - (lat - minLat) / latRange) * (canvasH - 40) + 20,
-  });
-
-  return (
-    <View style={[cm.canvas, { width: canvasW, height: canvasH }]}>
-      {/* Grid lines */}
-      <View style={cm.gridH1} />
-      <View style={cm.gridH2} />
-      <View style={cm.gridV1} />
-      <View style={cm.gridV2} />
-
-      {coordItems.map((item) => {
-        const { x, y } = toCanvas(item.lat!, item.lng!);
-        const pinColor = CAT_PIN[item.category] ?? '#888';
-        return (
-          <Pressable
-            key={item.id}
-            style={[cm.pin, { left: x - 14, top: y - 28 }]}
-            onPress={() => onItemPress(item)}
-          >
-            <View style={[cm.pinBubble, { backgroundColor: pinColor }]}>
-              <MapPin size={12} color="#fff" />
-            </View>
-            <View style={[cm.pinTip, { borderTopColor: pinColor }]} />
-          </Pressable>
-        );
-      })}
-    </View>
   );
 }
 
@@ -134,14 +92,30 @@ export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: M
     );
   }
 
+  const region = computeRegion(coordItems);
+
   return (
     <ScrollView contentContainerStyle={mv.wrap} showsVerticalScrollIndicator={false}>
-      {coordItems.length > 0 ? (
+      {coordItems.length > 0 && region ? (
         <View style={mv.mapSection}>
           <Text style={mv.sectionLabel}>On the map</Text>
-          <View style={mv.mapCard}>
-            <CoordMap coordItems={coordItems} onItemPress={onItemPress} />
-          </View>
+          <RNMapView
+            style={mv.mapSurface}
+            initialRegion={region}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
+          >
+            {coordItems.map((item) => (
+              <Marker
+                key={item.id}
+                coordinate={{ latitude: item.lat!, longitude: item.lng! }}
+                pinColor={CAT_PIN[item.category] ?? '#888'}
+                title={item.title}
+                description={item.locationName ?? undefined}
+                onPress={() => onItemPress(item)}
+              />
+            ))}
+          </RNMapView>
         </View>
       ) : (
         <View style={mv.noMapBanner}>
@@ -173,22 +147,11 @@ const mv = StyleSheet.create({
   emptyTitle:  { ...t.title, fontSize: 16, color: color.mute },
   emptyBody:   { ...t.body, color: color.faint, textAlign: 'center', maxWidth: 260 },
   mapSection:  { gap: 8 },
+  mapSurface:  { height: 300, borderRadius: radius.lg, overflow: 'hidden' },
   listSection: { gap: 8 },
   sectionLabel:{ ...t.small, color: color.mute, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  mapCard:     { borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#E8F0E8', borderWidth: 1, borderColor: color.haze },
   noMapBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.haze, borderRadius: radius.md, padding: 12 },
   noMapText:   { ...t.small, color: color.mute, flex: 1 },
-});
-
-const cm = StyleSheet.create({
-  canvas:      { backgroundColor: '#EEF3EC', position: 'relative' },
-  gridH1:      { position: 'absolute', top: '33%', left: 0, right: 0, height: 1, backgroundColor: '#D4E0D0' },
-  gridH2:      { position: 'absolute', top: '66%', left: 0, right: 0, height: 1, backgroundColor: '#D4E0D0' },
-  gridV1:      { position: 'absolute', left: '33%', top: 0, bottom: 0, width: 1, backgroundColor: '#D4E0D0' },
-  gridV2:      { position: 'absolute', left: '66%', top: 0, bottom: 0, width: 1, backgroundColor: '#D4E0D0' },
-  pin:         { position: 'absolute', alignItems: 'center', width: 28 },
-  pinBubble:   { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  pinTip:      { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 6, borderLeftColor: 'transparent', borderRightColor: 'transparent', marginTop: -1 },
 });
 
 const pl = StyleSheet.create({

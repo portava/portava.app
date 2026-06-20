@@ -235,19 +235,29 @@ export function TripPlanSection({
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Auto-load map when entering map mode or when mapItems is cleared by a mutation
+  useEffect(() => {
+    if (viewMode === 'map' && mapItems.length === 0 && !mapLoading) {
+      loadMap();
+    }
+  }, [viewMode, mapItems.length, mapLoading, loadMap]);
+
   const handleViewModeChange = useCallback((m: ViewMode) => {
     setViewMode(m);
     AsyncStorage.setItem(`tripPlanMode:${tripId}`, m).catch(() => {});
-    if (m === 'map' && mapItems.length === 0 && !mapLoading) loadMap();
-  }, [tripId, mapItems.length, mapLoading, loadMap]);
+  }, [tripId]);
 
   const handleAdded = useCallback((item: TripPlanItem) => {
     setItems((prev) => [...prev, item]);
+    setMapItems([]);   // invalidate map cache so it refetches on next map view
     setAddSheetOpen(false);
   }, []);
 
   const handleItemsChanged = useCallback(
-    (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => setItems(updater),
+    (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => {
+      setItems(updater);
+      setMapItems([]);  // invalidate map cache
+    },
     [],
   );
 
@@ -354,10 +364,12 @@ export function TripPlanSection({
         onClose={() => setDetailItem(null)}
         onUpdated={(updated) => {
           setItems((prev) => prev.map((i) => i.id === updated.id ? updated : i));
+          setMapItems([]);  // invalidate map cache
           setDetailItem(updated);
         }}
         onRemoved={(id) => {
           setItems((prev) => prev.filter((i) => i.id !== id));
+          setMapItems([]);  // invalidate map cache
           setDetailItem(null);
         }}
       />
