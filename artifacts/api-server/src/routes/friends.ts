@@ -349,10 +349,12 @@ router.get("/circles/:circleOwnerId/members", async (req, res) => {
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
-  const { data: memberships } = await sc
+  const { data: memberships, error: memErr } = await sc
     .from("circle_memberships")
     .select("member_id")
     .eq("owner_id", circleOwnerId);
+
+  if (memErr) { sendError(res, "db_error", memErr.message); return; }
 
   const memberIds = (memberships ?? [])
     .map((m: any) => m.member_id as string)
@@ -361,10 +363,12 @@ router.get("/circles/:circleOwnerId/members", async (req, res) => {
 
   if (memberIds.length === 0) { res.status(200).json({ members: [] }); return; }
 
-  const { data: profiles } = await sc
+  const { data: profiles, error: profErr } = await sc
     .from("profiles")
     .select("id, handle, name, avatar_url")
     .in("id", memberIds);
+
+  if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
   res.status(200).json({
     members: (profiles ?? []).map((p: any) => ({

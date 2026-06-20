@@ -174,29 +174,27 @@ export function MeetupCreationSheet({
   const defaultVisibility: MeetupVisibility =
     tripId ? 'trip' : circleOwnerId ? 'circle' : 'invitees';
 
-  // Load candidates (friends + context-specific members, deduped)
+  // Load candidates — source matches backend eligibility policy exactly:
+  //   trip context   → accepted trip co-travelers only
+  //   circle context → circle members only
+  //   plain          → friends only
   const loadCandidates = useCallback(async () => {
     if (candidates.length > 0 || candidatesLoading) return;
     setCandidatesLoading(true);
 
-    const results = await Promise.all([
-      getMyFriends(),
-      tripId         ? getTripMembers(tripId)               : Promise.resolve(null),
-      circleOwnerId  ? getCircleMembers(circleOwnerId)       : Promise.resolve(null),
-    ]);
-
-    const friendsList  = (results[0].ok && results[0].data) ? results[0].data.friends : [];
-    const membersList  = (results[1]?.ok && results[1]?.data) ? (results[1].data as any).members : [];
-    const circleList   = (results[2]?.ok && results[2]?.data) ? (results[2].data as any).members : [];
-
-    // Merge and dedup by id
-    const seen = new Set<string>();
-    const merged: FriendUser[] = [];
-    for (const u of [...membersList, ...circleList, ...friendsList]) {
-      if (!seen.has(u.id)) { seen.add(u.id); merged.push(u); }
+    let list: FriendUser[] = [];
+    if (tripId) {
+      const res = await getTripMembers(tripId);
+      list = (res.ok && res.data) ? res.data.members : [];
+    } else if (circleOwnerId) {
+      const res = await getCircleMembers(circleOwnerId);
+      list = (res.ok && res.data) ? res.data.members : [];
+    } else {
+      const res = await getMyFriends();
+      list = (res.ok && res.data) ? res.data.friends : [];
     }
 
-    setCandidates(merged);
+    setCandidates(list);
     setCandidatesLoading(false);
   }, [candidates.length, candidatesLoading, tripId, circleOwnerId]);
 

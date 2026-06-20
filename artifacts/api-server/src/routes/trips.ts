@@ -88,11 +88,13 @@ router.get("/trips/:tripId/members", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: rows } = await sc
+  const { data: rows, error: rowsErr } = await sc
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .in("role", ["owner", "member"]);
+
+  if (rowsErr) { sendError(res, "db_error", rowsErr.message); return; }
 
   const memberIds = (rows ?? [])
     .map((r: any) => r.user_id as string)
@@ -100,10 +102,12 @@ router.get("/trips/:tripId/members", async (req, res) => {
 
   if (memberIds.length === 0) { res.status(200).json({ members: [] }); return; }
 
-  const { data: profiles } = await sc
+  const { data: profiles, error: profErr } = await sc
     .from("profiles")
     .select("id, handle, name, avatar_url")
     .in("id", memberIds);
+
+  if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
   res.status(200).json({
     members: (profiles ?? []).map((p: any) => ({

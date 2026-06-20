@@ -149,19 +149,44 @@ router.post("/meetups", async (req, res) => {
 
   const meetupId = (meetup as any).id;
 
-  // Bulk-invite if provided
+  // Bulk-invite if provided — apply same scope eligibility as /invites endpoint
   let inviteErrors: string[] = [];
   if (b.inviteeIds && b.inviteeIds.length > 0) {
-    const inviteRows = b.inviteeIds
-      .filter((id) => id !== user.id)
-      .map((uid) => ({ meetup_id: meetupId, user_id: uid }));
+    let candidateIds = b.inviteeIds.filter((id) => id !== user.id);
+
+    // Trip-scoped: only accepted trip members may be invited
+    if (b.tripId && candidateIds.length > 0) {
+      const { data: tripMemberRows } = await client
+        .from("trip_members")
+        .select("user_id")
+        .eq("trip_id", b.tripId)
+        .in("role", ["owner", "member"])
+        .in("user_id", candidateIds);
+      const eligible = new Set((tripMemberRows ?? []).map((r: any) => r.user_id as string));
+      candidateIds = candidateIds.filter((id) => eligible.has(id));
+    }
+
+    // Circle-scoped: only circle members (+ owner) may be invited
+    if (b.circleOwnerId && !b.tripId && candidateIds.length > 0) {
+      const { data: circleMemberRows } = await client
+        .from("circle_memberships")
+        .select("member_id")
+        .eq("owner_id", b.circleOwnerId)
+        .in("member_id", candidateIds);
+      const eligible = new Set([
+        b.circleOwnerId,
+        ...((circleMemberRows ?? []).map((r: any) => r.member_id as string)),
+      ]);
+      candidateIds = candidateIds.filter((id) => eligible.has(id));
+    }
+
+    const inviteRows = candidateIds.map((uid) => ({ meetup_id: meetupId, user_id: uid }));
     if (inviteRows.length > 0) {
       const { error: iErr } = await client
         .from("meetup_invites")
         .insert(inviteRows);
       if (iErr) inviteErrors.push(iErr.message);
       else {
-        // Create inbox items for each invitee
         await createMeetupInboxItems(client, meetupId, (meetup as any).title, inviteRows.map((r) => r.user_id), user.id);
       }
     }
