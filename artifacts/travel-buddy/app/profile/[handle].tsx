@@ -1,12 +1,24 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { Users, CheckCircle, UserPlus, Clock, UserCheck } from 'lucide-react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  Image,
+  Pressable,
+  StyleSheet,
+  ActivityIndicator,
+  TextInput,
+  Modal,
+  Alert,
+} from 'react-native';
+import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
+import { Users, CheckCircle, UserPlus, Clock, UserCheck, MessageCircle, X } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { getProfileByHandle } from '../../src/services/friends';
 import { useSession } from '../../src/context/SessionContext';
 import { useFriendStatus } from '../../src/hooks/useFriends';
+import { useMessagePermission } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 interface PublicProfile {
@@ -42,23 +54,23 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   }
 
   if (loading) {
-    return <View style={s.friendBtn}><ActivityIndicator size="small" color={color.mute} /></View>;
+    return <View style={s.actionBtn}><ActivityIndicator size="small" color={color.mute} /></View>;
   }
 
   if (status === 'friends') {
     return (
-      <View style={[s.friendBtn, s.friendsBtnStyle]}>
+      <View style={[s.actionBtn, s.friendsBtnStyle]}>
         <UserCheck size={15} color={color.signal} />
-        <Text style={[s.friendBtnText, { color: color.signal }]}>Friends</Text>
+        <Text style={[s.btnText, { color: color.signal }]}>Friends</Text>
       </View>
     );
   }
 
   if (status === 'outgoing_pending') {
     return (
-      <Pressable style={[s.friendBtn, s.pendingBtnStyle]} onPress={() => run(cancel)} disabled={busy}>
+      <Pressable style={[s.actionBtn, s.pendingBtnStyle]} onPress={() => run(cancel)} disabled={busy}>
         <Clock size={15} color={color.mute} />
-        <Text style={[s.friendBtnText, { color: color.mute }]}>{busy ? 'Cancelling…' : 'Request Sent'}</Text>
+        <Text style={[s.btnText, { color: color.mute }]}>{busy ? 'Cancelling…' : 'Request Sent'}</Text>
       </Pressable>
     );
   }
@@ -66,22 +78,121 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   if (status === 'incoming_pending') {
     return (
       <View style={s.incomingRow}>
-        <Pressable style={[s.friendBtn, s.acceptBtnStyle, { flex: 1 }]} onPress={() => run(accept)} disabled={busy}>
-          <Text style={[s.friendBtnText, { color: '#fff' }]}>{busy ? '…' : 'Accept'}</Text>
+        <Pressable style={[s.actionBtn, s.acceptBtnStyle, { flex: 1 }]} onPress={() => run(accept)} disabled={busy}>
+          <Text style={[s.btnText, { color: '#fff' }]}>{busy ? '…' : 'Accept'}</Text>
         </Pressable>
-        <Pressable style={[s.friendBtn, s.declineBtnStyle, { flex: 1 }]} onPress={() => run(decline)} disabled={busy}>
-          <Text style={[s.friendBtnText, { color: color.ink }]}>{busy ? '…' : 'Decline'}</Text>
+        <Pressable style={[s.actionBtn, s.declineBtnStyle, { flex: 1 }]} onPress={() => run(decline)} disabled={busy}>
+          <Text style={[s.btnText, { color: color.ink }]}>{busy ? '…' : 'Decline'}</Text>
         </Pressable>
       </View>
     );
   }
 
   return (
-    <Pressable style={[s.friendBtn, s.addFriendBtnStyle]} onPress={() => run(send)} disabled={busy}>
+    <Pressable style={[s.actionBtn, s.addFriendBtnStyle]} onPress={() => run(send)} disabled={busy}>
       <UserPlus size={15} color="#fff" />
-      <Text style={[s.friendBtnText, { color: '#fff' }]}>{busy ? 'Sending…' : 'Add Friend'}</Text>
+      <Text style={[s.btnText, { color: '#fff' }]}>{busy ? 'Sending…' : 'Add Friend'}</Text>
     </Pressable>
   );
+}
+
+function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
+  const { verdict, loading, send } = useMessagePermission(isOwn ? null : userId);
+  const [showComposer, setShowComposer] = useState(false);
+  const [previewText, setPreviewText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  if (isOwn || !userId) return null;
+  if (loading) return null;
+
+  if (verdict === 'denied') {
+    return (
+      <View style={[s.actionBtn, s.disabledBtnStyle]}>
+        <MessageCircle size={15} color={color.faint} />
+        <Text style={[s.btnText, { color: color.faint }]}>Not accepting messages</Text>
+      </View>
+    );
+  }
+
+  if (verdict === 'allowed') {
+    return (
+      <Pressable
+        style={[s.actionBtn, s.msgBtnStyle]}
+        onPress={() => router.push('/messages')}
+      >
+        <MessageCircle size={15} color={color.ink} />
+        <Text style={[s.btnText, { color: color.ink }]}>Message</Text>
+      </Pressable>
+    );
+  }
+
+  if (verdict === 'requires_request') {
+    if (sent) {
+      return (
+        <View style={[s.actionBtn, s.pendingBtnStyle]}>
+          <MessageCircle size={15} color={color.mute} />
+          <Text style={[s.btnText, { color: color.mute }]}>Request sent</Text>
+        </View>
+      );
+    }
+
+    return (
+      <>
+        <Pressable
+          style={[s.actionBtn, s.msgBtnStyle]}
+          onPress={() => setShowComposer(true)}
+        >
+          <MessageCircle size={15} color={color.ink} />
+          <Text style={[s.btnText, { color: color.ink }]}>Message</Text>
+        </Pressable>
+
+        <Modal visible={showComposer} transparent animationType="slide">
+          <View style={s.modalOverlay}>
+            <View style={s.modalCard}>
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Send a message request</Text>
+                <Pressable onPress={() => setShowComposer(false)} hitSlop={8}>
+                  <X size={20} color={color.ink} />
+                </Pressable>
+              </View>
+              <TextInput
+                style={s.composerInput}
+                placeholder="Introduce yourself… (optional)"
+                placeholderTextColor={color.faint}
+                value={previewText}
+                onChangeText={setPreviewText}
+                maxLength={280}
+                multiline
+                numberOfLines={3}
+              />
+              <Pressable
+                style={[s.actionBtn, s.addFriendBtnStyle, { marginTop: space.sm }]}
+                disabled={busy}
+                onPress={async () => {
+                  setBusy(true);
+                  const res = await send(previewText.trim() || undefined);
+                  setBusy(false);
+                  if (res.ok) {
+                    setSent(true);
+                    setShowComposer(false);
+                  } else {
+                    Alert.alert('Error', res.message ?? 'Could not send request');
+                  }
+                }}
+              >
+                <Text style={[s.btnText, { color: '#fff' }]}>
+                  {busy ? 'Sending…' : 'Send Request'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      </>
+    );
+  }
+
+  return null;
 }
 
 export default function Profile() {
@@ -102,7 +213,6 @@ export default function Profile() {
   }, [handle]);
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
-
   useFocusEffect(useCallback(() => { loadProfile(); }, [loadProfile]));
 
   if (loading) {
@@ -135,7 +245,6 @@ export default function Profile() {
       <ScreenHeader title={`@${profile.handle}`} back />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md }}>
 
-        {/* Avatar + name */}
         <View style={s.heroRow}>
           {profile.avatarUrl
             ? <Image source={{ uri: profile.avatarUrl }} style={s.avatar} />
@@ -145,7 +254,7 @@ export default function Profile() {
           }
           <View style={{ flex: 1, gap: 4 }}>
             <View style={s.nameRow}>
-              <Text style={s.name}>{profile.name}</Text>
+              <Text style={s.name} numberOfLines={1}>{profile.name}</Text>
               {profile.verified && <CheckCircle size={16} color={color.signal} />}
             </View>
             <Text style={s.handle}>@{profile.handle}</Text>
@@ -153,7 +262,6 @@ export default function Profile() {
           </View>
         </View>
 
-        {/* Follow / follower counts */}
         <View style={s.statsRow}>
           <View style={s.stat}>
             <Text style={s.statNum}>{profile.followersCount}</Text>
@@ -167,20 +275,16 @@ export default function Profile() {
 
         {profile.bio ? <Text style={s.bio}>{profile.bio}</Text> : null}
 
-        {/* Stamps / traits */}
         <View style={s.stampRow}>
           {profile.openToMeet && <Stamp label="open to meet" tone="signal" />}
           {profile.travelStyle ? <Stamp label={profile.travelStyle} tone="deep" rotate={2} /> : null}
           {(profile.interests ?? []).slice(0, 3).map((i) => <Stamp key={i} label={i} rotate={-2} />)}
         </View>
 
-        {/* Action buttons (not shown on own profile) */}
         {!isOwn && (
           <View style={s.actions}>
             <FriendButton userId={profile.id} isOwn={isOwn} />
-            <Pressable style={s.msgBtn}>
-              <Text style={s.msgText}>Message</Text>
-            </Pressable>
+            <MessageButton userId={profile.id} isOwn={isOwn} />
           </View>
         )}
 
@@ -199,11 +303,11 @@ const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errText: { ...t.body, color: color.mute },
   heroRow: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
-  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: color.haze },
+  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: color.haze, flexShrink: 0 },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   avatarInitial: { ...t.title, color: color.ink, fontSize: 28 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { ...t.title, color: color.ink, fontSize: 20 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  name: { ...t.title, color: color.ink, fontSize: 20, flexShrink: 1 },
   handle: { ...t.small, color: color.mute },
   meta: { ...t.small, color: color.deep },
   statsRow: { flexDirection: 'row', gap: space.xl },
@@ -214,19 +318,24 @@ const s = StyleSheet.create({
   stampRow: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
   actions: { gap: space.sm, marginTop: space.sm },
   incomingRow: { flexDirection: 'row', gap: space.sm },
-  friendBtn: {
+  actionBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 6, paddingVertical: 11, paddingHorizontal: space.lg,
     borderRadius: radius.pill,
   },
-  friendBtnText: { ...t.small, fontWeight: '700', fontSize: 14 },
+  btnText: { ...t.small, fontWeight: '700', fontSize: 14 },
   addFriendBtnStyle: { backgroundColor: color.ink },
   pendingBtnStyle: { borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   friendsBtnStyle: { borderWidth: 1, borderColor: color.signal, backgroundColor: color.paperRaised },
   acceptBtnStyle: { backgroundColor: color.signal },
   declineBtnStyle: { borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
-  msgBtn: { borderWidth: 1, borderColor: color.haze, paddingVertical: 11, borderRadius: radius.pill, alignItems: 'center' },
-  msgText: { ...t.small, fontWeight: '700', color: color.ink },
+  msgBtnStyle: { borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
+  disabledBtnStyle: { borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
   privateNote: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderRadius: 10, backgroundColor: color.paperRaised },
   privateText: { ...t.small, color: color.mute, flex: 1 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(17,17,15,0.5)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.xl, gap: space.md },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  modalTitle: { ...t.heading, color: color.ink },
+  composerInput: { ...t.body, color: color.ink, backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, minHeight: 80, textAlignVertical: 'top' },
 });

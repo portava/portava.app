@@ -7,6 +7,7 @@ import friendsRouter from "./friends";
 import profileRouter from "./profile";
 import passportRouter from "./passport";
 import telegraphRouter from "./telegraph";
+import messagingRouter from "./messaging";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(friendsRouter);
 router.use(profileRouter);
 router.use(passportRouter);
 router.use(telegraphRouter);
+router.use(messagingRouter);
 
 export default router;
