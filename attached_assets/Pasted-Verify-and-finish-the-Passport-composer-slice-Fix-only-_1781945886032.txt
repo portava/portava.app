@@ -1,0 +1,22 @@
+Verify and finish the Passport composer slice. Fix only what's broken, don't revert working files.
+Context: the Passport backend (migration 0004, GPS verification, postcard auto-create) is applied and passing 13 tests. The composer slice was just added to artifacts/travel-buddy: src/services/media.ts, src/services/location.ts, src/services/posts.ts (updated), src/lib/composerLogic.ts (+ test), app/create.tsx (full composer). The post-media storage bucket migration (0005) was run.
+npx tsc --noEmit currently fails with 5 errors. 4 are a real bug in app/(tabs)/index.tsx and 1 is pre-existing in TripPage2.tsx.
+Do this:
+
+Fix the index.tsx author bug (minimal edit, keep the rich-card mapping). In postRowToFeedItem, the code references p.author / p.author.name / p.author.handle / p.author.avatarUrl, but PostRow (in src/services/posts.ts) only has authorId: string — there is no author object, name, or avatar (the posts API does not join profiles). Replace the broken author: ternary with a safe fallback that uses only fields that exist:
+
+ts   author: { id: p.authorId, name: 'Traveler', avatarUrl: '' },
+Do not invent fields like author_name or author_avatar_url — they don't exist on PostRow either. Keep the rest of postRowToFeedItem and the rich-card integration intact. Do not revert the file.
+
+Confirm typecheck. Run npx tsc --noEmit in artifacts/travel-buddy. The 4 author errors must be gone. The only remaining error allowed is the pre-existing TripPage2.tsx:37 route-typing issue (not part of this work) — leave it or fix it with a cast, your call, but don't let it block.
+Confirm the composer files typecheck clean — media.ts, location.ts, posts.ts, composerLogic.ts, create.tsx should have zero errors. Report any that appear.
+Confirm the storage bucket exists. select id, public from storage.buckets where id='post-media'; (public=true) and 4 policies on storage.objects named post-media%.
+Run the live round-trip and prove it with data. Sign in, open the composer (+ → Post Update), pick a photo (Share must be disabled until a photo is attached), optionally use current location or type a manual place, tap Share. Then verify with SQL and report the actual rows:
+
+sql   select id, media_urls, media_type, location_source, location_verified, add_to_passport
+   from posts order by created_at desc limit 3;
+   select id, post_id, stamp_eligible, stamp_reason, verification_method, location_name
+   from passport_postcards order by created_at desc limit 3;
+Expected: the post has a real media URL (uploaded to post-media), and a passport_postcards row exists for it. Manual location → stamp_eligible=false, manual_location_only. GPS near the tagged place → stamp_eligible=true, gps_within_radius.
+Boundaries: do not weaken backend verification, do not send location_verified from the client, do not fake a media URL, do not break the existing Pulse Wall or mock cards, do not expose the service-role key. If media upload fails, the post must not be created.
+Report: the tsc result, the bucket check, and the two SQL query outputs proving a real media post created a postcard with server-decided verification.

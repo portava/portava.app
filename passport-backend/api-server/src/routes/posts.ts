@@ -11,69 +11,8 @@ import {
   listPostsQuerySchema,
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
-import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
-
-const STORAGE_BUCKET = "post-media";
-const ALLOWED_MIME: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "video/mp4": "mp4",
-  "video/quicktime": "mov",
-};
-
-/* ===========================================================================
- * POST /media/upload  — authenticated media upload proxied through API server
- * ===========================================================================
- * Client sends raw binary body with Content-Type = MIME type.
- * Server uses service-role key to upload to Supabase Storage, bypassing RLS.
- * Files stored at post-media/{userId}/{timestamp}.{ext}.
- * Returns { url, path }.
- */
-router.post(
-  "/media/upload",
-  (req, res, next) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
-    req.on("error", next);
-  },
-  async (req, res) => {
-    const auth = await requireUser(req, res);
-    if (!auth) return;
-    const { user } = auth;
-
-    const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
-    const ext = ALLOWED_MIME[mimeType];
-    if (!ext) {
-      sendError(res, "invalid_payload", `Unsupported media type: ${mimeType}`);
-      return;
-    }
-    const rawBody: Buffer = (req as any).rawBody;
-    if (!rawBody || rawBody.length === 0) {
-      sendError(res, "invalid_payload", "Empty file body");
-      return;
-    }
-    const path = `${user.id}/${Date.now()}.${ext}`;
-    const sc = getServiceClient();
-    if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return; }
-
-    const { error } = await sc.storage
-      .from(STORAGE_BUCKET)
-      .upload(path, rawBody, { contentType: mimeType, upsert: false });
-    if (error) {
-      req.log.error({ err: error, path }, "Storage upload failed");
-      sendError(res, "db_error", `Upload failed: ${error.message}`);
-      return;
-    }
-    const { data: urlData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-    res.status(201).json({ url: urlData.publicUrl, path });
-  },
-);
 
 // Columns returned to clients (never expose nothing extra; these are all safe).
 const POST_COLUMNS =

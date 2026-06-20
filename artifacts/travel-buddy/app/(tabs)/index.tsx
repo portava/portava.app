@@ -28,9 +28,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     id: p.id,
     type: 'post',
     city: 'Cebu',
-    author: p.author
-      ? { id: p.authorId, name: p.author.name ?? p.author.handle, avatarUrl: p.author.avatarUrl ?? '' }
-      : { id: p.authorId, name: 'Traveler', avatarUrl: '' },
+    author: { id: p.authorId, name: 'Traveler', avatarUrl: '' },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
     tags: [],
