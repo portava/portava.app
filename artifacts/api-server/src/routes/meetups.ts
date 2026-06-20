@@ -169,7 +169,11 @@ router.post("/meetups", async (req, res) => {
 
   // Post system message to chat thread if scoped to trip or circle
   if ((b.tripId || b.circleOwnerId) && !inviteErrors.length) {
-    await postMeetupSystemMessage(client, meetupId, (meetup as any).title, b.tripId ?? null, b.circleOwnerId ?? null, user.id);
+    await postMeetupSystemMessage(client, meetupId, (meetup as any).title, b.tripId ?? null, b.circleOwnerId ?? null, user.id, {
+      locationName: b.locationName ?? null,
+      approximateDate: b.approximateDate ?? null,
+      timeBlock: b.timeBlock ?? null,
+    });
   }
 
   res.status(201).json({ ...(meetup as any), inviteErrors });
@@ -731,6 +735,11 @@ async function postMeetupSystemMessage(
   tripId: string | null,
   circleOwnerId: string | null,
   creatorId: string,
+  extras: {
+    locationName?: string | null;
+    approximateDate?: string | null;
+    timeBlock?: string | null;
+  } = {},
 ): Promise<void> {
   // Resolve the chat thread
   let threadId: string | null = null;
@@ -754,10 +763,27 @@ async function postMeetupSystemMessage(
 
   if (!threadId) return;
 
-  const body = JSON.stringify({ type: "meetup_card", meetupId, title });
+  // Fetch creator display name for the card
+  const { data: profile } = await client
+    .from("profiles")
+    .select("name, handle")
+    .eq("id", creatorId)
+    .maybeSingle();
+  const plannedByName = (profile as any)?.name ?? (profile as any)?.handle ?? null;
+
+  const body = JSON.stringify({
+    type: "meetup_card",
+    meetupId,
+    title,
+    ...(extras.locationName   ? { locationName: extras.locationName }     : {}),
+    ...(extras.approximateDate ? { approximateDate: extras.approximateDate } : {}),
+    ...(extras.timeBlock       ? { timeBlock: extras.timeBlock }           : {}),
+    ...(plannedByName          ? { plannedByName }                         : {}),
+  });
+
   const { data: msg } = await client
     .from("messages")
-    .insert({ thread_id: threadId, sender_id: creatorId, body })
+    .insert({ thread_id: threadId, sender_id: creatorId, body, msg_type: "system", subtype: "meetup" })
     .select("id")
     .single();
 

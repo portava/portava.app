@@ -301,7 +301,7 @@ export default function TelegraphThread() {
   const { id, title, threadType, contextId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { messages, loading, error, sending, send } = useThreadMessages(id ?? null);
+  const { messages, loading, error, sending, send, reload } = useThreadMessages(id ?? null);
   const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
@@ -548,7 +548,15 @@ export default function TelegraphThread() {
           initialLocation={meetupSheetCtx.initialLocation}
           onDismiss={() => setMeetupSheetCtx(null)}
           onCreated={(meetup) => {
-            if (id) {
+            if (!id) return;
+            const isScoped = Boolean(meetupSheetCtx?.tripId || meetupSheetCtx?.circleOwnerId);
+            if (isScoped) {
+              // Backend already posts the system message via postMeetupSystemMessage —
+              // just reload to pick it up.
+              reload();
+            } else {
+              // DM or unscoped meetup: backend has no thread to post to, so the
+              // client sends the card directly.
               send(JSON.stringify({
                 type: 'meetup_card',
                 meetupId: meetup.id,
