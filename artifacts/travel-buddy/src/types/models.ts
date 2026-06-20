@@ -50,6 +50,11 @@ export type PostKind =
 
 export type CostLevel = 1 | 2 | 3 | 4; // $ .. $$$$
 
+/** ISO 639-1 language codes supported by Telegraph auto-translation. */
+export type DefaultLanguage =
+  | 'en' | 'es' | 'fr' | 'de' | 'ja' | 'ko' | 'zh' | 'pt' | 'it' | 'ru'
+  | 'ar' | 'th' | 'vi' | 'id' | 'tl' | 'sv' | 'nl' | 'pl' | 'tr' | 'hi';
+
 export interface User {
   id: ID;
   handle: string;
@@ -66,6 +71,7 @@ export interface User {
   followers: number;
   following: number;
   bio?: string;
+  defaultLanguage?: DefaultLanguage;
 }
 
 export interface Destination {
@@ -192,6 +198,94 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
   recommendation?: AiRecommendation;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Telegraph — unified message + AI recommendation layer
+ * Structured message types for user DMs, translations, AI suggestions,
+ * activity invites, plan confirmations, and system notices.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+export type TelegraphMessageKind =
+  | 'user_message'
+  | 'translated_user_message'
+  | 'ai_activity_recommendation'
+  | 'activity_invite'
+  | 'add_to_plan_confirmation'
+  | 'system_notice';
+
+export type TranslationStatus =
+  | 'not_needed'   // sender + recipient speak same language
+  | 'pending'      // translation in progress
+  | 'done'         // translation complete, translatedText available
+  | 'failed';      // translation failed — showing originalText
+
+export type TelegraphPriceLevel = 'free' | '$' | '$$' | '$$$' | '$$$$';
+
+/** An AI-generated activity card surfaced inside a Telegraph thread. */
+export interface TelegraphActivityRecommendation {
+  id: ID;
+  title: string;
+  category: PostCategory;
+  reason: string;            // why it matches the traveler's profile/context
+  locationContext: string;   // "1.2 km from Ayala Mall"
+  estimatedTime: string;     // "2–3 hours"
+  priceLevel: TelegraphPriceLevel;
+  imageUrl?: string | null;
+  tripId?: ID;               // if "Add to Trip" should target a specific trip
+  activityId?: ID;           // attached activity entity (future)
+}
+
+/**
+ * The canonical Telegraph message. All six kinds share this shape; only
+ * some fields are populated depending on kind.
+ */
+export interface TelegraphMessage {
+  id: ID;
+  kind: TelegraphMessageKind;
+
+  senderId: ID;
+  recipientId: ID;
+
+  // Text (user_message / translated_user_message)
+  originalText?: string;
+  translatedText?: string;
+  sourceLanguage?: DefaultLanguage;
+  targetLanguage?: DefaultLanguage;
+  translationStatus?: TranslationStatus;
+
+  // Context
+  tripId?: ID;
+  attachedActivityId?: ID;
+
+  // ai_activity_recommendation
+  recommendation?: TelegraphActivityRecommendation;
+  recommendationReason?: string;
+
+  // system_notice
+  noticeText?: string;
+
+  // activity_invite
+  activityTitle?: string;
+  activityTime?: ISODate;
+  inviteStatus?: 'pending' | 'accepted' | 'declined';
+
+  // add_to_plan_confirmation
+  planItemTitle?: string;
+  planConfirmed?: boolean;
+
+  createdAt: ISODate;
+}
+
+/** Conversation enriched with Telegraph metadata. */
+export interface TelegraphConversation {
+  id: ID;
+  participants: User[];
+  lastMessage: string;
+  lastAt: ISODate;
+  unread: number;
+  hasActiveRecommendation?: boolean;
+  tripId?: ID;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

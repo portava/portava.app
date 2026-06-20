@@ -1,0 +1,1225 @@
+New task: Build Telegraph Trip Intelligence Pack — Daily Trip Brief, AI Trip Concierge Commands, and AI Memory + Preference Learning.
+
+Goal:
+Combine three connected Telegraph systems into one planned build package:
+
+1. AI Trip Concierge + Daily Trip Brief
+2. AI Trip Concierge Commands
+3. AI Memory + Preference Learning
+
+These systems should make Telegraph smarter, more useful, and more personalized while keeping privacy and permissions safe.
+
+Core product rule:
+Telegraph should help users plan better trips, fill itinerary gaps, suggest activities, create meetups, and improve recommendations based on user preferences — but it must never expose private data or take actions without confirmation.
+
+Hard rules:
+- Do not expose exact GPS.
+- Do not expose live location.
+- Do not expose private availability.
+- Do not expose private Passport data.
+- Do not expose private posts.
+- Do not expose private trip/circle data.
+- Do not expose trip_only content to non-members.
+- Do not auto-create meetups.
+- Do not auto-add plan items.
+- Do not auto-message users.
+- Do not expose another user’s learned preferences.
+- Do not infer or display sensitive categories.
+- Do not use service-role keys on frontend.
+- Do not weaken RLS/access rules.
+
+Build this in safe sections.
+
+==================================================
+SECTION A — AI Trip Concierge + Daily Trip Brief
+==================================================
+
+Goal:
+Create a daily AI-powered trip assistant that gives each accepted trip member a smart daily brief.
+
+The brief should answer:
+- What is planned today?
+- What is open?
+- What should I add?
+- Who is free?
+- What conflicts or warnings exist?
+- What quick actions can I take?
+
+Surfaces:
+1. Trip Detail page
+- Top card: “Today’s Brief”
+- Accepted trip members only
+
+2. Trip Plan page
+- Above Timeline
+- Summarizes today’s plan and gaps
+
+3. Trip Chat
+- Optional compact pinned Telegraph card
+- “Here’s today’s plan”
+
+4. Home screen/dashboard later
+- Upcoming trip daily brief
+
+Do not put Daily Brief on Passport.
+Passport remains profile/memories.
+
+Daily brief content:
+1. Today’s plan
+- scheduled items
+- times
+- locations
+- meetups
+- important notes
+
+2. Open windows
+- gaps in itinerary
+- unscheduled time blocks
+- “You have 2–5 PM open”
+
+3. Telegraph suggestions
+- activities
+- restaurants
+- nightlife
+- beaches
+- attractions
+- plan gap fillers
+
+4. Meetup opportunities
+- member availability overlaps
+- suggested meetup windows
+- pending meetup invites
+
+5. Travel reminders/warnings
+- time conflicts
+- tight timing
+- cancelled meetup
+- missing location
+- items without time
+- pending RSVP
+- pending time poll
+
+6. Quick actions
+- Add suggestion to plan
+- Create meetup
+- Start time poll
+- Open chat
+- Edit plan
+- Dismiss suggestion
+- Mark item done
+- Reschedule item
+
+Create object:
+TripDailyBrief:
+- id
+- trip_id
+- user_id
+- date
+- timezone
+- summary
+- today_items[]
+- open_windows[]
+- recommendations[]
+- meetup_suggestions[]
+- warnings[]
+- quick_actions[]
+- generated_at
+- expires_at
+- status: fresh / stale / unavailable
+
+today_items:
+- plan_item_id
+- title
+- starts_at
+- ends_at
+- location_name
+- category
+- status
+- source_type
+
+open_windows:
+- starts_at
+- ends_at
+- reason
+- suggested_action
+
+warnings:
+- type
+- severity
+- message
+- related_item_id nullable
+
+quick_actions:
+- type: add_to_plan / create_meetup / start_poll / open_chat / edit_plan / dismiss / mark_done / reschedule
+- label
+- payload
+
+Create:
+TripDailyBriefEngine
+
+Inputs:
+- trip dates
+- trip timezone
+- trip plan items
+- meetups
+- accepted members
+- shared availability
+- Telegraph recommendations
+- chat planning signals if available
+- user interests/profile
+- destination/city
+- privacy resolver
+
+Output:
+- user-specific daily brief
+
+Important:
+The brief may be different per user depending on:
+- user interests
+- user availability
+- user permissions
+- private/public visibility
+- accepted trip membership
+
+Privacy resolver:
+Before generating the brief, verify:
+- current user is accepted trip member
+- user can view trip
+- user can view each plan item
+- user can view each meetup
+- user can view availability used
+- user can view recommendation source
+
+Do not include:
+- exact GPS
+- live location
+- private notes from another user unless shared with trip
+- hidden trip items
+- private Passport info
+- private availability
+- chat content from threads user cannot access
+
+Brief style:
+Keep it short and useful.
+
+Example:
+“Today you have dinner planned at 8 PM, but your afternoon is open from 2–6 PM. Telegraph found two beach/lounge options that match your nightlife and food interests. Three trip members are free around 9 PM, so this is a good window for a group meetup.”
+
+Avoid:
+- generic advice
+- too much text
+- fake certainty
+- private-data hints
+
+Daily chat card:
+Optional but recommended.
+Only one daily brief card per trip/day unless manually refreshed.
+
+Card:
+“Today’s Trip Brief”
+- top 3 plan items
+- open window
+- 1–2 suggestions
+- button: View full brief
+
+Do not spam chat.
+
+Refresh triggers:
+- trip plan changes
+- meetup created/updated/cancelled
+- RSVP changes
+- availability changes
+- recommendation dismissed/acted on
+- user manually refreshes
+- new day starts in trip timezone
+
+Cache:
+- cache per trip/user/date
+- mark stale when source changes
+- regenerate on request if stale
+
+Suggested API:
+- GET /api/trips/:tripId/daily-brief?date=
+- POST /api/trips/:tripId/daily-brief/refresh
+- POST /api/trips/:tripId/daily-brief/actions/:actionId
+- POST /api/trips/:tripId/daily-brief/dismiss/:recommendationId
+
+Security:
+- resolve current user from auth token
+- verify accepted trip membership
+- never trust client user_id
+- run privacy resolver before returning brief
+- no service-role exposure
+
+Daily Brief UI:
+Show:
+- date
+- summary
+- today’s plan preview
+- open window preview
+- suggestion cards
+- warning chips
+- quick actions
+
+Mobile:
+- compact card
+- expandable details
+- no horizontal overflow
+- action buttons easy to tap
+- works at 390px and 430px
+
+Desktop:
+- wider layout
+- still not cluttered
+
+Empty/error states:
+No plan items:
+“Nothing planned today yet. Telegraph can help you add something.”
+
+No recommendations:
+“No suggestions yet. Add interests, availability, or places to improve your brief.”
+
+No access:
+“You need to be an accepted trip member to view this brief.”
+
+Error:
+“Couldn’t load today’s brief. Try again.”
+
+==================================================
+SECTION B — AI Trip Concierge Commands
+==================================================
+
+Goal:
+Let users ask Telegraph natural-language trip planning commands and turn those requests into safe, useful trip actions.
+
+Examples:
+- “Plan my Friday night.”
+- “Find food near this meetup.”
+- “Fill my free afternoon.”
+- “What should we do tonight?”
+- “Find nightlife near our hotel area.”
+- “Create a dinner meetup for everyone free tonight.”
+- “Add a beach day to Saturday.”
+- “What’s missing from my itinerary?”
+- “Make this trip more fun.”
+- “Find something close to our next plan item.”
+
+Core rule:
+Telegraph can suggest, draft, and prepare actions, but it must not auto-create meetups, auto-add plan items, auto-message users, or expose private data without confirmation.
+
+Command surfaces:
+1. Trip Detail page
+- “Ask Telegraph about this trip”
+
+2. Trip Plan page
+- “Ask Telegraph to help plan”
+
+3. Trip Chat
+- command shortcut near composer
+- optional “Ask Telegraph” button
+
+4. Daily Brief
+Quick prompts:
+- Fill free time
+- Suggest dinner
+- Create meetup
+- Fix conflicts
+
+5. Discovery Map
+- “Find something like this”
+- “Add similar places to my trip”
+
+Do not put main command box on Passport.
+
+Supported command intents:
+
+Planning:
+- plan_day
+- plan_night
+- fill_free_time
+- fix_schedule_conflict
+- suggest_itinerary
+- improve_trip_plan
+
+Food:
+- find_restaurant
+- suggest_dinner
+- suggest_lunch
+- food_near_plan_item
+
+Nightlife:
+- find_nightlife
+- suggest_bar
+- suggest_club
+- suggest_lounge
+
+Meetups:
+- create_meetup_draft
+- find_overlap
+- start_time_poll
+- invite_trip_members
+
+Places:
+- find_nearby
+- find_similar
+- add_place_to_plan
+- replace_plan_item
+
+Safety:
+- explain_privacy
+- show_public_view
+- summarize_plan
+
+General:
+- ask_trip_question
+- ask_recommendation
+- unknown
+
+Create:
+TelegraphCommand:
+- id
+- user_id
+- trip_id nullable
+- thread_id nullable
+- raw_text
+- parsed_intent
+- confidence
+- entities_json
+- context_json
+- status: received / parsed / needs_confirmation / completed / failed / declined
+- created_at
+- updated_at
+
+Entities can include:
+- date
+- time
+- category
+- location
+- people
+- budget
+- vibe
+- distance preference
+- trip item reference
+- cuisine
+- nightlife style
+- activity type
+
+Create:
+TelegraphCommandResponse:
+- command_id
+- summary
+- suggestions[]
+- proposed_actions[]
+- warnings[]
+- missing_info[]
+- requires_confirmation boolean
+
+ProposedAction:
+- type:
+  - add_to_plan
+  - create_meetup
+  - start_time_poll
+  - send_chat_card
+  - view_place
+  - save_place
+  - edit_plan_item
+  - remove_plan_item
+- label
+- payload
+- risk_or_privacy_note nullable
+- requires_confirmation true
+
+Every action that changes data must require user confirmation.
+
+Context resolver:
+Before answering a command, resolve only data the user can access.
+
+Context can include:
+- trip destination
+- trip dates
+- accepted trip members
+- user’s own preferences
+- shared trip preferences
+- trip plan items
+- meetups
+- Telegraph recommendations
+- public discovery places
+- shared availability
+- chat context only from threads user belongs to
+
+Do not include:
+- exact GPS
+- live location
+- private availability not shared with user
+- private Passport data
+- private posts
+- trip_only content user cannot access
+- circle data outside accepted circle membership
+- private trip details for pending/non-members
+
+Confirmation-first actions:
+User: “Plan my Friday night.”
+Telegraph should return:
+- suggested dinner
+- suggested nightlife spot
+- suggested time
+- Add both to plan button
+- Create meetup button if members free
+
+But must not add anything until user confirms.
+
+User: “Create a dinner meetup for everyone.”
+Telegraph should:
+- open meetup draft
+- prefill title/time/invitees
+- ask user to confirm
+- only then create meetup
+
+Trip plan commands:
+“Fill my free afternoon”
+- find open windows
+- suggest activities
+- show Add to Plan actions
+
+“Fix my schedule”
+- detect conflicts
+- suggest reschedule
+- ask for confirmation
+
+“What’s missing?”
+Identify plan gaps:
+- no dinner
+- no transport
+- no meetup
+- long empty window
+- too much travel distance
+- too many nightlife items
+- no rest time
+
+“Plan Friday night”
+- suggest dinner + activity/nightlife
+- consider availability
+- consider current plan
+- consider location safety/permissions
+
+Meetup commands:
+- “Create a meetup tonight”
+- “Who’s free Friday?”
+- “Start a poll for dinner time”
+- “Invite everyone to this place”
+
+Rules:
+- use shared availability only
+- do not reveal private availability
+- create meetup draft first
+- invitees must confirm/RSVP
+- no auto-invites unless user confirms
+
+Chat command behavior:
+In trip/circle chat:
+- user can type command or tap Ask Telegraph
+- Telegraph response appears as AI/system card, not as another user
+- action cards visible only to users allowed to see them
+- if action becomes shared, post a system card after confirmation
+
+Privacy and explainability:
+Every response should include a safe reason.
+
+Good:
+“Suggested because your Friday night is open and this matches your nightlife interests.”
+
+Bad:
+“Suggested because Sarah is secretly free and near this location.”
+
+Never reveal:
+- private availability
+- exact GPS
+- private location
+- private profile info
+- hidden trip/circle data
+
+If context is limited:
+“I can only use shared trip information and public places for this suggestion.”
+
+Suggested API:
+- POST /api/telegraph/commands
+- GET /api/telegraph/commands/:commandId
+- POST /api/telegraph/commands/:commandId/confirm-action
+- POST /api/telegraph/commands/:commandId/decline-action
+- GET /api/trips/:tripId/telegraph/commands/history
+
+Optional:
+- POST /api/trips/:tripId/telegraph/ask
+- POST /api/threads/:threadId/telegraph/ask
+
+Security:
+- resolve user from auth token
+- verify trip/thread access
+- run privacy resolver before context assembly
+- never trust client user_id
+- never expose service-role key
+- actions must re-check permissions at confirmation time
+
+UI:
+- text input
+- suggested prompt chips
+- response cards
+- action buttons
+- loading state
+- error state
+
+Suggested prompt chips:
+- Plan tonight
+- Fill free time
+- Find food
+- Find nightlife
+- Create meetup
+- Fix conflicts
+- Add to plan
+- What’s missing?
+
+Mobile:
+- input fits 390/430px
+- response cards full width
+- action buttons easy to tap
+- confirmation sheets keyboard-safe
+- no horizontal overflow
+
+Error/fallback:
+If no trip details:
+“I need more trip details to help. Add trip dates or destination first.”
+
+If no permissions:
+“You need to be an accepted trip member to plan this trip.”
+
+If no recommendations:
+“I don’t have enough suggestions yet. Add interests, places, or availability to improve this.”
+
+If AI/provider fails:
+“Telegraph couldn’t generate suggestions right now. Try again.”
+
+Do not block rest of trip page if Telegraph fails.
+
+==================================================
+SECTION C — AI Memory + Preference Learning
+==================================================
+
+Goal:
+Create a privacy-safe preference learning system so Telegraph gets smarter from user behavior.
+
+Telegraph should learn from:
+- interests selected by user
+- places saved
+- recommendations dismissed
+- recommendations added to plan
+- meetups created
+- RSVP behavior
+- trip plan categories
+- Passport postcard categories
+- public interactions
+- user feedback
+- explicit preferences
+
+Do not use sensitive data silently.
+Do not expose one user’s learned preferences to another user.
+
+Preference Learning scope:
+Help Telegraph understand:
+- what activities user likes
+- what places user saves
+- what recommendations they ignore
+- what they add to plans
+- what trip styles they prefer
+- what times they prefer going out
+- whether they prefer food/nightlife/beach/adventure/culture/rest
+- whether they prefer solo plans, group meetups, or quiet activities
+- what suggestions should be avoided
+
+This improves:
+- Telegraph recommendations
+- Telegraph chat suggestions
+- Daily Trip Brief
+- AI Trip Concierge commands
+- Add-to-Plan suggestions
+- Meetup suggestions
+- Discovery ranking
+
+Explicit preferences:
+User can set preferences directly.
+
+Settings fields:
+- travel_style
+- interests
+- preferred_activities
+- food_preferences
+- nightlife_preferences
+- budget_style
+- pace_preference: relaxed / balanced / packed
+- group_preference: solo / small_group / group / mixed
+- activity_time_preference: morning / afternoon / evening / night
+- language_preferences
+- avoid_list
+
+Examples:
+- likes nightlife
+- likes beaches
+- likes seafood
+- likes luxury hotels
+- likes walkable areas
+- avoids raw food
+- prefers late-night plans
+- prefers group activities
+
+Keep main Passport profile clean.
+Full preference controls belong in Settings, not profile header.
+
+Behavioral signals:
+Create:
+user_preference_events
+
+Fields:
+- id
+- user_id
+- event_type
+- category
+- entity_type nullable
+- entity_id nullable
+- trip_id nullable
+- city nullable
+- country nullable
+- metadata_json
+- weight
+- created_at
+
+Event types:
+- interest_selected
+- place_saved
+- recommendation_viewed
+- recommendation_dismissed
+- recommendation_added_to_plan
+- recommendation_acted_on
+- meetup_created
+- meetup_joined
+- meetup_declined
+- plan_item_added
+- plan_item_removed
+- postcard_created
+- postcard_removed
+- search_performed
+- concierge_command_used
+- category_liked
+- category_avoided
+- feedback_positive
+- feedback_negative
+
+Rules:
+- dismissed recommendation lowers future ranking for similar items
+- added-to-plan increases future ranking for similar items
+- saved place increases preference
+- removed plan item may reduce preference
+- explicit user preference overrides inferred preference
+- recent behavior should matter more than old behavior
+- do not overlearn from one action
+
+Create:
+UserPreferenceProfile
+
+Fields:
+- user_id
+- category_scores_json
+- activity_scores_json
+- cuisine_scores_json
+- nightlife_scores_json
+- pace_preference
+- group_preference
+- budget_preference
+- time_of_day_scores_json
+- city_affinity_json
+- country_affinity_json
+- avoid_tags_json
+- explicit_preferences_json
+- inferred_preferences_json
+- confidence_json
+- updated_at
+
+Example category_scores:
+- nightlife: 0.92
+- food: 0.85
+- beach: 0.72
+- museum: 0.25
+- shopping: 0.31
+
+Preference confidence:
+- explicit = high
+- repeated behavior = medium/high
+- one-time action = low
+
+Create:
+PreferenceLearningEngine
+
+Inputs:
+- explicit preferences
+- user_preference_events
+- saved places
+- plan items
+- meetups
+- recommendation feedback
+- Passport/postcard categories if allowed
+- concierge commands
+
+Output:
+- updated UserPreferenceProfile
+- ranked preference tags
+- avoid signals
+- confidence levels
+
+Rules:
+- explicit preferences override inferred signals
+- negative feedback reduces similar suggestions
+- dismissals decay over time
+- preferences adapt by city/trip context
+- do not make creepy or over-specific assumptions
+- do not expose inference details publicly
+
+Privacy-safe memory:
+Private by default:
+- inferred preferences
+- private trip behavior
+- private availability
+- private Passport signals
+- dismissed recommendations
+- search behavior
+- meetup acceptance/decline behavior
+
+Can be used only:
+- for that user’s Telegraph experience
+- inside a trip only when user’s data is already allowed/shared
+- in aggregate only if anonymized later
+
+Do not show:
+- “Sarah rejected clubs”
+- “John is free every Friday”
+- “Andre went to this exact place”
+- “This user likes late-night bars” publicly unless explicitly displayed by user
+
+Recommendation scoring integration:
+Update Telegraph scoring using:
+- explicit preference score
+- inferred preference score
+- context match
+- trip gap fit
+- availability fit
+- social proof
+- freshness
+- avoid penalty
+- dismissal penalty
+- already-planned penalty
+- diversity penalty
+
+Suggested formula:
+final_score =
+interest_match
++ behavior_affinity
++ trip_context_fit
++ availability_fit
++ plan_gap_fit
++ social_proof
++ freshness
+- avoid_penalty
+- dismissed_recently_penalty
+- already_planned_penalty
+- privacy_risk_penalty
+
+Rules:
+- never recommend dismissed item again immediately
+- avoid categories user repeatedly dismisses
+- include diversity so app does not become repetitive
+- do not overfit to one category
+
+Feedback controls:
+Add lightweight feedback to Telegraph cards:
+- Like this
+- Not for me
+- Show me more like this
+- Show me less like this
+- Dismiss
+- Save
+
+Feedback creates user_preference_events.
+
+Preference settings UI:
+Add inside Settings:
+“Travel Preferences”
+
+Fields:
+- interests
+- food preferences
+- nightlife preferences
+- travel pace
+- group preference
+- budget style
+- preferred activity times
+- avoid list
+
+Add:
+“Reset learned preferences”
+
+Reset behavior:
+- clears inferred preferences
+- preserves explicit profile interests unless user chooses full reset
+- does not delete posts/trips/plans
+
+Explain why recommended:
+Good:
+- “Suggested because you like nightlife and Friday night is open.”
+- “Suggested because you saved similar beach spots.”
+- “Suggested because it fits your relaxed pace preference.”
+- “Suggested because your trip plan has an open afternoon.”
+
+Avoid:
+- “Suggested because you dismissed museums 4 times.”
+- “Suggested because Sarah is free.”
+- “Suggested because you were at this exact location.”
+- “Suggested because we tracked your activity.”
+
+Decay/freshness:
+- old behavior has less weight
+- recent trip behavior matters more for current trip
+- repeated behavior increases confidence
+- explicit preferences remain stable until changed
+- negative feedback decays but still matters
+
+City/trip-specific learning:
+Examples:
+- user likes nightlife in Taipei
+- user likes beach in Cebu
+- user likes food tours in Tokyo
+- user prefers relaxed pace on longer trips
+
+Store:
+- city affinity
+- country affinity
+- trip type affinity
+- time-of-day preference
+
+Sensitive category boundaries:
+Do not infer or expose:
+- health status
+- political/religious identity
+- sexuality
+- financial status
+- exact home/work locations
+- private relationships
+- adult/illegal activity preferences
+
+Allowed travel-safe categories:
+- food
+- nightlife
+- beach
+- culture
+- shopping
+- adventure
+- wellness
+- sightseeing
+- luxury
+- budget
+- walkable
+- group
+- solo
+- relaxed
+- packed
+
+Suggested API:
+- GET /api/me/preferences
+- PATCH /api/me/preferences
+- POST /api/me/preferences/events
+- POST /api/me/preferences/reset-learned
+- GET /api/me/preferences/summary
+- POST /api/telegraph/recommendations/:id/feedback
+
+Security:
+- resolve user from auth token
+- user can only read/edit own preferences
+- never expose another user’s preference profile
+- never expose service-role key
+- no private data in public responses
+
+Integration points:
+Use preference profile in:
+1. Telegraph Recommendations
+2. Telegraph in Chat
+3. Daily Trip Brief
+4. AI Trip Concierge Commands
+5. Discovery Map ranking
+6. Add-to-Plan suggestions
+7. Meetup suggestions
+
+UI copy:
+Settings:
+“Travel Buddy learns from what you save, dismiss, and add to trips so suggestions get better.”
+
+Privacy note:
+“Your learned preferences are private to you. They are used to personalize your recommendations, not shown on your public Passport.”
+
+Reset:
+“Reset learned preferences”
+
+Feedback:
+“More like this”
+“Less like this”
+“Not for me”
+
+==================================================
+SECTION D — Shared Privacy Resolver
+==================================================
+
+Create/extend one shared Telegraph privacy resolver used by:
+- Daily Brief
+- Concierge Commands
+- Preference Learning integration
+- Recommendations
+- Chat suggestions
+
+TelegraphPrivacyVerdict:
+- canUseTripContext
+- canUseCircleContext
+- canUseAvailability
+- canUseLocation
+- canUsePreferences
+- canUsePassportSignals
+- canShowRecommendation
+- reason
+
+Rules:
+- trip context only for accepted trip members
+- circle context only for accepted circle members
+- availability only if shared with viewer/context
+- location only if safe and permitted
+- exact GPS never exposed
+- private Passport signals only for the owner’s own personalization
+- private user behavior never shown to others
+- actions re-check permissions at confirmation time
+
+==================================================
+SECTION E — Tests
+==================================================
+
+Daily Brief tests:
+1. Accepted trip member can fetch daily brief.
+2. Pending invite cannot fetch daily brief.
+3. Non-member cannot fetch daily brief.
+4. Removed member cannot fetch daily brief.
+5. Brief includes today’s plan items.
+6. Brief excludes private/unauthorized items.
+7. Brief excludes exact GPS.
+8. Brief includes open windows.
+9. Brief includes Telegraph recommendations.
+10. Brief includes meetup suggestions only when availability is shared.
+11. Brief warnings detect time overlap.
+12. Brief warnings detect cancelled meetup.
+13. Refresh regenerates stale brief.
+14. User-specific brief does not leak another user’s private data.
+
+Concierge Command tests:
+15. Accepted trip member can submit trip command.
+16. Pending invite cannot submit trip command.
+17. Non-member cannot submit trip command.
+18. Command parser detects plan_day.
+19. Command parser detects find_food.
+20. Command parser detects create_meetup.
+21. Unknown command returns safe fallback.
+22. Response includes only permitted context.
+23. Response does not expose exact GPS.
+24. Response does not expose private availability.
+25. Response does not expose private Passport data.
+26. Action confirmation re-checks permissions.
+27. Add-to-plan action requires confirmation.
+28. Meetup creation action requires confirmation.
+29. Time poll action requires confirmation.
+30. Declined action does not mutate data.
+
+Preference Learning tests:
+31. User can fetch own preferences.
+32. User can update explicit preferences.
+33. User cannot fetch another user’s preferences.
+34. Preference event is created when recommendation is dismissed.
+35. Preference event is created when recommendation is added to plan.
+36. Preference event is created when feedback is submitted.
+37. Learning engine increases score for repeated positive behavior.
+38. Learning engine decreases score for repeated negative behavior.
+39. Explicit preference overrides inferred preference.
+40. Reset learned preferences clears inferred data only.
+41. Private preferences are not returned in public Passport.
+42. Preference summary excludes sensitive/internal fields.
+
+Recommendation/ranking tests:
+43. Telegraph ranks preferred category higher.
+44. Dismissed recommendation is not repeated immediately.
+45. Already-planned item is not recommended again.
+46. Avoid list penalizes matching recommendations.
+47. Diversity prevents only one category from dominating.
+48. City-specific preference applies in matching city.
+
+Privacy tests:
+49. Another user cannot see preference profile.
+50. Public profile does not expose inferred preferences.
+51. Preference engine does not expose private availability.
+52. Preference engine does not expose exact GPS.
+53. Preference engine does not expose private trip data.
+54. service-role/internal fields not returned.
+55. Private trip/circle/chat context is never used for unauthorized users.
+
+UI tests:
+56. Daily Brief card renders on Trip Detail.
+57. Daily Brief appears above Plan timeline.
+58. Warning chips render.
+59. Quick actions open correct flows.
+60. Ask Telegraph input renders on Trip Detail.
+61. Prompt chips render.
+62. Command response card renders.
+63. Add-to-plan confirmation sheet opens.
+64. Create-meetup confirmation sheet opens.
+65. Travel Preferences settings render.
+66. User can edit interests.
+67. User can edit travel pace.
+68. User can edit group preference.
+69. Feedback menu works on Telegraph card.
+70. Reset learned preferences works.
+71. Mobile 390/430 has no overflow.
+72. Desktop layout works.
+
+Regression:
+73. Telegraph recommendations still render.
+74. Trip Plan still works.
+75. Meetups still work.
+76. Trip Chat still works.
+77. Telegraph chat suggestions still work.
+78. Passport remains clean.
+79. Request Inbox still works.
+
+==================================================
+SECTION F — Validation
+==================================================
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- daily brief API tests
+- Telegraph command tests
+- preference API tests
+- learning engine tests
+- Telegraph ranking tests
+- feedback tests
+- trip permission tests
+- context resolver tests
+- action confirmation tests
+- meetup integration tests
+- availability permission tests
+- trip plan tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- accepted member opens trip brief
+- non-member cannot access brief
+- pending invite cannot access brief
+- plan items appear
+- open windows appear
+- recommendations appear
+- ask “Plan my Friday night”
+- ask “Find food near this meetup”
+- ask “Fill my free afternoon”
+- confirm Add to Plan
+- confirm Create Meetup
+- user selects interests
+- user dismisses recommendation
+- similar recommendation is reduced
+- user saves/adds beach recommendation
+- beach suggestions increase
+- reset learned preferences clears inferred behavior
+- public Passport does not show learned preferences
+- mobile layout clean
+
+==================================================
+SECTION G — Acceptance Criteria
+==================================================
+
+This combined task is complete when:
+
+Daily Brief:
+1. Trip Daily Brief exists.
+2. Accepted trip members can view it.
+3. Non-members/pending users cannot view it.
+4. Brief summarizes today’s plan.
+5. Brief shows open windows.
+6. Brief shows Telegraph suggestions.
+7. Brief shows meetup opportunities when allowed.
+8. Warnings display for conflicts/issues.
+9. Quick actions work with confirmation.
+
+Concierge Commands:
+10. Users can ask Telegraph trip planning commands.
+11. Telegraph parses core planning intents.
+12. Telegraph returns useful response cards.
+13. Actions require confirmation.
+14. Add-to-Plan from command works.
+15. Create Meetup from command works.
+16. Time Poll from command works if implemented.
+17. Unauthorized users cannot access trip context.
+
+Preference Learning:
+18. Users can manage explicit travel preferences.
+19. Telegraph records safe preference events.
+20. Learning engine creates a private preference profile.
+21. Recommendations improve based on feedback/actions.
+22. Users can reset learned preferences.
+23. Recommendation explanations are privacy-safe.
+24. Preferences are not exposed publicly.
+25. Sensitive/private data is not learned or leaked.
+
+Global:
+26. No private/exact data leaks.
+27. Mobile UI is clean.
+28. Desktop UI still works.
+29. Tests pass.
+
+==================================================
+SECTION H — Hard Boundaries
+==================================================
+
+Do not:
+- expose exact GPS
+- expose live location
+- expose private availability
+- expose private Passport data
+- expose private posts
+- expose private trip/circle data
+- expose trip_only content to non-members
+- expose another user’s learned preferences
+- infer/display sensitive categories
+- auto-create meetups
+- auto-add plan items
+- auto-message users
+- use trip context for non-members
+- use circle context for non-members
+- use service-role keys on frontend
+- weaken RLS/access rules
+- break Telegraph recommendations
+- break Telegraph chat suggestions
+- break Daily Brief
+- break Trip Plan
+- break Meetups
+- break Trip/Circle Chat
+- break Passport
+
+Build sequence recommendation:
+1. Shared Telegraph privacy/context resolver
+2. Preference settings + preference events
+3. PreferenceLearningEngine
+4. Daily Trip Brief engine + UI
+5. Concierge command parser + response cards
+6. Confirm-action flows for Add-to-Plan/Create Meetup/Time Poll
+7. Feedback controls + ranking integration
+8. Full tests/validation

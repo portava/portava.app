@@ -6,6 +6,7 @@ import type {
   Conversation,
   AppNotification,
   ChatMessage,
+  TelegraphMessage,
 } from '../types/models';
 
 /* Images: Unsplash source URLs (stable IDs). Replace with backend media later. */
@@ -175,3 +176,82 @@ export function postById(id: string): Post | undefined {
 export function userByHandle(handle: string): User | undefined {
   return [me, ...users].find((u) => u.handle === handle);
 }
+
+/* ─── Telegraph seed messages per conversation ─── */
+export const telegraphMessages: Record<string, TelegraphMessage[]> = {
+  c_1: [
+    {
+      id: 'tm_c1_1', kind: 'user_message',
+      senderId: byId.u_1.id, recipientId: me.id,
+      originalText: 'Hey! Are you still in Cebu?',
+      sourceLanguage: 'en', targetLanguage: 'en',
+      translationStatus: 'not_needed',
+      createdAt: '2026-06-14T15:00:00Z',
+    },
+    {
+      id: 'tm_c1_2', kind: 'user_message',
+      senderId: me.id, recipientId: byId.u_1.id,
+      originalText: 'Yes! Until the 27th 🌊',
+      sourceLanguage: 'en', targetLanguage: 'en',
+      translationStatus: 'not_needed',
+      createdAt: '2026-06-14T15:05:00Z',
+    },
+    {
+      id: 'tm_c1_3', kind: 'system_notice',
+      senderId: 'telegraph_system', recipientId: me.id,
+      noticeText: 'You and Maya are both in Cebu until June 27th',
+      createdAt: '2026-06-14T15:05:10Z',
+    },
+    {
+      id: 'tm_c1_4', kind: 'user_message',
+      senderId: byId.u_1.id, recipientId: me.id,
+      originalText: 'Diving Mactan Thursday — in?',
+      sourceLanguage: 'en', targetLanguage: 'en',
+      translationStatus: 'not_needed',
+      createdAt: '2026-06-14T16:02:00Z',
+    },
+    {
+      id: 'tm_c1_ai', kind: 'ai_activity_recommendation',
+      senderId: 'telegraph_system', recipientId: me.id,
+      recommendation: {
+        id: 'rec_c1_1',
+        title: 'Malapascua Thresher Shark Dive',
+        category: 'beach',
+        reason: 'Top dive site near Mactan — matches both your beach + adventure interests.',
+        locationContext: '3 hrs from Mactan by ferry',
+        estimatedTime: 'Full day',
+        priceLevel: '$$$',
+      },
+      recommendationReason: 'You and Maya both love beach and diving activities.',
+      createdAt: '2026-06-14T16:02:30Z',
+    },
+  ],
+  c_2: [
+    {
+      id: 'tm_c2_1', kind: 'translated_user_message',
+      senderId: byId.u_3.id, recipientId: me.id,
+      originalText: "J'ai trouvé le meilleur lechón de la ville!",
+      translatedText: "I found the best lechón in the city!",
+      sourceLanguage: 'fr', targetLanguage: 'en',
+      translationStatus: 'done',
+      createdAt: '2026-06-14T09:50:00Z',
+    },
+    {
+      id: 'tm_c2_2', kind: 'user_message',
+      senderId: me.id, recipientId: byId.u_3.id,
+      originalText: 'No way 😱 where??',
+      sourceLanguage: 'en', targetLanguage: 'en',
+      translationStatus: 'not_needed',
+      createdAt: '2026-06-14T10:00:00Z',
+    },
+    {
+      id: 'tm_c2_3', kind: 'activity_invite',
+      senderId: byId.u_3.id, recipientId: me.id,
+      activityTitle: 'Lechón Crawl — CNT + STK Originals',
+      activityTime: '2026-06-15T18:00:00Z',
+      inviteStatus: 'pending',
+      originalText: 'Sending you the lechón spot 🐷',
+      createdAt: '2026-06-14T10:11:00Z',
+    },
+  ],
+};
