@@ -34,6 +34,10 @@ import {
   buildDisplayFields,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
+import {
+  syncTripChatMembers,
+  syncCircleChatMembers,
+} from '../services/groupChatSync';
 
 const router = Router();
 
@@ -613,7 +617,8 @@ router.get('/me/threads', async (req, res) => {
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
     .select('thread_id, muted_at, archived_at')
-    .eq('user_id', user.id);
+    .eq('user_id', user.id)
+    .is('left_at', null);
 
   if (mErr) {
     req.log.error({ err: mErr }, 'thread membership query failed');
@@ -633,7 +638,7 @@ router.get('/me/threads', async (req, res) => {
   const [threadsRes, lastMsgRes, allMembersRes] = await Promise.all([
     sc
       .from('message_threads')
-      .select('id, created_at, updated_at, last_message_at, status')
+      .select('id, created_at, updated_at, last_message_at, status, thread_type, trip_id, circle_owner_id, title')
       .in('id', threadIds)
       .order('last_message_at', { ascending: false, nullsFirst: false }),
 
@@ -716,6 +721,10 @@ router.get('/me/threads', async (req, res) => {
     return {
       id: t.id,
       status: t.status,
+      threadType: (t.thread_type ?? 'direct') as 'direct' | 'trip' | 'circle',
+      tripId: t.trip_id ?? null,
+      circleOwnerId: t.circle_owner_id ?? null,
+      title: t.title ?? null,
       lastMessageAt: t.last_message_at ?? null,
       createdAt: t.created_at,
       mutedAt: mem.muted_at ?? null,
@@ -746,6 +755,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
@@ -862,6 +872,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
@@ -1083,6 +1094,119 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     senderPreferredLanguage: senderLanguage,
     logger: req.log,
   }).catch(() => {});
+});
+
+/* ---------------------------------------------------------------------------
+ * GET /api/trips/:tripId/chat
+ * ---------------------------------------------------------------------------
+ * Returns the group chat thread for a trip (creates it on first call).
+ * Caller must be an accepted trip member (role = owner or member).
+ * Also syncs current accepted members into the thread.
+ */
+router.get('/trips/:tripId/chat', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+
+  const { tripId } = req.params;
+  if (!isUuid(tripId)) { sendError(res, 'invalid_payload', 'Invalid trip id'); return; }
+
+  // Verify caller is an accepted trip member.
+  const { data: tripMembership } = await sc
+    .from('trip_members')
+    .select('role')
+    .eq('trip_id', tripId)
+    .eq('user_id', user.id)
+    .in('role', ['owner', 'member'])
+    .maybeSingle();
+
+  if (!tripMembership) {
+    sendError(res, 'forbidden', 'You must be an accepted trip member to access the trip chat');
+    return;
+  }
+
+  // Get trip metadata for response.
+  const { data: trip } = await sc
+    .from('trips')
+    .select('id, title, destination_city')
+    .eq('id', tripId)
+    .maybeSingle();
+
+  if (!trip) { sendError(res, 'not_found', 'Trip not found'); return; }
+
+  try {
+    const threadId = await syncTripChatMembers(sc, tripId);
+    const threadTitle = (trip as any).title ?? (trip as any).destination_city ?? 'Trip Chat';
+
+    res.status(200).json({
+      threadId,
+      threadType: 'trip',
+      title: threadTitle,
+      tripId,
+      circleOwnerId: null,
+    });
+  } catch (e) {
+    req.log.error({ err: e }, 'syncTripChatMembers failed in GET /trips/:tripId/chat');
+    sendError(res, 'db_error', 'Failed to open trip chat');
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * GET /api/circles/:circleOwnerId/chat
+ * ---------------------------------------------------------------------------
+ * Returns the group chat thread for a trusted circle (creates it on first call).
+ * Caller must be the circle owner OR an accepted circle member.
+ * Also syncs current circle members into the thread.
+ */
+router.get('/circles/:circleOwnerId/chat', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+
+  const { circleOwnerId } = req.params;
+  if (!isUuid(circleOwnerId)) { sendError(res, 'invalid_payload', 'Invalid circle owner id'); return; }
+
+  // Verify caller is the owner or an accepted member of this circle.
+  const isOwner = user.id === circleOwnerId;
+  if (!isOwner) {
+    const { data: circleMembership } = await sc
+      .from('circle_memberships')
+      .select('member_id')
+      .eq('owner_id', circleOwnerId)
+      .eq('member_id', user.id)
+      .maybeSingle();
+
+    if (!circleMembership) {
+      sendError(res, 'forbidden', 'You must be a member of this circle to access the circle chat');
+      return;
+    }
+  }
+
+  // Get owner profile for title.
+  const { data: ownerProfile } = await sc
+    .from('profiles')
+    .select('id, name, handle')
+    .eq('id', circleOwnerId)
+    .maybeSingle();
+
+  if (!ownerProfile) { sendError(res, 'not_found', 'Circle owner not found'); return; }
+
+  try {
+    const threadId = await syncCircleChatMembers(sc, circleOwnerId);
+    const displayName = (ownerProfile as any).name ?? (ownerProfile as any).handle ?? 'Circle';
+    const threadTitle = `${displayName}'s Circle`;
+
+    res.status(200).json({
+      threadId,
+      threadType: 'circle',
+      title: threadTitle,
+      tripId: null,
+      circleOwnerId,
+    });
+  } catch (e) {
+    req.log.error({ err: e }, 'syncCircleChatMembers failed in GET /circles/:circleOwnerId/chat');
+    sendError(res, 'db_error', 'Failed to open circle chat');
+  }
 });
 
 export default router;

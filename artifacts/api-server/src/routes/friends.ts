@@ -9,6 +9,7 @@ import {
   isUuid,
 } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
+import { syncCircleChatMembers } from "../services/groupChatSync.js";
 
 const router = Router();
 
@@ -449,6 +450,9 @@ router.post("/circle-invites/:inviteId/accept", async (req, res) => {
     .upsert({ owner_id: (inv as any).owner_id, member_id: user.id, created_at: now });
 
   if (cmErr) req.log.error({ err: cmErr }, "circle_memberships upsert failed after invite accept");
+
+  // Fire-and-forget: sync group chat membership for this circle.
+  syncCircleChatMembers(sc, (inv as any).owner_id).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));
 
   res.status(200).json({ status: "accepted", ownerId: (inv as any).owner_id });
 });

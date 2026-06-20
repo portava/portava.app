@@ -6,7 +6,7 @@
  *   - Language settings (GET/PATCH)
  *   - Message permission (GET verdict)
  *   - Message requests (send, accept, decline, cancel, list incoming)
- *   - Threads (list)
+ *   - Threads (list, open group chat)
  *   - Messages (list paginated, send, retry translation)
  *
  * All writes go through the API server (service-role + JWT verification).
@@ -68,6 +68,10 @@ export interface ThreadOtherMember {
 export interface ThreadSummary {
   id: string;
   status: string;
+  threadType: 'direct' | 'trip' | 'circle';
+  tripId: string | null;
+  circleOwnerId: string | null;
+  title: string | null;
   lastMessageAt: string | null;
   createdAt: string;
   mutedAt: string | null;
@@ -81,6 +85,14 @@ export interface ThreadSummary {
   } | null;
 }
 
+export interface GroupChatResult {
+  threadId: string;
+  threadType: 'trip' | 'circle';
+  title: string | null;
+  tripId: string | null;
+  circleOwnerId: string | null;
+}
+
 export interface Message {
   id: string;
   threadId: string;
@@ -92,7 +104,6 @@ export interface Message {
   deleted: boolean;
   createdAt: string;
   editedAt: string | null;
-  // Translation fields (added by translation pipeline)
   displayBody: string | null;
   originalBody: string | null;
   originalLanguage: string | null;
@@ -263,6 +274,29 @@ export async function cancelMessageRequest(
 
 export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary[] }>> {
   return apiGet('/api/me/threads');
+}
+
+// ── Group chat ────────────────────────────────────────────────────────────────
+
+/**
+ * Get (or create) the group chat thread for a trip.
+ * The caller must be an accepted trip member (owner or member role).
+ */
+export async function openTripChat(
+  tripId: string,
+): Promise<MsgResult<GroupChatResult>> {
+  return apiGet(`/api/trips/${tripId}/chat`);
+}
+
+/**
+ * Get (or create) the group chat thread for a trusted circle.
+ * circleOwnerId is the user whose circle this belongs to.
+ * The caller must be the owner or an accepted circle member.
+ */
+export async function openCircleChat(
+  circleOwnerId: string,
+): Promise<MsgResult<GroupChatResult>> {
+  return apiGet(`/api/circles/${circleOwnerId}/chat`);
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────

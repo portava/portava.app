@@ -1,8 +1,8 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageSquare } from 'lucide-react-native';
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripMapPreview, TripSafety, TripPostsSection,
@@ -11,6 +11,7 @@ import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip } from '../../src/hooks/useBackend';
+import { openTripChat } from '../../src/services/messaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 export default function TripDetail() {
@@ -19,9 +20,8 @@ export default function TripDetail() {
   const { configured, isAuthed, userId } = useSession();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
+  const [chatLoading, setChatLoading] = useState(false);
 
-  // Live: merge the real trip row into the hero; keep mock sub-sections until their
-  // tables land. Mock fallback when not signed in.
   const trip = live && realTrip ? {
     ...mockTripDetail,
     id: realTrip.id,
@@ -35,20 +35,47 @@ export default function TripDetail() {
     coverUrl: realTrip.coverUrl ?? mockTripDetail.coverUrl,
   } : mockTripDetail;
 
+  async function handleOpenChat() {
+    if (!trip.id || chatLoading) return;
+    setChatLoading(true);
+    const res = await openTripChat(trip.id);
+    setChatLoading(false);
+    if (res.ok && res.data) {
+      const { threadId, title } = res.data;
+      const params = new URLSearchParams({ title: title ?? trip.title ?? 'Trip Chat', threadType: 'trip' });
+      router.push(`/messages/${threadId}?${params.toString()}`);
+    } else {
+      Alert.alert('Chat unavailable', res.message ?? 'Could not open the trip chat. Make sure you are an accepted trip member.');
+    }
+  }
+
   if (live && loading) {
     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {/* top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
           <ChevronLeft size={22} color={color.signal} />
           <Text style={styles.backText}>My Trip</Text>
         </Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable style={styles.topBtn} onPress={() => { /* share */ }} hitSlop={6}>
+        {isAuthed && (
+          <Pressable
+            style={[styles.topBtn, chatLoading && { opacity: 0.5 }]}
+            onPress={handleOpenChat}
+            disabled={chatLoading}
+            hitSlop={6}
+          >
+            {chatLoading
+              ? <ActivityIndicator size="small" color={color.signal} />
+              : <MessageSquare size={15} color={color.signal} />
+            }
+            <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
+          </Pressable>
+        )}
+        <Pressable style={styles.topBtn} onPress={() => { }} hitSlop={6}>
           <Share2 size={15} color={color.ink} /><Text style={styles.topBtnText}>Share Trip</Text>
         </Pressable>
         <Pressable style={styles.topBtn} onPress={() => router.push('/settings')} hitSlop={6}>
@@ -89,8 +116,6 @@ const styles = StyleSheet.create({
   topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
 });
 
-/* Trip map section — placeholder this pass. Live location is OFF/private by default
-   and never rendered until the Live Map UI pass. */
 function TripMapPlaceholder() {
   return (
     <View style={mp.wrap}>

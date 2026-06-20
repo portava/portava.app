@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { toCamel } from "./plan.js";
+import { syncTripChatMembers } from "../services/groupChatSync.js";
 
 const router = Router();
 
@@ -125,6 +126,9 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
 
   const { error } = await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+
+  // Fire-and-forget: sync group chat membership for this trip.
+  syncTripChatMembers(client, tripId).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
   res.status(200).json({ status: "accepted", tripId, role: "member" });
 });

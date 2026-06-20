@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -27,14 +27,14 @@ function MessageBubble({
   mine,
   autoTranslate,
   defaultShowOriginal,
+  isGroupThread,
 }: {
   item: Message;
   mine: boolean;
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
+  isGroupThread: boolean;
 }) {
-  // Local toggle: starts at the user's global preference (show_original_messages).
-  // If auto_translate_messages is off, always show original regardless.
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
   if (item.deleted) {
@@ -52,11 +52,6 @@ function MessageBubble({
     );
   }
 
-  // Decide what body to show.
-  // - Sender sees their own body (no translation).
-  // - If autoTranslate is off, show original.
-  // - If showOriginal is toggled on, show originalBody.
-  // - Otherwise show displayBody (translated if available, else original).
   let bodyToShow: string;
   if (mine || !autoTranslate || showOriginal) {
     bodyToShow = item.originalBody ?? item.body ?? '';
@@ -70,47 +65,55 @@ function MessageBubble({
   const isPending = item.translationStatus === 'pending';
 
   return (
-    <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
-      <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
-        {bodyToShow}
-      </Text>
-
-      <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
-        {formatTime(item.createdAt)}
-        {item.editedAt ? '  ·  edited' : ''}
-      </Text>
-
-      {showLabel && (
-        <View style={styles.translationRow}>
-          {isPending ? (
-            <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
-              Translating…
-            </Text>
-          ) : isFailed ? (
-            <Text style={[styles.transLabel, { color: color.mute }]}>
-              Translation unavailable
-            </Text>
-          ) : isTranslated && item.translationLabel ? (
-            <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
-              {item.translationLabel}
-            </Text>
-          ) : null}
-
-          {item.canShowOriginal && autoTranslate && (
-            <Pressable onPress={() => setShowOriginal((v) => !v)} hitSlop={8}>
-              <Text style={[styles.transToggle, mine && styles.transToggleMine]}>
-                {showOriginal ? 'Show translation' : 'Show original'}
-              </Text>
-            </Pressable>
-          )}
-        </View>
+    <View>
+      {isGroupThread && !mine && item.senderName && (
+        <Text style={styles.senderLabel}>
+          {item.senderName}
+          {item.senderHandle ? ` @${item.senderHandle}` : ''}
+        </Text>
       )}
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
+          {bodyToShow}
+        </Text>
+
+        <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
+          {formatTime(item.createdAt)}
+          {item.editedAt ? '  ·  edited' : ''}
+        </Text>
+
+        {showLabel && (
+          <View style={styles.translationRow}>
+            {isPending ? (
+              <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
+                Translating…
+              </Text>
+            ) : isFailed ? (
+              <Text style={[styles.transLabel, { color: color.mute }]}>
+                Translation unavailable
+              </Text>
+            ) : isTranslated && item.translationLabel ? (
+              <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
+                {item.translationLabel}
+              </Text>
+            ) : null}
+
+            {item.canShowOriginal && autoTranslate && (
+              <Pressable onPress={() => setShowOriginal((v) => !v)} hitSlop={8}>
+                <Text style={[styles.transToggle, mine && styles.transToggleMine]}>
+                  {showOriginal ? 'Show translation' : 'Show original'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+      </View>
     </View>
   );
 }
 
 export default function TelegraphThread() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, title, threadType } = useLocalSearchParams<{ id: string; title?: string; threadType?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { messages, loading, error, sending, send } = useThreadMessages(id ?? null);
@@ -118,9 +121,12 @@ export default function TelegraphThread() {
   const [input, setInput] = useState('');
   const listRef = useRef<FlatList>(null);
 
-  // Resolve user's translation preferences (default: auto-translate on, don't default to original).
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
   const defaultShowOriginal = langSettings?.show_original_messages ?? false;
+  const isGroupThread = threadType === 'trip' || threadType === 'circle';
+
+  const headerTitle = title && title.trim() ? title : 'Chat';
+  const HeaderIcon = threadType === 'trip' ? Globe : threadType === 'circle' ? Users : null;
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -144,7 +150,7 @@ export default function TelegraphThread() {
             <ArrowLeft size={20} color={color.ink} />
           </Pressable>
           <View style={styles.headerMeta}>
-            <Text style={styles.headerName}>Chat</Text>
+            <Text style={styles.headerName}>{headerTitle}</Text>
             <View style={styles.headerTagRow}>
               <Zap size={9} color={color.signal} fill={color.signal} />
               <Text style={styles.headerTag}>Telegraph</Text>
@@ -164,7 +170,7 @@ export default function TelegraphThread() {
             <ArrowLeft size={20} color={color.ink} />
           </Pressable>
           <View style={styles.headerMeta}>
-            <Text style={styles.headerName}>Chat</Text>
+            <Text style={styles.headerName}>{headerTitle}</Text>
           </View>
         </View>
         <View style={styles.center}><Text style={styles.errText}>{error}</Text></View>
@@ -181,8 +187,13 @@ export default function TelegraphThread() {
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
           <ArrowLeft size={20} color={color.ink} />
         </Pressable>
+        {HeaderIcon && (
+          <View style={styles.headerIconBadge}>
+            <HeaderIcon size={14} color={color.onInk} />
+          </View>
+        )}
         <View style={styles.headerMeta}>
-          <Text style={styles.headerName}>Chat</Text>
+          <Text style={styles.headerName} numberOfLines={1}>{headerTitle}</Text>
           <View style={styles.headerTagRow}>
             <Zap size={9} color={color.signal} fill={color.signal} />
             <Text style={styles.headerTag}>Telegraph</Text>
@@ -209,6 +220,7 @@ export default function TelegraphThread() {
                 mine={mine}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
+                isGroupThread={isGroupThread}
               />
             </View>
           );
@@ -262,10 +274,28 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   backBtn: { padding: 4 },
+  headerIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   headerMeta: { flex: 1 },
   headerName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
   headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
+
+  senderLabel: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    fontFamily: 'Courier',
+    marginBottom: 2,
+    marginLeft: 2,
+  },
 
   list: { paddingHorizontal: space.lg, paddingVertical: space.md },
 

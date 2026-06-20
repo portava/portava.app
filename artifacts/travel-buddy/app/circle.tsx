@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { router } from 'expo-router';
+import { MessageSquare } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
+import { openCircleChat } from '../src/services/messaging';
+import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
-/** Circle page — Travel Circle (following) + Followers. */
 export default function Circle() {
   const [tab, setTab] = useState<'circle' | 'followers'>('circle');
   const [following, setFollowing] = useState<FollowUser[]>([]);
   const [followers, setFollowers] = useState<FollowUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const { userId } = useSession();
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -24,6 +28,20 @@ export default function Circle() {
   useEffect(() => { load(); }, [load]);
 
   const list = tab === 'circle' ? following : followers;
+
+  async function handleOpenCircleChat() {
+    if (!userId || chatLoading) return;
+    setChatLoading(true);
+    const res = await openCircleChat(userId);
+    setChatLoading(false);
+    if (res.ok && res.data) {
+      const { threadId, title } = res.data;
+      const params = new URLSearchParams({ title: title ?? 'My Circle', threadType: 'circle' });
+      router.push(`/messages/${threadId}?${params.toString()}`);
+    } else {
+      Alert.alert('Chat unavailable', res.message ?? 'Could not open your circle chat.');
+    }
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -40,6 +58,21 @@ export default function Circle() {
           </Text>
         </Pressable>
       </View>
+
+      {tab === 'circle' && userId && (
+        <Pressable
+          style={[styles.chatBanner, chatLoading && { opacity: 0.6 }]}
+          onPress={handleOpenCircleChat}
+          disabled={chatLoading}
+        >
+          {chatLoading
+            ? <ActivityIndicator size="small" color={color.onInk} />
+            : <MessageSquare size={16} color={color.onInk} />
+          }
+          <Text style={styles.chatBannerText}>Circle Group Chat</Text>
+          <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
+        </Pressable>
+      )}
 
       {loading ? (
         <View style={styles.center}>
@@ -95,6 +128,22 @@ const styles = StyleSheet.create({
   tabText: { ...t.bodyStrong, color: color.mute, fontSize: 13 },
   tabTextActive: { color: color.onInk },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  chatBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    marginBottom: 0,
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
+  },
+  chatBannerText: { ...t.bodyStrong, color: color.onInk, flex: 1 },
+  chatBannerSub: { ...t.small, color: color.onInk + 'BB', fontSize: 11 },
+
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze },
   avatarEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },

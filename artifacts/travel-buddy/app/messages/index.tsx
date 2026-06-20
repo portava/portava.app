@@ -1,11 +1,12 @@
 import React, { useCallback } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { Zap } from 'lucide-react-native';
+import { Zap, Users, Globe } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, type as t } from '../../src/theme/tokens';
+import type { ThreadSummary } from '../../src/services/messaging';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -17,12 +18,51 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+function navigateToThread(item: ThreadSummary) {
+  const title = item.threadType !== 'direct'
+    ? (item.title ?? '')
+    : (item.otherMembers[0]?.name ?? '');
+  const params = new URLSearchParams({ title, threadType: item.threadType });
+  router.push(`/messages/${item.id}?${params.toString()}`);
+}
+
+function ThreadAvatar({ item }: { item: ThreadSummary }) {
+  if (item.threadType === 'trip') {
+    return (
+      <View style={[styles.avatar, styles.groupAvatar, { backgroundColor: '#E8F4F8' }]}>
+        <Globe size={22} color={color.deep} />
+      </View>
+    );
+  }
+  if (item.threadType === 'circle') {
+    return (
+      <View style={[styles.avatar, styles.groupAvatar, { backgroundColor: '#F0EDE8' }]}>
+        <Users size={22} color={color.ink} />
+      </View>
+    );
+  }
+  const other = item.otherMembers[0];
+  if (other?.avatarUrl) {
+    return <Image source={{ uri: other.avatarUrl }} style={styles.avatar} />;
+  }
+  return (
+    <View style={[styles.avatar, styles.avatarPlaceholder]}>
+      <Text style={styles.avatarInitial}>
+        {(other?.name?.[0] ?? '?').toUpperCase()}
+      </Text>
+    </View>
+  );
+}
+
 export default function TelegraphInbox() {
   const insets = useSafeAreaInsets();
   const { isAuthed, userId } = useSession();
   const { data: threads, loading, error, reload } = useMyThreads();
 
   useFocusEffect(useCallback(() => { reload(); }, [reload]));
+
+  const groupThreads = threads.filter((t) => t.threadType !== 'direct');
+  const dmThreads = threads.filter((t) => t.threadType === 'direct');
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -57,35 +97,26 @@ export default function TelegraphInbox() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: space.xxxl }}
           renderItem={({ item }) => {
-            const other = item.otherMembers[0];
+            const isGroup = item.threadType !== 'direct';
+            const displayName = isGroup
+              ? (item.title ?? (item.threadType === 'trip' ? 'Trip Chat' : 'Circle Chat'))
+              : (item.otherMembers[0]?.name ?? 'Unknown');
             const lmp = item.lastMessagePreview;
             const isMine = lmp?.senderId === userId;
-
-            // Show translated preview for incoming messages; original for own.
             const previewText = lmp
               ? (isMine ? lmp.body : (lmp.displayBody ?? lmp.body))
               : '';
-
             const lastAt = lmp?.createdAt;
+
             return (
               <Pressable
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-                onPress={() => router.push(`/messages/${item.id}`)}
+                onPress={() => navigateToThread(item)}
               >
-                {other?.avatarUrl ? (
-                  <Image source={{ uri: other.avatarUrl }} style={styles.avatar} />
-                ) : (
-                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                    <Text style={styles.avatarInitial}>
-                      {(other?.name?.[0] ?? '?').toUpperCase()}
-                    </Text>
-                  </View>
-                )}
+                <ThreadAvatar item={item} />
                 <View style={{ flex: 1, gap: 2 }}>
                   <View style={styles.nameRow}>
-                    <Text style={styles.name} numberOfLines={1}>
-                      {other?.name ?? 'Unknown'}
-                    </Text>
+                    <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
                     {lastAt ? <Text style={styles.time}>{timeAgo(lastAt)}</Text> : null}
                   </View>
                   {previewText ? (
@@ -97,9 +128,22 @@ export default function TelegraphInbox() {
           }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListHeaderComponent={() => (
-            <View style={styles.sectionLabel}>
-              <Text style={styles.sectionText}>DIRECT MESSAGES</Text>
-            </View>
+            <>
+              {groupThreads.length > 0 && (
+                <View style={styles.sectionLabel}>
+                  <Text style={styles.sectionText}>GROUP CHATS</Text>
+                </View>
+              )}
+            </>
+          )}
+          ListFooterComponent={() => (
+            <>
+              {dmThreads.length > 0 && (
+                <View style={styles.sectionLabel}>
+                  <Text style={styles.sectionText}>DIRECT MESSAGES</Text>
+                </View>
+              )}
+            </>
           )}
         />
       )}
@@ -139,6 +183,7 @@ const styles = StyleSheet.create({
   rowPressed: { opacity: 0.6 },
 
   avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: color.haze, flexShrink: 0 },
+  groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   avatarInitial: { ...t.bodyStrong, color: color.ink },
 
