@@ -5,10 +5,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle } from 'lucide-react-native';
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
-  TripPlans, TripCircle, CompassTripBrief, TripStamps, TripMapPreview, TripSafety, TripPostsSection,
+  TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
 } from '../../src/components/TripPage2';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
+import { DailyBriefCard } from '../../src/components/DailyBriefCard';
+import { ConciergeCommandBar } from '../../src/components/ConciergeCommandBar';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip } from '../../src/hooks/useBackend';
@@ -54,6 +56,8 @@ export default function TripDetail() {
     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
   }
 
+  const todayDate = new Date().toISOString().slice(0, 10);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
@@ -92,7 +96,22 @@ export default function TripDetail() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
         <TripHero trip={trip} />
+
+        {/* ── Daily Brief (accepted members only; graceful fallback for others) ── */}
+        {live && trip.id ? (
+          <DailyBriefCard tripId={trip.id} date={todayDate} />
+        ) : null}
+
         <TodayNextUp nextUp={mockNextUp} />
+
+        {/* ── Concierge Command Bar ── */}
+        {live && trip.id ? (
+          <ConciergeCommandBar
+            tripId={trip.id}
+            destination={trip.destinationCity}
+          />
+        ) : null}
+
         <TripPlanSection
           tripId={trip.id}
           currentUserId={userId ?? ''}

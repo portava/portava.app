@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { posts as editorialPosts, me } from '../../src/data/cebu';
@@ -12,6 +12,7 @@ import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
 import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
+import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import { filterPulseFeed } from '../../src/lib/recommend';
 import { PULSE_FILTERS } from '../../src/types/models';
@@ -61,7 +62,19 @@ export default function Pulse() {
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const { buckets, status } = useCityPulse({ currentCitySlug: CURRENT_CITY, interests: me.interests });
+  const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
+
+  // Load learned category affinities from the preference engine so Pulse
+  // ranking improves as the user interacts with recommendations.
+  useEffect(() => {
+    fetchPreferences().then((res) => {
+      if (res.ok && res.data?.inferred?.categoryAffinities) {
+        setCategoryAffinities(res.data.inferred.categoryAffinities);
+      }
+    }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
+  }, []);
+
+  const { buckets, status } = useCityPulse({ currentCitySlug: CURRENT_CITY, interests: me.interests, categoryAffinities });
 
   const realFeed = useGlobalFeed();
   const followingFeed = useFollowingFeed();

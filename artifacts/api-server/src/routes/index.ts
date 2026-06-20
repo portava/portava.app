@@ -14,6 +14,10 @@ import planRouter from "./plan";
 import groupChatRouter from "./groupChat";
 import availabilityRouter from "./availability";
 import meetupsRouter from "./meetups";
+import preferencesRouter from "./preferences";
+import dailyBriefRouter from "./dailyBrief";
+import telegraphCommandsRouter from "./telegraphCommands";
+import telegraphFeedbackRouter from "./telegraphFeedback";
 
 const router: IRouter = Router();
 
@@ -26,11 +30,15 @@ router.use(profileRouter);
 router.use(passportRouter);
 router.use(telegraphRouter);
 router.use(telegraphChatRouter);
+router.use(telegraphFeedbackRouter);
+router.use(telegraphCommandsRouter);
 router.use(messagingRouter);
 router.use(requestsRouter);
 router.use(planRouter);
 router.use(groupChatRouter);
 router.use(availabilityRouter);
 router.use(meetupsRouter);
+router.use(preferencesRouter);
+router.use(dailyBriefRouter);
 
 export default router;

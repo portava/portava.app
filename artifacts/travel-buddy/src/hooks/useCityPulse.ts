@@ -16,14 +16,30 @@ export function useAvailability() {
   return { availability, loading: false, error: null };
 }
 
-export function useCityPulse(opts: { currentCitySlug?: string; interests?: Interest[] }) {
+export function useCityPulse(opts: {
+  currentCitySlug?: string;
+  interests?: Interest[];
+  /**
+   * Learned category affinities from the Telegraph preference engine.
+   * Pass the `inferred.categoryAffinities` value from GET /api/me/preferences.
+   * When provided, these nudge ranking for each visit after the user has
+   * interacted with recommendations — making the pulse improve over time.
+   */
+  categoryAffinities?: Record<string, number>;
+}) {
   const { availability } = useAvailability();
   // TODO(backend): GET /pulse/events?city=...
   const events: CityEvent[] = mockEvents;
 
   const buckets: PulseBuckets = useMemo(
-    () => filterPulse(events, { availability, currentCitySlug: opts.currentCitySlug, interests: opts.interests }),
-    [events, availability, opts.currentCitySlug, opts.interests]
+    () => filterPulse(events, {
+      availability,
+      currentCitySlug: opts.currentCitySlug,
+      interests: opts.interests,
+      categoryAffinities: opts.categoryAffinities,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [events, availability, opts.currentCitySlug, opts.interests, opts.categoryAffinities]
   );
 
   const status = resolveStatus(availability, new Date().toISOString(), opts.currentCitySlug);

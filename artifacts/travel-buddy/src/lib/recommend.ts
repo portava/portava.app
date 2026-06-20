@@ -1,14 +1,15 @@
 /**
- * Pulse recommendation filter — SIMPLE & DETERMINISTIC (this pass).
+ * Pulse recommendation filter — preference-aware ranking.
  *
  * Rules (in order), per the product spec:
  *   1. Current-city events first.
  *   2. Inside-availability events first; outside -> "flexible" bucket.
- *   3. Match interests when category tags exist (soft sort, not a score).
- *   4. Items with unknown availability stay visible (openNearby), not penalized.
- *
- * NO ranking score is computed or faked. The RecommendationScore contract
- * exists on CityEvent for a future backend; we leave it null here.
+ *   3. Match interests when category tags exist (soft sort).
+ *   4. Incorporate learned category affinities (from Telegraph preference engine)
+ *      as a floating-point boost on top of the binary interest match.
+ *      This makes ranking improve over subsequent visits as the user
+ *      interacts with recommendations and feedback signals are recorded.
+ *   5. Items with unknown availability stay visible (openNearby), not penalized.
  */
 import type { Availability, CityEvent, Interest, PulseBuckets, PulseFeedItem, PulseFilter } from '../types/models';
 import { isWithinAvailability } from './availability';
@@ -19,15 +20,29 @@ export function filterPulse(
     availability: Availability | null;
     currentCitySlug?: string;
     interests?: Interest[];
+    /**
+     * Learned category affinity scores from the Telegraph preference engine
+     * (GET /api/me/preferences → inferred.categoryAffinities).
+     * Values are floats clamped ~0–5; higher = stronger affinity.
+     * When provided, these boost the sort score beyond the binary interest match.
+     */
+    categoryAffinities?: Record<string, number>;
   }
 ): PulseBuckets {
-  const { availability, currentCitySlug, interests = [] } = opts;
+  const { availability, currentCitySlug, interests = [], categoryAffinities = {} } = opts;
 
   // 1. City scope: current city first. Other cities still allowed but after.
   const inCity = (e: CityEvent) => !currentCitySlug || e.citySlug === currentCitySlug;
 
-  // soft interest affinity: 1 if category matches a user interest, else 0.
+  // Binary interest match (1 or 0 — explicit preferences set by the user).
   const interestMatch = (e: CityEvent) => (interests.includes(e.category) ? 1 : 0);
+
+  // Learned affinity score (0–1 normalised from the raw inferred score).
+  // Raw scores are small floats; cap at 5 for normalisation to prevent outliers dominating.
+  const affinityScore = (e: CityEvent) => {
+    const raw = categoryAffinities[e.category] ?? 0;
+    return Math.min(raw, 5) / 5; // normalise to 0–1
+  };
 
   const fitsAvailability: CityEvent[] = [];
   const openNearby: CityEvent[] = [];
@@ -40,12 +55,17 @@ export function filterPulse(
     else openNearby.push(e); // unknown availability -> keep visible
   }
 
-  // deterministic sort: in-city first, then interest match, then soonest start.
+  // Preference-aware sort:
+  //   1. In-city (boolean gate)
+  //   2. Combined affinity = explicit interest match + learned affinity score (0–1)
+  //      This means repeated feedback nudges rank order without a hard gate.
+  //   3. Soonest start as tiebreaker.
+  const combinedAffinity = (e: CityEvent) => interestMatch(e) + affinityScore(e);
   const sorter = (a: CityEvent, b: CityEvent) => {
     const city = Number(inCity(b)) - Number(inCity(a));
     if (city !== 0) return city;
-    const interest = interestMatch(b) - interestMatch(a);
-    if (interest !== 0) return interest;
+    const affinity = combinedAffinity(b) - combinedAffinity(a);
+    if (affinity !== 0) return affinity;
     return new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
   };
 

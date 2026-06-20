@@ -8,6 +8,7 @@ import {
 import type { PulseFeedItem } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePlanPicker } from './PlanPickerController';
+import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
 
 /* shared bits */
 function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
@@ -97,6 +98,7 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
           <Text style={s.outlineText}>Add to Plan</Text>
         </Pressable>
         <Pressable style={s.solidBtn} onPress={() => router.push('/(tabs)/trips')}><Text style={s.solidText}>Join Plan</Text></Pressable>
+        <TelegraphFeedbackMenu recommendationId={item.id} category={item.type} />
       </View>
     </View>
   );
@@ -115,6 +117,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
+        <TelegraphFeedbackMenu recommendationId={item.id} category={item.type} />
       </View>
     </View>
   );
