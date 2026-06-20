@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,14 +9,19 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe, Check } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
 import type { Message } from '../../src/services/messaging';
+import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -112,6 +117,147 @@ function MessageBubble({
   );
 }
 
+// ── Add-to-Plan sheet ─────────────────────────────────────────────────────────
+
+function AddToPlanSheet({
+  visible,
+  suggestion,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  suggestion: TelegraphSuggestion | null;
+  onClose: () => void;
+  onConfirm: (tripId: string) => void;
+}) {
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+
+  if (!suggestion) return null;
+
+  function handleConfirm() {
+    if (!selectedTripId) {
+      Alert.alert('Select a trip', 'Please choose a trip to add this to.');
+      return;
+    }
+    onConfirm(selectedTripId);
+    setSelectedTripId(null);
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={sheetStyles.overlay} onPress={onClose} />
+      <View style={sheetStyles.sheet}>
+        <View style={sheetStyles.handle} />
+        <Text style={sheetStyles.title}>Add to Trip Plan</Text>
+        <Text style={sheetStyles.subtitle} numberOfLines={2}>
+          {suggestion.title}
+        </Text>
+
+        <Text style={sheetStyles.sectionLabel}>Choose your trip</Text>
+        <View style={sheetStyles.tripOption}>
+          <Text style={sheetStyles.tripName}>My Trip</Text>
+          <Pressable
+            style={[
+              sheetStyles.radioBtn,
+              selectedTripId === 'current' && sheetStyles.radioBtnSelected,
+            ]}
+            onPress={() => setSelectedTripId('current')}
+          >
+            {selectedTripId === 'current' && <Check size={12} color={color.onInk} />}
+          </Pressable>
+        </View>
+
+        <Text style={sheetStyles.hint}>
+          To add to a specific trip, open the trip chat and use the suggestion there.
+        </Text>
+
+        <Pressable style={sheetStyles.confirmBtn} onPress={handleConfirm}>
+          <Text style={sheetStyles.confirmLabel}>Add to Plan</Text>
+        </Pressable>
+        <Pressable style={sheetStyles.cancelBtn} onPress={onClose}>
+          <Text style={sheetStyles.cancelLabel}>Cancel</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Create Meetup sheet ───────────────────────────────────────────────────────
+
+function CreateMeetupSheet({
+  visible,
+  prefill,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  prefill: MeetupPrefill | null;
+  onClose: () => void;
+  onConfirm: (title: string, location: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [location, setLocation] = useState('');
+
+  useEffect(() => {
+    if (prefill) {
+      setTitle(prefill.title);
+      setLocation(prefill.location);
+    }
+  }, [prefill]);
+
+  if (!prefill) return null;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={sheetStyles.overlay} onPress={onClose} />
+      <View style={sheetStyles.sheet}>
+        <View style={sheetStyles.handle} />
+        <Text style={sheetStyles.title}>Create Meetup</Text>
+
+        <Text style={sheetStyles.sectionLabel}>Title</Text>
+        <TextInput
+          style={sheetStyles.input}
+          value={title}
+          onChangeText={setTitle}
+          placeholder="Meetup title"
+          placeholderTextColor={color.faint}
+        />
+
+        <Text style={sheetStyles.sectionLabel}>Location</Text>
+        <TextInput
+          style={sheetStyles.input}
+          value={location}
+          onChangeText={setLocation}
+          placeholder="Where?"
+          placeholderTextColor={color.faint}
+        />
+
+        {prefill.suggestedTime && (
+          <Text style={sheetStyles.hint}>Suggested time: {prefill.suggestedTime}</Text>
+        )}
+
+        <Pressable
+          style={sheetStyles.confirmBtn}
+          onPress={() => {
+            if (!title.trim()) {
+              Alert.alert('Add a title', 'Please enter a title for the meetup.');
+              return;
+            }
+            onConfirm(title.trim(), location.trim());
+          }}
+        >
+          <Text style={sheetStyles.confirmLabel}>Create Meetup</Text>
+        </Pressable>
+        <Pressable style={sheetStyles.cancelBtn} onPress={onClose}>
+          <Text style={sheetStyles.cancelLabel}>Cancel</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+
 export default function TelegraphThread() {
   const { id, title, threadType } = useLocalSearchParams<{ id: string; title?: string; threadType?: string }>();
   const insets = useSafeAreaInsets();
@@ -119,6 +265,9 @@ export default function TelegraphThread() {
   const { messages, loading, error, sending, send } = useThreadMessages(id ?? null);
   const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
+  const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
+  const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
+  const [meetupPrefill, setMeetupPrefill] = useState<MeetupPrefill | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
@@ -138,9 +287,52 @@ export default function TelegraphThread() {
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
+    setLastSentMessage(text);
     await send(text);
     listRef.current?.scrollToEnd({ animated: true });
   }
+
+  const handleAddToPlan = useCallback(
+    async (suggestion: TelegraphSuggestion): Promise<string | null> => {
+      return new Promise((resolve) => {
+        setAddToPlanSuggestion(suggestion);
+        // The sheet calls resolve via onConfirm; we store the resolver to call later
+        // Simplified: we use inline Alert for trip selection in DM threads
+        if (threadType !== 'trip') {
+          Alert.alert(
+            'Add to Trip Plan',
+            `Add "${suggestion.title}" to your trip plan?`,
+            [
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+              {
+                text: 'Add',
+                onPress: () => {
+                  setAddToPlanSuggestion(null);
+                  resolve('current');
+                },
+              },
+            ],
+          );
+        } else {
+          resolve(id ?? null);
+          setAddToPlanSuggestion(null);
+        }
+      });
+    },
+    [threadType, id],
+  );
+
+  const handleCreateMeetup = useCallback((prefill: MeetupPrefill) => {
+    setMeetupPrefill(prefill);
+  }, []);
+
+  const handleViewPlace = useCallback((suggestion: TelegraphSuggestion) => {
+    Alert.alert(
+      suggestion.title,
+      suggestion.reason + (suggestion.location_context ? `\n\n📍 ${suggestion.location_context}` : ''),
+      [{ text: 'OK' }],
+    );
+  }, []);
 
   if (loading) {
     return (
@@ -229,6 +421,17 @@ export default function TelegraphThread() {
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
 
+      {/* Telegraph suggestion tray — above the composer */}
+      {id && (
+        <TelegraphSuggestionTray
+          threadId={id}
+          lastSentMessage={lastSentMessage}
+          onAddToPlan={handleAddToPlan}
+          onCreateMeetup={handleCreateMeetup}
+          onViewPlace={handleViewPlace}
+        />
+      )}
+
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <TextInput
           style={styles.inputField}
@@ -253,6 +456,17 @@ export default function TelegraphThread() {
           )}
         </Pressable>
       </View>
+
+      {/* Create Meetup sheet */}
+      <CreateMeetupSheet
+        visible={!!meetupPrefill}
+        prefill={meetupPrefill}
+        onClose={() => setMeetupPrefill(null)}
+        onConfirm={(t, l) => {
+          setMeetupPrefill(null);
+          Alert.alert('Meetup created!', `"${t}" at ${l || 'TBD'}`);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -375,4 +589,63 @@ const styles = StyleSheet.create({
   sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: color.signal },
   sendBtnDisabled: { backgroundColor: color.haze },
+});
+
+const sheetStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  sheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: space.xl,
+    paddingBottom: 40,
+    gap: space.sm,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.haze,
+    alignSelf: 'center',
+    marginBottom: space.md,
+  },
+  title: { ...t.heading, color: color.ink, fontWeight: '700', fontSize: 18 },
+  subtitle: { ...t.body, color: color.mute, fontSize: 13 },
+  sectionLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 11, color: color.mute, marginTop: space.md, letterSpacing: 0.5 },
+  tripOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.sm },
+  tripName: { ...t.body, color: color.ink },
+  radioBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioBtnSelected: { backgroundColor: color.signal, borderColor: color.signal },
+  hint: { ...t.small, color: color.mute, fontSize: 12 },
+  input: {
+    backgroundColor: color.paper,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    ...t.body,
+    color: color.ink,
+  },
+  confirmBtn: {
+    marginTop: space.md,
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  confirmLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  cancelBtn: { paddingVertical: 10, alignItems: 'center' },
+  cancelLabel: { ...t.body, color: color.mute },
 });

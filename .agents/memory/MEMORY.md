@@ -2,3 +2,4 @@
 - [pnpm firewall blocks](pnpm-firewall.md) — Replit package firewall (403) blocks tarballs not in content store even if in lockfile; workaround: symlink from node_modules/.pnpm virtual store
 - [Follow backend API shape](follow-backend-shape.md) — all follow/profile endpoint shapes; GET /api/users/:userId is the single Passport-load call
 - [Friend requests + circle/trip bridges](friends-backend-shape.md) — privacy constraints, endpoint catalog, normalized pair, migration pattern
+- [Telegraph chat suggestions](telegraph-chat-suggestions.md) — inline intent-on-GET pattern, privacy verdict rules, rate-limit design, fake-client test pattern
