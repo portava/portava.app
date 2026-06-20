@@ -1,0 +1,298 @@
+Next task: Build Friend Requests + explicit Trusted Circle/Trip invite bridge.
+
+Goal:
+Add mutual friend requests as a separate social relationship layer, then allow explicit invite flows from friends into trusted circles or trips.
+
+Core relationship model:
+- Follow = public content discovery
+- Friend = mutual social connection
+- Circle = trusted privacy/live-map access
+- Trip member = trip-specific access
+
+Hard rule:
+A friend relationship must not automatically grant:
+- circle_memberships
+- trip membership
+- live-map access
+- private posts
+- trip_only posts
+- exact GPS
+- private Passport access
+
+Any sensitive access must be granted through a separate explicit invite/accept flow.
+
+SECTION 1 — Friend request model
+
+Create standalone friend request system.
+
+Suggested table:
+friend_requests:
+- id
+- requester_id
+- recipient_id
+- status: pending / accepted / declined / cancelled / blocked
+- created_at
+- responded_at
+- updated_at
+
+Constraints:
+- requester_id != recipient_id
+- prevent duplicate pending requests
+- prevent duplicate accepted friendship
+- unique normalized pair if using relationship table
+- user can only create request as self
+- recipient can only accept/decline their own incoming request
+- requester can cancel own pending request
+
+Optional accepted relationship table:
+user_friendships:
+- user_a
+- user_b
+- created_at
+- accepted_request_id
+
+Normalize pair:
+- smaller uuid first if needed
+- unique(user_a, user_b)
+
+SECTION 2 — Friend API
+
+Add endpoints:
+
+- POST /api/users/:userId/friend-request
+- POST /api/friend-requests/:requestId/accept
+- POST /api/friend-requests/:requestId/decline
+- POST /api/friend-requests/:requestId/cancel
+- GET /api/me/friend-requests/incoming
+- GET /api/me/friend-requests/outgoing
+- GET /api/me/friends
+- GET /api/users/:userId/friend-status
+
+Friend status values:
+- none
+- incoming_pending
+- outgoing_pending
+- friends
+- blocked if blocking exists
+
+Security:
+- use auth token user
+- never trust client-supplied requester_id
+- user cannot accept someone else’s request
+- user cannot create request for another user
+- service-role key never exposed
+
+SECTION 3 — Friend UI
+
+Add to Passport/Profile public view:
+
+For non-owner:
+- Add Friend
+- Request Sent
+- Accept / Decline if incoming
+- Friends
+- Cancel Request
+- optional overflow menu
+
+Owner:
+- no Add Friend button on own profile
+
+Friend request surfaces:
+- Profile/Passport header
+- Settings or notifications area for incoming requests
+- optional small badge if request count exists
+
+Do not overload Passport header.
+Use a clean button or menu.
+
+SECTION 4 — Explicit bridge to Trusted Circle
+
+Friends should make inviting easier, not automatic.
+
+Owner can invite a friend into a trusted circle.
+
+Flow:
+1. User opens friend profile or friends list.
+2. User taps “Invite to trusted circle.”
+3. Recipient receives invite.
+4. Recipient accepts.
+5. Only then create circle_memberships row.
+
+Important:
+Friendship alone does not create circle_memberships.
+
+Circle invite should be explicit:
+circle_invites or existing invite system:
+- inviter_id
+- recipient_id
+- circle_id
+- status: pending / accepted / declined / cancelled
+- created_at
+- responded_at
+
+If circle invite infrastructure already exists:
+- reuse it
+- do not create duplicate systems
+
+SECTION 5 — Explicit bridge to Trips
+
+Friends can be invited to trips.
+
+Flow:
+1. User taps “Invite to trip.”
+2. Select trip.
+3. Send invite.
+4. Recipient accepts.
+5. Only then create trip_members row.
+
+Important:
+Friendship alone does not create trip membership.
+
+Trip invite should be explicit and use existing trip invitation/membership logic if available.
+
+SECTION 6 — Privacy rules
+
+Friendship can affect:
+- social display
+- future friend-only content if explicitly added later
+- easier invites
+- optional messaging permission if product chooses later
+
+Friendship cannot automatically affect:
+- live location
+- trusted circle
+- trip access
+- private posts
+- private Passport
+- trip_only content
+- exact GPS
+
+SECTION 7 — Public content rules
+
+For this phase:
+- Friends do not unlock private posts unless a friend-only visibility model is explicitly built.
+- Friends do not unlock trip_only posts.
+- Friends do not unlock private Passport.
+
+Leave friend-only content as future placeholder if not already designed.
+
+SECTION 8 — Notifications
+
+If notification system exists:
+Notify recipient when:
+- friend request received
+- friend request accepted
+- circle invite received
+- trip invite received
+
+If no notification system exists:
+- show requests in a Friend Requests screen/settings area
+- leave push notifications as TODO
+
+SECTION 9 — Blocking compatibility
+
+If blocking exists:
+- blocked users cannot send friend requests
+- blocked users cannot follow
+- blocked users cannot view/interact if product rules say so
+- existing friend request should be cancelled or hidden after block
+- friendship should not override block
+
+If blocking does not exist:
+- leave clean TODO
+- do not fake block behavior
+
+SECTION 10 — Tests
+
+Backend tests:
+1. User can send friend request.
+2. User cannot send request to self.
+3. Duplicate pending request blocked/idempotent.
+4. Recipient can accept request.
+5. Non-recipient cannot accept request.
+6. Recipient can decline request.
+7. Requester can cancel outgoing request.
+8. Accepted friendship appears in both users’ friend lists.
+9. Friend status returns correct state.
+10. Friendship does not create circle_memberships.
+11. Friendship does not create trip_members.
+12. Friendship does not expose private posts.
+13. Friendship does not expose trip_only posts.
+14. Friendship does not expose live location.
+15. Blocking rules respected if blocking exists.
+
+Circle bridge tests:
+16. Friend can be invited to circle.
+17. Circle invite does not create membership until accepted.
+18. Accepting circle invite creates circle_memberships.
+19. Declining circle invite creates no membership.
+20. Non-recipient cannot accept circle invite.
+
+Trip bridge tests:
+21. Friend can be invited to trip.
+22. Trip invite does not create trip membership until accepted.
+23. Accepting trip invite creates trip membership.
+24. Declining trip invite creates no membership.
+25. Non-recipient cannot accept trip invite.
+
+UI tests:
+26. Add Friend button appears on public Passport.
+27. Owner does not see Add Friend on own profile.
+28. Request Sent state appears.
+29. Incoming request shows Accept/Decline.
+30. Friends state appears after accept.
+31. Cancel request works.
+32. Friend buttons fit mobile layout.
+33. No horizontal overflow on 390/430px.
+
+SECTION 11 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- friend API tests
+- Passport/Profile render tests
+- privacy/RLS tests
+- circle invite tests if implemented
+- trip invite tests if implemented
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A sends friend request to User B
+- User B accepts
+- both see Friends state
+- no circle_memberships created
+- no trip_members created
+- private posts still hidden
+- trip_only posts still hidden
+- live location still hidden
+- User A explicitly invites User B to circle
+- circle membership only appears after User B accepts
+- User A explicitly invites User B to trip
+- trip membership only appears after User B accepts
+
+SECTION 12 — Acceptance criteria
+
+This task is complete when:
+1. Friend requests work backend-first.
+2. Friend status works on Passport/Profile.
+3. Add Friend / Request Sent / Accept / Decline / Friends UI works.
+4. Friendship does not grant sensitive access.
+5. Circle/trip bridge is explicit invite/accept only.
+6. Tests prove no private/trip/circle/live access leak.
+7. Mobile UI is clean.
+8. Desktop UI still works.
+
+Hard boundaries:
+- Do not connect friends automatically to circle_memberships.
+- Do not connect friends automatically to trip_members.
+- Do not grant live-map access from friendship.
+- Do not expose exact GPS.
+- Do not expose private/trip_only posts.
+- Do not weaken RLS/access rules.
+- Do not expose service-role key.
+- Do not break Follow UI.
+- Do not break Passport.
+- Do not break Pulse.

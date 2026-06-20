@@ -1,0 +1,951 @@
+New task: Build the full Travel Buddy Passport page.
+
+Goal:
+Finish the full Passport page as a clean, polished, mobile-first travel identity page.
+
+The Passport page should feel like a public travel profile and memory wall, not a settings dump.
+
+Core product rules:
+- Passport is the user’s travel identity page.
+- Postcards are the main Passport experience.
+- The Postcards tab must be the first tab.
+- The Passport page must load directly into the Postcards tab by default.
+- Keep the profile header clean and organized.
+- Limit anything between the main profile info and the tab wall.
+- Move account/profile controls into a Settings menu.
+- Minimize interests on the main profile.
+- Do not leak private/trip_only/live-location/exact GPS data.
+
+SECTION 1 — Page structure
+
+Passport page layout should be:
+
+1. Clean profile header
+2. Compact stats row
+3. Owner/public action row
+4. Tab wall
+5. Active tab content
+
+Tab order must be:
+
+1. Postcards
+2. Stamps
+3. Trips
+4. Map
+5. About
+
+Postcards must:
+- be first
+- be selected by default
+- be the landing section when Passport opens
+- show postcard cards immediately if the user has postcards
+- show a clean empty state if no postcards exist
+
+Do not make About, Stats, Interests, Map, or Settings the landing section.
+
+Do not add large sections between profile info and the tab wall.
+
+SECTION 2 — Clean profile header
+
+The Passport profile header should show only the most important public-facing info.
+
+Show:
+- avatar/profile picture
+- display name
+- @username
+- short bio
+- home base/current city if set
+- follow button for public viewer if follow UI exists
+- owner action/settings menu for owner
+- compact visibility badge if useful
+
+Do not overload the profile header with:
+- long interests lists
+- account settings
+- username forms
+- privacy controls
+- notification settings
+- full travel preferences
+- large onboarding checklist
+- detailed edit forms
+- oversized stat cards
+
+The main profile should answer:
+“Who is this traveler?”
+
+Everything else belongs in:
+- Settings
+- About tab
+- Postcard card actions
+- owner-only menus
+
+SECTION 3 — Minimize interests
+
+If interests exist, minimize them on the main profile.
+
+Rules:
+- show max 3 interest chips on the profile header
+- if more than 3, show “+N more”
+- move full interests list to About tab and/or Settings
+- move full interests editing to Settings
+- do not show a large interests block before the tab wall
+
+Example:
+Beach • Nightlife • Food +4 more
+
+If no interests:
+- public viewer sees nothing
+- owner sees a small prompt in Settings or profile completion, not a big empty section
+
+SECTION 4 — Compact stats row
+
+Show compact stats under the profile info.
+
+Stats:
+- Postcards
+- Verified stamps
+- Countries
+- Cities
+- Trips
+
+Optional if follow backend/UI exists:
+- Followers
+- Following
+
+Rules:
+- stats must be compact
+- no giant cards before tabs
+- no NaN/null/undefined
+- stats wrap cleanly on mobile
+- removed/deleted/hidden content should not inflate public stats
+- private content should not inflate public stats unless owner view clearly labels it
+
+Verified stamp count:
+- only GPS-verified, stamp_eligible postcards count as verified stamps
+
+Manual tags:
+- count as tagged memories only
+- do not count as verified stamps
+
+SECTION 5 — Owner action menu
+
+Create a clean owner-only action menu instead of scattered buttons.
+
+Owner action menu items:
+- Edit profile
+- Share Passport
+- View as public
+- Passport settings
+
+Optional if already supported:
+- Copy profile link
+- Manage privacy
+- Manage blocked users
+
+Public viewer should never see owner actions.
+
+SECTION 6 — Passport Settings menu
+
+Create an owner-only Passport Settings menu.
+
+Settings menu should hold controls that should not clutter the public profile.
+
+Settings sections:
+
+Profile Settings:
+- profile picture/avatar
+- display name
+- username
+- bio
+- home city
+- home country
+- cover photo if implemented
+
+Passport Settings:
+- Passport visibility: public/private
+- public profile route/share link
+- view as public
+- show/hide stats if supported
+
+Travel Preferences:
+- interests
+- travel style
+- favorite activities
+- languages if supported
+
+Safety/Privacy:
+- blocked users if blocking exists
+- report/privacy info
+- location privacy reminder
+- verified stamp explanation
+
+Do not put all of these controls on the main Passport page.
+
+Settings UI:
+- mobile: bottom sheet or full-screen modal
+- desktop: modal/card/drawer
+- must have save/cancel/loading/error/success states
+- keyboard-safe on mobile
+
+SECTION 7 — Editable profile fields
+
+Owner can edit:
+- avatar/profile picture
+- display name
+- username
+- bio
+- home city
+- home country
+- interests
+- Passport visibility
+- cover photo if implemented
+
+Suggested profile fields:
+profiles:
+- id/user_id
+- username
+- display_name
+- avatar_url
+- cover_photo_url nullable
+- bio nullable
+- home_city nullable
+- home_country nullable
+- interests json/array nullable
+- passport_visibility: public/private
+- username_updated_at nullable
+- profile_photo_updated_at nullable
+- profile_updated_at nullable
+- updated_at
+
+If similar fields already exist, reuse existing fields instead of duplicating.
+
+SECTION 8 — Username system
+
+Users should be able to:
+- choose username on signin/onboarding if missing
+- change username from Passport Settings
+- change username from Settings page/profile section if that exists
+
+Username rules:
+- unique
+- lowercase normalized
+- 3–24 characters
+- letters, numbers, underscores, periods only
+- no spaces
+- reserved names blocked
+- displayed as @username
+
+Reserved names:
+- admin
+- support
+- system
+- travelbuddy
+- passport
+- official
+- root
+- api
+- settings
+- login
+- signup
+- help
+
+API:
+- GET /api/users/check-username?username=
+- PATCH /api/me/profile
+
+Security:
+- API uses auth token user, not client-supplied user_id
+- user can only change own username
+- user cannot spoof admin/support/system
+- duplicate usernames blocked server-side
+
+Optional safety:
+- add username_updated_at
+- optional username change cooldown if easy
+- do not overbuild cooldown if it slows first pass
+
+SECTION 9 — Avatar/profile photo upload
+
+Users can upload/change profile picture.
+
+Storage:
+- use existing avatar/profile-media bucket if it exists
+- otherwise create/use: profile-media or avatars
+
+Path:
+avatars/{userId}/{uuid}.{ext}
+
+Allowed types:
+- image/jpeg
+- image/png
+- image/webp
+
+Suggested max size:
+- 5MB
+
+Rules:
+- authenticated user can upload only to own folder
+- public read is okay for avatar URLs if profiles are public
+- validate file type
+- validate file size
+- keep old avatar until new upload succeeds
+- if upload fails, do not save broken avatar_url
+- show useful upload errors
+- do not expose service-role key
+
+Mobile:
+- use existing media picker pattern if available
+- if Expo image picker is already installed, use it
+- do not force package install if Replit package install is blocked
+- convert local URI to Blob correctly before upload
+
+SECTION 10 — Optional cover photo / banner
+
+Add cover photo only if simple and safe.
+
+If implemented:
+- field: cover_photo_url
+- storage path: covers/{userId}/{uuid}.{ext}
+- same validation as avatar or higher size cap if needed
+- owner can edit from Passport Settings
+- public viewer sees cover if Passport is public
+
+If not implemented:
+- leave clean TODO
+- do not block Passport completion
+
+SECTION 11 — Public Passport route/share link
+
+Add a clean public Passport route.
+
+Preferred:
+- /u/:username
+
+Alternative:
+- /passport/:username
+
+Rules:
+- public route uses username, not raw user ID
+- internal lookup can use user ID
+- public response must not expose private fields
+- public response must not expose exact GPS
+- public response must not expose service/internal fields
+- private Passport should show clean private state
+
+Owner action:
+- Share Passport
+- copy/share public profile link
+
+If route system is not ready:
+- create route foundation or leave clear TODO
+- do not expose raw IDs as the intended public profile URL
+
+SECTION 12 — Public/private Passport behavior
+
+Owner view:
+- sees full own Passport
+- sees Settings/action menu
+- sees profile completion prompt
+- sees owner-only postcard actions
+- sees private visibility status
+- can view public preview
+
+Public viewer:
+- sees clean public profile
+- sees public postcards only
+- sees follow button if follow UI exists
+- no edit/settings controls
+- no profile completion prompts
+- no private fields
+- no exact GPS
+- no trip_only/private content
+- no internal verification data
+
+If passport_visibility = private:
+Public viewer sees:
+“This Passport is private.”
+
+Owner still sees full Passport.
+
+SECTION 13 — View as public
+
+Add “View as public” inside owner action/settings menu if easy.
+
+Purpose:
+Owner can see what strangers see.
+
+Public preview must hide:
+- private postcards
+- trip_only postcards
+- exact GPS
+- edit controls
+- settings controls
+- profile completion prompts
+- internal verification fields
+
+SECTION 14 — Profile completion card
+
+Add compact owner-only profile completion prompt.
+
+Show only when incomplete.
+
+Prompt:
+“Finish your Passport”
+
+Checklist:
+- Add profile photo
+- Choose username
+- Add bio
+- Add home base
+- Add first postcard
+
+Rules:
+- compact only
+- owner-only
+- dismissible if easy
+- must not create a large block before tabs
+- public viewer never sees it
+
+SECTION 15 — Postcards tab
+
+Postcards tab is the main wall.
+
+Each postcard card should show:
+- media
+- caption/note
+- location label
+- date
+- verified stamp badge if GPS verified
+- manual tag label if not verified
+- privacy label for owner if useful
+- owner action menu
+
+Card order:
+- pinned postcard first if one exists
+- then newest first by default
+
+Empty state:
+“No postcards yet. Create a photo post to start your Passport.”
+
+SECTION 16 — Pinned postcard
+
+Add pinned postcard support.
+
+Rules:
+- owner can pin/unpin one postcard
+- pinned postcard appears first in Postcards tab
+- only one pinned postcard per user
+- if no pinned postcard, default newest first
+- public sees pinned postcard only if it is public
+- private/trip_only pinned postcard hidden from public unless viewer has permission
+
+Suggested field:
+passport_postcards:
+- pinned_at nullable
+
+or separate:
+profiles.pinned_postcard_id
+
+Use whichever fits existing schema best.
+
+SECTION 17 — Postcard owner action menu
+
+Use a clean action menu per postcard.
+
+Owner postcard menu:
+- Edit note
+- Edit post
+- Clear note
+- Remove from Passport
+- Delete post
+- Change visibility if supported
+- Pin/unpin postcard
+
+Rules:
+- Remove from Passport does not delete original post by default
+- Delete post removes/hides original post and linked postcard
+- Clear note removes text only, not media
+- Edit note updates postcard note/caption
+- Edit post updates linked original post if supported
+- destructive actions require confirmation
+
+Public viewer:
+- no owner menu
+- optional report postcard if reporting exists
+
+SECTION 18 — Postcard states
+
+Support clean postcard states.
+
+States:
+- active
+- removed_from_passport
+- post_deleted
+- hidden_by_moderation
+
+Rules:
+- removed/deleted/hidden postcards should not render broken cards
+- public should not see removed/deleted/hidden postcards
+- owner can see active cards only unless product has an archive/debug view
+- linked deleted post should hide linked postcard
+- media missing should show clean fallback, not broken UI
+
+SECTION 19 — Postcard privacy labels
+
+Owner should see clear privacy/status labels:
+- Public
+- Private
+- Trip-only
+- Verified stamp
+- Manual tag
+
+Public viewer should see only clean public-safe badges:
+- Verified stamp
+- Tagged location/manual memory if useful
+
+Do not clutter public cards with internal privacy details.
+
+SECTION 20 — Verified stamp vs manual tag UI
+
+Verified stamp:
+Show a clear verified stamp badge only when:
+- location_verified = true
+- stamp_eligible = true
+- not revoked
+- not removed/deleted
+
+Manual tag:
+Show manual/tagged memory label when:
+- location is manually chosen
+- GPS verification was denied/unavailable
+- GPS mismatch
+- stamp_eligible = false
+
+Important copy:
+“Verified stamps mean you were GPS-verified near that location when posting. Manual tags are memories, not verified stamps.”
+
+Put this copy in Passport Settings or info tooltip, not as a giant profile block.
+
+SECTION 21 — Postcard sorting/filter foundation
+
+Default:
+- newest first, except pinned first
+
+Prepare future filters:
+- Newest
+- Oldest
+- Verified only
+- Manual tags
+- Country
+- City
+- Trip
+
+Do not overbuild heavy filter UI if not needed.
+But keep data/query structure ready.
+
+SECTION 22 — Compact featured travel summary
+
+Add a small featured summary if easy.
+
+Examples:
+- Latest verified stamp
+- Latest postcard location
+- Recent trip
+
+Rules:
+- keep it compact
+- do not create a large section between profile header and tabs
+- hide if no data
+- public-safe only
+
+SECTION 23 — Stamps tab
+
+Stamps tab should show:
+- verified stamps collection
+- country/city/landmark stamps if available
+- empty state if no verified stamps
+
+Empty state:
+“No verified stamps yet. GPS-verified posts can earn stamps.”
+
+Rules:
+- manual tags do not count as verified stamps
+- removed/deleted/revoked stamps do not show publicly
+- private stamps hidden from public
+- trip_only stamps hidden from unauthorized viewers
+
+SECTION 24 — Trips tab
+
+Trips tab should show:
+- past trips
+- active trips if relevant
+- trip cards
+- trip dates
+- trip locations
+- linked postcard count if available
+
+Respect trip privacy:
+- private trips hidden from public
+- trip_only content only visible to accepted trip members
+- do not leak trip members
+- do not grant trip access from Passport
+
+SECTION 25 — Map tab
+
+Map tab should show Passport map if available.
+
+Rules:
+- public map uses safe approximate place/city coordinates
+- do not expose exact GPS
+- private/trip_only postcards hidden from public
+- manual tags can show softer/manual marker if supported
+- verified stamps can show verified marker
+
+If map is not ready:
+- show clean placeholder
+- do not block rest of Passport
+
+Map empty:
+“Map will appear when postcards have locations.”
+
+SECTION 26 — About tab
+
+About tab should hold secondary info.
+
+About can show:
+- full bio
+- full interests
+- travel style
+- languages
+- home base
+- joined date if available
+- report/block action for public viewer if supported
+
+Keep this out of the main profile header.
+
+SECTION 27 — Report/block safety hooks
+
+Add hooks if reporting/blocking exists.
+
+Public viewer actions:
+- Report profile
+- Report postcard
+- Block user
+
+Rules:
+- do not build heavy moderation if not already available
+- respect blocked users if blocking exists
+- blocked users cannot view/interact/follow if product supports blocking
+- if blocking does not exist, leave clean TODO
+
+SECTION 28 — Loading/skeleton/error states
+
+Passport should not flash broken UI.
+
+Add:
+- profile skeleton
+- postcard skeleton
+- empty postcard state
+- private Passport state
+- error retry state
+- upload loading
+- settings save loading
+- delete confirmation loading
+
+No visible:
+- undefined
+- null
+- NaN
+- broken image icon if avoidable
+
+SECTION 29 — Mobile layout
+
+Mobile is priority.
+
+Requirements:
+- no horizontal overflow
+- works at 390px and 430px
+- clean profile header
+- compact avatar/name/username/bio
+- interests max 3 chips
+- stats row wraps cleanly
+- tabs easy to tap
+- Postcards tab visible first
+- postcard cards full width
+- settings opens as bottom sheet or full-screen modal
+- owner action menu mobile-friendly
+- postcard action menu mobile-friendly
+- delete confirmations mobile-safe
+- keyboard-safe settings forms
+
+Desktop:
+- preserve website layout
+- avoid giant blank space
+- do not break existing desktop Passport route
+- profile can be wider/two-column if existing layout supports it
+
+SECTION 30 — Backend/API rules
+
+Reuse existing APIs where possible.
+
+If missing, add:
+- GET /api/me/profile
+- PATCH /api/me/profile
+- GET /api/users/check-username?username=
+- GET /api/users/:username/passport
+- GET /api/me/passport/postcards
+- GET /api/users/:username/passport/postcards
+- PATCH /api/passport/postcards/:id
+- DELETE or PATCH /api/passport/postcards/:id/remove
+- PATCH /api/posts/:id for edit post if already in post scope
+
+Security:
+- API sets user from auth token
+- never trust client user_id for owner edits
+- owner-only profile/post/postcard mutations
+- non-owner cannot mutate profile/postcards/posts
+- public responses exclude private/internal fields
+- service-role key never exposed
+- exact GPS never exposed publicly
+
+SECTION 31 — Edit post / note behavior
+
+Owner can:
+- edit own post
+- edit postcard note
+- clear note
+- delete original post with confirmation
+- remove postcard from Passport
+- change visibility if supported
+
+Owner cannot:
+- fake location_verified
+- force stamp_eligible
+- edit GPS verification result
+- edit another user’s content
+
+Public cannot:
+- edit
+- delete
+- remove
+- see private/trip_only content
+- see exact GPS
+
+SECTION 32 — Empty states
+
+Postcards:
+“No postcards yet. Create a photo post to start your Passport.”
+
+Stamps:
+“No verified stamps yet. GPS-verified posts can earn stamps.”
+
+Trips:
+“No trips shown yet.”
+
+Map:
+“Map will appear when postcards have locations.”
+
+About:
+Owner:
+“Add more details in Passport Settings.”
+
+Public:
+hide empty sections or keep minimal.
+
+SECTION 33 — Tests
+
+Add or verify tests.
+
+Default/layout:
+1. Passport opens to Postcards by default.
+2. Postcards tab is first.
+3. Postcards tab remains selected on initial load.
+4. Main profile header is compact.
+5. No large settings/interests block appears before tabs.
+6. Interests show max 3 chips.
+7. Extra interests show +N more.
+8. Mobile has no horizontal overflow.
+9. Desktop Passport still renders correctly.
+
+Settings/profile:
+10. Owner sees owner action/settings menu.
+11. Public viewer does not see owner menu.
+12. Settings opens/closes.
+13. Owner can update display name.
+14. Owner can update username.
+15. Owner can update bio.
+16. Owner can update home city/country.
+17. Owner can update avatar.
+18. Owner can update interests.
+19. Invalid username rejected.
+20. Duplicate username rejected.
+21. Reserved username rejected.
+22. User cannot update another user’s profile.
+23. Public profile response excludes private fields.
+
+Avatar/upload:
+24. Valid avatar upload succeeds.
+25. Invalid avatar file type rejected.
+26. Oversized avatar rejected.
+27. Upload failure does not save broken avatar_url.
+28. User cannot upload into another user’s avatar folder.
+
+Public route/share:
+29. /u/:username or /passport/:username loads public Passport.
+30. Public route does not expose raw user ID as primary route.
+31. Share Passport copies public link.
+32. Missing/invalid username route handles gracefully.
+
+Postcards:
+33. Postcards load in default tab.
+34. Pinned postcard appears first.
+35. Only one pinned postcard allowed.
+36. Newest first after pinned.
+37. Owner can edit postcard note.
+38. Owner can clear note.
+39. Owner can remove postcard.
+40. Removing postcard does not delete original post.
+41. Owner can delete original post with confirmation.
+42. Deleted original post hides linked postcard.
+43. Non-owner cannot edit/remove postcard.
+44. Removed/deleted postcard does not render broken card.
+45. Manual tag does not show verified stamp.
+46. GPS-verified postcard shows verified stamp.
+
+Privacy:
+47. Public sees only public postcards.
+48. Private Passport hidden from public.
+49. Owner can view private Passport.
+50. Public preview hides private/trip_only content.
+51. Exact GPS is never exposed publicly.
+52. trip_only content hidden from non-members.
+53. private content hidden from public.
+54. Settings does not expose service/internal fields.
+55. Follow/friend/circle/trip access is not granted by Passport profile edits.
+
+Tabs:
+56. Stamps tab empty state works.
+57. Trips tab empty state works.
+58. Map tab empty state works.
+59. About tab shows secondary info only.
+60. Switching tabs works on mobile and desktop.
+
+Safety/report/block:
+61. Report profile hook works or shows TODO safely.
+62. Report postcard hook works or shows TODO safely.
+63. Blocked user handling respected if blocking exists.
+
+Regression:
+64. Pulse still works.
+65. Post media upload still works.
+66. Avatar upload still works.
+67. Follow button still works if implemented.
+68. Existing privacy/RLS tests still pass.
+
+SECTION 34 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- Passport render tests
+- profile settings tests
+- username validation tests
+- avatar upload tests
+- postcard API tests
+- privacy/RLS tests
+- mobile 390px smoke test
+- mobile 430px smoke test
+- desktop smoke test
+- existing posts tests
+- existing media upload tests
+
+Manual verification:
+- owner Passport with complete profile
+- owner Passport with incomplete profile
+- public Passport
+- private Passport
+- user with many interests
+- user with no interests
+- user with no postcards
+- user with verified postcards
+- user with manual-tag postcards
+- pinned postcard
+- remove postcard
+- edit postcard note
+- clear note
+- delete linked post
+- avatar upload success
+- avatar upload failure
+- username duplicate
+- username reserved
+- view as public
+- share profile link
+- mobile preview
+- desktop preview
+
+SECTION 35 — Acceptance criteria
+
+This task is complete only when:
+
+1. Passport opens to Postcards by default.
+2. Postcards tab is first.
+3. Profile header is clean and uncluttered.
+4. There are limited items between profile info and the tab wall.
+5. Interests are minimized on main profile.
+6. Full interests/settings are moved into Settings/About.
+7. Owner Settings menu exists.
+8. Owner can edit profile from Settings.
+9. Owner can change username.
+10. Owner can upload/change avatar.
+11. Owner can share Passport link.
+12. Public username route works or is clearly scaffolded.
+13. Owner can view as public.
+14. Owner can manage postcards.
+15. Owner can pin/unpin one postcard.
+16. Postcard actions are in a clean menu.
+17. Verified stamp/manual tag UI is honest.
+18. Public viewer sees only public-safe content.
+19. Private/trip_only/exact GPS/live-location/internal data does not leak.
+20. Mobile Passport layout is clean.
+21. Desktop Passport layout still works.
+22. Loading/empty/error states are clean.
+23. Tests pass.
+
+Hard boundaries:
+- Do not expose exact GPS.
+- Do not allow fake verified stamps.
+- Do not let users edit another user’s content.
+- Do not leak private/trip_only content.
+- Do not connect profile settings to circle_memberships.
+- Do not grant live-map access from profile settings.
+- Do not grant trip access from profile settings.
+- Do not expose service-role key.
+- Do not break Pulse.
+- Do not break post media upload.
+- Do not break avatar upload.
+- Do not break follow backend/UI if implemented.
+- Do not break desktop layout.
+
+Final design direction:
+Passport should look like a clean travel identity page.
+
+Main profile:
+- avatar
+- name
+- @username
+- short bio
+- compact stats
+- minimal interests
+- settings/action menu
+
+Main content:
+- Postcards wall first
+
+Settings:
+- all editing, privacy, interests, and account-style controls
+
+Public view:
+- clean, safe, shareable
+
+Owner view:
+- editable, organized, not cluttered

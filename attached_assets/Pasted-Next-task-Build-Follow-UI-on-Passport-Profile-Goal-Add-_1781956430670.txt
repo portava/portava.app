@@ -1,0 +1,219 @@
+Next task: Build Follow UI on Passport/Profile.
+
+Goal:
+Add the user-facing Follow experience now that the follow backend exists.
+
+This task should connect the existing follow backend to the Passport/Profile UI.
+
+Core product rule:
+Follow = public social discovery only.
+Follow must not grant private posts, trip_only posts, circle membership, trip access, or live-map visibility.
+
+Do not connect follows to:
+- circle_memberships
+- trip_members
+- live location
+- private Passport access
+- trip_only content access
+
+SECTION 1 — UI surfaces
+
+Add follow UI to:
+
+1. Public Passport page
+- show Follow button when viewing another user
+- show Following state if already followed
+- allow Unfollow
+- show followers/following counts if backend supports them
+
+2. Profile header
+- owner does not see Follow button on own Passport
+- public viewer sees Follow/Following button
+- blocked users should not see/interact if blocking exists
+
+3. Optional Profile card usage
+If traveler cards exist in Pulse/Discovery/Search:
+- show small Follow button or status if easy
+- do not overbuild this pass
+
+SECTION 2 — Button states
+
+Follow button states:
+- Follow
+- Following
+- Loading
+- Error
+- Unfollow confirmation if desired
+
+Rules:
+- optimistic update allowed only if rollback works on failure
+- duplicate follow should not duplicate count
+- if API returns already-following, UI should show Following
+- if unfollow succeeds, UI returns to Follow
+- disabled while request is pending
+
+SECTION 3 — Counts
+
+Show compact counts:
+- Followers
+- Following
+
+Rules:
+- counts update after follow/unfollow
+- no NaN/null/undefined
+- counts should not become negative
+- if endpoint unavailable, hide counts or show fallback cleanly
+
+SECTION 4 — API integration
+
+Use existing endpoints:
+
+- POST /api/users/:userId/follow
+- DELETE /api/users/:userId/follow
+- GET /api/users/:userId/follow-status
+- GET /api/me/following
+- GET /api/me/followers
+
+If counts endpoint exists:
+- use it
+
+If counts endpoint does not exist:
+- add lightweight count support or return counts from public Passport payload if safe
+
+Do not expose private data in followers/following responses.
+
+SECTION 5 — Privacy rules
+
+Follow should only affect:
+- public content discovery
+- public Passport/profile relationship display
+- optional Following feed later
+
+Follow must not unlock:
+- private Passport
+- private posts
+- trip_only posts
+- trip member data
+- circle member data
+- live location
+- exact GPS
+- direct messaging unless product already allows it separately
+
+SECTION 6 — Public Passport behavior
+
+When User A views User B’s public Passport:
+- if not following: show Follow
+- if following: show Following
+- if owner: hide Follow button
+- if Passport private: public profile can still show limited private state, but no private postcards
+- follow state should still work if profile is visible enough to follow
+
+SECTION 7 — Optional Following feed filter
+
+Add only if simple and backend already supports it.
+
+Pulse filter:
+- For You / Following / Nearby if existing
+- Following shows public posts from followed users only
+
+Rules:
+- Following filter must include public posts only
+- private/trip_only posts remain protected
+- if no followed users: show empty state
+
+Empty state:
+“Follow travelers to see their public posts here.”
+
+If this requires too much backend work, leave as follow-up.
+
+SECTION 8 — Mobile layout
+
+Mobile requirements:
+- Follow button fits in Passport header
+- no horizontal overflow
+- counts wrap cleanly
+- loading/error states clean
+- button is easy to tap
+- works at 390px and 430px
+
+Desktop:
+- preserve existing Passport layout
+- button should align cleanly in header/action area
+
+SECTION 9 — Tests
+
+Add/verify tests:
+
+UI:
+1. Owner does not see Follow button on own Passport.
+2. Public viewer sees Follow button on another public Passport.
+3. Follow button changes to Following after success.
+4. Following changes back to Follow after unfollow.
+5. Loading state prevents duplicate taps.
+6. Error state rolls back optimistic update.
+7. Counts update after follow.
+8. Counts update after unfollow.
+9. No NaN/null/undefined counts.
+
+Privacy:
+10. Follow does not expose private Passport.
+11. Follow does not expose private posts.
+12. Follow does not expose trip_only posts.
+13. Follow does not expose live location.
+14. Follow does not create circle_memberships.
+15. Follow does not create trip membership.
+
+Backend integration:
+16. follow-status endpoint returns correct state.
+17. duplicate follow is handled safely.
+18. self-follow is not available from UI.
+19. non-authenticated user is redirected or prompted to sign in.
+20. blocked users respected if blocking exists.
+
+Following filter if implemented:
+21. Following feed shows only public posts from followed users.
+22. Following feed excludes private/trip_only posts.
+23. Empty following feed state works.
+
+SECTION 10 — Validation
+
+Run:
+- frontend/mobile typecheck
+- backend typecheck if endpoints changed
+- follow API tests
+- Passport render tests
+- follow UI tests
+- privacy tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verify:
+- User A views User B Passport
+- User A follows User B
+- counts update
+- reload page still shows Following
+- User A unfollows User B
+- counts update
+- User A cannot follow self
+- private/trip_only/live-map content does not become visible
+- mobile Passport header still clean
+
+Acceptance criteria:
+1. Follow button works on public Passport.
+2. Following state persists after reload.
+3. Unfollow works.
+4. Counts display cleanly.
+5. Owner does not see follow button on own Passport.
+6. Follow does not grant private/trip/circle/live access.
+7. Mobile layout remains clean.
+8. Tests pass.
+
+Hard boundaries:
+- Do not connect follows to circle_memberships.
+- Do not connect follows to trip_members.
+- Do not grant live-map access.
+- Do not expose exact GPS.
+- Do not expose private/trip_only posts.
+- Do not weaken RLS/access rules.
+- Do not expose service-role key.

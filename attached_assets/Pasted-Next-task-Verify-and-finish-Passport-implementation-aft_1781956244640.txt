@@ -1,0 +1,95 @@
+Next task: Verify and finish Passport implementation after the full Passport page build.
+
+Goal:
+Do a focused verification pass on the full Passport page to prove the profile/settings/postcards system actually works end-to-end.
+
+Do not add new features in this pass unless needed to fix broken acceptance criteria.
+
+Verify these 5 areas:
+
+1. Passport landing behavior
+- Passport opens to Postcards tab by default.
+- Postcards tab is first.
+- No large clutter exists between profile header and tab wall.
+- Interests are minimized to max 3 chips.
+- Settings/About hold the extra profile details.
+
+2. Profile/settings behavior
+- Owner sees Settings.
+- Public viewer does not see Settings.
+- Owner can edit display name.
+- Owner can edit username.
+- Owner can edit bio.
+- Owner can edit home city/country.
+- Owner can upload/change avatar.
+- Username validation works:
+  - duplicate blocked
+  - reserved blocked
+  - invalid format blocked
+- Settings save updates Passport immediately.
+
+3. Postcard behavior
+- Postcards render in the default tab.
+- Pinned postcard appears first if set.
+- Newest order works after pinned.
+- Verified stamp badge shows only for verified/stamp_eligible postcards.
+- Manual tag does not show verified stamp.
+- Owner can edit note.
+- Owner can clear note.
+- Owner can remove postcard.
+- Remove from Passport does not delete original post.
+- Delete original post hides linked postcard.
+- Deleted/removed cards do not render broken UI.
+
+4. Privacy/security behavior
+- Public viewer sees only public Passport content.
+- Private Passport shows private state.
+- Public preview hides private/trip_only content.
+- Exact GPS is never exposed.
+- Internal verification fields are not exposed.
+- Non-owner cannot edit profile/postcards/posts.
+- Profile settings do not create circle_memberships.
+- Profile settings do not create trip membership.
+- Profile settings do not grant live-map access.
+
+5. Layout behavior
+- Mobile 390px clean.
+- Mobile 430px clean.
+- No horizontal overflow.
+- Settings modal/sheet is keyboard-safe.
+- Postcard action menu works on mobile.
+- Desktop Passport still works.
+
+Required output:
+Return a verification report with:
+
+- PASS/FAIL for each area
+- exact failing screens/components/files if any
+- exact API endpoints tested
+- exact tests run
+- screenshots or notes for mobile 390/430 if possible
+- list of fixes applied
+- remaining issues if any
+
+Validation commands:
+- backend typecheck
+- frontend/mobile typecheck
+- Passport render tests
+- profile settings tests
+- username validation tests
+- avatar upload tests
+- postcard API tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+- existing posts tests
+- existing media upload tests
+
+Hard rule:
+Do not mark this complete until Passport is actually usable:
+- owner can edit profile/settings
+- Postcards is the landing tab
+- postcard cards display correctly
+- public/private behavior is safe
+- mobile layout is clean

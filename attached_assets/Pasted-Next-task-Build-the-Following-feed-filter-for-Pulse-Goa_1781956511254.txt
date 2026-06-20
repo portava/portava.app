@@ -1,0 +1,203 @@
+Next task: Build the Following feed filter for Pulse.
+
+Goal:
+Add a “Following” feed mode so users can see public posts from travelers they follow.
+
+Core product rule:
+Follow = public social discovery only.
+The Following feed must only show public-safe content from followed users.
+
+Do not let follows unlock:
+- private posts
+- trip_only posts
+- private Passport
+- live location
+- exact GPS
+- circle membership
+- trip membership
+- messages unless messaging already allows it separately
+
+SECTION 1 — Pulse feed tabs/filter
+
+Add feed filters to Pulse:
+
+Recommended order:
+1. For You
+2. Following
+3. Nearby / Explore if already exists
+
+If the app already has Pulse filter chips, add “Following” there.
+
+Following tab behavior:
+- selected tab fetches public posts from users I follow
+- if I follow no one, show empty state
+- if followed users have no public posts, show empty state
+- do not show private/trip_only posts
+- do not show deleted/hidden posts
+- do not show blocked users if blocking exists
+
+Empty state:
+“Follow travelers to see their public posts here.”
+
+Optional CTA:
+“Explore travelers”
+
+SECTION 2 — Backend/API
+
+Add or reuse endpoint:
+
+Option A:
+GET /api/posts?feed=following
+
+Option B:
+GET /api/pulse/following
+
+Preferred:
+Use existing posts feed endpoint if it already supports feed types.
+
+Server behavior:
+- auth required
+- resolve current user from token
+- find users current user follows
+- return public posts from followed users only
+- exclude private posts
+- exclude trip_only posts
+- exclude deleted/hidden posts
+- exclude blocked users if blocking exists
+- paginate with existing cursor/limit pattern
+
+Do not trust client-supplied user_id.
+
+Do not expose:
+- private visibility posts
+- trip_only posts
+- exact GPS
+- internal verification fields
+- service-role key
+
+SECTION 3 — Query rules
+
+Following feed should include:
+- public standalone posts from followed users
+- public Passport/postcard-linked posts if they are public
+- public trip-attached posts only if post visibility is public and the existing product allows public trip posts
+
+Following feed should exclude:
+- private posts
+- trip_only posts
+- removed/deleted posts
+- hidden/moderated posts
+- posts from blocked users
+- exact GPS fields
+- private trip/member data
+
+SECTION 4 — UI cards
+
+Use the same Pulse card component if possible.
+
+Following feed cards should show:
+- author avatar
+- display name
+- @username
+- post media
+- caption/body
+- public location label if available
+- verified stamp/manual tag badge if already supported
+- follow state if useful
+- post date
+
+Do not create a separate card style unless necessary.
+
+SECTION 5 — State/loading/error
+
+Add:
+- loading skeleton
+- empty state
+- error retry
+- pull-to-refresh if existing Pulse supports it
+- pagination/infinite scroll if existing feed supports it
+
+Rules:
+- switching tabs should not break scroll
+- Following should refresh after following/unfollowing someone
+- no duplicate posts
+- no NaN/null/undefined
+
+SECTION 6 — Privacy tests
+
+Add tests:
+
+1. User A follows User B.
+2. User B public post appears in User A Following feed.
+3. User B private post does not appear.
+4. User B trip_only post does not appear unless existing trip permission separately allows it and feed explicitly supports that.
+5. User C not followed does not appear.
+6. Deleted/hidden posts do not appear.
+7. Exact GPS fields are not returned.
+8. Internal verification fields are not returned.
+9. Follow does not create circle_memberships.
+10. Follow does not create trip membership.
+11. Follow does not grant live location.
+12. Blocked user posts excluded if blocking exists.
+
+SECTION 7 — UI tests
+
+Add/verify:
+1. Pulse shows Following filter.
+2. Following filter fetches following feed.
+3. Empty state appears when user follows no one.
+4. Empty state appears when followed users have no public posts.
+5. Loading state appears.
+6. Error state retry works.
+7. Cards render cleanly.
+8. Mobile has no horizontal overflow.
+9. Switching back to For You works.
+10. Following feed updates after follow/unfollow.
+
+SECTION 8 — Validation
+
+Run:
+- backend typecheck
+- frontend/mobile typecheck
+- posts/feed tests
+- follow API tests
+- Following feed tests
+- Pulse render tests
+- privacy/RLS tests
+- mobile 390 smoke test
+- mobile 430 smoke test
+- desktop smoke test
+
+Manual verification:
+- User A follows User B
+- User B creates public post
+- User B public post appears in User A Following
+- User B private post does not appear
+- User B trip_only post does not appear
+- User A unfollows User B
+- User B posts disappear from Following after refresh
+- For You still works
+- Pulse mobile layout still works
+
+SECTION 9 — Acceptance criteria
+
+This task is complete when:
+1. Pulse has a Following feed filter.
+2. Following feed shows public posts from followed users.
+3. Following feed excludes private/trip_only/deleted/hidden content.
+4. Empty/loading/error states work.
+5. Follow/unfollow updates feed behavior.
+6. No circle/trip/live-map access is granted.
+7. Mobile layout is clean.
+8. Tests pass.
+
+Hard boundaries:
+- Do not weaken post visibility rules.
+- Do not expose private/trip_only posts.
+- Do not expose exact GPS.
+- Do not expose service-role key.
+- Do not connect follows to circle_memberships.
+- Do not connect follows to trip_members.
+- Do not grant live-map access.
+- Do not break For You/Pulse feed.
+- Do not break Passport.

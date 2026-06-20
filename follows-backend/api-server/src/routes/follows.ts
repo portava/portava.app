@@ -1,0 +1,149 @@
+import { Router } from "express";
+import { requireUser, sendError } from "../lib/http";
+import { decideFollow, decideUnfollow, isUuid } from "../lib/followDecisions";
+
+const router = Router();
+
+/* Helper: does a profile exist? (service-role read) */
+async function profileExists(client: any, userId: string): Promise<boolean> {
+  const { data, error } = await client.from("profiles").select("id").eq("id", userId).maybeSingle();
+  if (error) return false;
+  return Boolean(data);
+}
+
+/* ===========================================================================
+ * POST /users/:userId/follow  — follow a user
+ * ===========================================================================
+ * follower is the verified user (never client-supplied). No self-follow.
+ * A follow grants NOTHING sensitive — it only inserts a social edge.
+ */
+router.post("/users/:userId/follow", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const target = req.params.userId;
+
+  // (No block table yet; blocked=false. Hook left for Phase 2.)
+  const targetExists = isUuid(target) ? await profileExists(client, target) : false;
+  const decision = decideFollow(user.id, target, { targetExists, blocked: false });
+  if (!decision.ok) {
+    const map: Record<string, any> = {
+      unauthenticated: "unauthenticated",
+      invalid_payload: "invalid_payload",
+      cannot_follow_self: "invalid_payload",
+      not_found: "not_found",
+      blocked: "forbidden",
+    };
+    sendError(res, map[decision.code], decision.code === "cannot_follow_self" ? "You cannot follow yourself" : undefined);
+    return;
+  }
+
+  // Idempotent: ignore duplicate (PK conflict) and return current state.
+  const { error } = await client
+    .from("user_follows")
+    .upsert({ follower_id: user.id, following_id: target }, { onConflict: "follower_id,following_id", ignoreDuplicates: true });
+  if (error) {
+    req.log.error({ err: error }, "Failed to follow");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(201).json({ following: true, userId: target });
+});
+
+/* ===========================================================================
+ * DELETE /users/:userId/follow  — unfollow
+ * ===========================================================================
+ */
+router.delete("/users/:userId/follow", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const target = req.params.userId;
+
+  const decision = decideUnfollow(user.id, target);
+  if (!decision.ok) {
+    sendError(res, decision.code === "unauthenticated" ? "unauthenticated" : "invalid_payload");
+    return;
+  }
+
+  const { error } = await client
+    .from("user_follows")
+    .delete()
+    .eq("follower_id", user.id)     // only your own follow row
+    .eq("following_id", target);
+  if (error) {
+    req.log.error({ err: error }, "Failed to unfollow");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(200).json({ following: false, userId: target });
+});
+
+/* ===========================================================================
+ * GET /users/:userId/follow-status  — am I following this user? + counts
+ * ===========================================================================
+ */
+router.get("/users/:userId/follow-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const target = req.params.userId;
+  if (!isUuid(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const [mine, followers, following] = await Promise.all([
+    client.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", target).maybeSingle(),
+    client.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
+    client.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
+  ]);
+
+  res.status(200).json({
+    userId: target,
+    isFollowing: Boolean(mine.data),
+    followersCount: followers.count ?? 0,
+    followingCount: following.count ?? 0,
+  });
+});
+
+/* ===========================================================================
+ * GET /me/following  — users I follow
+ * GET /me/followers  — users who follow me
+ * ===========================================================================
+ * Returns ONLY the social edge + public profile basics (id, handle, name,
+ * avatar). Never private content.
+ */
+const PUBLIC_PROFILE = "id, handle, name, avatar_url";
+
+router.get("/me/following", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { data, error } = await client
+    .from("user_follows")
+    .select(`following_id, created_at, profile:profiles!user_follows_following_id_fkey(${PUBLIC_PROFILE})`)
+    .eq("follower_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) { req.log.error({ err: error }, "following list failed"); sendError(res, "db_error", error.message); return; }
+  res.status(200).json({ users: (data ?? []).map(rowToUser) });
+});
+
+router.get("/me/followers", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { data, error } = await client
+    .from("user_follows")
+    .select(`follower_id, created_at, profile:profiles!user_follows_follower_id_fkey(${PUBLIC_PROFILE})`)
+    .eq("following_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) { req.log.error({ err: error }, "followers list failed"); sendError(res, "db_error", error.message); return; }
+  res.status(200).json({ users: (data ?? []).map(rowToUser) });
+});
+
+function rowToUser(r: any) {
+  const p = r.profile ?? {};
+  return { id: p.id, handle: p.handle, name: p.name, avatarUrl: p.avatar_url ?? null, since: r.created_at };
+}
+
+export default router;
