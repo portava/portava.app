@@ -8,7 +8,7 @@ import type { DiscoveryItem } from '../data/discovery';
 import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { TravelSectionHeader, TravelEmptyState } from './primitives';
-import { useAttach } from './AttachController';
+import { usePlanPicker } from './PlanPickerController';
 
 /* small provisional note */
 function Prov({ text = 'Starter city note — provisional' }: { text?: string }) {
@@ -22,7 +22,7 @@ function Prov({ text = 'Starter city note — provisional' }: { text?: string })
 
 /* ── Hidden Gems ── */
 export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View style={g.card}>
       <View style={g.media}>
@@ -41,7 +41,7 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
         ) : null}
         <View style={g.btnRow}>
           <Pressable style={({ pressed }) => [g.addBtn, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => attach.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' }, 'plan')}>
+            onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
             <Text style={g.addText}>Add to Plan</Text>
           </Pressable>
         </View>
@@ -92,7 +92,7 @@ export function NeighborhoodsSection({ items }: { items: NeighborhoodVibe[] }) {
 
 /* ── Traveler Picks ── */
 export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View style={tp.card}>
       <View style={tp.head}>
@@ -115,7 +115,7 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
           <Bookmark size={14} color={color.mute} /><Text style={tp.saveText}>Save</Text>
         </Pressable>
         <Pressable style={({ pressed }) => [tp.addBtn, pressed && { opacity: layout.pressedOpacity }]}
-          onPress={() => attach.open({ id: pick.id, type: 'place', title: pick.place, city: pick.city, category: pick.tag }, 'plan')}>
+          onPress={() => planPicker.open({ id: pick.id, type: 'place', title: pick.place, city: pick.city, category: pick.tag })}>
           <Text style={tp.addText}>Add to Plan</Text>
         </Pressable>
       </View>
@@ -140,7 +140,7 @@ export function TravelerPicksSection({ picks }: { picks: TravelerPick[] }) {
 
 /* ── Saved Ideas ── */
 export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View>
       <TravelSectionHeader title="Saved Ideas" onAction={() => router.push('/saved')} />
@@ -156,8 +156,8 @@ export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
                 <Text style={sv.meta} numberOfLines={1}>{it.type} · {it.neighborhood}</Text>
               </View>
               <Pressable style={({ pressed }) => [sv.addBtn, pressed && { opacity: layout.pressedOpacity }]}
-                onPress={() => attach.open({ id: it.id, type: 'place', title: it.name, city: it.neighborhood, category: it.type }, 'trip')}>
-                <Plus size={13} color={color.signal} /><Text style={sv.addText}>Add to Trip</Text>
+                onPress={() => planPicker.open({ id: it.id, type: 'place', title: it.name, city: it.neighborhood, category: it.type })}>
+                <Plus size={13} color={color.signal} /><Text style={sv.addText}>Add to Plan</Text>
               </Pressable>
               <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.signal} fill={color.signal} /></Pressable>
             </View>

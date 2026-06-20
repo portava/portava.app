@@ -64,6 +64,7 @@ export default function TripDetail() {
           tripId={trip.id}
           currentUserId={userId ?? ''}
           isOwner={realTrip ? userId === realTrip.ownerId : false}
+          tripStartDate={realTrip?.startDate ?? undefined}
         />
         <SavedIdeas ideas={trip.savedIdeas} />
         <TripPlans plans={tripPlans} />

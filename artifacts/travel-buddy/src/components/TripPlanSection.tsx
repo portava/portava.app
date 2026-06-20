@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, Modal, Alert,
+  TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Plus, MapPin, Clock, Trash2, MoreHorizontal, CheckCircle2 } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory } from '../types/models';
+import { Plus, MapPin, Clock, Trash2, MoreHorizontal, CheckCircle2, Pencil, Lock } from 'lucide-react-native';
+import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../types/models';
 import { fetchTripPlan, removePlanItem, updatePlanItem } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { AddToPlanSheet } from './AddToPlanSheet';
@@ -37,6 +38,32 @@ function fmtTime(iso: string | null) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function dayLabel(key: string, tripStartDate: string | null | undefined): string {
+  if (key === '__unscheduled__') return 'Unscheduled';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const d = new Date(key + 'T00:00:00');
+  if (isNaN(d.getTime())) return key;
+
+  const ms = d.getTime();
+  if (ms === today.getTime()) return 'Today';
+  if (ms === tomorrow.getTime()) return 'Tomorrow';
+
+  if (tripStartDate) {
+    const start = new Date(tripStartDate + 'T00:00:00');
+    if (!isNaN(start.getTime())) {
+      const dayNum = Math.round((ms - start.getTime()) / 86_400_000) + 1;
+      if (dayNum >= 1) {
+        const fmt = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return `Day ${dayNum} — ${fmt}`;
+      }
+    }
+  }
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 function groupByDay(items: TripPlanItem[]): { label: string; key: string; items: TripPlanItem[] }[] {
   const map = new Map<string, TripPlanItem[]>();
   for (const item of items) {
@@ -47,15 +74,127 @@ function groupByDay(items: TripPlanItem[]): { label: string; key: string; items:
   const buckets: { label: string; key: string; items: TripPlanItem[] }[] = [];
   for (const [key, rows] of map) {
     if (key === '__unscheduled__') continue;
-    const d = new Date(key);
-    const label = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-    buckets.push({ key, label, items: rows });
+    buckets.push({ key, label: key, items: rows });
   }
   buckets.sort((a, b) => a.key.localeCompare(b.key));
   if (map.has('__unscheduled__')) {
-    buckets.push({ key: '__unscheduled__', label: 'Unscheduled', items: map.get('__unscheduled__')! });
+    buckets.push({ key: '__unscheduled__', label: '__unscheduled__', items: map.get('__unscheduled__')! });
   }
   return buckets;
+}
+
+// ── Inline edit modal ─────────────────────────────────────────────────────────
+
+interface EditSheetProps {
+  item: TripPlanItem;
+  onClose: () => void;
+  onSaved: (updated: TripPlanItem) => void;
+  tripId: string;
+}
+
+const STATUS_OPTIONS: { value: TripPlanItemStatus; label: string }[] = [
+  { value: 'tentative', label: 'Tentative' },
+  { value: 'confirmed', label: 'Confirmed' },
+  { value: 'done',      label: 'Done' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+function EditPlanItemSheet({ item, tripId, onClose, onSaved }: EditSheetProps) {
+  const [title, setTitle] = useState(item.title);
+  const [dayDate, setDayDate] = useState(item.dayDate ?? '');
+  const [startsAt, setStartsAt] = useState(
+    item.startsAt ? new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+  );
+  const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
+  const [notes, setNotes] = useState(item.notes ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    if (!title.trim()) { setError('Title is required'); return; }
+    setError('');
+    setSubmitting(true);
+    try {
+      const updated = await updatePlanItem(tripId, item.id, {
+        title: title.trim(),
+        dayDate: dayDate.trim() || null,
+        startsAt: dayDate.trim() && startsAt.trim() ? `${dayDate.trim()}T${startsAt.trim()}:00` : null,
+        status,
+        notes: notes.trim() || null,
+      });
+      onSaved(updated);
+    } catch (e: any) {
+      setError(e.message ?? 'Could not save. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Pressable style={ed.overlay} onPress={onClose} />
+        <View style={ed.sheet}>
+          <View style={ed.handle} />
+          <View style={ed.header}>
+            <Text style={ed.headerTitle}>Edit Plan Item</Text>
+            <Pressable onPress={onClose} style={ed.cancelBtn}><Text style={ed.cancelText}>Cancel</Text></Pressable>
+          </View>
+          <ScrollView
+            contentContainerStyle={ed.body}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={ed.label}>Title</Text>
+            <TextInput style={ed.input} value={title} onChangeText={setTitle} placeholderTextColor={color.faint} />
+
+            <Text style={ed.label}>Date <Text style={ed.opt}>(YYYY-MM-DD)</Text></Text>
+            <TextInput style={ed.input} value={dayDate} onChangeText={setDayDate} placeholder="e.g. 2026-07-15" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
+
+            <Text style={ed.label}>Time <Text style={ed.opt}>(HH:MM, 24-hour)</Text></Text>
+            <TextInput style={ed.input} value={startsAt} onChangeText={setStartsAt} placeholder="e.g. 19:30" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
+
+            <Text style={ed.label}>Status</Text>
+            <View style={ed.statusRow}>
+              {STATUS_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt.value}
+                  style={[ed.statusChip, status === opt.value && ed.statusChipActive]}
+                  onPress={() => setStatus(opt.value)}
+                >
+                  <Text style={[ed.statusChipText, status === opt.value && ed.statusChipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={ed.label}>Notes <Text style={ed.opt}>(optional)</Text></Text>
+            <TextInput
+              style={[ed.input, ed.inputMulti]}
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Any extra details…"
+              placeholderTextColor={color.faint}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+
+            {error ? <Text style={ed.error}>{error}</Text> : null}
+
+            <Pressable
+              style={[ed.saveBtn, submitting && ed.saveBtnDisabled]}
+              onPress={handleSave}
+              disabled={submitting}
+            >
+              <Text style={ed.saveText}>{submitting ? 'Saving…' : 'Save Changes'}</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
 // ── Plan item card ─────────────────────────────────────────────────────────────
@@ -64,104 +203,163 @@ function PlanItemCard({
   item,
   currentUserId,
   isOwner,
+  tripId,
   onRemove,
   onMarkDone,
+  onMarkTentative,
+  onEdited,
 }: {
   item: TripPlanItem;
   currentUserId: string;
   isOwner: boolean;
+  tripId: string;
   onRemove: (id: string) => void;
   onMarkDone: (id: string) => void;
+  onMarkTentative: (id: string) => void;
+  onEdited: (updated: TripPlanItem) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const cat = CAT_STYLE[item.category] ?? CAT_STYLE.other;
   const statusStyle = STATUS_STYLE[item.status] ?? STATUS_STYLE.tentative;
   const canAct = isOwner || item.creatorId === currentUserId;
   const timeStr = fmtTime(item.startsAt);
 
   return (
-    <View style={ic.card}>
-      <View style={ic.top}>
-        <View style={[ic.catBadge, { backgroundColor: cat.bg }]}>
-          <Text style={[ic.catText, { color: cat.fg }]}>{cat.label}</Text>
-        </View>
-        {item.sourceType !== 'manual' && (
-          <View style={ic.sourceBadge}>
-            <Text style={ic.sourceText}>{item.sourceType === 'meetup' ? 'Meetup' : 'Place'}</Text>
+    <>
+      <View style={ic.card}>
+        <View style={ic.top}>
+          <View style={[ic.catBadge, { backgroundColor: cat.bg }]}>
+            <Text style={[ic.catText, { color: cat.fg }]}>{cat.label}</Text>
           </View>
-        )}
-        <View style={{ flex: 1 }} />
-        <View style={[ic.statusBadge, { backgroundColor: statusStyle.bg }]}>
-          <Text style={[ic.statusText, { color: statusStyle.fg }]}>{item.status}</Text>
+          {item.sourceType !== 'manual' && (
+            <View style={ic.sourceBadge}>
+              <Text style={ic.sourceText}>{item.sourceType === 'meetup' ? 'Meetup' : 'Place'}</Text>
+            </View>
+          )}
+          <View style={{ flex: 1 }} />
+          <View style={[ic.statusBadge, { backgroundColor: statusStyle.bg }]}>
+            <Text style={[ic.statusText, { color: statusStyle.fg }]}>{item.status}</Text>
+          </View>
+          {canAct && (
+            <Pressable hitSlop={8} onPress={() => setMenuOpen(true)} style={ic.moreBtn}>
+              <MoreHorizontal size={16} color={color.mute} />
+            </Pressable>
+          )}
         </View>
-        {canAct && (
-          <Pressable hitSlop={8} onPress={() => setMenuOpen(true)} style={ic.moreBtn}>
-            <MoreHorizontal size={16} color={color.mute} />
-          </Pressable>
+
+        <Text style={ic.title} numberOfLines={2}>{item.title}</Text>
+
+        {(timeStr || item.locationName) && (
+          <View style={ic.metaRow}>
+            {timeStr && (
+              <View style={ic.metaItem}>
+                <Clock size={12} color={color.mute} />
+                <Text style={ic.metaText}>{timeStr}</Text>
+              </View>
+            )}
+            {item.locationName && (
+              <View style={ic.metaItem}>
+                <MapPin size={12} color={color.mute} />
+                <Text style={ic.metaText} numberOfLines={1}>{item.locationName}</Text>
+              </View>
+            )}
+          </View>
         )}
       </View>
 
-      <Text style={ic.title} numberOfLines={2}>{item.title}</Text>
-
-      {(timeStr || item.locationName) && (
-        <View style={ic.metaRow}>
-          {timeStr && (
-            <View style={ic.metaItem}>
-              <Clock size={12} color={color.mute} />
-              <Text style={ic.metaText}>{timeStr}</Text>
-            </View>
-          )}
-          {item.locationName && (
-            <View style={ic.metaItem}>
-              <MapPin size={12} color={color.mute} />
-              <Text style={ic.metaText} numberOfLines={1}>{item.locationName}</Text>
-            </View>
-          )}
-        </View>
-      )}
-
+      {/* Action menu modal */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={ic.menuOverlay} onPress={() => setMenuOpen(false)}>
           <View style={ic.menuSheet}>
             <Text style={ic.menuTitle} numberOfLines={1}>{item.title}</Text>
+
+            <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); setEditOpen(true); }}>
+              <Pencil size={18} color={color.deep} />
+              <Text style={ic.menuItemText}>Edit / Reschedule</Text>
+            </Pressable>
+
+            {item.status !== 'confirmed' && (
+              <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); onMarkTentative(item.id); }}>
+                <Clock size={18} color={color.mute} />
+                <Text style={ic.menuItemText}>Mark as tentative</Text>
+              </Pressable>
+            )}
+
             {item.status !== 'done' && (
               <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); onMarkDone(item.id); }}>
                 <CheckCircle2 size={18} color={color.success} />
                 <Text style={ic.menuItemText}>Mark as done</Text>
               </Pressable>
             )}
+
             <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); onRemove(item.id); }}>
               <Trash2 size={18} color={color.signal} />
               <Text style={[ic.menuItemText, { color: color.signal }]}>Remove from plan</Text>
             </Pressable>
+
             <Pressable style={ic.menuCancel} onPress={() => setMenuOpen(false)}>
               <Text style={ic.menuCancelText}>Cancel</Text>
             </Pressable>
           </View>
         </Pressable>
       </Modal>
+
+      {/* Edit sheet */}
+      {editOpen && (
+        <EditPlanItemSheet
+          item={item}
+          tripId={tripId}
+          onClose={() => setEditOpen(false)}
+          onSaved={(updated) => { setEditOpen(false); onEdited(updated); }}
+        />
+      )}
+    </>
+  );
+}
+
+// ── Non-member locked view ─────────────────────────────────────────────────────
+
+function PlanLockedView() {
+  return (
+    <View style={lk.wrap}>
+      <View style={lk.iconWrap}><Lock size={22} color={color.mute} /></View>
+      <Text style={lk.title}>Members-only</Text>
+      <Text style={lk.body}>Join this trip to see and collaborate on the day-by-day plan.</Text>
     </View>
   );
 }
 
 // ── Main section ──────────────────────────────────────────────────────────────
 
-export function TripPlanSection({ tripId, currentUserId, isOwner }: {
+export function TripPlanSection({
+  tripId,
+  currentUserId,
+  isOwner,
+  tripStartDate,
+}: {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  tripStartDate?: string | null;
 }) {
   const [items, setItems] = useState<TripPlanItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setAccessDenied(false);
     try {
       const data = await fetchTripPlan(tripId);
       setItems(data);
-    } catch {
-      // non-member, unauthenticated, or network error — stay empty
+    } catch (e: any) {
+      const msg = (e.message ?? '').toLowerCase();
+      if (msg.includes('403') || msg.includes('401') || msg.includes('forbidden') || msg.includes('unauthorized')) {
+        setAccessDenied(true);
+      }
+      // other errors: stay empty, don't show locked
     } finally {
       setLoading(false);
     }
@@ -194,6 +392,19 @@ export function TripPlanSection({ tripId, currentUserId, isOwner }: {
     }
   }, [tripId]);
 
+  const handleMarkTentative = useCallback(async (itemId: string) => {
+    try {
+      const updated = await updatePlanItem(tripId, itemId, { status: 'tentative' });
+      setItems((prev) => prev.map((i) => i.id === itemId ? updated : i));
+    } catch {
+      Alert.alert('Error', 'Could not update item. Please try again.');
+    }
+  }, [tripId]);
+
+  const handleEdited = useCallback((updated: TripPlanItem) => {
+    setItems((prev) => prev.map((i) => i.id === updated.id ? updated : i));
+  }, []);
+
   const handleAdded = useCallback((item: TripPlanItem) => {
     setItems((prev) => [...prev, item]);
     setAddSheetOpen(false);
@@ -206,15 +417,19 @@ export function TripPlanSection({ tripId, currentUserId, isOwner }: {
       <View style={ps.head}>
         <Text style={ps.title}>Trip Plan</Text>
         <View style={{ flex: 1 }} />
-        <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
-          <Plus size={15} color={color.onInk} />
-          <Text style={ps.addBtnText}>Add Item</Text>
-        </Pressable>
+        {!accessDenied && (
+          <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
+            <Plus size={15} color={color.onInk} />
+            <Text style={ps.addBtnText}>Add Item</Text>
+          </Pressable>
+        )}
       </View>
 
       {loading && <ActivityIndicator color={color.signal} style={{ marginVertical: space.lg }} />}
 
-      {!loading && items.length === 0 && (
+      {!loading && accessDenied && <PlanLockedView />}
+
+      {!loading && !accessDenied && items.length === 0 && (
         <View style={ps.empty}>
           <Text style={ps.emptyTitle}>No plans yet.</Text>
           <Text style={ps.emptyBody}>Add places, meetups, or activities to build your day-by-day itinerary.</Text>
@@ -224,10 +439,10 @@ export function TripPlanSection({ tripId, currentUserId, isOwner }: {
         </View>
       )}
 
-      {!loading && buckets.map((bucket) => (
+      {!loading && !accessDenied && buckets.map((bucket) => (
         <View key={bucket.key} style={ps.bucket}>
           <View style={ps.dayChip}>
-            <Text style={ps.dayChipText}>{bucket.label}</Text>
+            <Text style={ps.dayChipText}>{dayLabel(bucket.key, tripStartDate)}</Text>
           </View>
           {bucket.items.length === 0 ? (
             <Text style={ps.emptyDay}>Nothing planned for this day yet.</Text>
@@ -237,8 +452,11 @@ export function TripPlanSection({ tripId, currentUserId, isOwner }: {
               item={item}
               currentUserId={currentUserId}
               isOwner={isOwner}
+              tripId={tripId}
               onRemove={handleRemove}
               onMarkDone={handleMarkDone}
+              onMarkTentative={handleMarkTentative}
+              onEdited={handleEdited}
             />
           ))}
         </View>
@@ -294,4 +512,35 @@ const ic = StyleSheet.create({
   menuItemText: { ...t.body, color: color.ink },
   menuCancel: { paddingVertical: space.md, alignItems: 'center', marginTop: space.sm },
   menuCancelText: { ...t.bodyStrong, color: color.mute },
+});
+
+const lk = StyleSheet.create({
+  wrap: { marginHorizontal: space.lg, padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, alignItems: 'center', gap: space.sm },
+  iconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.paperRaised, alignItems: 'center', justifyContent: 'center', marginBottom: space.sm },
+  title: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  body: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+});
+
+const ed = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'transparent' },
+  sheet: { backgroundColor: color.paper, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 30 },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
+  headerTitle: { ...t.heading, color: color.ink, fontSize: 17 },
+  cancelBtn: { padding: 4 },
+  cancelText: { ...t.bodyStrong, color: color.mute },
+  body: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg, gap: 4 },
+  label: { ...t.small, fontWeight: '700', color: color.ink, marginTop: space.md, marginBottom: 4 },
+  opt: { fontWeight: '400', color: color.mute },
+  input: { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, ...t.body, color: color.ink, backgroundColor: color.paperRaised },
+  inputMulti: { height: 80, paddingTop: space.sm },
+  statusRow: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
+  statusChip: { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1.5, borderColor: color.haze, backgroundColor: color.paperRaised },
+  statusChipActive: { backgroundColor: color.signal, borderColor: color.signal },
+  statusChipText: { ...t.small, fontWeight: '700', color: color.ink },
+  statusChipTextActive: { color: color.onInk },
+  error: { ...t.small, color: color.signal, marginTop: space.sm },
+  saveBtn: { marginTop: space.lg, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center' },
+  saveBtnDisabled: { opacity: 0.6 },
+  saveText: { ...t.bodyStrong, color: color.onInk, fontSize: 15 },
 });

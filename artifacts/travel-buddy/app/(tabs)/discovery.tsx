@@ -12,12 +12,12 @@ import {
   compassPick, forYouSide, featuredExperiences, DISCOVERY_CATEGORIES,
   hiddenGems, neighborhoods, travelerPicks, savedIdeas,
 } from '../../src/data/discovery';
-import { useAttach } from '../../src/components/AttachController';
+import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 export default function Discovery() {
   const [cat, setCat] = useState('All');
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
 
   // simple filter: 'All' shows everything; otherwise match category label
   const visibleFeatured = cat === 'All'
@@ -56,7 +56,7 @@ export default function Discovery() {
         <SectionHead title="Featured Experiences" onViewAll={() => router.push('/(tabs)/ai')} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
           {(visibleFeatured.length ? visibleFeatured : featuredExperiences).map((f) => (
-            <FeaturedCard key={f.id} item={f} onAdd={() => attach.open({ id: f.id, type: 'experience', title: f.name, city: 'Cebu', category: 'Experience' }, 'plan')} />
+            <FeaturedCard key={f.id} item={f} onAdd={() => planPicker.open({ id: f.id, type: 'experience', title: f.name, city: 'Cebu', category: 'Experience' })} />
           ))}
         </ScrollView>
 

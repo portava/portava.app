@@ -7,7 +7,7 @@ import {
 } from 'lucide-react-native';
 import type { PulseFeedItem } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { useAttach } from './AttachController';
+import { usePlanPicker } from './PlanPickerController';
 
 /* shared bits */
 function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
@@ -97,7 +97,7 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Hidden Gem Share ── */
 function GemCard({ item }: { item: PulseFeedItem }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} />
@@ -105,7 +105,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
       <Text style={s.title}>{item.title}</Text>
       {item.blurb ? <Text style={s.blurb}>{item.blurb}</Text> : null}
       <View style={s.actions}>
-        <Pressable style={s.outlineBtn} onPress={() => attach.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' }, 'plan')}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
+        <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
       </View>
@@ -115,7 +115,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Itinerary / Plan Idea ── */
 function ItineraryCard({ item }: { item: PulseFeedItem }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} />
@@ -129,7 +129,7 @@ function ItineraryCard({ item }: { item: PulseFeedItem }) {
       ))}
       <TagRow tags={item.tags} />
       <View style={s.actions}>
-        <Pressable style={s.outlineBtn} onPress={() => attach.open({ id: item.id, type: 'itinerary', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' }, 'trip')}><Text style={s.outlineText}>Use this plan</Text></Pressable>
+        <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
       </View>
@@ -161,7 +161,7 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Compass Suggestion (stub-real: only with explicit reason) ── */
 function CompassCard({ item }: { item: PulseFeedItem }) {
-  const attach = useAttach();
+  const planPicker = usePlanPicker();
   return (
     <View style={[s.card, s.compassCard]}>
       <View style={s.compassHead}>
@@ -174,7 +174,7 @@ function CompassCard({ item }: { item: PulseFeedItem }) {
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.solidBtn} onPress={() => attach.open({ id: item.id, type: 'compass_suggestion', title: item.title ?? 'Compass pick', city: item.city, category: 'Compass' }, 'plan')}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
+        <Pressable style={s.solidBtn} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: item.title ?? 'Compass pick', city: item.city, category: 'Compass' })}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
       </View>
     </View>
   );
