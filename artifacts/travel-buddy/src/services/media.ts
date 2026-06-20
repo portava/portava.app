@@ -1,11 +1,15 @@
 /**
- * Media upload service. Uploads a picked image/video to the `post-media`
- * Supabase Storage bucket under the user's own folder, then returns the public
- * URL. The composer calls this BEFORE POST /api/posts; if upload fails, the post
- * is not created (and no fake URL is ever used).
+ * Media upload service. Uploads a picked image/video through the API server's
+ * POST /api/media/upload endpoint (service-role key, bypasses Storage RLS),
+ * then returns the public URL. The composer calls this BEFORE POST /api/posts;
+ * if upload fails, the post is not created (and no fake URL is ever used).
  *
- * Path: post-media/{userId}/{uuid}.{ext}  (RLS lets a user write only their own
- * folder.)
+ * NOTE: We deliberately do NOT write to Supabase Storage directly from the
+ * client. The Supabase project uses an ECC P-256 JWT key; PostgREST / Storage
+ * cannot fully resolve auth.uid() from it, so user-key uploads fail RLS.
+ * The API server calls auth.getUser(token) (Auth endpoint, not PostgREST) to
+ * verify identity, then uploads with the service-role key — same pattern as
+ * trip / post creation.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
@@ -42,25 +46,8 @@ export interface MediaUploadResult {
   detail?: Record<string, unknown>;
 }
 
-function extFromMime(mime: string): string {
-  switch (mime) {
-    case 'image/jpeg': return 'jpg';
-    case 'image/png': return 'png';
-    case 'image/webp': return 'webp';
-    case 'video/mp4': return 'mp4';
-    default: return 'bin';
-  }
-}
-
-function uuid(): string {
-  // RFC4122-ish; crypto.randomUUID where available, else fallback.
-  const g: any = globalThis as any;
-  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+function apiBase(): string {
+  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
 export function validateMedia(media: PickedMedia): { ok: true } | { ok: false; kind: MediaErrorKind; message: string } {
@@ -80,13 +67,18 @@ export function validateMedia(media: PickedMedia): { ok: true } | { ok: false; k
 }
 
 /**
- * Upload one picked media asset. Returns the public URL on success.
- * Steps: validate -> resolve current user -> fetch(uri)->blob -> storage.upload
- * -> getPublicUrl. Rich error detail on failure (no generic "could not upload").
+ * Upload one picked media asset via POST /api/media/upload (API server,
+ * service-role key — bypasses Storage RLS). Returns the public URL on success.
+ * Steps: validate → get bearer token → fetch(uri)→blob → POST binary to API →
+ * parse { url, path }. Rich error detail on failure.
  */
 export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult> {
   if (!isSupabaseConfigured) {
     return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const base = apiBase();
+  if (!base) {
+    return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'API base URL not configured' };
   }
 
   const v = validateMedia(media);
@@ -94,16 +86,17 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
     return { ok: false, url: null, mediaType: null, errorKind: v.kind, message: v.message };
   }
 
-  const { data: sessionData } = await supabase.auth.getSession();
-  const userId = sessionData.session?.user?.id ?? null;
-  if (!userId) {
+  // Get a fresh bearer token (mirrors createPost / createTrip pattern).
+  const { data: refreshed } = await supabase.auth.refreshSession();
+  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+  const token = session?.access_token ?? null;
+  if (!token) {
     return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Please sign in to upload media' };
   }
 
   const mime = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
-  const path = `${userId}/${uuid()}.${extFromMime(mime)}`;
 
-  // Convert the local file URI to a Blob (Expo/web compatible).
+  // Read the local file URI into a Blob (Expo/web compatible).
   let blob: Blob;
   try {
     const resp = await fetch(media.uri);
@@ -116,29 +109,34 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
     };
   }
 
-  const { error: upErr } = await supabase.storage
-    .from('post-media')
-    .upload(path, blob, { contentType: mime, upsert: false });
-
-  if (upErr) {
+  // POST the raw binary to the API server — it uploads with service-role key.
+  let apiRes: Response;
+  try {
+    apiRes = await fetch(`${base}/api/media/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': mime, Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+  } catch (e) {
     return {
       ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
-      message: upErr.message,
-      detail: {
-        bucket: 'post-media',
-        path,
-        mimeType: mime,
-        fileSize: media.fileSize ?? blob.size ?? null,
-        statusCode: (upErr as any).statusCode ?? (upErr as any).status ?? null,
-        userPresent: Boolean(userId),
-      },
+      message: e instanceof Error ? e.message : 'Network error during upload',
     };
   }
 
-  const { data: pub } = supabase.storage.from('post-media').getPublicUrl(path);
-  const url = pub?.publicUrl ?? null;
+  if (!apiRes.ok) {
+    const body = await apiRes.json().catch(() => ({}));
+    return {
+      ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
+      message: (body as any)?.message ?? `Upload failed (HTTP ${apiRes.status})`,
+      detail: { status: apiRes.status, mimeType: mime, fileSize: media.fileSize ?? blob.size },
+    };
+  }
+
+  const body = await apiRes.json().catch(() => ({}));
+  const url: string | null = (body as any)?.url ?? null;
   if (!url) {
-    return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Uploaded but could not resolve public URL', detail: { path } };
+    return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Upload succeeded but no URL returned' };
   }
 
   return { ok: true, url, mediaType: mime };
