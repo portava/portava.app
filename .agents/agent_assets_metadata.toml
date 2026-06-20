@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "IOUo4WSpCuhm2zvD4EjeO"
+uri = "file://migrations/APPLY_THESE_IN_ORDER.txt"
+type = "text"
+title = "APPLY_THESE_IN_ORDER.sql (migrations 0008 + 0009 + 0010)"
