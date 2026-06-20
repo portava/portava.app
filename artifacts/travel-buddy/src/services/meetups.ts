@@ -57,6 +57,8 @@ export interface MeetupInvite {
   meetupId: string;
   status: RsvpStatus;
   invitedAt: string;
+  /** 'invite' = pending invite; 'confirmation' = accepted invite whose meetup is now confirmed */
+  kind: 'invite' | 'confirmation';
   meetup: {
     id: string;
     title: string;

@@ -138,7 +138,37 @@ function MeetupInviteRow({
 }) {
   const m = invite.meetup;
   const creator = invite.creator;
+  const isConfirmation = invite.kind === 'confirmation';
   const isPending = invite.status === 'pending';
+
+  if (isConfirmation) {
+    return (
+      <View style={styles.row}>
+        <View style={[styles.iconBadge, { backgroundColor: '#DCFCE7' }]}>
+          <CalendarClock size={18} color="#16A34A" />
+        </View>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Text style={styles.rowText}>
+            {'✅ Time confirmed'}
+          </Text>
+          {m ? (
+            <Pressable onPress={() => router.push(`/meetup/${m.id}` as any)}>
+              <Text style={styles.meetupTitle} numberOfLines={1}>{m.title}</Text>
+              {m.startsAt && (
+                <Text style={styles.meetupMeta}>
+                  🗓 {new Date(m.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                  {m.timeBlock ? ` · ${m.timeBlock}` : ''}
+                </Text>
+              )}
+              {m.locationName && <Text style={styles.meetupMeta}>📍 {m.locationName}</Text>}
+              <Text style={[styles.meta, { color: '#16A34A', marginTop: 2 }]}>Tap to view details ›</Text>
+            </Pressable>
+          ) : null}
+          <Text style={styles.meta}>{relativeTime(invite.invitedAt)}</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.row}>

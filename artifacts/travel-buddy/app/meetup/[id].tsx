@@ -257,12 +257,15 @@ export default function MeetupScreen() {
           </View>
         </View>
 
-        {/* RSVP */}
+        {/* RSVP — single unconfirmed slot: 2 options only (Going / Can't go) */}
         {!isCancelled && isAuthed ? (
           <View style={s.card}>
             <Text style={s.sectionTitle}>Your RSVP</Text>
             <View style={s.rsvpRow}>
-              {RSVP_OPTIONS.map((opt) => {
+              {(meetup.timeOptions.length === 1 && !meetup.timeOptions[0].confirmed
+                ? RSVP_OPTIONS.filter((o) => o.key !== 'maybe')
+                : RSVP_OPTIONS
+              ).map((opt) => {
                 const isSelected = meetup.myRsvp === opt.key;
                 const isLoading = actioning === `rsvp_${opt.key}`;
                 return (

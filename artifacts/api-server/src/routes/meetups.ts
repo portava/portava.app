@@ -932,11 +932,12 @@ router.get("/me/meetup-invites", async (req, res) => {
   if (!ctx) return;
   const { client, user } = ctx;
 
+  // Fetch pending invites AND accepted invites whose meetup has since been confirmed
   const { data: invites } = await client
     .from("meetup_invites")
     .select("id, meetup_id, status, invited_at")
     .eq("user_id", user.id)
-    .eq("status", "pending")
+    .in("status", ["pending", "going", "maybe"])
     .order("invited_at", { ascending: false });
 
   if (!invites || invites.length === 0) { res.json({ invites: [] }); return; }
@@ -957,15 +958,23 @@ router.get("/me/meetup-invites", async (req, res) => {
   for (const p of profiles ?? []) profileMap[p.id] = p;
 
   const result = (invites as any[])
-    .filter((i) => meetupMap[i.meetup_id] && meetupMap[i.meetup_id].status !== "cancelled")
+    .filter((i) => {
+      const m = meetupMap[i.meetup_id];
+      if (!m || m.status === "cancelled") return false;
+      if (i.status === "pending") return true;
+      // going / maybe → surface as confirmation notification only when meetup is confirmed
+      return (i.status === "going" || i.status === "maybe") && m.status === "confirmed";
+    })
     .map((i) => {
       const m = meetupMap[i.meetup_id];
       const creator = m ? profileMap[m.creator_id] : null;
+      const kind: "invite" | "confirmation" = i.status === "pending" ? "invite" : "confirmation";
       return {
         inviteId:        i.id,
         meetupId:        i.meetup_id,
         status:          i.status,
         invitedAt:       i.invited_at,
+        kind,
         meetup: m ? {
           id:              m.id,
           title:           m.title,
