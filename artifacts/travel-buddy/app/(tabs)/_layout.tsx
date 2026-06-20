@@ -1,10 +1,12 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform, AppState } from 'react-native';
 import { Tabs, router, usePathname, Link } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane, Bell } from 'lucide-react-native';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
+import { getRequestCount } from '../../src/services/requests';
+import { isSupabaseConfigured } from '../../src/lib/supabase';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -13,7 +15,7 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
-function DesktopSidebar() {
+function DesktopSidebar({ requestCount }: { requestCount: number }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
@@ -37,12 +39,28 @@ function DesktopSidebar() {
             >
               <Icon size={20} color={active ? color.signal : color.mute} />
               <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
+              {label === 'Passport' && requestCount > 0 && (
+                <View style={styles.sidebarBadge}>
+                  <Text style={styles.sidebarBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+                </View>
+              )}
             </Pressable>
           );
         })}
       </View>
 
       <View style={{ flex: 1 }} />
+
+      {/* Notifications link */}
+      <Pressable style={styles.notifBtn} onPress={() => router.push('/notifications' as any)}>
+        <Bell size={18} color={color.mute} />
+        <Text style={styles.navLabel}>Notifications</Text>
+        {requestCount > 0 && (
+          <View style={styles.sidebarBadge}>
+            <Text style={styles.sidebarBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+          </View>
+        )}
+      </Pressable>
 
       {/* Compose button */}
       <Pressable style={styles.composeBtn} onPress={() => router.push('/create')}>
@@ -73,6 +91,21 @@ function StampButton() {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
+  const [requestCount, setRequestCount] = useState(0);
+
+  const refreshCount = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    const res = await getRequestCount();
+    if (res.ok && res.data) setRequestCount((res.data as { count: number }).count ?? 0);
+  }, []);
+
+  useEffect(() => {
+    refreshCount();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshCount();
+    });
+    return () => sub.remove();
+  }, [refreshCount]);
 
   const tabs = (
     <Tabs
@@ -120,7 +153,16 @@ export default function TabLayout() {
         name="passport"
         options={{
           title: 'Passport',
-          tabBarIcon: ({ color: c }) => <User size={22} color={c} />,
+          tabBarIcon: ({ color: c }) => (
+            <View>
+              <User size={22} color={c} />
+              {requestCount > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
@@ -130,7 +172,7 @@ export default function TabLayout() {
   if (isDesktop) {
     return (
       <View style={styles.desktopShell}>
-        <DesktopSidebar />
+        <DesktopSidebar requestCount={requestCount} />
         <View style={styles.desktopContent}>{tabs}</View>
       </View>
     );
@@ -197,10 +239,34 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.mute,
     fontWeight: '500',
+    flex: 1,
   },
   navLabelActive: {
     color: color.ink,
     fontWeight: '700',
+  },
+  notifBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: 10,
+  },
+  sidebarBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  sidebarBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
   composeBtn: {
     flexDirection: 'row',
@@ -246,5 +312,24 @@ const styles = StyleSheet.create({
   stampGlyph: { color: color.onInk, fontSize: 20, lineHeight: 22, fontWeight: '900' },
   stampWord: {
     color: color.onInk, fontFamily: 'Courier', fontSize: 9, fontWeight: '700', letterSpacing: 1,
+  },
+  /* ── Tab badge ── */
+  tabBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  tabBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+    lineHeight: 11,
   },
 });

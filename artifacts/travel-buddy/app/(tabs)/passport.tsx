@@ -1,9 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Bell } from 'lucide-react-native';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
+import { useRequestCount } from '../../src/hooks/useRequests';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
 import { CompactStatsRow } from '../../src/components/CompactStatsRow';
@@ -154,9 +156,12 @@ function PassportContent({
   insets: { top: number; bottom: number };
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
+  const { count: requestCount, reload: reloadCount } = useRequestCount();
+
+  useFocusEffect(useCallback(() => { reloadCount(); }, [reloadCount]));
 
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: color.paper }}
         contentContainerStyle={{ paddingTop: insets.top, paddingBottom: space.xxxl }}
@@ -244,12 +249,53 @@ function PassportContent({
           onSaved={handleSaved}
         />
       )}
-    </>
+
+      {/* Notifications bell — absolutely positioned top-right */}
+      <Pressable
+        style={[styles.bellBtn, { top: insets.top + space.sm }]}
+        onPress={() => router.push('/notifications' as any)}
+        hitSlop={8}
+        accessibilityLabel="Open notifications inbox"
+      >
+        <Bell size={20} color={color.ink} />
+        {requestCount > 0 && (
+          <View style={styles.bellBadge}>
+            <Text style={styles.bellBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+          </View>
+        )}
+      </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
+  bellBtn: {
+    position: 'absolute',
+    right: space.lg,
+    zIndex: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700', lineHeight: 11 },
 
   tabBarWrap: { marginTop: space.md },
   tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },

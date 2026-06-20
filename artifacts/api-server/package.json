@@ -8,9 +8,10 @@
     "build": "node ./build.mjs",
     "start": "node --env-file-if-exists=.env --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test src/test/posts.test.ts src/lib/messagingPermissions.test.ts",
+    "test": "node --import tsx/esm --test src/test/requests.test.ts src/test/friendDecisions.test.ts src/lib/messagingPermissions.test.ts",
+    "test:requests": "node --import tsx/esm --test src/test/requests.test.ts",
     "test:messaging": "node --import tsx/esm --test src/lib/messagingPermissions.test.ts",
-    "test:watch": "node --import tsx/esm --test --watch src/test/posts.test.ts"
+    "test:watch": "node --import tsx/esm --test --watch src/test/requests.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
