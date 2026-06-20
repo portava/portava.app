@@ -13,9 +13,9 @@ import {
 
 const router = Router();
 
-// Columns returned to clients (never expose nothing extra; these are all safe).
+// Columns returned to clients. profiles!author_id joins the author's profile row.
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at";
+  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, profiles!author_id(handle, name, avatar_url)";
 
 /* ===========================================================================
  * POST /posts  — create a standalone or trip-attached post

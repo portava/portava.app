@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { View, Text, FlatList, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { posts as editorialPosts, me } from '../../src/data/cebu';
 import { pulseFeed } from '../../src/data/pulseFeed';
@@ -8,7 +8,6 @@ import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
 import { PulseFilterSheet, PulseCreateMenu, PulseFAB } from '../../src/components/PulseCreate';
-import { RealPostsList } from '../../src/components/RealPostsList';
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
@@ -16,11 +15,41 @@ import { useGlobalFeed } from '../../src/hooks/usePosts';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import { filterPulseFeed } from '../../src/lib/recommend';
 import { PULSE_FILTERS } from '../../src/types/models';
-import type { PulseFilter } from '../../src/types/models';
-import { color, space, type as t } from '../../src/theme/tokens';
+import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
+import type { PostRow } from '../../src/services/posts';
+import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 const CURRENT_CITY = 'cebu';
+
+/** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
+function postRowToFeedItem(p: PostRow): PulseFeedItem {
+  return {
+    id: p.id,
+    type: 'post',
+    city: 'Cebu',
+    author: p.author
+      ? { id: p.authorId, name: p.author.name ?? p.author.handle, avatarUrl: p.author.avatarUrl ?? '' }
+      : { id: p.authorId, name: 'Traveler', avatarUrl: '' },
+    createdAt: p.createdAt,
+    timeAgo: timeAgo(p.createdAt),
+    tags: [],
+    mediaUrl: p.mediaUrls[0],
+    caption: p.content,
+    source: 'post',
+    visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
+  };
+}
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 export default function Pulse() {
   const [active, setActive] = useState<PulseFilter[]>(['All']);
@@ -28,21 +57,31 @@ export default function Pulse() {
   const [createOpen, setCreateOpen] = useState(false);
   const { buckets, status } = useCityPulse({ currentCitySlug: CURRENT_CITY, interests: me.interests });
 
-  // Real backend posts (proof-of-round-trip). Refetch whenever this screen
-  // regains focus — e.g. after the composer creates a post and navigates back —
-  // so the new post appears from a real GET, not optimistic local state.
+  // Real backend posts — refetch on screen focus so newly created posts appear immediately.
   const realFeed = useGlobalFeed();
   useFocusEffect(
     useCallback(() => {
       realFeed.reload();
-      // no cleanup needed
     }, [realFeed.reload]),
   );
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
 
-  const feed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
+  // Merge real posts (prepended) with mock feed, then filter.
+  const realItems = useMemo<PulseFeedItem[]>(
+    () => (realFeed.data ?? []).map(postRowToFeedItem),
+    [realFeed.data],
+  );
+  const mockFeed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
+  const feed = useMemo<PulseFeedItem[]>(() => {
+    // When filtering by Posts, show only real + mock posts. Otherwise prepend real posts.
+    const filteredReal = active.includes('All') || active.includes('Posts')
+      ? realItems
+      : realItems.filter(() => false); // real posts have type='post'; hide when other filters active
+    return [...filteredReal, ...mockFeed];
+  }, [realItems, mockFeed, active]);
+
   const filterCount = active.filter((f) => f !== 'All').length;
 
   function toggleQuick(f: PulseFilter) {
@@ -85,14 +124,6 @@ export default function Pulse() {
       {/* When you're flexible */}
       <FlexibleStrip events={buckets.flexible} />
 
-      {/* Live posts — REAL backend posts (proof-of-round-trip) */}
-      <RealPostsList
-        data={realFeed.data}
-        loading={realFeed.loading}
-        error={realFeed.error}
-        onRetry={realFeed.reload}
-      />
-
       {/* Pulse Wall title + quick filter chips */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
       <FlatList
@@ -113,7 +144,7 @@ export default function Pulse() {
       {feed.length === 0 ? (
         <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
       ) : null}
-      {/* Editorial inspiration — labeled, not live activity */}
+      {/* Editorial inspiration — labeled separately, not live activity */}
       <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
       {editorialPosts.slice(0, 3).map((p) => (
         <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
@@ -136,7 +167,11 @@ export default function Pulse() {
         keyExtractor={(it) => it.id}
         ListHeaderComponent={Header}
         ListFooterComponent={Footer}
-        renderItem={({ item }) => <View style={{ paddingHorizontal: space.lg }}><PulseFeedCard item={item} /></View>}
+        renderItem={({ item }) => (
+          <View style={{ paddingHorizontal: space.lg }}>
+            <PulseFeedCard item={item} />
+          </View>
+        )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
