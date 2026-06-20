@@ -1,2 +1,2 @@
-- [Supabase ECC JWT workaround](supabase-ecc-jwt-workaround.md) — when PostgREST can't verify ECC P-256 tokens, route writes through the API server with a service role key
-- [Metro _tmp watcher crash](metro-tmp-watcher.md) — Metro crashes on ENOENT for `*_tmp_\d+` paths; block them in metro.config.js blockList
+- [Posts backend apply](posts-backend-apply.md) — vitest/supertest blocked by firewall; use node:test shim + tsx symlinks; inject fake client via http.ts test slot instead of vi.doMock
+- [pnpm firewall blocks](pnpm-firewall.md) — Replit package firewall (403) blocks tarballs not in content store even if in lockfile; workaround: symlink from node_modules/.pnpm virtual store
