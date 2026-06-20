@@ -43,7 +43,7 @@ export default function TripDetail() {
     setChatLoading(false);
     if (res.ok && res.data) {
       const { threadId, title } = res.data;
-      const params = new URLSearchParams({ title: title ?? trip.title ?? 'Trip Chat', threadType: 'trip' });
+      const params = new URLSearchParams({ title: title ?? trip.title ?? 'Trip Chat', threadType: 'trip', contextId: trip.id });
       router.push(`/messages/${threadId}?${params.toString()}`);
     } else {
       Alert.alert('Chat unavailable', res.message ?? 'Could not open the trip chat. Make sure you are an accepted trip member.');

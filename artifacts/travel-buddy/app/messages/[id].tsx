@@ -242,8 +242,15 @@ function AddToPlanSheet({
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+interface MeetupSheetCtx {
+  tripId?: string;
+  circleOwnerId?: string;
+  initialTitle?: string;
+  initialLocation?: string;
+}
+
 export default function TelegraphThread() {
-  const { id, title, threadType } = useLocalSearchParams<{ id: string; title?: string; threadType?: string }>();
+  const { id, title, threadType, contextId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { messages, loading, error, sending, send } = useThreadMessages(id ?? null);
@@ -251,7 +258,7 @@ export default function TelegraphThread() {
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
-  const [meetupPrefill, setMeetupPrefill] = useState<MeetupPrefill | null>(null);
+  const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
@@ -307,8 +314,19 @@ export default function TelegraphThread() {
   );
 
   const handleCreateMeetup = useCallback((prefill: MeetupPrefill) => {
-    setMeetupPrefill(prefill);
+    setMeetupSheetCtx({
+      tripId: prefill.tripId ?? undefined,
+      initialTitle: prefill.title,
+      initialLocation: prefill.location,
+    });
   }, []);
+
+  const handlePlanMeetupButton = useCallback(() => {
+    setMeetupSheetCtx({
+      tripId: threadType === 'trip' ? contextId : undefined,
+      circleOwnerId: threadType === 'circle' ? contextId : undefined,
+    });
+  }, [threadType, contextId]);
 
   const handleViewPlace = useCallback((suggestion: TelegraphSuggestion) => {
     Alert.alert(
@@ -417,6 +435,11 @@ export default function TelegraphThread() {
       )}
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        {/* Plan meetup button — group chats get context pre-filled, DMs get unscoped */}
+        <Pressable style={styles.planMeetupBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
+          <CalendarClock size={18} color={color.signal} />
+        </Pressable>
+
         <TextInput
           style={styles.inputField}
           placeholder="Message…"
@@ -441,14 +464,19 @@ export default function TelegraphThread() {
         </Pressable>
       </View>
 
-      {/* Create Meetup sheet — real creation via MeetupCreationSheet */}
-      {meetupPrefill && (
+      {/* Meetup creation sheet — triggered by button or Telegraph suggestion */}
+      {meetupSheetCtx && (
         <MeetupCreationSheet
-          tripId={meetupPrefill.tripId ?? undefined}
-          initialTitle={meetupPrefill.title}
-          initialLocation={meetupPrefill.location}
-          onDismiss={() => setMeetupPrefill(null)}
-          onCreated={() => setMeetupPrefill(null)}
+          tripId={meetupSheetCtx.tripId}
+          circleOwnerId={meetupSheetCtx.circleOwnerId}
+          initialTitle={meetupSheetCtx.initialTitle}
+          initialLocation={meetupSheetCtx.initialLocation}
+          onDismiss={() => setMeetupSheetCtx(null)}
+          onCreated={(meetup) => {
+            if (id) {
+              send(JSON.stringify({ type: 'meetup_card', meetupId: meetup.id, title: meetup.title }));
+            }
+          }}
         />
       )}
     </KeyboardAvoidingView>
@@ -570,6 +598,7 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.ink,
   },
+  planMeetupBtn: { width: 36, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: color.signal },
   sendBtnDisabled: { backgroundColor: color.haze },

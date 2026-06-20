@@ -108,7 +108,7 @@ export default function Circle() {
     setChatLoading(false);
     if (res.ok && res.data) {
       const { threadId, title } = res.data;
-      const params = new URLSearchParams({ title: title ?? 'My Circle', threadType: 'circle' });
+      const params = new URLSearchParams({ title: title ?? 'My Circle', threadType: 'circle', contextId: userId ?? '' });
       router.push(`/messages/${threadId}?${params.toString()}`);
     } else {
       Alert.alert('Chat unavailable', res.message ?? 'Could not open your circle chat.');
