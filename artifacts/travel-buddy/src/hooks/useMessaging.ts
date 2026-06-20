@@ -12,11 +12,15 @@ import {
   getMyThreads,
   getThreadMessages,
   sendMessage,
+  retryTranslation,
+  getMyLanguageSettings,
+  updateMyLanguageSettings,
   type MessageVerdict,
   type MessagePermissionResult,
   type MessageRequest,
   type ThreadSummary,
   type Message,
+  type LanguageSettings,
 } from '../services/messaging';
 
 // ── Message permission (for profile / passport) ───────────────────────────────
@@ -33,7 +37,7 @@ export function useMessagePermission(userId: string | null | undefined) {
     setError(null);
     const res = await getMessagePermission(userId);
     if (res.ok && res.data) {
-      setResult(res.data);
+      setResult(res.data as MessagePermissionResult);
       setVerdict((res.data as MessagePermissionResult).verdict);
     } else {
       setError(res.message ?? 'Failed to load message permission');
@@ -129,7 +133,6 @@ export function useThreadMessages(threadId: string | null) {
     setError(null);
     const res = await getThreadMessages(threadId);
     if (res.ok && res.data) {
-      // Messages arrive newest-first from the API; reverse for display.
       setMessages([...(res.data.messages ?? [])].reverse());
     } else {
       setError(res.message ?? 'Failed to load messages');
@@ -155,5 +158,55 @@ export function useThreadMessages(threadId: string | null) {
     [threadId],
   );
 
-  return { messages, loading, error, sending, reload, send };
+  const retry = useCallback(
+    async (messageId: string) => {
+      const res = await retryTranslation(messageId);
+      if (res.ok) {
+        // Optimistically mark status as pending while we wait.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, translationStatus: 'pending' as const, translationLabel: null }
+              : m,
+          ),
+        );
+      }
+      return res;
+    },
+    [],
+  );
+
+  return { messages, loading, error, sending, reload, send, retry };
+}
+
+// ── Language settings ─────────────────────────────────────────────────────────
+
+export function useLanguageSettings() {
+  const [data, setData] = useState<LanguageSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const res = await getMyLanguageSettings();
+    if (res.ok && res.data) setData(res.data as LanguageSettings);
+    else setError(res.message ?? 'Failed to load language settings');
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const update = useCallback(
+    async (patch: Partial<Omit<LanguageSettings, 'translation_updated_at'>>) => {
+      const res = await updateMyLanguageSettings(patch);
+      if (res.ok && res.data) setData(res.data as LanguageSettings);
+      return res;
+    },
+    [],
+  );
+
+  return { data, loading, error, reload, update };
 }

@@ -3,15 +3,19 @@
  *
  * GET  /api/me/message-settings
  * PATCH /api/me/message-settings
+ * GET  /api/me/language-settings
+ * PATCH /api/me/language-settings
  * GET  /api/users/:userId/message-permission
  * POST /api/users/:userId/message-request
  * GET  /api/me/message-requests
  * POST /api/message-requests/:requestId/accept
  * POST /api/message-requests/:requestId/decline
  * POST /api/message-requests/:requestId/cancel
+ * POST /api/users/:userId/open-thread
  * GET  /api/me/threads
  * GET  /api/threads/:threadId/messages
  * POST /api/threads/:threadId/messages
+ * POST /api/messages/:messageId/translate/retry
  *
  * Privacy guarantee: no private posts, trips, live location, exact GPS,
  * circle memberships, or trip memberships are exposed through any of these
@@ -24,6 +28,12 @@ import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
 import { getServiceClient } from '../lib/supabase';
 import { isUuid } from '../lib/followDecisions';
+import {
+  translateMessageForThread,
+  markTranslationsPending,
+  buildDisplayFields,
+  type TranslationStatusValue,
+} from '../services/messageTranslation';
 
 const router = Router();
 
@@ -38,11 +48,22 @@ const MESSAGE_PRIVACY_VALUES = [
   'no_one',
 ] as const;
 
+const LANGUAGE_CODES = [
+  'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'pt', 'it', 'ru',
+  'ar', 'th', 'vi', 'id', 'tl', 'sv', 'nl', 'pl', 'tr', 'hi',
+] as const;
+
 const MessageSettingsPatchSchema = z.object({
   message_privacy: z.enum(MESSAGE_PRIVACY_VALUES).optional(),
   allow_message_requests: z.boolean().optional(),
   allow_trip_member_messages: z.boolean().optional(),
   allow_circle_member_messages: z.boolean().optional(),
+});
+
+const LanguageSettingsPatchSchema = z.object({
+  preferred_message_language: z.enum(LANGUAGE_CODES).optional(),
+  auto_translate_messages: z.boolean().optional(),
+  show_original_messages: z.boolean().optional(),
 });
 
 /* ---------------------------------------------------------------------------
@@ -66,7 +87,6 @@ router.get('/me/message-settings', async (req, res) => {
     return;
   }
 
-  // If no row exists, return defaults.
   res.status(200).json(
     data ?? {
       message_privacy: 'everyone',
@@ -111,10 +131,73 @@ router.patch('/me/message-settings', async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * GET /api/me/language-settings
+ * ---------------------------------------------------------------------------
+ * Returns the current user's translation / language preferences.
+ */
+router.get('/me/language-settings', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data, error } = await client
+    .from('profiles')
+    .select('preferred_message_language, auto_translate_messages, show_original_messages, translation_updated_at')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, 'language settings select failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json(
+    data ?? {
+      preferred_message_language: 'en',
+      auto_translate_messages: true,
+      show_original_messages: false,
+      translation_updated_at: null,
+    },
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * PATCH /api/me/language-settings
+ * ---------------------------------------------------------------------------
+ */
+router.patch('/me/language-settings', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = LanguageSettingsPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues.map((i) => i.message).join('; '));
+    return;
+  }
+
+  const patch: Record<string, unknown> = { ...parsed.data, translation_updated_at: new Date().toISOString() };
+
+  const { data, error } = await client
+    .from('profiles')
+    .update(patch)
+    .eq('id', user.id)
+    .select('preferred_message_language, auto_translate_messages, show_original_messages, translation_updated_at')
+    .single();
+
+  if (error) {
+    req.log.error({ err: error }, 'language settings update failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json(data);
+});
+
+/* ---------------------------------------------------------------------------
  * GET /api/users/:userId/message-permission
  * ---------------------------------------------------------------------------
- * Returns the verdict for the current user messaging the given user.
- * Safe for public consumption — no internal fields are leaked.
  */
 router.get('/users/:userId/message-permission', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -127,8 +210,6 @@ router.get('/users/:userId/message-permission', async (req, res) => {
     return;
   }
 
-  // Must use service client: recipient's user_message_settings are RLS-restricted
-  // to the row owner only — a user-scoped client cannot read another user's settings.
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
@@ -145,11 +226,6 @@ router.get('/users/:userId/message-permission', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/users/:userId/open-thread
  * ---------------------------------------------------------------------------
- * Opens (or finds) a 1-on-1 direct thread between the caller and the target.
- * Only valid when verdict = 'allowed'. If verdict = 'requires_request', the
- * caller must use POST /api/users/:userId/message-request instead.
- *
- * Idempotent: if a thread already exists, returns it.
  */
 router.post('/users/:userId/open-thread', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -160,11 +236,9 @@ router.post('/users/:userId/open-thread', async (req, res) => {
   if (!isUuid(recipientId)) { sendError(res, 'invalid_payload', 'Invalid user id'); return; }
   if (recipientId === user.id) { sendError(res, 'invalid_payload', 'Cannot open a thread with yourself'); return; }
 
-  // Service client required: canMessage reads recipient settings (RLS-restricted to owner).
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Check permission: must be 'allowed' (direct messaging).
   const verdict = await canMessage(sc, user.id, recipientId);
   if (verdict.verdict === 'denied') {
     sendError(res, 'forbidden', `Cannot message this user: ${verdict.reason ?? 'denied'}`);
@@ -175,7 +249,6 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     return;
   }
 
-  // Look for an existing STRICTLY 1:1 direct thread (exactly 2 members: caller + recipient).
   const { data: myMemberships } = await sc
     .from('message_thread_members')
     .select('thread_id')
@@ -185,8 +258,6 @@ router.post('/users/:userId/open-thread', async (req, res) => {
 
   let existingThreadId: string | null = null;
   if (myThreadIds.length > 0) {
-    // Fetch all members of threads the caller belongs to, then filter for
-    // threads that have EXACTLY caller + recipient and no other members.
     const { data: allMembers } = await sc
       .from('message_thread_members')
       .select('thread_id, user_id')
@@ -199,11 +270,7 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     }
 
     for (const [threadId, members] of Object.entries(membersByThread)) {
-      if (
-        members.length === 2 &&
-        members.includes(user.id) &&
-        members.includes(recipientId)
-      ) {
+      if (members.length === 2 && members.includes(user.id) && members.includes(recipientId)) {
         existingThreadId = threadId;
         break;
       }
@@ -215,7 +282,6 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     return;
   }
 
-  // No existing 1:1 thread — create one.
   const now = new Date().toISOString();
   const { data: thread, error: tErr } = await sc
     .from('message_threads')
@@ -241,9 +307,6 @@ router.post('/users/:userId/open-thread', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/users/:userId/message-request
  * ---------------------------------------------------------------------------
- * Creates a message request from the current user to the target user.
- * Idempotent on duplicate pending (returns existing request).
- * Validates via canMessage resolver — must be 'requires_request' verdict.
  */
 router.post('/users/:userId/message-request', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -251,34 +314,21 @@ router.post('/users/:userId/message-request', async (req, res) => {
   const { client, user } = auth;
 
   const recipientId = req.params.userId;
-  if (!isUuid(recipientId)) {
-    sendError(res, 'invalid_payload', 'Invalid user id');
-    return;
-  }
-  if (recipientId === user.id) {
-    sendError(res, 'invalid_payload', 'You cannot send a message request to yourself');
-    return;
-  }
+  if (!isUuid(recipientId)) { sendError(res, 'invalid_payload', 'Invalid user id'); return; }
+  if (recipientId === user.id) { sendError(res, 'invalid_payload', 'You cannot send a message request to yourself'); return; }
 
-  // Check recipient exists (user-scoped client is fine for public profiles).
   const { data: profile } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();
-  if (!profile) {
-    sendError(res, 'not_found', 'User not found');
-    return;
-  }
+  if (!profile) { sendError(res, 'not_found', 'User not found'); return; }
 
-  // Service client required: canMessage reads recipient settings (RLS-restricted to owner).
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Evaluate permission — must be requires_request (not denied, not allowed).
   const verdict = await canMessage(sc, user.id, recipientId);
   if (verdict.verdict === 'denied') {
     sendError(res, 'forbidden', `Cannot message this user: ${verdict.reason ?? 'denied'}`);
     return;
   }
 
-  // Idempotent on pending.
   const { data: existing } = await sc
     .from('message_requests')
     .select('id, status')
@@ -293,11 +343,9 @@ router.post('/users/:userId/message-request', async (req, res) => {
       return;
     }
     if (ex.status === 'accepted') {
-      // A thread already exists — look it up.
       res.status(200).json({ requestId: ex.id, status: 'accepted' });
       return;
     }
-    // Declined/cancelled → create a fresh request.
   }
 
   const previewText = typeof req.body?.previewText === 'string'
@@ -322,7 +370,6 @@ router.post('/users/:userId/message-request', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * GET /api/me/message-requests
  * ---------------------------------------------------------------------------
- * Incoming pending message requests for the current user (for Request Inbox).
  */
 router.get('/me/message-requests', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -370,7 +417,6 @@ router.get('/me/message-requests', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/message-requests/:requestId/accept
  * ---------------------------------------------------------------------------
- * Recipient only. Creates a message_threads + two message_thread_members rows.
  */
 router.post('/message-requests/:requestId/accept', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -384,7 +430,7 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
   const { data: mr } = await sc
     .from('message_requests')
-    .select('id, sender_id, recipient_id, status')
+    .select('id, sender_id, recipient_id, status, preview_text')
     .eq('id', requestId)
     .maybeSingle();
 
@@ -395,7 +441,6 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Detect an existing 1:1 thread between sender and recipient — accept is idempotent.
   const { data: senderMemberships } = await sc
     .from('message_thread_members')
     .select('thread_id')
@@ -431,10 +476,8 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   let threadId: string;
 
   if (existingDirectThreadId) {
-    // Reuse the existing 1:1 direct thread — no duplicate creation.
     threadId = existingDirectThreadId;
   } else {
-    // Create a new 1:1 thread and add both parties.
     const { data: thread, error: tErr } = await sc
       .from('message_threads')
       .insert({ created_at: now, updated_at: now })
@@ -455,19 +498,51 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     ]);
   }
 
-  // Mark request accepted.
   await sc
     .from('message_requests')
     .update({ status: 'accepted', responded_at: now })
     .eq('id', requestId);
 
   res.status(200).json({ status: 'accepted', threadId, requestId });
+
+  // After response: if there is a preview message, insert it as a real message and translate.
+  // Only run if the preview_text was not already inserted (new thread creation path or no messages yet).
+  const previewBody = typeof req_.preview_text === 'string' ? req_.preview_text.trim() : '';
+  if (previewBody) {
+    const { data: senderProfile } = await sc
+      .from('profiles')
+      .select('preferred_message_language')
+      .eq('id', req_.sender_id)
+      .maybeSingle();
+    const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+
+    const { data: previewMsg } = await sc
+      .from('messages')
+      .insert({ thread_id: threadId, sender_id: req_.sender_id, body: previewBody, created_at: now })
+      .select('id')
+      .single();
+
+    await sc
+      .from('message_threads')
+      .update({ last_message_at: now, updated_at: now })
+      .eq('id', threadId);
+
+    if (previewMsg) {
+      translateMessageForThread(sc, {
+        messageId: (previewMsg as any).id,
+        body: previewBody,
+        senderId: req_.sender_id,
+        threadId,
+        senderPreferredLanguage: senderLanguage,
+        logger: req.log,
+      }).catch(() => {});
+    }
+  }
 });
 
 /* ---------------------------------------------------------------------------
  * POST /api/message-requests/:requestId/decline
  * ---------------------------------------------------------------------------
- * Recipient only. Leaves no thread.
  */
 router.post('/message-requests/:requestId/decline', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -499,7 +574,6 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/message-requests/:requestId/cancel
  * ---------------------------------------------------------------------------
- * Sender only.
  */
 router.post('/message-requests/:requestId/cancel', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -530,7 +604,6 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * GET /api/me/threads
  * ---------------------------------------------------------------------------
- * Lists threads the current user is a member of, with last-message preview.
  */
 router.get('/me/threads', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -557,7 +630,6 @@ router.get('/me/threads', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Fetch threads + last message + other members.
   const [threadsRes, lastMsgRes, allMembersRes] = await Promise.all([
     sc
       .from('message_threads')
@@ -565,27 +637,44 @@ router.get('/me/threads', async (req, res) => {
       .in('id', threadIds)
       .order('last_message_at', { ascending: false, nullsFirst: false }),
 
-    // Last message per thread (most recent non-deleted).
     sc
       .from('messages')
-      .select('thread_id, body, sender_id, created_at, deleted_at')
+      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language')
       .in('thread_id', threadIds)
       .is('deleted_at', null)
       .order('created_at', { ascending: false }),
 
     sc
       .from('message_thread_members')
-      .select(`user_id, profile:profiles!message_thread_members_user_id_fkey(${PROFILE_PUBLIC})`)
+      .select(`user_id, thread_id, profile:profiles!message_thread_members_user_id_fkey(${PROFILE_PUBLIC})`)
       .in('thread_id', threadIds),
   ]);
 
-  // Last message per thread (first occurrence after ordering by desc).
+  // Last message per thread.
   const lastMsgByThread: Record<string, any> = {};
   for (const m of (lastMsgRes.data ?? []) as any[]) {
     if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
   }
 
-  // Other members per thread (excluding current user).
+  // Fetch translations for last messages (for recipient preview).
+  const lastMsgIds = Object.values(lastMsgByThread)
+    .filter((m) => m.sender_id !== user.id)
+    .map((m) => m.id)
+    .filter(Boolean);
+
+  let translationsByMsgId: Record<string, any> = {};
+  if (lastMsgIds.length > 0) {
+    const { data: tRows } = await sc
+      .from('message_translations')
+      .select('message_id, translated_body, status, source_language')
+      .in('message_id', lastMsgIds)
+      .eq('recipient_id', user.id);
+
+    for (const t of tRows ?? []) {
+      translationsByMsgId[(t as any).message_id] = t;
+    }
+  }
+
   const membersByThread: Record<string, any[]> = {};
   for (const m of (allMembersRes.data ?? []) as any[]) {
     if (m.user_id === user.id) continue;
@@ -605,6 +694,25 @@ router.get('/me/threads', async (req, res) => {
   const threads = (threadsRes.data ?? []).map((t: any) => {
     const lm = lastMsgByThread[t.id];
     const mem = membershipMap[t.id] ?? {};
+
+    let lastMessagePreview: any = null;
+    if (lm) {
+      // Build display body for preview.
+      let displayBody = lm.body.slice(0, 80);
+      if (lm.sender_id !== user.id) {
+        const tRow = translationsByMsgId[lm.id];
+        if (tRow?.status === 'translated' && tRow.translated_body) {
+          displayBody = tRow.translated_body.slice(0, 80);
+        }
+      }
+      lastMessagePreview = {
+        body: lm.body.slice(0, 80),
+        displayBody,
+        senderId: lm.sender_id,
+        createdAt: lm.created_at,
+      };
+    }
+
     return {
       id: t.id,
       status: t.status,
@@ -613,9 +721,7 @@ router.get('/me/threads', async (req, res) => {
       mutedAt: mem.muted_at ?? null,
       archivedAt: mem.archived_at ?? null,
       otherMembers: membersByThread[t.id] ?? [],
-      lastMessagePreview: lm
-        ? { body: lm.body.slice(0, 80), senderId: lm.sender_id, createdAt: lm.created_at }
-        : null,
+      lastMessagePreview,
     };
   });
 
@@ -625,8 +731,7 @@ router.get('/me/threads', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * GET /api/threads/:threadId/messages
  * ---------------------------------------------------------------------------
- * Thread members only. Paginated (cursor = before ISO timestamp, limit 50).
- * Deleted messages rendered as tombstone.
+ * Thread members only. Paginated. Extended with translation display fields.
  */
 router.get('/threads/:threadId/messages', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -636,7 +741,6 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
 
-  // Guard: must be a member.
   const { data: membership } = await client
     .from('message_thread_members')
     .select('user_id')
@@ -654,7 +758,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let query = sc
     .from('messages')
-    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
+    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -668,8 +772,49 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
-  const messages = ((data ?? []) as any[]).map((m) => {
+  const rows = (data ?? []) as any[];
+
+  // Fetch translations for messages where current user is recipient (sender_id != user.id).
+  const incomingMsgIds = rows
+    .filter((m) => m.sender_id !== user.id && !m.deleted_at)
+    .map((m) => m.id);
+
+  let translationMap: Record<string, any> = {};
+  if (incomingMsgIds.length > 0) {
+    const { data: tRows } = await sc
+      .from('message_translations')
+      .select('message_id, source_language, target_language, translated_body, status')
+      .in('message_id', incomingMsgIds)
+      .eq('recipient_id', user.id);
+
+    for (const t of tRows ?? []) {
+      translationMap[(t as any).message_id] = t;
+    }
+  }
+
+  const messages = rows.map((m) => {
     const p = m.profile ?? {};
+    const isDeleted = Boolean(m.deleted_at);
+    const tRow = translationMap[m.id] ?? null;
+
+    const display = buildDisplayFields(
+      {
+        body: isDeleted ? null : m.body,
+        deleted: isDeleted,
+        senderId: m.sender_id,
+        originalLanguage: m.original_language,
+      },
+      user.id,
+      tRow
+        ? {
+            source_language: tRow.source_language,
+            target_language: tRow.target_language,
+            translated_body: tRow.translated_body,
+            status: tRow.status as TranslationStatusValue,
+          }
+        : null,
+    );
+
     return {
       id: m.id,
       threadId: m.thread_id,
@@ -677,10 +822,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       senderHandle: p.handle ?? null,
       senderName: p.name ?? null,
       senderAvatarUrl: p.avatar_url ?? null,
-      body: m.deleted_at ? null : m.body,
-      deleted: Boolean(m.deleted_at),
+      body: isDeleted ? null : m.body,
+      deleted: isDeleted,
       createdAt: m.created_at,
       editedAt: m.edited_at ?? null,
+      // Translation display fields
+      displayBody: display.displayBody,
+      originalBody: display.originalBody,
+      originalLanguage: display.originalLanguage,
+      translated: display.translated,
+      translationStatus: display.translationStatus,
+      translationLabel: display.translationLabel,
+      canShowOriginal: display.canShowOriginal,
     };
   });
 
@@ -690,7 +843,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/threads/:threadId/messages
  * ---------------------------------------------------------------------------
- * Thread members only. Creates a message and bumps last_message_at.
+ * Thread members only. Saves message, then runs translation pipeline.
  */
 router.post('/threads/:threadId/messages', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -704,7 +857,6 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   if (!body) { sendError(res, 'invalid_payload', 'body is required'); return; }
   if (body.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
-  // Guard: must be a member.
   const { data: membership } = await client
     .from('message_thread_members')
     .select('user_id')
@@ -716,6 +868,14 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Fetch sender's language preference (for detection fallback).
+  const { data: senderProfile } = await sc
+    .from('profiles')
+    .select('preferred_message_language')
+    .eq('id', user.id)
+    .maybeSingle();
+  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
 
   const now = new Date().toISOString();
 
@@ -738,6 +898,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .eq('id', threadId);
 
   const m = msg as any;
+
+  // Respond immediately, then run translation pipeline in background.
   res.status(201).json({
     id: m.id,
     threadId: m.thread_id,
@@ -746,7 +908,181 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     deleted: false,
     createdAt: m.created_at,
     editedAt: null,
+    displayBody: m.body,
+    originalBody: m.body,
+    originalLanguage: null,
+    translated: false,
+    translationStatus: null,
+    translationLabel: null,
+    canShowOriginal: false,
   });
+
+  // Fire-and-forget: translate in background (does not block the response).
+  translateMessageForThread(sc, {
+    messageId: m.id,
+    body,
+    senderId: user.id,
+    threadId,
+    senderPreferredLanguage: senderLanguage,
+    logger: req.log,
+  }).catch(() => {
+    // Outer safety net — translateMessageForThread already catches internally.
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * POST /api/messages/:messageId/translate/retry
+ * ---------------------------------------------------------------------------
+ * Re-triggers translation for a message where status = 'failed'.
+ * Only the thread members can trigger this.
+ */
+router.post('/messages/:messageId/translate/retry', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { messageId } = req.params;
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Fetch message + verify membership.
+  const { data: msgRow } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, original_language')
+    .eq('id', messageId)
+    .maybeSingle();
+
+  if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
+  const m = msgRow as any;
+  if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
+
+  const { data: mem } = await client
+    .from('message_thread_members')
+    .select('user_id')
+    .eq('thread_id', m.thread_id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+
+  // Check this user has a failed translation row.
+  const { data: tRow } = await sc
+    .from('message_translations')
+    .select('id, status')
+    .eq('message_id', messageId)
+    .eq('recipient_id', user.id)
+    .maybeSingle();
+
+  if (!tRow || (tRow as any).status === 'translated' || (tRow as any).status === 'skipped') {
+    sendError(res, 'invalid_payload', 'No failed translation to retry');
+    return;
+  }
+
+  res.status(202).json({ status: 'retry_queued', messageId });
+
+  // Reset to pending and re-run.
+  await markTranslationsPending(sc, messageId);
+
+  const { data: senderProfile } = await sc
+    .from('profiles')
+    .select('preferred_message_language')
+    .eq('id', m.sender_id)
+    .maybeSingle();
+  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+
+  translateMessageForThread(sc, {
+    messageId,
+    body: m.body,
+    senderId: m.sender_id,
+    threadId: m.thread_id,
+    senderPreferredLanguage: senderLanguage,
+    logger: req.log,
+  }).catch(() => {});
+});
+
+/* ---------------------------------------------------------------------------
+ * PATCH /api/threads/:threadId/messages/:messageId
+ * ---------------------------------------------------------------------------
+ * Sender only. Updates message body, sets edited_at, invalidates + regenerates
+ * translations.
+ */
+router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { threadId, messageId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+
+  const newBody = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  if (!newBody) { sendError(res, 'invalid_payload', 'body is required'); return; }
+  if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
+
+  // Verify thread membership.
+  const { data: mem } = await client
+    .from('message_thread_members')
+    .select('user_id')
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Fetch message — must exist, belong to this thread, not deleted, and be owned by caller.
+  const { data: msgRow } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at')
+    .eq('id', messageId)
+    .eq('thread_id', threadId)
+    .maybeSingle();
+
+  if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
+  const m = msgRow as any;
+  if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
+  if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; }
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await sc
+    .from('messages')
+    .update({ body: newBody, edited_at: now })
+    .eq('id', messageId);
+
+  if (updateErr) {
+    req.log.error({ err: updateErr }, 'message edit failed');
+    sendError(res, 'db_error', updateErr.message);
+    return;
+  }
+
+  res.status(200).json({
+    id: messageId,
+    threadId,
+    senderId: user.id,
+    body: newBody,
+    deleted: false,
+    editedAt: now,
+  });
+
+  // Invalidate existing translations and regenerate for updated body.
+  await markTranslationsPending(sc, messageId);
+
+  const { data: senderProfile } = await sc
+    .from('profiles')
+    .select('preferred_message_language')
+    .eq('id', user.id)
+    .maybeSingle();
+  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+
+  translateMessageForThread(sc, {
+    messageId,
+    body: newBody,
+    senderId: user.id,
+    threadId,
+    senderPreferredLanguage: senderLanguage,
+    logger: req.log,
+  }).catch(() => {});
 });
 
 export default router;

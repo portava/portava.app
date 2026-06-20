@@ -13,12 +13,100 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Zap, Send } from 'lucide-react-native';
-import { useThreadMessages } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import type { Message } from '../../src/services/messaging';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function MessageBubble({
+  item,
+  mine,
+  autoTranslate,
+  defaultShowOriginal,
+}: {
+  item: Message;
+  mine: boolean;
+  autoTranslate: boolean;
+  defaultShowOriginal: boolean;
+}) {
+  // Local toggle: starts at the user's global preference (show_original_messages).
+  // If auto_translate_messages is off, always show original regardless.
+  const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
+
+  if (item.deleted) {
+    return (
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+        <Text
+          style={[
+            styles.bubbleText,
+            { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute },
+          ]}
+        >
+          This message was deleted.
+        </Text>
+      </View>
+    );
+  }
+
+  // Decide what body to show.
+  // - Sender sees their own body (no translation).
+  // - If autoTranslate is off, show original.
+  // - If showOriginal is toggled on, show originalBody.
+  // - Otherwise show displayBody (translated if available, else original).
+  let bodyToShow: string;
+  if (mine || !autoTranslate || showOriginal) {
+    bodyToShow = item.originalBody ?? item.body ?? '';
+  } else {
+    bodyToShow = item.displayBody ?? item.body ?? '';
+  }
+
+  const showLabel = !mine && item.translationStatus !== null && item.translationStatus !== 'skipped';
+  const isTranslated = item.translated && autoTranslate && !showOriginal;
+  const isFailed = item.translationStatus === 'failed';
+  const isPending = item.translationStatus === 'pending';
+
+  return (
+    <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+      <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
+        {bodyToShow}
+      </Text>
+
+      <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
+        {formatTime(item.createdAt)}
+        {item.editedAt ? '  ·  edited' : ''}
+      </Text>
+
+      {showLabel && (
+        <View style={styles.translationRow}>
+          {isPending ? (
+            <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
+              Translating…
+            </Text>
+          ) : isFailed ? (
+            <Text style={[styles.transLabel, { color: color.mute }]}>
+              Translation unavailable
+            </Text>
+          ) : isTranslated && item.translationLabel ? (
+            <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
+              {item.translationLabel}
+            </Text>
+          ) : null}
+
+          {item.canShowOriginal && autoTranslate && (
+            <Pressable onPress={() => setShowOriginal((v) => !v)} hitSlop={8}>
+              <Text style={[styles.transToggle, mine && styles.transToggleMine]}>
+                {showOriginal ? 'Show translation' : 'Show original'}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+    </View>
+  );
 }
 
 export default function TelegraphThread() {
@@ -26,8 +114,13 @@ export default function TelegraphThread() {
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { messages, loading, error, sending, send } = useThreadMessages(id ?? null);
+  const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
   const listRef = useRef<FlatList>(null);
+
+  // Resolve user's translation preferences (default: auto-translate on, don't default to original).
+  const autoTranslate = langSettings?.auto_translate_messages ?? true;
+  const defaultShowOriginal = langSettings?.show_original_messages ?? false;
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -111,20 +204,12 @@ export default function TelegraphThread() {
           const mine = item.senderId === userId;
           return (
             <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
-              <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
-                {item.deleted ? (
-                  <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute }]}>
-                    This message was deleted.
-                  </Text>
-                ) : (
-                  <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
-                    {item.body}
-                  </Text>
-                )}
-                <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
-                  {formatTime(item.createdAt)}
-                </Text>
-              </View>
+              <MessageBubble
+                item={item}
+                mine={mine}
+                autoTranslate={autoTranslate}
+                defaultShowOriginal={defaultShowOriginal}
+              />
             </View>
           );
         }}
@@ -184,9 +269,10 @@ const styles = StyleSheet.create({
 
   list: { paddingHorizontal: space.lg, paddingVertical: space.md },
 
-  bubbleRow: { alignSelf: 'flex-start', maxWidth: '80%' },
+  bubbleRow: { alignSelf: 'flex-start', maxWidth: '82%' },
   bubbleRowMine: { alignSelf: 'flex-end' },
-  bubble: { borderRadius: radius.lg, paddingHorizontal: space.md, paddingVertical: space.sm },
+
+  bubble: { borderRadius: radius.lg, paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: 6 },
   bubbleOther: {
     backgroundColor: color.paperRaised,
     borderWidth: 1,
@@ -194,10 +280,44 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
   },
   bubbleMine: { backgroundColor: color.signal, borderBottomRightRadius: 4 },
+
   bubbleText: { ...t.body, color: color.ink, lineHeight: 20 },
   bubbleTextMine: { color: color.onInk },
-  bubbleTime: { ...t.stamp, fontFamily: 'Courier', color: color.faint, fontSize: 10, marginTop: 2, textAlign: 'right' },
+
+  bubbleTime: {
+    ...t.stamp,
+    fontFamily: 'Courier',
+    color: color.faint,
+    fontSize: 10,
+    marginTop: 2,
+    textAlign: 'right',
+  },
   bubbleTimeMine: { color: color.onInk + '88' },
+
+  translationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+
+  transLabel: {
+    fontSize: 10,
+    color: color.mute,
+    fontFamily: 'Courier',
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
+  transLabelMine: { color: color.onInk + '99' },
+
+  transToggle: {
+    fontSize: 10,
+    color: color.signal,
+    fontFamily: 'Courier',
+    textDecorationLine: 'underline',
+  },
+  transToggleMine: { color: color.onInk + 'CC' },
 
   compose: {
     flexDirection: 'row',

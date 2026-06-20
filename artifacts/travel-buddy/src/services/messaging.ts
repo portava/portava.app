@@ -3,10 +3,11 @@
  *
  * Covers:
  *   - Message settings (GET/PATCH)
+ *   - Language settings (GET/PATCH)
  *   - Message permission (GET verdict)
  *   - Message requests (send, accept, decline, cancel, list incoming)
  *   - Threads (list)
- *   - Messages (list paginated, send)
+ *   - Messages (list paginated, send, retry translation)
  *
  * All writes go through the API server (service-role + JWT verification).
  * No private posts, trip data, live location, or GPS are accessible here.
@@ -15,12 +16,21 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
+export type TranslationStatusValue = 'pending' | 'translated' | 'failed' | 'skipped';
+
 export interface MessageSettings {
   message_privacy: 'everyone' | 'followers' | 'following' | 'friends' | 'trip_members' | 'no_one';
   allow_message_requests: boolean;
   allow_trip_member_messages: boolean;
   allow_circle_member_messages: boolean;
   updated_at: string | null;
+}
+
+export interface LanguageSettings {
+  preferred_message_language: string;
+  auto_translate_messages: boolean;
+  show_original_messages: boolean;
+  translation_updated_at: string | null;
 }
 
 export interface MessagePermissionResult {
@@ -65,6 +75,7 @@ export interface ThreadSummary {
   otherMembers: ThreadOtherMember[];
   lastMessagePreview: {
     body: string;
+    displayBody: string;
     senderId: string;
     createdAt: string;
   } | null;
@@ -81,6 +92,14 @@ export interface Message {
   deleted: boolean;
   createdAt: string;
   editedAt: string | null;
+  // Translation fields (added by translation pipeline)
+  displayBody: string | null;
+  originalBody: string | null;
+  originalLanguage: string | null;
+  translated: boolean;
+  translationStatus: TranslationStatusValue | null;
+  translationLabel: string | null;
+  canShowOriginal: boolean;
 }
 
 export type MsgErrorKind =
@@ -189,6 +208,18 @@ export async function updateMyMessageSettings(
   return apiPatch('/api/me/message-settings', patch);
 }
 
+// ── Language settings ─────────────────────────────────────────────────────────
+
+export async function getMyLanguageSettings(): Promise<MsgResult<LanguageSettings>> {
+  return apiGet('/api/me/language-settings');
+}
+
+export async function updateMyLanguageSettings(
+  patch: Partial<Omit<LanguageSettings, 'translation_updated_at'>>,
+): Promise<MsgResult<LanguageSettings>> {
+  return apiPatch('/api/me/language-settings', patch);
+}
+
 // ── Permission check ──────────────────────────────────────────────────────────
 
 export async function getMessagePermission(
@@ -249,4 +280,10 @@ export async function sendMessage(
   body: string,
 ): Promise<MsgResult<Message>> {
   return apiPost(`/api/threads/${threadId}/messages`, { body });
+}
+
+export async function retryTranslation(
+  messageId: string,
+): Promise<MsgResult<{ status: string; messageId: string }>> {
+  return apiPost(`/api/messages/${messageId}/translate/retry`);
 }

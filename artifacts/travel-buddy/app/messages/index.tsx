@@ -19,7 +19,7 @@ function timeAgo(iso: string): string {
 
 export default function TelegraphInbox() {
   const insets = useSafeAreaInsets();
-  const { isAuthed } = useSession();
+  const { isAuthed, userId } = useSession();
   const { data: threads, loading, error, reload } = useMyThreads();
 
   useFocusEffect(useCallback(() => { reload(); }, [reload]));
@@ -58,8 +58,15 @@ export default function TelegraphInbox() {
           contentContainerStyle={{ paddingBottom: space.xxxl }}
           renderItem={({ item }) => {
             const other = item.otherMembers[0];
-            const preview = item.lastMessagePreview?.body ?? '';
-            const lastAt = item.lastMessagePreview?.createdAt;
+            const lmp = item.lastMessagePreview;
+            const isMine = lmp?.senderId === userId;
+
+            // Show translated preview for incoming messages; original for own.
+            const previewText = lmp
+              ? (isMine ? lmp.body : (lmp.displayBody ?? lmp.body))
+              : '';
+
+            const lastAt = lmp?.createdAt;
             return (
               <Pressable
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -81,8 +88,8 @@ export default function TelegraphInbox() {
                     </Text>
                     {lastAt ? <Text style={styles.time}>{timeAgo(lastAt)}</Text> : null}
                   </View>
-                  {preview ? (
-                    <Text style={styles.preview} numberOfLines={1}>{preview}</Text>
+                  {previewText ? (
+                    <Text style={styles.preview} numberOfLines={1}>{previewText}</Text>
                   ) : null}
                 </View>
               </Pressable>
