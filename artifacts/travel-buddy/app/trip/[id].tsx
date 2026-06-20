@@ -3,10 +3,11 @@ import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock } from 'lucide-react-native';
-import { TripHero, TodayNextUp, TripTimeline, SavedIdeas } from '../../src/components/TripPage';
+import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripMapPreview, TripSafety, TripPostsSection,
 } from '../../src/components/TripPage2';
+import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip } from '../../src/hooks/useBackend';
@@ -15,7 +16,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { configured, isAuthed } = useSession();
+  const { configured, isAuthed, userId } = useSession();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
 
@@ -59,7 +60,11 @@ export default function TripDetail() {
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
         <TripHero trip={trip} />
         <TodayNextUp nextUp={mockNextUp} />
-        <TripTimeline days={trip.timeline} />
+        <TripPlanSection
+          tripId={trip.id}
+          currentUserId={userId ?? ''}
+          isOwner={realTrip ? userId === realTrip.ownerId : false}
+        />
         <SavedIdeas ideas={trip.savedIdeas} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />

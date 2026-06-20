@@ -715,3 +715,47 @@ export interface AttachTarget {
   subtitle?: string;
   group: 'active' | 'upcoming' | 'planning' | 'trip_plans' | 'open' | 'draft';
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Trip Plan Items — structured day-by-day itinerary per trip.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+export type TripPlanCategory =
+  | 'accommodation'
+  | 'activity'
+  | 'dining'
+  | 'transport'
+  | 'free_time'
+  | 'meeting_point'
+  | 'other';
+
+export type TripPlanItemStatus =
+  | 'confirmed'
+  | 'tentative'
+  | 'done'
+  | 'cancelled';
+
+export type TripPlanSourceType =
+  | 'manual'
+  | 'place'
+  | 'meetup';
+
+export interface TripPlanItem {
+  id: ID;
+  tripId: ID;
+  creatorId: ID;
+  title: string;
+  category: TripPlanCategory;
+  status: TripPlanItemStatus;
+  sourceType: TripPlanSourceType;
+  sourceId: string | null;
+  dayDate: ISODate | null;
+  startsAt: ISODate | null;
+  endsAt: ISODate | null;
+  locationName: string | null;
+  notes: string | null;
+  sortOrder: number;
+  visibility: 'members' | 'public';
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}

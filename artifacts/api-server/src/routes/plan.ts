@@ -1,0 +1,170 @@
+/**
+ * Plan helper routes — add place or meetup to a trip plan.
+ *
+ *   POST /api/meetups/:meetupId/add-to-trip-plan  { tripId }
+ *   POST /api/places/:placeId/add-to-trip-plan    { tripId, dayDate?, startsAt? }
+ */
+import { Router } from "express";
+import { z } from "zod";
+import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+
+const router = Router();
+
+const UUID = /^[0-9a-f-]{36}$/i;
+
+// ── POST /meetups/:meetupId/add-to-trip-plan ─────────────────────────────────
+
+const AddMeetupSchema = z.object({
+  tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
+});
+
+router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { meetupId } = req.params;
+  if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
+
+  const parsed = AddMeetupSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const { tripId } = parsed.data;
+
+  // Caller must be an accepted trip member
+  const member = await isAcceptedTripMember(client, tripId, user.id);
+  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+
+  // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
+  const { data: meetup } = await client
+    .from("meetups")
+    .select("id, title, starts_at, location_name")
+    .eq("id", meetupId)
+    .maybeSingle();
+  if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
+
+  // Duplicate guard: same meetup already added to this trip (non-removed)
+  const { data: existing } = await client
+    .from("trip_plan_items")
+    .select("id")
+    .eq("trip_id", tripId)
+    .eq("source_type", "meetup")
+    .eq("source_id", meetupId)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (existing) { res.status(409).json({ error: "duplicate", message: "This meetup is already in your trip plan" }); return; }
+
+  const { data: item, error } = await client
+    .from("trip_plan_items")
+    .insert({
+      trip_id: tripId,
+      creator_id: user.id,
+      title: (meetup as any).title,
+      category: "meeting_point",
+      status: "tentative",
+      source_type: "meetup",
+      source_id: meetupId,
+      starts_at: (meetup as any).starts_at ?? null,
+      location_name: (meetup as any).location_name ?? null,
+      sort_order: 0,
+      visibility: "members",
+    })
+    .select("*")
+    .single();
+
+  if (error) { req.log.error({ err: error }, "add meetup to plan"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(toCamel(item));
+});
+
+// ── POST /places/:placeId/add-to-trip-plan ───────────────────────────────────
+
+const AddPlaceSchema = z.object({
+  tripId:   z.string().regex(UUID, "tripId must be a valid UUID"),
+  dayDate:  z.string().optional(),
+  startsAt: z.string().optional(),
+});
+
+router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { placeId } = req.params;
+
+  const parsed = AddPlaceSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const { tripId, dayDate, startsAt } = parsed.data;
+
+  const member = await isAcceptedTripMember(client, tripId, user.id);
+  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+
+  // Fetch place row — public-safe columns only (name, category, location_name)
+  // NOTE: approximate_lat / approximate_lng are intentionally NOT fetched.
+  const { data: place } = await client
+    .from("places")
+    .select("id, name, category, location_name")
+    .eq("id", placeId)
+    .maybeSingle();
+  if (!place) { sendError(res, "not_found", "Place not found"); return; }
+
+  // Duplicate guard
+  const { data: existing } = await client
+    .from("trip_plan_items")
+    .select("id")
+    .eq("trip_id", tripId)
+    .eq("source_type", "place")
+    .eq("source_id", placeId)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (existing) { res.status(409).json({ error: "duplicate", message: "This place is already in your trip plan" }); return; }
+
+  const { data: item, error } = await client
+    .from("trip_plan_items")
+    .insert({
+      trip_id: tripId,
+      creator_id: user.id,
+      title: (place as any).name,
+      category: (place as any).category ?? "activity",
+      status: "tentative",
+      source_type: "place",
+      source_id: placeId,
+      day_date: dayDate ?? null,
+      starts_at: startsAt ?? null,
+      location_name: (place as any).location_name ?? null,
+      sort_order: 0,
+      visibility: "members",
+    })
+    .select("*")
+    .single();
+
+  if (error) { req.log.error({ err: error }, "add place to plan"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(toCamel(item));
+});
+
+// ── snake_case → camelCase row mapper ────────────────────────────────────────
+
+function toCamel(row: Record<string, any>) {
+  return {
+    id: row.id,
+    tripId: row.trip_id,
+    creatorId: row.creator_id,
+    title: row.title,
+    category: row.category,
+    status: row.status,
+    sourceType: row.source_type,
+    sourceId: row.source_id ?? null,
+    dayDate: row.day_date ?? null,
+    startsAt: row.starts_at ?? null,
+    endsAt: row.ends_at ?? null,
+    locationName: row.location_name ?? null,
+    notes: row.notes ?? null,
+    sortOrder: row.sort_order,
+    visibility: row.visibility,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export { toCamel };
+export default router;

@@ -1,0 +1,502 @@
+/**
+ * Integration tests for Trip Plan Builder routes.
+ *
+ * Covers all 15 scenarios specified in task-13:
+ *   1.  Non-member cannot read plan (403)
+ *   2.  Pending invitee cannot read plan (403)
+ *   3.  Accepted member can read plan (200)
+ *   4.  Owner can read plan (200)
+ *   5.  Non-member cannot create plan item (403)
+ *   6.  Accepted member can create plan item; creator_id set from token
+ *   7.  Owner can create plan item
+ *   8.  Member cannot edit another member's item (403)
+ *   9.  Member CAN edit their own item (200)
+ *  10.  Owner can edit any item
+ *  11.  Soft-delete: remove sets removed_at; source fields unchanged
+ *  12.  Removed item no longer appears in GET /plan
+ *  13.  Duplicate meetup guard: second add returns 409
+ *  14.  GPS fields are NOT present in any plan item response
+ *  15.  creator_id in response always matches token user, not body
+ *
+ * Runtime: node:test + node:assert/strict
+ * Run: node --import tsx/esm --test src/test/tripPlan.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import tripsRouter from "../routes/trips.js";
+import planRouter from "../routes/plan.js";
+
+// ── ID constants (valid UUIDs) ────────────────────────────────────────────────
+
+const ALICE_ID  = "aaaaaaaa-0000-0000-0000-000000000001";
+const BOB_ID    = "bbbbbbbb-0000-0000-0000-000000000002";
+const CAROL_ID  = "cccccccc-0000-0000-0000-000000000003";
+const TRIP_ID   = "33333333-0000-0000-0000-000000000001";
+const MEETUP_ID = "44444444-0000-0000-0000-000000000002";
+const PLACE_ID  = "55555555-0000-0000-0000-000000000003";
+const ITEM_ID_1 = "66666666-0000-0000-0000-000000000004";
+const ITEM_ID_2 = "77777777-0000-0000-0000-000000000005";
+
+// ── Fake state shape ──────────────────────────────────────────────────────────
+
+interface TM   { trip_id: string; user_id: string; role: string }
+interface Item { id: string; trip_id: string; creator_id: string; title: string;
+                 category: string; status: string; source_type: string;
+                 source_id: string | null; day_date: string | null;
+                 starts_at: string | null; ends_at: string | null;
+                 location_name: string | null; notes: string | null;
+                 sort_order: number; visibility: string;
+                 removed_at: string | null;
+                 created_at: string; updated_at: string;
+                 approximate_lat?: number; approximate_lng?: number }
+interface Meetup { id: string; title: string; starts_at: string | null; location_name: string | null }
+interface Place  { id: string; name: string; category: string; location_name: string | null;
+                   approximate_lat?: number; approximate_lng?: number }
+
+interface State {
+  users:           Record<string, { id: string } | null>;
+  trip_members:    TM[];
+  trip_plan_items: Item[];
+  meetups:         Meetup[];
+  places:          Place[];
+}
+
+function baseState(): State {
+  return {
+    users: {
+      "alice-tok": { id: ALICE_ID },
+      "bob-tok":   { id: BOB_ID },
+      "carol-tok": { id: CAROL_ID },
+    },
+    trip_members:    [],
+    trip_plan_items: [],
+    meetups: [
+      { id: MEETUP_ID, title: "Beach Meetup", starts_at: "2026-07-10T18:00:00Z", location_name: "Mactan Shore" },
+    ],
+    places: [
+      { id: PLACE_ID, name: "Anzani Restaurant", category: "dining", location_name: "Banilad, Cebu",
+        approximate_lat: 10.32, approximate_lng: 123.89 },
+    ],
+  };
+}
+
+// ── Fake Supabase client ──────────────────────────────────────────────────────
+
+function makeFakeClient(state: State) {
+  function from(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let _op: "select" | "update" | "delete" | "insert" = "select";
+    let _insertRow: any = null;
+    let _updatePayload: any = null;
+    let _selectCols: string | null = null;
+
+    const b: any = {
+      select(cols?: string) { _selectCols = cols ?? null; return b; },
+      insert(row: any) {
+        _op = "insert";
+        _insertRow = row;
+        return b;
+      },
+      update(patch: any) { _op = "update"; _updatePayload = patch; return b; },
+      delete() { _op = "delete"; return b; },
+      eq(col: string, val: any) { filters.push((r: any) => r[col] === val); return b; },
+      in(col: string, vals: any[]) { filters.push((r: any) => vals.includes(r[col])); return b; },
+      is(col: string, val: any) {
+        filters.push((r: any) => val === null ? r[col] == null : r[col] === val);
+        return b;
+      },
+      order() { return b; },
+      limit() { return b; },
+      maybeSingle() { return resolveOne(); },
+      single()      { return resolveInsertOrOne(); },
+      then(onF: any, onR: any) {
+        if (_op === "update")  return resolveUpdate().then(onF, onR);
+        if (_op === "delete")  return resolveDelete().then(onF, onR);
+        return resolveList().then(onF, onR);
+      },
+    };
+
+    function getSource(): any[] { return (state as any)[table] ?? []; }
+    function matchedRows() { return getSource().filter((r: any) => filters.every((f) => f(r))); }
+
+    function stripGps(row: any) {
+      const { approximate_lat: _a, approximate_lng: _b, ...rest } = row;
+      return rest;
+    }
+
+    async function resolveOne() {
+      if (_op === "update") {
+        const m = matchedRows();
+        return { data: m[0] ? { ...m[0], ..._updatePayload } : null, error: null };
+      }
+      const m = matchedRows();
+      return { data: m[0] ?? null, error: null };
+    }
+
+    async function resolveInsertOrOne() {
+      if (_op === "insert" && _insertRow) {
+        // check for duplicate (unique index simulation for source items)
+        if (table === "trip_plan_items" && _insertRow.source_id) {
+          const dup = getSource().find((r: any) =>
+            r.trip_id === _insertRow.trip_id &&
+            r.source_type === _insertRow.source_type &&
+            r.source_id === _insertRow.source_id &&
+            r.removed_at == null
+          );
+          if (dup) return { data: null, error: { message: "duplicate key value violates unique constraint" } };
+        }
+        const newRow: any = {
+          id: `new-${Date.now()}`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          removed_at: null, ..._insertRow,
+        };
+        getSource().push(newRow);
+        return { data: newRow, error: null };
+      }
+      if (_op === "update" && _updatePayload) {
+        // Apply update to matching rows and return the first updated row
+        const source = getSource();
+        let updated: any = null;
+        for (const row of source) {
+          if (filters.every((f) => f(row))) {
+            Object.assign(row, _updatePayload);
+            updated = row;
+          }
+        }
+        return { data: updated ?? null, error: null };
+      }
+      const m = matchedRows();
+      return { data: m[0] ?? null, error: null };
+    }
+
+    async function resolveList() {
+      return { data: matchedRows(), error: null };
+    }
+
+    async function resolveUpdate() {
+      for (const row of getSource()) {
+        if (filters.every((f) => f(row))) Object.assign(row, _updatePayload);
+      }
+      return { data: null, error: null };
+    }
+
+    async function resolveDelete() {
+      (state as any)[table] = getSource().filter((r: any) => !filters.every((f) => f(r)));
+      return { data: null, error: null };
+    }
+
+    return b;
+  }
+
+  return {
+    from,
+    auth: {
+      getUser: async (token: string) => {
+        const u = state.users[token];
+        if (!u) return { data: { user: null }, error: { message: "invalid token" } };
+        return { data: { user: u }, error: null };
+      },
+    },
+  };
+}
+
+// ── Server helpers ─────────────────────────────────────────────────────────────
+
+function makeApp(state: State) {
+  _setTestClient(makeFakeClient(state), true);
+  const app = express();
+  app.use(express.json());
+  app.use((req: any, _res: any, next: any) => {
+    req.log = { error: () => {}, info: () => {}, warn: () => {} };
+    next();
+  });
+  app.use("/api", tripsRouter);
+  app.use("/api", planRouter);
+  return app;
+}
+
+interface TestServer { port: number; state: State; close: () => Promise<void> }
+
+async function startServer(state: State): Promise<TestServer> {
+  const app = makeApp(state);
+  return new Promise((resolve, reject) => {
+    const srv = createServer(app);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as { port: number };
+      resolve({ port, state, close: () => new Promise<void>((res, rej) => srv.close((e) => e ? rej(e) : res())) });
+    });
+    srv.on("error", reject);
+  });
+}
+
+async function get(port: number, path: string, token?: string) {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function post(port: number, path: string, token?: string, body?: unknown) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: "POST", headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function patch(port: number, path: string, token?: string, body?: unknown) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: "PATCH", headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+function stateWithMembers(roles: Record<string, string>): State {
+  const s = baseState();
+  for (const [userId, role] of Object.entries(roles)) {
+    s.trip_members.push({ trip_id: TRIP_ID, user_id: userId, role });
+  }
+  return s;
+}
+
+function stateWithItem(creatorId: string): State {
+  const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member", [creatorId]: creatorId === ALICE_ID || creatorId === BOB_ID ? (creatorId === ALICE_ID ? "owner" : "member") : "member" });
+  s.trip_plan_items.push({
+    id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: creatorId,
+    title: "Test Item", category: "activity", status: "tentative",
+    source_type: "manual", source_id: null,
+    day_date: null, starts_at: null, ends_at: null,
+    location_name: null, notes: null,
+    sort_order: 0, visibility: "members", removed_at: null,
+    created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+  });
+  return s;
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+// ── 1. Non-member cannot read plan ───────────────────────────────────────────
+
+describe("GET /api/trips/:tripId/plan — membership gate", () => {
+  it("1. non-member gets 403", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "bob-tok");
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("2. pending invitee gets 403", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "invited" });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "bob-tok");
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("3. accepted member gets 200 with items array", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "bob-tok");
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.items));
+    await close();
+  });
+
+  it("4. owner gets 200 with items array", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.items));
+    await close();
+  });
+});
+
+// ── 5-7. POST /plan/items — create ────────────────────────────────────────────
+
+describe("POST /api/trips/:tripId/plan/items — create", () => {
+  it("5. non-member gets 403", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items`, "bob-tok", { title: "Test" });
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("6. member can create; creator_id set from token (not body)", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items`, "bob-tok", {
+      title: "Swimming", category: "activity",
+      // evil: attacker passes wrong creator_id in body — must be ignored
+      creatorId: ALICE_ID,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.creatorId, BOB_ID, "creatorId must come from token, not body");
+    await close();
+  });
+
+  it("7. owner can create plan item", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items`, "alice-tok", { title: "Check-in" });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.tripId, TRIP_ID);
+    await close();
+  });
+});
+
+// ── 8-10. PATCH /plan/items/:itemId — edit permissions ───────────────────────
+
+describe("PATCH /api/trips/:tripId/plan/items/:itemId — edit", () => {
+  it("8. member cannot edit another member's item", async () => {
+    // Item belongs to BOB; Carol tries to edit
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member", [CAROL_ID]: "member" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Bob item", category: "activity", status: "tentative",
+      source_type: "manual", source_id: null, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "carol-tok", { title: "Modified" });
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("9. member can edit their own item", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "bob-tok", { title: "Updated Title" });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.title, "Updated Title");
+    await close();
+  });
+
+  it("10. owner can edit any item", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { status: "confirmed" });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.status, "confirmed");
+    await close();
+  });
+});
+
+// ── 11-12. Soft-delete ────────────────────────────────────────────────────────
+
+describe("PATCH /remove — soft-delete", () => {
+  it("11. remove sets removed_at; source_type and source_id unchanged", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Meetup item", category: "meeting_point", status: "tentative",
+      source_type: "meetup", source_id: MEETUP_ID, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/remove`, "bob-tok");
+    assert.equal(r.status, 200);
+    // The item row in state should now have removed_at set
+    const dbItem = s.trip_plan_items.find((i) => i.id === ITEM_ID_1)!;
+    assert.ok(dbItem.removed_at, "removed_at should be set after soft-delete");
+    // source fields untouched
+    assert.equal(dbItem.source_type, "meetup");
+    assert.equal(dbItem.source_id, MEETUP_ID);
+    await close();
+  });
+
+  it("12. removed item no longer appears in GET /plan", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: ALICE_ID,
+      title: "Gone item", category: "activity", status: "tentative",
+      source_type: "manual", source_id: null, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members",
+      removed_at: "2026-06-05T00:00:00Z", // already removed
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-05T00:00:00Z",
+    });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 0, "removed item should not appear");
+    await close();
+  });
+});
+
+// ── 13. Duplicate meetup guard ────────────────────────────────────────────────
+
+describe("POST /meetups/:id/add-to-trip-plan — duplicate guard", () => {
+  it("13. adding same meetup twice returns 409", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    // First add — should succeed
+    const r1 = await post(port, `/api/meetups/${MEETUP_ID}/add-to-trip-plan`, "alice-tok", { tripId: TRIP_ID });
+    assert.equal(r1.status, 201, "first add should succeed");
+    // Second add — should be duplicate
+    const r2 = await post(port, `/api/meetups/${MEETUP_ID}/add-to-trip-plan`, "alice-tok", { tripId: TRIP_ID });
+    assert.equal(r2.status, 409, "second add should return 409 duplicate");
+    await close();
+  });
+});
+
+// ── 14. GPS fields not exposed ────────────────────────────────────────────────
+
+describe("GET /plan — GPS privacy", () => {
+  it("14. plan item responses do not include GPS coordinates", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner" });
+    // Add a place item manually with GPS fields in the row
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: ALICE_ID,
+      title: "Anzani", category: "dining", status: "tentative",
+      source_type: "place", source_id: PLACE_ID,
+      day_date: null, starts_at: null, ends_at: null,
+      location_name: "Banilad, Cebu", notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+      // These should NOT appear in the response
+      approximate_lat: 10.32,
+      approximate_lng: 123.89,
+    });
+    const { port, close } = await startServer(s);
+    const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 1);
+    const item = r.body.items[0];
+    assert.equal(item.approximate_lat, undefined, "approximate_lat must not be exposed");
+    assert.equal(item.approximate_lng, undefined, "approximate_lng must not be exposed");
+    await close();
+  });
+});
+
+// ── 15. creator_id always from token ─────────────────────────────────────────
+
+describe("POST /plan/items — creator_id from token", () => {
+  it("15. creator_id in response matches token even if body sends different value", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items`, "bob-tok", {
+      title: "My item",
+      creatorId: ALICE_ID, // attacker tries to impersonate alice
+      creator_id: ALICE_ID, // snake_case variant
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.creatorId, BOB_ID, "creator must always be set from JWT, not body");
+    await close();
+  });
+});
