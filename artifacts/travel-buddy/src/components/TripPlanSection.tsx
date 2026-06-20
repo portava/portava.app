@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, Modal, Alert,
   TextInput, KeyboardAvoidingView, Platform,
@@ -64,33 +64,135 @@ function dayLabel(key: string, tripStartDate: string | null | undefined): string
   return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-function groupByDay(items: TripPlanItem[]): { label: string; key: string; items: TripPlanItem[] }[] {
-  const map = new Map<string, TripPlanItem[]>();
+function dayChipLabel(key: string, tripStartDate: string | null | undefined): string {
+  if (key === '__unscheduled__') return 'Unscheduled';
+  const d = new Date(key + 'T00:00:00');
+  if (isNaN(d.getTime())) return key;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const ms = d.getTime();
+  if (ms === today.getTime()) return 'Today';
+  if (ms === tomorrow.getTime()) return 'Tomorrow';
+
+  if (tripStartDate) {
+    const start = new Date(tripStartDate + 'T00:00:00');
+    if (!isNaN(start.getTime())) {
+      const dayNum = Math.round((ms - start.getTime()) / 86_400_000) + 1;
+      if (dayNum >= 1) return `Day ${dayNum}`;
+    }
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+// ── Day bucket type ───────────────────────────────────────────────────────────
+
+interface DayBucket {
+  key: string;
+  items: TripPlanItem[];
+}
+
+// ── Build day buckets from trip date range + items ────────────────────────────
+
+function buildBuckets(
+  items: TripPlanItem[],
+  tripStartDate: string | null | undefined,
+  tripEndDate: string | null | undefined,
+): DayBucket[] {
+  const itemsByDay = new Map<string, TripPlanItem[]>();
+  const unscheduled: TripPlanItem[] = [];
+
   for (const item of items) {
-    const key = item.dayDate ?? '__unscheduled__';
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(item);
+    if (item.dayDate) {
+      if (!itemsByDay.has(item.dayDate)) itemsByDay.set(item.dayDate, []);
+      itemsByDay.get(item.dayDate)!.push(item);
+    } else {
+      unscheduled.push(item);
+    }
   }
-  const buckets: { label: string; key: string; items: TripPlanItem[] }[] = [];
-  for (const [key, rows] of map) {
-    if (key === '__unscheduled__') continue;
-    buckets.push({ key, label: key, items: rows });
+
+  const buckets: DayBucket[] = [];
+
+  if (tripStartDate && tripEndDate) {
+    const start = new Date(tripStartDate + 'T00:00:00');
+    const end = new Date(tripEndDate + 'T00:00:00');
+    const cur = new Date(start);
+    while (cur <= end) {
+      const key = cur.toISOString().slice(0, 10);
+      buckets.push({ key, items: itemsByDay.get(key) ?? [] });
+      itemsByDay.delete(key);
+      cur.setDate(cur.getDate() + 1);
+    }
+    // Any items with dates outside the trip window
+    for (const [key, rows] of itemsByDay) {
+      buckets.push({ key, items: rows });
+    }
+    buckets.sort((a, b) => a.key.localeCompare(b.key));
+  } else {
+    for (const [key, rows] of itemsByDay) {
+      buckets.push({ key, items: rows });
+    }
+    buckets.sort((a, b) => a.key.localeCompare(b.key));
   }
-  buckets.sort((a, b) => a.key.localeCompare(b.key));
-  if (map.has('__unscheduled__')) {
-    buckets.push({ key: '__unscheduled__', label: '__unscheduled__', items: map.get('__unscheduled__')! });
+
+  if (unscheduled.length > 0 || items.length === 0) {
+    buckets.push({ key: '__unscheduled__', items: unscheduled });
   }
+
   return buckets;
 }
 
-// ── Inline edit modal ─────────────────────────────────────────────────────────
+// ── Horizontal day chip bar ───────────────────────────────────────────────────
 
-interface EditSheetProps {
-  item: TripPlanItem;
-  onClose: () => void;
-  onSaved: (updated: TripPlanItem) => void;
-  tripId: string;
+function DayChipBar({
+  buckets,
+  activeDay,
+  onPick,
+  tripStartDate,
+}: {
+  buckets: DayBucket[];
+  activeDay: string;
+  onPick: (key: string) => void;
+  tripStartDate?: string | null;
+}) {
+  if (buckets.length <= 1) return null;
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={dc.strip}
+      style={dc.scroll}
+    >
+      <Pressable
+        style={[dc.chip, activeDay === 'all' && dc.chipActive]}
+        onPress={() => onPick('all')}
+      >
+        <Text style={[dc.chipText, activeDay === 'all' && dc.chipTextActive]}>All</Text>
+      </Pressable>
+
+      {buckets.map((b) => {
+        const on = activeDay === b.key;
+        const hasItems = b.items.length > 0;
+        return (
+          <Pressable
+            key={b.key}
+            style={[dc.chip, on && dc.chipActive]}
+            onPress={() => onPick(b.key)}
+          >
+            <Text style={[dc.chipText, on && dc.chipTextActive]}>
+              {dayChipLabel(b.key, tripStartDate)}
+            </Text>
+            {hasItems && <View style={[dc.dot, on && dc.dotActive]} />}
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 }
+
+// ── Inline edit modal ─────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS: { value: TripPlanItemStatus; label: string }[] = [
   { value: 'tentative', label: 'Tentative' },
@@ -99,11 +201,20 @@ const STATUS_OPTIONS: { value: TripPlanItemStatus; label: string }[] = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-function EditPlanItemSheet({ item, tripId, onClose, onSaved }: EditSheetProps) {
+function EditPlanItemSheet({
+  item, tripId, onClose, onSaved,
+}: {
+  item: TripPlanItem;
+  tripId: string;
+  onClose: () => void;
+  onSaved: (updated: TripPlanItem) => void;
+}) {
   const [title, setTitle] = useState(item.title);
   const [dayDate, setDayDate] = useState(item.dayDate ?? '');
   const [startsAt, setStartsAt] = useState(
-    item.startsAt ? new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+    item.startsAt
+      ? new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      : ''
   );
   const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
   const [notes, setNotes] = useState(item.notes ?? '');
@@ -138,7 +249,9 @@ function EditPlanItemSheet({ item, tripId, onClose, onSaved }: EditSheetProps) {
           <View style={ed.handle} />
           <View style={ed.header}>
             <Text style={ed.headerTitle}>Edit Plan Item</Text>
-            <Pressable onPress={onClose} style={ed.cancelBtn}><Text style={ed.cancelText}>Cancel</Text></Pressable>
+            <Pressable onPress={onClose} style={ed.cancelBtn}>
+              <Text style={ed.cancelText}>Cancel</Text>
+            </Pressable>
           </View>
           <ScrollView
             contentContainerStyle={ed.body}
@@ -200,14 +313,8 @@ function EditPlanItemSheet({ item, tripId, onClose, onSaved }: EditSheetProps) {
 // ── Plan item card ─────────────────────────────────────────────────────────────
 
 function PlanItemCard({
-  item,
-  currentUserId,
-  isOwner,
-  tripId,
-  onRemove,
-  onMarkDone,
-  onMarkTentative,
-  onEdited,
+  item, currentUserId, isOwner, tripId,
+  onRemove, onMarkDone, onMarkTentative, onEdited,
 }: {
   item: TripPlanItem;
   currentUserId: string;
@@ -268,7 +375,6 @@ function PlanItemCard({
         )}
       </View>
 
-      {/* Action menu modal */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={ic.menuOverlay} onPress={() => setMenuOpen(false)}>
           <View style={ic.menuSheet}>
@@ -305,7 +411,6 @@ function PlanItemCard({
         </Pressable>
       </Modal>
 
-      {/* Edit sheet */}
       {editOpen && (
         <EditPlanItemSheet
           item={item}
@@ -337,16 +442,19 @@ export function TripPlanSection({
   currentUserId,
   isOwner,
   tripStartDate,
+  tripEndDate,
 }: {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
   tripStartDate?: string | null;
+  tripEndDate?: string | null;
 }) {
   const [items, setItems] = useState<TripPlanItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [activeDay, setActiveDay] = useState<string>('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -359,7 +467,6 @@ export function TripPlanSection({
       if (msg.includes('403') || msg.includes('401') || msg.includes('forbidden') || msg.includes('unauthorized')) {
         setAccessDenied(true);
       }
-      // other errors: stay empty, don't show locked
     } finally {
       setLoading(false);
     }
@@ -410,10 +517,14 @@ export function TripPlanSection({
     setAddSheetOpen(false);
   }, []);
 
-  const buckets = groupByDay(items);
+  const allBuckets = buildBuckets(items, tripStartDate, tripEndDate);
+  const visibleBuckets = activeDay === 'all'
+    ? allBuckets
+    : allBuckets.filter((b) => b.key === activeDay);
 
   return (
     <View style={ps.wrap}>
+      {/* Header */}
       <View style={ps.head}>
         <Text style={ps.title}>Trip Plan</Text>
         <View style={{ flex: 1 }} />
@@ -425,6 +536,16 @@ export function TripPlanSection({
         )}
       </View>
 
+      {/* Day chip navigation */}
+      {!loading && !accessDenied && (
+        <DayChipBar
+          buckets={allBuckets}
+          activeDay={activeDay}
+          onPick={setActiveDay}
+          tripStartDate={tripStartDate}
+        />
+      )}
+
       {loading && <ActivityIndicator color={color.signal} style={{ marginVertical: space.lg }} />}
 
       {!loading && accessDenied && <PlanLockedView />}
@@ -432,14 +553,16 @@ export function TripPlanSection({
       {!loading && !accessDenied && items.length === 0 && (
         <View style={ps.empty}>
           <Text style={ps.emptyTitle}>No plans yet.</Text>
-          <Text style={ps.emptyBody}>Add places, meetups, or activities to build your day-by-day itinerary.</Text>
+          <Text style={ps.emptyBody}>
+            Add places, meetups, or activities to build your day-by-day itinerary.
+          </Text>
           <Pressable style={ps.emptyBtn} onPress={() => setAddSheetOpen(true)}>
             <Text style={ps.emptyBtnText}>Add your first item</Text>
           </Pressable>
         </View>
       )}
 
-      {!loading && !accessDenied && buckets.map((bucket) => (
+      {!loading && !accessDenied && items.length > 0 && visibleBuckets.map((bucket) => (
         <View key={bucket.key} style={ps.bucket}>
           <View style={ps.dayChip}>
             <Text style={ps.dayChipText}>{dayLabel(bucket.key, tripStartDate)}</Text>
@@ -489,6 +612,17 @@ const ps = StyleSheet.create({
   dayChip: { marginHorizontal: space.lg, marginBottom: space.sm, backgroundColor: color.ink, alignSelf: 'flex-start', paddingHorizontal: space.md, paddingVertical: 4, borderRadius: radius.pill },
   dayChipText: { ...t.small, color: color.onInk, fontWeight: '800', fontSize: 12 },
   emptyDay: { ...t.small, color: color.mute, marginHorizontal: space.lg, fontStyle: 'italic' },
+});
+
+const dc = StyleSheet.create({
+  scroll: { marginBottom: space.md },
+  strip: { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 2 },
+  chip: { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1.5, borderColor: color.haze, backgroundColor: color.paperRaised, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  chipActive: { backgroundColor: color.ink, borderColor: color.ink },
+  chipText: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
+  chipTextActive: { color: color.onInk },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.signal },
+  dotActive: { backgroundColor: color.onInk },
 });
 
 const ic = StyleSheet.create({

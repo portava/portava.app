@@ -3,11 +3,12 @@
  *
  * Call `usePlanPicker().open(source)` from any card to:
  *   1. Show the user's real trips in a bottom-sheet picker.
- *   2. On selection, call the real plan API (createPlanItem / addMeetupToPlan).
- *   3. Guard duplicates (409 → "Already added ✓" inline).
+ *   2. On selection, call the real plan API:
+ *        - type === 'meetup'  → addMeetupToPlan (dedicated meetup endpoint)
+ *        - all other types   → addPlaceToPlan  (dedicated place-copy endpoint),
+ *                              fallback to createPlanItem on 404 (stub/mock IDs)
+ *   3. Guard duplicates (409 → "Already added ✓" inline + toast).
  *   4. Toast on success.
- *
- * Replaces the mock AttachController 'plan' flow for Discovery/Pulse surfaces.
  */
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import {
@@ -17,16 +18,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Check, Plus, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { listMyTrips } from '../services/trips';
-import { createPlanItem, addMeetupToPlan } from '../services/tripPlan';
+import { createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan';
 import type { TripRow } from '../services/trips';
 import type { TripPlanCategory } from '../types/models';
 import { useSession } from '../context/SessionContext';
 
-// ── Source descriptor (matches AttachSource shape) ────────────────────────────
+// ── Source descriptor ─────────────────────────────────────────────────────────
 
 export interface PlanPickerSource {
   id: string;
-  type: 'hidden_gem' | 'experience' | 'compass_suggestion' | 'meetup' | 'place' | string;
+  type: 'meetup' | 'place' | 'hidden_gem' | 'experience' | 'compass_suggestion' | string;
   title: string;
   city?: string;
   category?: string;
@@ -38,7 +39,7 @@ export interface PlanPickerSource {
 type OpenFn = (source: PlanPickerSource) => void;
 const PlanPickerContext = createContext<{ open: OpenFn } | null>(null);
 
-// ── Map source type → TripPlanCategory ───────────────────────────────────────
+// ── Category mapping ──────────────────────────────────────────────────────────
 
 function sourceToCategory(type: string): TripPlanCategory {
   if (type === 'meetup') return 'meeting_point';
@@ -62,7 +63,6 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  // toast
   const [toast, setToast] = useState<string | null>(null);
   const toastY = useRef(new Animated.Value(80)).current;
 
@@ -82,7 +82,6 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
     setSheetOpen(true);
   }, []);
 
-  // Fetch trips when sheet opens
   useEffect(() => {
     if (!sheetOpen || !isAuthed) return;
     setLoadingTrips(true);
@@ -98,22 +97,36 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
     setError(null);
     try {
       if (source.type === 'meetup') {
+        // Dedicated meetup → plan endpoint — copies only trusted fields
         await addMeetupToPlan(source.id, trip.id);
       } else {
-        await createPlanItem(trip.id, {
-          title: source.title,
-          category: sourceToCategory(source.type),
-          sourceType: 'place',
-          sourceId: source.id,
-          locationName: source.locationName ?? source.city,
-        });
+        // Dedicated place → plan endpoint — safe place-copy semantics
+        // Falls back to createPlanItem when the source is a mock/stub ID (404)
+        try {
+          await addPlaceToPlan(source.id, trip.id);
+        } catch (placeErr: any) {
+          const msg = (placeErr.message ?? '').toLowerCase();
+          if (msg.includes('404') || msg.includes('not found') || msg.includes('no place')) {
+            // Place doesn't exist in DB yet (mock/stub ID) — use generic item create
+            await createPlanItem(trip.id, {
+              title: source.title,
+              category: sourceToCategory(source.type),
+              sourceType: 'place',
+              sourceId: source.id,
+              locationName: source.locationName ?? source.city,
+            });
+          } else {
+            throw placeErr;
+          }
+        }
       }
       setAddedIds((prev) => new Set(prev).add(trip.id));
       setSheetOpen(false);
       showToast(`Added to "${trip.title}"`);
     } catch (e: any) {
-      if (e.message?.includes('duplicate') || e.message?.includes('409') || e.message?.includes('already')) {
-        // Treat 409 as "already added" — not a hard error
+      const msg = (e.message ?? '').toLowerCase();
+      if (msg.includes('duplicate') || msg.includes('409') || msg.includes('already')) {
+        // 409 duplicate — treat as "already added", not an error
         setAddedIds((prev) => new Set(prev).add(trip.id));
         showToast(`Already in "${trip.title}" — no duplicate added`);
         setSheetOpen(false);
@@ -169,7 +182,9 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
             <ActivityIndicator color={color.signal} style={{ marginVertical: space.xl }} />
           ) : trips.length === 0 ? (
             <View style={s.emptyWrap}>
-              <Text style={s.emptyText}>No trips yet. Create a trip first, then add items to its plan.</Text>
+              <Text style={s.emptyText}>
+                No trips yet. Create a trip first, then add items to its plan.
+              </Text>
             </View>
           ) : (
             <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: space.sm }}>

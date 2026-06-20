@@ -78,6 +78,7 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Open Plan ── */
 function PlanCard({ item }: { item: PulseFeedItem }) {
+  const planPicker = usePlanPicker();
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} />
@@ -89,6 +90,12 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
       <View style={s.actions}>
         <Text style={s.going}>{item.attendeeCount ?? 0} going</Text>
         <View style={{ flex: 1 }} />
+        <Pressable
+          style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
+          onPress={() => planPicker.open({ id: item.id, type: 'meetup', title: item.title ?? 'Meetup', city: item.city })}
+        >
+          <Text style={s.outlineText}>Add to Plan</Text>
+        </Pressable>
         <Pressable style={s.solidBtn} onPress={() => router.push('/(tabs)/trips')}><Text style={s.solidText}>Join Plan</Text></Pressable>
       </View>
     </View>
