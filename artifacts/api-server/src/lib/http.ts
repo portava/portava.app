@@ -94,24 +94,51 @@ export async function requireUser(
 }
 
 /**
+ * Unified membership lookup for trip routes.
+ *
+ * Returns the membership row `{ role }` when the user is a trip member, or
+ * `null` when they are not (or when a DB error occurs).
+ *
+ * Options:
+ *   status: "accepted" (default) — only owner/member rows qualify.
+ *   status: "any"                — any role including "invited" qualifies.
+ *
+ * Callers that only need a boolean can call `isAcceptedTripMember`, which
+ * delegates here and is kept for back-compat.
+ */
+export async function requireTripMember(
+  client: SupabaseClient,
+  tripId: string,
+  userId: string,
+  options: { status?: "accepted" | "any" } = {},
+): Promise<{ role: string } | null> {
+  const { status = "accepted" } = options;
+
+  let query = client
+    .from("trip_members")
+    .select("role")
+    .eq("trip_id", tripId)
+    .eq("user_id", userId);
+
+  if (status === "accepted") {
+    query = (query as any).in("role", ["owner", "member"]);
+  }
+
+  const { data, error } = await (query as any).maybeSingle();
+  if (error || !data) return null;
+  return { role: (data as { role: string }).role };
+}
+
+/**
  * Is `userId` an ACCEPTED participant (owner or member, NOT 'invited') of the
- * trip? Mirrors the DB helper is_accepted_trip_member(). Uses the service-role
- * client so it can read trip_members regardless of RLS.
+ * trip? Delegates to requireTripMember. Kept for back-compat.
  */
 export async function isAcceptedTripMember(
   client: SupabaseClient,
   tripId: string,
   userId: string,
 ): Promise<boolean> {
-  const { data, error } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", userId)
-    .in("role", ["owner", "member"])
-    .maybeSingle();
-  if (error) return false;
-  return Boolean(data);
+  return (await requireTripMember(client, tripId, userId)) !== null;
 }
 
 /** Does the trip exist? (service-role read) */
@@ -166,18 +193,12 @@ export async function canEditPlanItem(
     return { permitted: false, code: "not_found", message: "Plan item not found" };
   }
 
-  const { data: membership } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", userId)
-    .in("role", ["owner", "member"])
-    .maybeSingle();
+  const membership = await requireTripMember(client, tripId, userId);
   if (!membership) {
     return { permitted: false, code: "not_member", message: "Not a trip member" };
   }
 
-  const role = (membership as { role: string }).role as "owner" | "member";
+  const role = membership.role as "owner" | "member";
   const creatorId = (item as { creator_id: string }).creator_id;
 
   if (ownerOnly) {

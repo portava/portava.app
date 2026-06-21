@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
-import { requireUser, isAcceptedTripMember, sendError, canEditPlanItem } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 
@@ -137,13 +137,8 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const memberOk = await (async () => {
-    const { data } = await sc
-      .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id)
-      .in("role", ["owner", "member"]).maybeSingle();
-    return !!data;
-  })();
-  if (!memberOk) { sendError(res, "forbidden", "Not a trip member"); return; }
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
   const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
     sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
