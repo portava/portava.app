@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet,
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
@@ -180,12 +180,14 @@ export function TripPlanSection({
   isOwner,
   tripStartDate,
   tripEndDate,
+  pageScrollRef,
 }: {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
   tripStartDate?: string | null;
   tripEndDate?: string | null;
+  pageScrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const [items, setItems] = useState<TripPlanItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -248,14 +250,28 @@ export function TripPlanSection({
     AsyncStorage.setItem(`tripPlanMode:${tripId}`, m).catch(() => {});
   }, [tripId]);
 
+  const timelineRef = useRef<View>(null);
+
   const warnCount = items.filter((i) => i.warnings && i.warnings.length > 0).length;
 
   const handleNeedsAttention = useCallback(() => {
     const first = items.find((i) => i.warnings && i.warnings.length > 0);
     if (!first) return;
+    setViewMode('timeline');
     setActiveDay(first.dayDate ?? '__unscheduled__');
     setActiveCat('all');
-  }, [items]);
+    // Give React a frame to apply the state changes, then scroll to the timeline
+    setTimeout(() => {
+      if (!timelineRef.current || !pageScrollRef?.current) return;
+      const nodeHandle = findNodeHandle(pageScrollRef.current);
+      if (nodeHandle == null) return;
+      timelineRef.current.measureLayout(
+        nodeHandle,
+        (_x, y) => { pageScrollRef.current?.scrollTo({ y, animated: true }); },
+        () => {},
+      );
+    }, 80);
+  }, [items, pageScrollRef]);
 
   const handleAdded = useCallback((item: TripPlanItem) => {
     setItems((prev) => [...prev, item]);
@@ -364,16 +380,18 @@ export function TripPlanSection({
       )}
 
       {!loading && !accessDenied && hasContent && viewMode === 'timeline' && (
-        <TimelineView
-          buckets={visibleBuckets}
-          tripStartDate={tripStartDate}
-          tripId={tripId}
-          currentUserId={currentUserId}
-          isOwner={isOwner}
-          onItemPress={handleItemPress}
-          onEditPress={handleEditPress}
-          onItemsChanged={handleItemsChanged}
-        />
+        <View ref={timelineRef}>
+          <TimelineView
+            buckets={visibleBuckets}
+            tripStartDate={tripStartDate}
+            tripId={tripId}
+            currentUserId={currentUserId}
+            isOwner={isOwner}
+            onItemPress={handleItemPress}
+            onEditPress={handleEditPress}
+            onItemsChanged={handleItemsChanged}
+          />
+        </View>
       )}
 
       {!loading && !accessDenied && hasContent && viewMode === 'map' && (

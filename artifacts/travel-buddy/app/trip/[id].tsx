@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +24,7 @@ export default function TripDetail() {
   const { configured, isAuthed, userId } = useSession();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
+  const pageScrollRef = useRef<ScrollView>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [gapDays, setGapDays] = useState<string[]>([]);
@@ -102,7 +103,7 @@ export default function TripDetail() {
         <Pressable style={styles.topIcon} hitSlop={6}><MoreHorizontal size={18} color={color.ink} /></Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
         <TripHero trip={trip} />
 
         {/* ── Daily Brief (accepted members only; graceful fallback for others) ── */}
@@ -135,6 +136,7 @@ export default function TripDetail() {
           isOwner={realTrip ? userId === realTrip.ownerId : false}
           tripStartDate={realTrip?.startDate ?? undefined}
           tripEndDate={realTrip?.endDate ?? undefined}
+          pageScrollRef={pageScrollRef}
         />
         {live && trip.id ? (
           <TripAvailabilitySection
