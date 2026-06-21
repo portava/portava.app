@@ -70,6 +70,17 @@ export interface UpdateProfileInput {
   avatarUrl?: string;
   travelStyle?: string;
   openToMeet?: boolean;
+  spokenLanguages?: string[];
+  defaultLanguage?: string | null;
+  travelStyles?: string[];
+  travelPace?: 'slow' | 'balanced' | 'packed' | null;
+  budgetStyle?: 'budget' | 'mid-range' | 'luxury' | 'flexible' | null;
+  travelGroupStyle?: string[];
+  lookingFor?: string[];
+  comfortLevel?: string | null;
+  availabilityTags?: string[];
+  planningStyle?: string | null;
+  publicSocialLinks?: Record<string, string>;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {

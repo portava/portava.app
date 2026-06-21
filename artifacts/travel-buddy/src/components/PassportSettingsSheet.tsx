@@ -19,6 +19,78 @@ const ALL_INTERESTS = [
   { key: 'business', label: 'Business' }, { key: 'events', label: 'Events' },
 ];
 
+const ALL_LANGUAGES = [
+  { key: 'English', label: 'English' }, { key: 'Spanish', label: 'Spanish' },
+  { key: 'French', label: 'French' }, { key: 'Mandarin', label: 'Mandarin' },
+  { key: 'Arabic', label: 'Arabic' }, { key: 'Portuguese', label: 'Portuguese' },
+  { key: 'German', label: 'German' }, { key: 'Italian', label: 'Italian' },
+  { key: 'Japanese', label: 'Japanese' }, { key: 'Korean', label: 'Korean' },
+  { key: 'Hindi', label: 'Hindi' }, { key: 'Russian', label: 'Russian' },
+  { key: 'Turkish', label: 'Turkish' }, { key: 'Dutch', label: 'Dutch' },
+  { key: 'Thai', label: 'Thai' }, { key: 'Vietnamese', label: 'Vietnamese' },
+  { key: 'Indonesian', label: 'Indonesian' }, { key: 'Polish', label: 'Polish' },
+  { key: 'Swedish', label: 'Swedish' }, { key: 'Greek', label: 'Greek' },
+];
+
+const ALL_TRAVEL_STYLES = [
+  { key: 'Luxury', label: 'Luxury' }, { key: 'Budget', label: 'Budget' },
+  { key: 'Adventure', label: 'Adventure' }, { key: 'Relaxed', label: 'Relaxed' },
+  { key: 'Nightlife', label: 'Nightlife' }, { key: 'Foodie', label: 'Foodie' },
+  { key: 'Culture', label: 'Culture' }, { key: 'Shopping', label: 'Shopping' },
+  { key: 'Beach', label: 'Beach' }, { key: 'Business', label: 'Business' },
+];
+
+const TRAVEL_PACE_OPTIONS = [
+  { key: 'slow', label: 'Slow & steady' },
+  { key: 'balanced', label: 'Balanced' },
+  { key: 'packed', label: 'Packed schedule' },
+];
+
+const BUDGET_OPTIONS = [
+  { key: 'budget', label: 'Budget' },
+  { key: 'mid-range', label: 'Mid-range' },
+  { key: 'luxury', label: 'Luxury' },
+  { key: 'flexible', label: 'Flexible' },
+];
+
+const GROUP_STYLE_OPTIONS = [
+  { key: 'Solo', label: 'Solo' },
+  { key: 'With friends', label: 'With friends' },
+  { key: 'With partner', label: 'With partner' },
+  { key: 'With family', label: 'With family' },
+  { key: 'Open to groups', label: 'Open to groups' },
+];
+
+const LOOKING_FOR_OPTIONS = [
+  { key: 'Travel buddies', label: 'Travel buddies' },
+  { key: 'Local recs', label: 'Local recs' },
+  { key: 'Events', label: 'Events' },
+  { key: 'Group plans', label: 'Group plans' },
+  { key: 'Language exchange', label: 'Language exchange' },
+  { key: 'Business networking', label: 'Business networking' },
+];
+
+const COMFORT_OPTIONS = [
+  { key: 'public', label: 'Public meetups' },
+  { key: 'small_groups', label: 'Small groups' },
+  { key: 'one_on_one', label: 'Open to 1-on-1' },
+  { key: 'verified_only', label: 'Verified only' },
+];
+
+const AVAILABILITY_OPTIONS = [
+  { key: 'Morning', label: 'Morning' },
+  { key: 'Afternoon', label: 'Afternoon' },
+  { key: 'Evening', label: 'Evening' },
+  { key: 'Late night', label: 'Late night' },
+];
+
+const PLANNING_STYLE_OPTIONS = [
+  { key: 'plan_ahead', label: 'Plan ahead' },
+  { key: 'last_minute', label: 'Last minute' },
+  { key: 'flexible', label: 'Flexible' },
+  { key: 'spontaneous', label: 'Spontaneous' },
+];
+
 interface Props {
   visible: boolean;
   profile: OwnProfile;
@@ -31,15 +103,41 @@ type Section = 'profile' | 'passport' | 'preferences' | 'safety';
 export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Props) {
   const [section, setSection] = useState<Section>('profile');
 
-  // Form state
+  // Core profile state
   const [displayName, setDisplayName] = useState(profile.displayName ?? '');
   const [username, setUsername] = useState(profile.username ?? '');
   const [bio, setBio] = useState(profile.bio ?? '');
   const [homeCity, setHomeCity] = useState(profile.homeCity ?? '');
   const [homeCountry, setHomeCountry] = useState(profile.homeCountry ?? '');
-  const [interests, setInterests] = useState<string[]>(profile.interests ?? []);
   const [passportPublic, setPassportPublic] = useState(profile.passportVisibility !== 'private');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
+  // Preferences state
+  const [interests, setInterests] = useState<string[]>(profile.interests ?? []);
+  const [spokenLanguages, setSpokenLanguages] = useState<string[]>(profile.spokenLanguages ?? []);
+  const [defaultLanguage, setDefaultLanguage] = useState(profile.defaultLanguage ?? '');
+  const [travelStyles, setTravelStyles] = useState<string[]>(profile.travelStyles ?? []);
+  const [travelPace, setTravelPace] = useState<string | null>(profile.travelPace ?? null);
+  const [budgetStyle, setBudgetStyle] = useState<string | null>(profile.budgetStyle ?? null);
+  const [travelGroupStyle, setTravelGroupStyle] = useState<string[]>(profile.travelGroupStyle ?? []);
+  const [lookingFor, setLookingFor] = useState<string[]>(profile.lookingFor ?? []);
+  const [comfortLevel, setComfortLevel] = useState<string | null>(profile.comfortLevel ?? null);
+  const [availabilityTags, setAvailabilityTags] = useState<string[]>(profile.availabilityTags ?? []);
+  const [planningStyle, setPlanningStyle] = useState<string | null>(profile.planningStyle ?? null);
+
+  // Collapsible preference sections (all open by default)
+  const [openSections, setOpenSections] = useState<Set<string>>(
+    new Set(['interests', 'languages', 'travelStyle', 'tripPrefs', 'availability'])
+  );
+
+  const togglePrefSection = (key: string) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // Username check
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable'>('idle');
@@ -62,12 +160,22 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       setBio(profile.bio ?? '');
       setHomeCity(profile.homeCity ?? '');
       setHomeCountry(profile.homeCountry ?? '');
-      setInterests(profile.interests ?? []);
       setPassportPublic(profile.passportVisibility !== 'private');
       setAvatarUri(null);
       setSaveError('');
       setSaved(false);
       setUsernameStatus('idle');
+      setInterests(profile.interests ?? []);
+      setSpokenLanguages(profile.spokenLanguages ?? []);
+      setDefaultLanguage(profile.defaultLanguage ?? '');
+      setTravelStyles(profile.travelStyles ?? []);
+      setTravelPace(profile.travelPace ?? null);
+      setBudgetStyle(profile.budgetStyle ?? null);
+      setTravelGroupStyle(profile.travelGroupStyle ?? []);
+      setLookingFor(profile.lookingFor ?? []);
+      setComfortLevel(profile.comfortLevel ?? null);
+      setAvailabilityTags(profile.availabilityTags ?? []);
+      setPlanningStyle(profile.planningStyle ?? null);
     }
   }, [visible, profile]);
 
@@ -88,10 +196,12 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
     }, 600);
   }, [profile.username]);
 
-  const toggleInterest = (key: string) => {
-    setInterests((prev) =>
-      prev.includes(key) ? prev.filter((i) => i !== key) : [...prev, key],
-    );
+  const toggleMulti = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (key: string) => {
+    setter((prev) => prev.includes(key) ? prev.filter((i) => i !== key) : [...prev, key]);
+  };
+
+  const toggleSingle = (setter: React.Dispatch<React.SetStateAction<string | null>>, current: string | null) => (key: string) => {
+    setter(current === key ? null : key);
   };
 
   const pickAvatar = async () => {
@@ -114,7 +224,6 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
 
     let finalAvatarUrl = profile.avatarUrl;
 
-    // Upload avatar if changed
     if (avatarUri) {
       setUploadingAvatar(true);
       const mime = avatarUri.endsWith('.png') ? 'image/png' : avatarUri.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
@@ -135,6 +244,16 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       homeCountry: homeCountry.trim() || undefined,
       interests,
       passportVisibility: passportPublic ? 'public' : 'private',
+      spokenLanguages,
+      defaultLanguage: defaultLanguage.trim() || null,
+      travelStyles,
+      travelPace: travelPace ?? null,
+      budgetStyle: budgetStyle ?? null,
+      travelGroupStyle,
+      lookingFor,
+      comfortLevel: comfortLevel ?? null,
+      availabilityTags,
+      planningStyle: planningStyle ?? null,
     };
     if (finalAvatarUrl !== profile.avatarUrl) patch.avatarUrl = finalAvatarUrl;
     if (username && username !== profile.username && usernameStatus !== 'unavailable') {
@@ -155,7 +274,7 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   const SECTIONS: { key: Section; label: string }[] = [
     { key: 'profile', label: 'Profile' },
     { key: 'passport', label: 'Passport' },
-    { key: 'preferences', label: 'Travel Preferences' },
+    { key: 'preferences', label: 'About Me' },
     { key: 'safety', label: 'Safety & Privacy' },
   ];
 
@@ -169,7 +288,6 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
           <Pressable onPress={onClose} hitSlop={8}><X size={22} color={color.ink} /></Pressable>
         </View>
 
-        {/* Section tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={sh.tabs} contentContainerStyle={sh.tabsContent}>
           {SECTIONS.map((s) => (
             <Pressable key={s.key} style={[sh.tab, section === s.key && sh.tabActive]} onPress={() => setSection(s.key)}>
@@ -182,7 +300,6 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
 
           {section === 'profile' && (
             <View style={sh.sectionBody}>
-              {/* Avatar */}
               <Pressable style={sh.avatarWrap} onPress={pickAvatar}>
                 {avatarDisplay ? (
                   <Image source={{ uri: avatarDisplay }} style={sh.avatar} />
@@ -277,18 +394,116 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
 
           {section === 'preferences' && (
             <View style={sh.sectionBody}>
-              <Text style={sh.sectionTitle}>Interests</Text>
-              <Text style={sh.sectionSub}>Select what you're into — shown on your Passport.</Text>
-              <View style={sh.interestGrid}>
-                {ALL_INTERESTS.map(({ key, label }) => {
-                  const on = interests.includes(key);
-                  return (
-                    <Pressable key={key} style={[sh.interestChip, on && sh.interestChipOn]} onPress={() => toggleInterest(key)}>
-                      <Text style={[sh.interestText, on && sh.interestTextOn]}>{label}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+
+              <PrefSection
+                title="Interests"
+                subtitle="What you're into — shown on your Passport."
+                open={openSections.has('interests')}
+                onToggle={() => togglePrefSection('interests')}
+              >
+                <ChipGrid
+                  options={ALL_INTERESTS}
+                  selected={interests}
+                  onToggle={toggleMulti(setInterests)}
+                />
+              </PrefSection>
+
+              <PrefSection
+                title="Languages"
+                subtitle="Languages you speak — helps with local connections."
+                open={openSections.has('languages')}
+                onToggle={() => togglePrefSection('languages')}
+              >
+                <ChipGrid
+                  options={ALL_LANGUAGES}
+                  selected={spokenLanguages}
+                  onToggle={toggleMulti(setSpokenLanguages)}
+                />
+                <View style={{ marginTop: space.sm }}>
+                  <Text style={sh.subLabel}>Native / default language</Text>
+                  <TextInput
+                    style={sh.input}
+                    value={defaultLanguage}
+                    onChangeText={setDefaultLanguage}
+                    placeholder="e.g. English"
+                    placeholderTextColor={color.faint}
+                    maxLength={50}
+                  />
+                </View>
+              </PrefSection>
+
+              <PrefSection
+                title="Travel Style"
+                subtitle="How you like to travel."
+                open={openSections.has('travelStyle')}
+                onToggle={() => togglePrefSection('travelStyle')}
+              >
+                <Text style={sh.subLabel}>Travel vibes (pick all that apply)</Text>
+                <ChipGrid
+                  options={ALL_TRAVEL_STYLES}
+                  selected={travelStyles}
+                  onToggle={toggleMulti(setTravelStyles)}
+                />
+                <Text style={[sh.subLabel, { marginTop: space.sm }]}>Travel pace</Text>
+                <ChipGrid
+                  options={TRAVEL_PACE_OPTIONS}
+                  selected={travelPace ? [travelPace] : []}
+                  onToggle={toggleSingle(setTravelPace, travelPace)}
+                />
+                <Text style={[sh.subLabel, { marginTop: space.sm }]}>Budget style</Text>
+                <ChipGrid
+                  options={BUDGET_OPTIONS}
+                  selected={budgetStyle ? [budgetStyle] : []}
+                  onToggle={toggleSingle(setBudgetStyle, budgetStyle)}
+                />
+              </PrefSection>
+
+              <PrefSection
+                title="Trip Preferences"
+                subtitle="Who you travel with and what you're looking for."
+                open={openSections.has('tripPrefs')}
+                onToggle={() => togglePrefSection('tripPrefs')}
+              >
+                <Text style={sh.subLabel}>Usually travel</Text>
+                <ChipGrid
+                  options={GROUP_STYLE_OPTIONS}
+                  selected={travelGroupStyle}
+                  onToggle={toggleMulti(setTravelGroupStyle)}
+                />
+                <Text style={[sh.subLabel, { marginTop: space.sm }]}>Looking for</Text>
+                <ChipGrid
+                  options={LOOKING_FOR_OPTIONS}
+                  selected={lookingFor}
+                  onToggle={toggleMulti(setLookingFor)}
+                />
+                <Text style={[sh.subLabel, { marginTop: space.sm }]}>Comfort level with meetups</Text>
+                <ChipGrid
+                  options={COMFORT_OPTIONS}
+                  selected={comfortLevel ? [comfortLevel] : []}
+                  onToggle={toggleSingle(setComfortLevel, comfortLevel)}
+                />
+              </PrefSection>
+
+              <PrefSection
+                title="Availability"
+                subtitle="When you're typically free and how you plan."
+                open={openSections.has('availability')}
+                onToggle={() => togglePrefSection('availability')}
+              >
+                <Text style={sh.subLabel}>Usually available</Text>
+                <ChipGrid
+                  options={AVAILABILITY_OPTIONS}
+                  selected={availabilityTags}
+                  onToggle={toggleMulti(setAvailabilityTags)}
+                />
+                <Text style={[sh.subLabel, { marginTop: space.sm }]}>Planning style</Text>
+                <ChipGrid
+                  options={PLANNING_STYLE_OPTIONS}
+                  selected={planningStyle ? [planningStyle] : []}
+                  onToggle={toggleSingle(setPlanningStyle, planningStyle)}
+                />
+              </PrefSection>
+
             </View>
           )}
 
@@ -307,7 +522,6 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
 
         </ScrollView>
 
-        {/* Save bar */}
         <View style={sh.saveBar}>
           {saveError ? <Text style={sh.saveError}>{saveError}</Text> : null}
           <Pressable
@@ -338,6 +552,57 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function PrefSection({
+  title, subtitle, open, onToggle, children,
+}: {
+  title: string;
+  subtitle: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={sh.prefSection}>
+      <Pressable style={sh.prefSectionHeader} onPress={onToggle}>
+        <View style={{ flex: 1 }}>
+          <Text style={sh.prefSectionTitle}>{title}</Text>
+          {!open && <Text style={sh.prefSectionSub} numberOfLines={1}>{subtitle}</Text>}
+        </View>
+        {open ? <ChevronUp size={18} color={color.mute} /> : <ChevronDown size={18} color={color.mute} />}
+      </Pressable>
+      {open && (
+        <View style={sh.prefSectionBody}>
+          <Text style={sh.prefSectionSub}>{subtitle}</Text>
+          {children}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function ChipGrid({
+  options,
+  selected,
+  onToggle,
+}: {
+  options: { key: string; label: string }[];
+  selected: string[];
+  onToggle: (key: string) => void;
+}) {
+  return (
+    <View style={sh.chipGrid}>
+      {options.map(({ key, label }) => {
+        const on = selected.includes(key);
+        return (
+          <Pressable key={key} style={[sh.chip, on && sh.chipOn]} onPress={() => onToggle(key)}>
+            <Text style={[sh.chipText, on && sh.chipTextOn]}>{label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 const sh = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -354,8 +619,6 @@ const sh = StyleSheet.create({
   body: { flex: 1 },
   bodyContent: { paddingBottom: space.xxxl },
   sectionBody: { padding: space.lg, gap: space.lg },
-  sectionTitle: { ...t.heading, color: color.ink },
-  sectionSub: { ...t.body, color: color.mute, marginTop: -space.sm },
 
   avatarWrap: { alignItems: 'center', marginBottom: space.sm },
   avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: color.haze },
@@ -400,20 +663,30 @@ const sh = StyleSheet.create({
   infoLabel: { ...t.bodyStrong, color: color.ink },
   infoText: { ...t.body, color: color.mute, lineHeight: 20 },
 
-  interestGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  interestChip: {
-    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
-    paddingHorizontal: 14, paddingVertical: 7,
-    backgroundColor: color.paper,
+  prefSection: {
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
+    backgroundColor: color.paperRaised, overflow: 'hidden',
   },
-  interestChipOn: { backgroundColor: color.ink, borderColor: color.ink },
-  interestText: { ...t.small, color: color.mute, fontWeight: '600' },
-  interestTextOn: { color: color.onInk },
+  prefSectionHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    padding: space.md,
+  },
+  prefSectionTitle: { ...t.bodyStrong, color: color.ink },
+  prefSectionSub: { ...t.small, color: color.mute, marginTop: 2 },
+  prefSectionBody: { paddingHorizontal: space.md, paddingBottom: space.md, gap: space.sm },
 
-  saveBar: {
-    borderTopWidth: 1, borderTopColor: color.haze,
-    padding: space.lg, gap: space.sm,
+  subLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 0.8, marginBottom: 6 },
+
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
+    paddingHorizontal: 12, paddingVertical: 6, backgroundColor: color.paper,
   },
+  chipOn: { backgroundColor: color.ink, borderColor: color.ink },
+  chipText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 13 },
+  chipTextOn: { color: color.onInk },
+
+  saveBar: { borderTopWidth: 1, borderTopColor: color.haze, padding: space.lg, gap: space.sm },
   saveBtn: {
     backgroundColor: color.signal, borderRadius: radius.pill,
     paddingVertical: 14, alignItems: 'center', justifyContent: 'center',

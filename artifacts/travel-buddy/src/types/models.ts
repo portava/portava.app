@@ -441,6 +441,17 @@ export interface OwnProfile {
   coverPhotoUrl: string | null;
   usernameUpdatedAt: ISODate | null;
   createdAt: ISODate | null;
+  spokenLanguages: string[];
+  defaultLanguage: string | null;
+  travelStyles: string[];
+  travelPace: string | null;
+  budgetStyle: string | null;
+  travelGroupStyle: string[];
+  lookingFor: string[];
+  comfortLevel: string | null;
+  availabilityTags: string[];
+  planningStyle: string | null;
+  publicSocialLinks: Record<string, string>;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

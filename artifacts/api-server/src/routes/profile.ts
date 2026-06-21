@@ -32,7 +32,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links";
 
 function mapProfile(r: any) {
   return {
@@ -55,6 +55,17 @@ function mapProfile(r: any) {
     coverPhotoUrl: r.cover_photo_url ?? null,
     usernameUpdatedAt: r.username_updated_at ?? null,
     createdAt: r.created_at ?? null,
+    spokenLanguages: r.spoken_languages ?? [],
+    defaultLanguage: r.default_language ?? null,
+    travelStyles: r.travel_styles ?? [],
+    travelPace: r.travel_pace ?? null,
+    budgetStyle: r.budget_style ?? null,
+    travelGroupStyle: r.travel_group_style ?? [],
+    lookingFor: r.looking_for ?? [],
+    comfortLevel: r.comfort_level ?? null,
+    availabilityTags: r.availability_tags ?? [],
+    planningStyle: r.planning_style ?? null,
+    publicSocialLinks: r.public_social_links ?? {},
   };
 }
 
@@ -101,6 +112,17 @@ const patchProfileSchema = z.object({
   avatarUrl: z.string().url().optional(),
   travelStyle: z.string().max(50).optional(),
   openToMeet: z.boolean().optional(),
+  spokenLanguages: z.array(z.string().max(50)).max(20).optional(),
+  defaultLanguage: z.string().max(50).nullish(),
+  travelStyles: z.array(z.string().max(50)).max(10).optional(),
+  travelPace: z.enum(["slow", "balanced", "packed"]).nullish(),
+  budgetStyle: z.enum(["budget", "mid-range", "luxury", "flexible"]).nullish(),
+  travelGroupStyle: z.array(z.string().max(50)).max(5).optional(),
+  lookingFor: z.array(z.string().max(50)).max(10).optional(),
+  comfortLevel: z.string().max(50).nullish(),
+  availabilityTags: z.array(z.string().max(50)).max(4).optional(),
+  planningStyle: z.string().max(50).nullish(),
+  publicSocialLinks: z.record(z.string().max(300)).optional(),
 });
 
 router.patch("/me/profile", async (req, res) => {
@@ -126,6 +148,17 @@ router.patch("/me/profile", async (req, res) => {
   if (p.avatarUrl !== undefined) row.avatar_url = p.avatarUrl;
   if (p.travelStyle !== undefined) row.travel_style = p.travelStyle;
   if (p.openToMeet !== undefined) row.open_to_meet = p.openToMeet;
+  if (p.spokenLanguages !== undefined) row.spoken_languages = p.spokenLanguages;
+  if (p.defaultLanguage !== undefined) row.default_language = p.defaultLanguage;
+  if (p.travelStyles !== undefined) row.travel_styles = p.travelStyles;
+  if (p.travelPace !== undefined) row.travel_pace = p.travelPace;
+  if (p.budgetStyle !== undefined) row.budget_style = p.budgetStyle;
+  if (p.travelGroupStyle !== undefined) row.travel_group_style = p.travelGroupStyle;
+  if (p.lookingFor !== undefined) row.looking_for = p.lookingFor;
+  if (p.comfortLevel !== undefined) row.comfort_level = p.comfortLevel;
+  if (p.availabilityTags !== undefined) row.availability_tags = p.availabilityTags;
+  if (p.planningStyle !== undefined) row.planning_style = p.planningStyle;
+  if (p.publicSocialLinks !== undefined) row.public_social_links = p.publicSocialLinks;
 
   if (p.username !== undefined) {
     const v = validateUsername(p.username);

@@ -39,6 +39,16 @@ interface PublicProfile {
   followingCount: number;
   isFollowing: boolean;
   isOwnProfile: boolean;
+  spokenLanguages: string[];
+  defaultLanguage: string | null;
+  travelStyles: string[];
+  travelPace: string | null;
+  budgetStyle: string | null;
+  travelGroupStyle: string[];
+  lookingFor: string[];
+  comfortLevel: string | null;
+  availabilityTags: string[];
+  planningStyle: string | null;
 }
 
 function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
@@ -281,6 +291,33 @@ export default function Profile() {
           {(profile.interests ?? []).slice(0, 3).map((i) => <Stamp key={i} label={i} rotate={-2} />)}
         </View>
 
+        {((profile.travelStyles?.length ?? 0) > 0 || profile.travelPace || profile.budgetStyle) && (
+          <AboutRow label="TRAVEL STYLE">
+            {(profile.travelStyles ?? []).map((ts) => <InfoChip key={ts} label={ts} />)}
+            {profile.travelPace && <InfoChip label={`${profile.travelPace} pace`} accent />}
+            {profile.budgetStyle && <InfoChip label={profile.budgetStyle} />}
+          </AboutRow>
+        )}
+
+        {(profile.spokenLanguages?.length ?? 0) > 0 && (
+          <AboutRow label="SPEAKS">
+            {(profile.spokenLanguages ?? []).map((lang) => <InfoChip key={lang} label={lang} />)}
+          </AboutRow>
+        )}
+
+        {(profile.lookingFor?.length ?? 0) > 0 && (
+          <AboutRow label="LOOKING FOR">
+            {(profile.lookingFor ?? []).map((lf) => <InfoChip key={lf} label={lf} />)}
+          </AboutRow>
+        )}
+
+        {((profile.availabilityTags?.length ?? 0) > 0 || profile.planningStyle) && (
+          <AboutRow label="AVAILABILITY">
+            {(profile.availabilityTags ?? []).map((tag) => <InfoChip key={tag} label={tag} />)}
+            {profile.planningStyle && <InfoChip label={profile.planningStyle.replace(/_/g, ' ')} accent />}
+          </AboutRow>
+        )}
+
         {!isOwn && (
           <View style={s.actions}>
             <FriendButton userId={profile.id} isOwn={isOwn} />
@@ -295,6 +332,23 @@ export default function Profile() {
           </View>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+function AboutRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={s.aboutRow}>
+      <Text style={s.aboutLabel}>{label}</Text>
+      <View style={s.aboutChips}>{children}</View>
+    </View>
+  );
+}
+
+function InfoChip({ label, accent = false }: { label: string; accent?: boolean }) {
+  return (
+    <View style={[s.infoChip, accent && s.infoChipAccent]}>
+      <Text style={[s.infoChipText, accent && s.infoChipTextAccent]}>{label}</Text>
     </View>
   );
 }
@@ -333,6 +387,13 @@ const s = StyleSheet.create({
   disabledBtnStyle: { borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
   privateNote: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderRadius: 10, backgroundColor: color.paperRaised },
   privateText: { ...t.small, color: color.mute, flex: 1 },
+  aboutRow: { gap: 6 },
+  aboutLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 0.8 },
+  aboutChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  infoChip: { borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: color.paperRaised },
+  infoChipAccent: { backgroundColor: color.deep, borderColor: color.deep },
+  infoChipText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 12 },
+  infoChipTextAccent: { color: color.onInk },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(17,17,15,0.5)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.xl, gap: space.md },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

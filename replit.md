@@ -50,6 +50,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0011_message_type.sql` | Adds `msg_type` (default `'text'`) and `subtype` columns to `messages`; partial index on `subtype` | 2026-06-21 |
 | `0012_daily_briefs.sql` | Creates `daily_briefs` table with per-user/per-day uniqueness constraint and RLS (users read own rows only); service role handles all writes | 2026-06-21 |
 | `0013_daily_briefs_cleanup.sql` | `daily_briefs_brief_date_idx` index on `daily_briefs(brief_date)` — keeps the nightly purge DELETE fast as the table grows | 2026-06-21 |
+| `0014_profile_about_me.sql` | Adds `spoken_languages`, `default_language`, `travel_styles`, `travel_pace`, `budget_style`, `travel_group_style`, `looking_for`, `comfort_level`, `availability_tags`, `planning_style`, `public_social_links` to `profiles` | pending |
 
 ## Gotchas
 

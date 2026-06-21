@@ -141,15 +141,43 @@ async function invalidateStoredBrief(
 /* ── Preference profile ─────────────────────────────────────────────────── */
 
 async function getPreferenceProfile(client: any, userId: string) {
-  const { data } = await client
-    .from("user_preference_profiles")
-    .select("explicit_preferences_json,inferred_preferences_json,updated_at")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (!data) return null;
-  const explicit = (() => { try { return JSON.parse(data.explicit_preferences_json); } catch { return defaultExplicit(); } })();
-  const inferred = (() => { try { return JSON.parse(data.inferred_preferences_json); } catch { return defaultInferred(); } })();
-  return { userId, explicit, inferred, lastUpdatedAt: data.updated_at };
+  const [prefRes, profileRes] = await Promise.all([
+    client
+      .from("user_preference_profiles")
+      .select("explicit_preferences_json,inferred_preferences_json,updated_at")
+      .eq("user_id", userId)
+      .maybeSingle(),
+    client
+      .from("profiles")
+      .select("spoken_languages,default_language,travel_styles,travel_pace,budget_style,travel_group_style,looking_for,comfort_level,availability_tags,planning_style")
+      .eq("id", userId)
+      .maybeSingle(),
+  ]);
+
+  const explicit = (() => {
+    try { return JSON.parse(prefRes.data?.explicit_preferences_json); }
+    catch { return defaultExplicit(); }
+  })();
+  const inferred = (() => {
+    try { return JSON.parse(prefRes.data?.inferred_preferences_json); }
+    catch { return defaultInferred(); }
+  })();
+
+  const p = profileRes.data;
+  if (p) {
+    if (p.travel_pace) explicit.pace = p.travel_pace;
+    if (p.travel_styles?.length) explicit.travelStyles = p.travel_styles;
+    if (p.budget_style) explicit.budgetStyle = p.budget_style;
+    if (p.travel_group_style?.length) explicit.groupStyle = p.travel_group_style.join(", ");
+    if (p.looking_for?.length) explicit.lookingFor = p.looking_for;
+    if (p.availability_tags?.length) explicit.preferredActivityTimes = p.availability_tags;
+    if (p.spoken_languages?.length) explicit.spokenLanguages = p.spoken_languages;
+    if (p.default_language) explicit.defaultLanguage = p.default_language;
+    if (p.comfort_level) explicit.comfortLevel = p.comfort_level;
+    if (p.planning_style) explicit.planningStyle = p.planning_style;
+  }
+
+  return { userId, explicit, inferred, lastUpdatedAt: prefRes.data?.updated_at ?? null };
 }
 
 /* ── Active trip resolution ─────────────────────────────────────────────────

@@ -1,0 +1,149 @@
+Add a richer “About Me” section to user profiles.
+
+Goal:
+Make profiles more useful for Travel Buddy matching, trip planning, activity recommendations, and Telegraph AI suggestions.
+
+Add these profile fields:
+
+1. Basic Intro
+- Display name
+- Age
+- Home city / country
+- Languages spoken
+- Default language
+- Short bio / personal intro
+
+2. Travel Style
+- Travel vibe:
+  - Luxury
+  - Budget
+  - Adventure
+  - Relaxed
+  - Nightlife
+  - Foodie
+  - Culture
+  - Shopping
+  - Beach
+  - Business
+- Preferred pace:
+  - Slow
+  - Balanced
+  - Packed schedule
+- Typical travel budget:
+  - Budget
+  - Mid-range
+  - Luxury
+  - Flexible
+
+3. Interests
+Allow users to select multiple interests:
+- Nightlife
+- Restaurants
+- Beaches
+- Museums
+- Shopping
+- Hiking
+- Local culture
+- Photography
+- Music
+- Sports
+- Wellness
+- Luxury experiences
+- Hidden gems
+- Group activities
+
+4. Trip Preferences
+- Usually travels:
+  - Solo
+  - With friends
+  - With partner
+  - With family
+  - Open to groups
+- Looking for:
+  - Travel buddies
+  - Local recommendations
+  - Events
+  - Group plans
+  - Language exchange
+  - Business networking
+- Comfort level:
+  - Public meetups only
+  - Small groups
+  - Open to 1-on-1 plans
+  - Verified users only
+
+5. Availability / Planning Style
+- Usually available:
+  - Morning
+  - Afternoon
+  - Evening
+  - Late night
+- Planning style:
+  - Plan ahead
+  - Last minute
+  - Flexible
+  - Spontaneous
+
+6. Safety / Trust Signals
+- Verified badge if user is verified
+- Mutual trips
+- Mutual circles
+- Languages matched
+- Shared interests
+- Joined date
+- Optional social links, but keep hidden unless user makes them public
+
+UI Requirements:
+- Add this to the profile edit screen.
+- Show a clean public-facing version on user profiles.
+- Use chips/tags for interests and travel styles.
+- Keep the top section simple: name, city, languages, short bio, verified badge.
+- Add collapsible sections for Travel Style, Interests, Trip Preferences, and Availability.
+- Empty fields should not show on public profile.
+- Do not break existing profile fields or profile routes.
+
+AI / Telegraph Integration:
+- The in-app AI should use these fields to recommend activities into Telegraph.
+- Example:
+  “Andre likes nightlife, luxury hotels, and late-night food. Recommend rooftop lounges nearby.”
+- Telegraph recommendations should respect:
+  - User interests
+  - Default language
+  - Current trip city
+  - Budget style
+  - Availability
+  - Comfort level
+- Do not expose private profile fields to other users unless marked public.
+
+Data Model:
+Add profile columns or JSON fields for:
+- bio
+- home_city
+- home_country
+- spoken_languages
+- default_language
+- travel_styles
+- travel_pace
+- budget_style
+- interests
+- travel_group_style
+- looking_for
+- comfort_level
+- availability_tags
+- planning_style
+- public_social_links
+- profile_visibility_settings
+
+Privacy:
+Add visibility controls:
+- Public
+- Friends / trusted circle only
+- Private
+
+Acceptance Criteria:
+- User can edit and save all About Me fields.
+- Public profile displays only visible fields.
+- Telegraph AI can read the profile preference data for recommendations.
+- Existing profile data remains intact.
+- Mobile layout is clean and does not overflow.
+- Add tests for saving, loading, and privacy visibility.

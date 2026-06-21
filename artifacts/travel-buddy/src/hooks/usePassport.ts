@@ -56,6 +56,17 @@ export function usePassport(): PassportState {
         coverPhotoUrl: null,
         usernameUpdatedAt: null,
         createdAt: '2026-01-01T00:00:00Z',
+        spokenLanguages: [],
+        defaultLanguage: null,
+        travelStyles: [],
+        travelPace: null,
+        budgetStyle: null,
+        travelGroupStyle: [],
+        lookingFor: [],
+        comfortLevel: null,
+        availabilityTags: [],
+        planningStyle: null,
+        publicSocialLinks: {},
       };
       setTimeout(() => {
         if (alive) {

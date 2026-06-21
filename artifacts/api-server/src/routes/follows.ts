@@ -154,7 +154,7 @@ function rowToUser(r: any) {
  * Never returns private posts, trips, circle memberships, or location data.
  */
 const PUBLIC_PASSPORT_FIELDS =
-  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, created_at";
+  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style";
 
 router.get("/users/:userId", async (req, res) => {
   const target = req.params.userId;
@@ -220,6 +220,16 @@ router.get("/users/:userId", async (req, res) => {
     followingCount: followingRes.count ?? 0,
     isFollowing,
     isOwnProfile: callerId === target,
+    spokenLanguages: p.spoken_languages ?? [],
+    defaultLanguage: p.default_language ?? null,
+    travelStyles: p.travel_styles ?? [],
+    travelPace: p.travel_pace ?? null,
+    budgetStyle: p.budget_style ?? null,
+    travelGroupStyle: p.travel_group_style ?? [],
+    lookingFor: p.looking_for ?? [],
+    comfortLevel: p.comfort_level ?? null,
+    availabilityTags: p.availability_tags ?? [],
+    planningStyle: p.planning_style ?? null,
   });
 });
 
@@ -292,6 +302,16 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     followingCount: followingRes.count ?? 0,
     isFollowing,
     isOwnProfile: callerId === target,
+    spokenLanguages: p.spoken_languages ?? [],
+    defaultLanguage: p.default_language ?? null,
+    travelStyles: p.travel_styles ?? [],
+    travelPace: p.travel_pace ?? null,
+    budgetStyle: p.budget_style ?? null,
+    travelGroupStyle: p.travel_group_style ?? [],
+    lookingFor: p.looking_for ?? [],
+    comfortLevel: p.comfort_level ?? null,
+    availabilityTags: p.availability_tags ?? [],
+    planningStyle: p.planning_style ?? null,
   });
 });
 
