@@ -12,7 +12,7 @@ import {
   View, Text, Pressable, ActivityIndicator, ScrollView, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw } from 'lucide-react-native';
+import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { fetchDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
@@ -134,21 +134,43 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
             </View>
           )}
 
-          {/* Suggestions */}
-          {brief.suggestions?.length > 0 && (
+          {/* Happening nearby — Ticketmaster event suggestions */}
+          {(brief.suggestions?.filter((s: any) => s.id?.startsWith('rec_event_')).length > 0) && (
+            <View style={s.section}>
+              <Text style={s.sectionLabel}>HAPPENING NEARBY</Text>
+              {brief.suggestions
+                .filter((s: any) => s.id?.startsWith('rec_event_'))
+                .map((sug: any) => (
+                  <EventSuggestionRow
+                    key={sug.id}
+                    suggestion={sug}
+                    tripId={tripId}
+                    onDismiss={() => {
+                      dismissBriefRecommendation(tripId, sug.id, sug.category);
+                      setBrief((b: any) => b ? { ...b, suggestions: b.suggestions.filter((s: any) => s.id !== sug.id) } : b);
+                    }}
+                  />
+                ))}
+            </View>
+          )}
+
+          {/* Suggestions (non-event) */}
+          {(brief.suggestions?.filter((s: any) => !s.id?.startsWith('rec_event_')).length > 0) && (
             <View style={s.section}>
               <Text style={s.sectionLabel}>SUGGESTIONS</Text>
-              {brief.suggestions.map((sug: any) => (
-                <SuggestionRow
-                  key={sug.id}
-                  suggestion={sug}
-                  tripId={tripId}
-                  onDismiss={() => {
-                    dismissBriefRecommendation(tripId, sug.id, sug.category);
-                    setBrief((b: any) => b ? { ...b, suggestions: b.suggestions.filter((s: any) => s.id !== sug.id) } : b);
-                  }}
-                />
-              ))}
+              {brief.suggestions
+                .filter((s: any) => !s.id?.startsWith('rec_event_'))
+                .map((sug: any) => (
+                  <SuggestionRow
+                    key={sug.id}
+                    suggestion={sug}
+                    tripId={tripId}
+                    onDismiss={() => {
+                      dismissBriefRecommendation(tripId, sug.id, sug.category);
+                      setBrief((b: any) => b ? { ...b, suggestions: b.suggestions.filter((s: any) => s.id !== sug.id) } : b);
+                    }}
+                  />
+                ))}
             </View>
           )}
 
@@ -211,6 +233,33 @@ function PlanRow({ item }: { item: any }) {
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+function EventSuggestionRow({ suggestion, tripId, onDismiss }: { suggestion: any; tripId: string; onDismiss: () => void }) {
+  const categoryLabel = suggestion.category === 'nightlife' ? 'Music' : suggestion.category === 'outdoor' ? 'Sports' : 'Event';
+  return (
+    <View style={s.eventRow}>
+      <View style={s.eventIconCol}>
+        <Ticket size={14} color={color.signal} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <View style={s.eventTitleRow}>
+          <Text style={s.eventTitle} numberOfLines={1}>{suggestion.title}</Text>
+          <View style={s.eventBadge}>
+            <Text style={s.eventBadgeText}>{categoryLabel.toUpperCase()}</Text>
+          </View>
+        </View>
+        <Text style={s.eventReason} numberOfLines={2}>{suggestion.reason}</Text>
+        <Text style={s.eventMeta}>{suggestion.estimatedTime} · {suggestion.priceLevel}</Text>
+      </View>
+      <TelegraphFeedbackMenu
+        recommendationId={suggestion.id}
+        category={suggestion.category}
+        tripId={tripId}
+        onDismiss={onDismiss}
+      />
     </View>
   );
 }
@@ -324,6 +373,14 @@ const s = StyleSheet.create({
   sugPrice: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 11 },
   sugReason: { ...t.small, color: color.mute, fontSize: 11, lineHeight: 16 },
   sugTime: { ...t.small, color: color.faint, fontSize: 10, marginTop: 2 },
+  eventRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze, gap: space.sm },
+  eventIconCol: { width: 24, alignItems: 'center', paddingTop: 2 },
+  eventTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' },
+  eventTitle: { ...t.bodyStrong, color: color.ink, fontSize: 13, flexShrink: 1 },
+  eventBadge: { backgroundColor: '#FFF0EE', borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 2 },
+  eventBadgeText: { ...t.stamp, color: color.signal, fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  eventReason: { ...t.small, color: color.mute, fontSize: 11, lineHeight: 16 },
+  eventMeta: { ...t.small, color: color.faint, fontSize: 10, marginTop: 2 },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, padding: space.lg, paddingTop: space.md },
   actionBtn: { paddingHorizontal: space.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal, backgroundColor: '#FFF0EE' },
   actionText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
