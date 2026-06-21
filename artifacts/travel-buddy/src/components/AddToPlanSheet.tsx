@@ -134,10 +134,21 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
             )}
 
             <Text style={sh.label}>Date <Text style={sh.opt}>(optional)</Text></Text>
-            <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" />
+            <DatePickerField
+              value={dayDate}
+              onChange={setDayDate}
+              onClear={() => { setDayDate(null); setStartsAt(null); }}
+              placeholder="Select a date (optional)"
+            />
 
             <Text style={sh.label}>Time <Text style={sh.opt}>(optional)</Text></Text>
-            <DatePickerField mode="time" value={startsAt} onChange={setStartsAt} placeholder="Pick a time" />
+            <DatePickerField
+              mode="time"
+              value={startsAt}
+              onChange={setStartsAt}
+              onClear={() => setStartsAt(null)}
+              placeholder="Pick a time"
+            />
 
             <Text style={sh.label}>Location <Text style={sh.opt}>(optional)</Text></Text>
             <TextInput

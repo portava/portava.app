@@ -110,7 +110,7 @@ function EditForm({
   const [category, setCategory] = useState<TripPlanCategory>(item.category);
   const [catPickerOpen, setCatPickerOpen] = useState(false);
   const [dayDate, setDayDate] = useState<Date | null>(
-    item.dayDate ? new Date(item.dayDate) : null,
+    item.dayDate ? new Date(item.dayDate + 'T00:00:00') : null,
   );
   const [startsAt, setStartsAt] = useState<Date | null>(
     item.startsAt ? new Date(item.startsAt) : null,
@@ -180,10 +180,21 @@ function EditForm({
       )}
 
       <Text style={ef.label}>Date</Text>
-      <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" />
+      <DatePickerField
+        value={dayDate}
+        onChange={setDayDate}
+        onClear={() => { setDayDate(null); setStartsAt(null); }}
+        placeholder="Select a date (optional)"
+      />
 
       <Text style={ef.label}>Time <Text style={ef.opt}>(optional)</Text></Text>
-      <DatePickerField mode="time" value={startsAt} onChange={setStartsAt} placeholder="Pick a time" />
+      <DatePickerField
+        mode="time"
+        value={startsAt}
+        onChange={setStartsAt}
+        onClear={() => setStartsAt(null)}
+        placeholder="Pick a time"
+      />
 
       <Text style={ef.label}>Location <Text style={ef.opt}>(optional)</Text></Text>
       <TextInput style={ef.input} value={locationName} onChangeText={setLocationName} placeholder="e.g. Ayala Mall, Cebu" placeholderTextColor={color.faint} />

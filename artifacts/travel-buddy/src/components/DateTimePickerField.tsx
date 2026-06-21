@@ -1,7 +1,7 @@
 /**
- * DateTimePickerField — a pressable date-picker input for Expo / React Native.
+ * DateTimePickerField — a pressable date/time-picker input for Expo / React Native.
  *
- * Renders a tappable button showing the selected date.
+ * Renders a tappable button showing the selected date or time.
  * On press it surfaces the native @react-native-community/datetimepicker:
  *   iOS     → inline spinner below the button + "Done" to dismiss
  *   Android → system dialog (auto-dismisses on selection or cancel)
@@ -9,18 +9,22 @@
  * Props:
  *   value       — selected Date (null = nothing selected yet)
  *   onChange    — called with the newly selected Date
- *   minimumDate — earliest selectable date (optional)
+ *   onClear     — optional; when provided a × button appears to clear the value
+ *   minimumDate — earliest selectable date (optional, date mode only)
  *   placeholder — string shown when value is null
+ *   mode        — 'date' (default) | 'time'
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { CalendarClock } from 'lucide-react-native';
+import { CalendarClock, X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   value: Date | null;
   onChange: (date: Date) => void;
+  /** When provided, a × button appears next to the field to reset the value to null. */
+  onClear?: () => void;
   minimumDate?: Date;
   placeholder?: string;
   mode?: 'date' | 'time';
@@ -40,7 +44,7 @@ function formatTime(d: Date): string {
 }
 
 export function DatePickerField({
-  value, onChange, minimumDate, placeholder = 'Pick a date', mode = 'date',
+  value, onChange, onClear, minimumDate, placeholder = 'Pick a date', mode = 'date',
 }: Props) {
   const [show, setShow] = useState(false);
 
@@ -55,18 +59,36 @@ export function DatePickerField({
 
   return (
     <View>
-      <Pressable
-        style={[s.field, show && s.fieldOpen]}
-        onPress={() => setShow((v) => !v)}
-        accessibilityRole="button"
-        accessibilityLabel={value ? `Date: ${formatDate(value)}` : placeholder}
-      >
-        <CalendarClock size={14} color={value ? color.signal : color.faint} />
-        <Text style={[s.fieldText, !value && s.placeholder]}>
-          {value ? (mode === 'time' ? formatTime(value) : formatDate(value)) : placeholder}
-        </Text>
-      </Pressable>
+      {/* Field row: picker button + optional clear */}
+      <View style={s.row}>
+        <Pressable
+          style={[s.field, show && s.fieldOpen]}
+          onPress={() => setShow((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={value
+            ? (mode === 'time' ? `Time: ${formatTime(value)}` : `Date: ${formatDate(value)}`)
+            : placeholder}
+        >
+          <CalendarClock size={14} color={value ? color.signal : color.faint} />
+          <Text style={[s.fieldText, !value && s.placeholder]}>
+            {value ? (mode === 'time' ? formatTime(value) : formatDate(value)) : placeholder}
+          </Text>
+        </Pressable>
 
+        {value && onClear ? (
+          <Pressable
+            hitSlop={8}
+            onPress={() => { setShow(false); onClear(); }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear"
+            style={s.clearBtn}
+          >
+            <X size={15} color={color.mute} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* Native picker (expands below field on iOS, dialog on Android) */}
       {show && (
         <>
           <DateTimePicker
@@ -88,7 +110,13 @@ export function DatePickerField({
 }
 
 const s = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
   field: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
@@ -111,6 +139,9 @@ const s = StyleSheet.create({
   },
   placeholder: {
     color: color.faint,
+  },
+  clearBtn: {
+    padding: 4,
   },
   doneBtn: {
     alignItems: 'flex-end',
