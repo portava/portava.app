@@ -134,9 +134,17 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
         <Text style={s.headerDateSub}>{formatDate(brief.date)}</Text>
       )}
 
-      {/* Last-refreshed timestamp */}
+      {/* Last-refreshed timestamp + staleness badge */}
       {brief.generatedAt ? (
-        <Text style={s.generatedAt}>Updated {formatGeneratedAt(brief.generatedAt)}</Text>
+        <View style={s.generatedAtRow}>
+          <Text style={s.generatedAt}>Updated {formatGeneratedAt(brief.generatedAt)}</Text>
+          {brief.isStale && (
+            <Pressable style={s.staleBadge} onPress={handleRefresh} disabled={refreshing} hitSlop={6}>
+              <AlertTriangle size={10} color="#92400E" />
+              <Text style={s.staleBadgeText}>May be outdated — tap to refresh</Text>
+            </Pressable>
+          )}
+        </View>
       ) : null}
 
       {/* Summary */}
@@ -457,7 +465,10 @@ const s = StyleSheet.create({
   headerTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   headerDate: { ...t.small, color: color.mute, fontSize: 11 },
   headerDateSub: { ...t.small, color: color.mute, fontSize: 11, paddingHorizontal: space.lg, paddingTop: 4 },
-  generatedAt: { ...t.small, color: color.mute, fontSize: 10, paddingHorizontal: space.lg, paddingTop: 2, paddingBottom: space.sm },
+  generatedAtRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg, paddingTop: 2, paddingBottom: space.sm },
+  generatedAt: { ...t.small, color: color.mute, fontSize: 10 },
+  staleBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D', borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 3 },
+  staleBadgeText: { ...t.small, color: '#92400E', fontSize: 10, fontWeight: '600' },
   destRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
   destText: { ...t.small, color: color.signal, fontSize: 11 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

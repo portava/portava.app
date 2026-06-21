@@ -61,8 +61,8 @@ function briefCacheKey(userId: string, date: string) {
 function getCachedBrief(userId: string, date: string): CachedBrief | null {
   return briefCache.get(briefCacheKey(userId, date)) ?? null;
 }
-function setCachedBrief(userId: string, date: string, brief: any): void {
-  briefCache.set(briefCacheKey(userId, date), { brief, builtAt: Date.now() });
+function setCachedBrief(userId: string, date: string, brief: any, builtAt?: number): void {
+  briefCache.set(briefCacheKey(userId, date), { brief, builtAt: builtAt ?? Date.now() });
 }
 function invalidateBriefCache(userId: string, date: string): void {
   briefCache.delete(briefCacheKey(userId, date));
@@ -765,14 +765,12 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       invalidateBriefCache(user.id, date);
       // fall through to regenerate with fresh active-trip lookup
     } else {
-      // Smart invalidation: rebuild if source data changed since brief was built
+      // Smart invalidation: flag isStale when source data changed since brief was built
       const activeTripForStaleCheck = cachedActiveTripId ?? tripId;
       const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
-      if (lastModified <= cached.builtAt) {
-        res.json({ access: "full", brief: { ...cached.brief, isStale: false, generatedAt: cached.builtAt }, fromCache: true });
-        return;
-      }
-      // Source data changed — fall through to rebuild
+      const isStale = lastModified > cached.builtAt;
+      res.json({ access: "full", brief: { ...cached.brief, isStale, generatedAt: cached.builtAt }, fromCache: true });
+      return;
     }
   }
 
@@ -789,12 +787,12 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     } else {
       const activeTripForStaleCheck = storedActiveTripId ?? tripId;
       const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
-      if (lastModified <= stored.generatedAt) {
-        // DB brief is still fresh — warm L1 and return
-        setCachedBrief(user.id, date, stored.brief);
-        res.json({ access: "full", brief: { ...stored.brief, isStale: false, generatedAt: stored.generatedAt }, fromCache: true });
-        return;
-      }
+      const isStale = lastModified > stored.generatedAt;
+      // DB brief may be stale — warm L1 preserving original generatedAt so
+      // subsequent L1 hits compare against the real generation time, not now.
+      setCachedBrief(user.id, date, stored.brief, stored.generatedAt);
+      res.json({ access: "full", brief: { ...stored.brief, isStale, generatedAt: stored.generatedAt }, fromCache: true });
+      return;
     }
   }
 
@@ -825,7 +823,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: { ...briefWithMeta, generatedAt: nowMs } });
+  res.json({ access: "full", brief: { ...briefWithMeta, isStale: false, generatedAt: nowMs } });
 });
 
 /* ===========================================================================
@@ -877,7 +875,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: { ...briefWithMeta, generatedAt: refreshedAt }, refreshed: true });
+  res.json({ access: "full", brief: { ...briefWithMeta, isStale: false, generatedAt: refreshedAt }, refreshed: true });
 });
 
 /* ===========================================================================
