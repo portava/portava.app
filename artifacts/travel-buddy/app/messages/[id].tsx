@@ -32,6 +32,24 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+/** "YYYY-MM-DD" or full ISO → "Fri Jun 27" */
+function fmtDate(isoDate: string): string {
+  const d = new Date(isoDate.length === 10 ? isoDate + 'T12:00:00' : isoDate);
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+/** Full ISO timestamp → "Fri Jun 27 · 7:00 PM" */
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `${datePart} · ${timePart}`;
+}
+
+const BLOCK_SHORT: Record<string, string> = {
+  morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', late: 'Late night',
+};
+
 // ── Meetup card ───────────────────────────────────────────────────────────────
 
 interface MeetupCardPayload {
@@ -109,6 +127,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [isCancelled, setIsCancelled] = useState(false);
   // undefined = still loading; null = loaded but creator not found
   const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
+  // startsAt from the live meetup — used for unconfirmed cards with exact time set
+  const [fetchedStartsAt, setFetchedStartsAt] = useState<string | null>(null);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
@@ -117,6 +137,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setMyRsvp(res.data.myRsvp ?? null);
         setIsCancelled(res.data.status === 'cancelled');
         setCreator(res.data.creator ?? null);
+        setFetchedStartsAt(res.data.startsAt ?? null);
       }
     });
   }, [payload.meetupId]);
@@ -153,13 +174,12 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
 
   const isConfirmed = payload.isConfirmed ?? false;
   const when = isConfirmed
-    ? (payload.confirmedTime
-        ? new Date(payload.confirmedTime).toLocaleString(undefined, {
-            weekday: 'short', month: 'short', day: 'numeric',
-            hour: 'numeric', minute: '2-digit',
-          })
-        : null)
-    : [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
+    ? (payload.confirmedTime ? fmtDateTime(payload.confirmedTime) : null)
+    : fetchedStartsAt
+      ? fmtDateTime(fetchedStartsAt)
+      : payload.approximateDate
+        ? `${fmtDate(payload.approximateDate)}${payload.timeBlock ? ` · ${BLOCK_SHORT[payload.timeBlock] ?? payload.timeBlock}` : ''}`
+        : null;
   const rsvpLabel = counts
     ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
     : null;
