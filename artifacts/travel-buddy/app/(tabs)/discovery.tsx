@@ -137,9 +137,18 @@ export default function DiscoveryHub() {
   const [activeTripId, setActiveTripId]       = useState<string | null>(null);
   const pendingPlace                          = useRef<{ id: string; name: string; category: string; address?: string | null } | null>(null);
 
-  // Load trips + set default destination from most recent active trip
+  // Load trips + set default destination from most recent active trip.
+  // When no trip/destination exists, fall back to a popular worldwide city so
+  // the feed shows content immediately without requiring manual input.
   useEffect(() => {
-    if (!isAuthed) return;
+    const FALLBACK_DESTINATION = 'Paris';
+
+    if (!isAuthed) {
+      // Not signed in — show a popular city feed so the screen isn't empty
+      if (!destination) setDestination(FALLBACK_DESTINATION);
+      return;
+    }
+
     listMyTrips().then((rows) => {
       const opts = rows.map((r) => ({
         id: r.id,
@@ -150,9 +159,12 @@ export default function DiscoveryHub() {
 
       if (!destination) {
         const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
-        if (active?.destinationCity) setDestination(active.destinationCity);
+        // Use trip destination if available, otherwise fall back to popular city
+        setDestination(active?.destinationCity || FALLBACK_DESTINATION);
       }
-    }).catch(() => {});
+    }).catch(() => {
+      if (!destination) setDestination(FALLBACK_DESTINATION);
+    });
   }, [isAuthed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-apply deep-link category if params change (e.g. in-app navigation)

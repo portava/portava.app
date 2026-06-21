@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, ChevronRight, Bookmark, Navigation } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
+import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 
 interface PlaceCardProps {
@@ -13,6 +14,10 @@ interface PlaceCardProps {
 export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
   const [saved, setSaved] = useState(false);
   const accent = categoryColor(place.category);
+
+  useEffect(() => {
+    isSaved(place.id).then(setSaved).catch(() => {});
+  }, [place.id]);
 
   const openDirections = () => {
     if (place.lat != null && place.lng != null) {
@@ -108,7 +113,10 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
 
           <Pressable
             style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
-            onPress={() => setSaved((s) => !s)}
+            onPress={() => {
+              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, savedAt: Date.now() };
+              toggleSave(bookmark).then(setSaved).catch(() => setSaved((s) => !s));
+            }}
             hitSlop={6}
           >
             <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />

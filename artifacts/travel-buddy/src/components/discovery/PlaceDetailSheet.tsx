@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
+import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 import { categoryColor } from './PlaceCard';
 
@@ -16,6 +17,11 @@ interface PlaceDetailSheetProps {
 
 export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: PlaceDetailSheetProps) {
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (place) isSaved(place.id).then(setSaved).catch(() => {});
+  }, [place?.id]);
+
   if (!place) return null;
 
   const accent = categoryColor(place.category);
@@ -72,7 +78,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
           </View>
           <Pressable
             style={({ pressed }) => [styles.saveHeaderBtn, saved && styles.saveHeaderBtnActive, pressed && { opacity: 0.7 }]}
-            onPress={() => setSaved((s) => !s)}
+            onPress={() => {
+              if (!place) return;
+              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, savedAt: Date.now() };
+              toggleSave(bookmark).then(setSaved).catch(() => setSaved((s) => !s));
+            }}
             hitSlop={8}
           >
             <Bookmark size={18} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
@@ -104,6 +114,17 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
             <View style={styles.infoRow}>
               <MapPin size={15} color={color.mute} />
               <Text style={styles.infoText}>{place.address}</Text>
+            </View>
+          )}
+
+          {/* Rating */}
+          {place.rating != null && (
+            <View style={styles.infoRow}>
+              <Star size={15} color="#F59E0B" fill="#F59E0B" />
+              <Text style={[styles.infoText, { color: color.ink, fontWeight: '600' }]}>
+                {place.rating.toFixed(1)}
+                <Text style={[styles.infoText, { fontWeight: '400' }]}> · OSM community rating</Text>
+              </Text>
             </View>
           )}
 
