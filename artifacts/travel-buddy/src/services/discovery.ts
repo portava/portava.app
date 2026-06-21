@@ -28,10 +28,13 @@ export interface DiscoveryPlace {
   address: string | null;
   website: string | null;
   phone: string | null;
+  openingHours: string | null;
 }
 
 export interface DiscoveryFilters {
   radiusKm: number;
+  openNow: boolean;
+  minRating: number | null;
 }
 
 export interface DiscoveryResult {

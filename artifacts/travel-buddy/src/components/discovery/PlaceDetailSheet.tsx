@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 import { categoryColor } from './PlaceCard';
@@ -15,6 +15,7 @@ interface PlaceDetailSheetProps {
 }
 
 export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: PlaceDetailSheetProps) {
+  const [saved, setSaved] = useState(false);
   if (!place) return null;
 
   const accent = categoryColor(place.category);
@@ -31,6 +32,18 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
     if (place.lat != null && place.lng != null) {
       const url = `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`;
       Linking.openURL(url).catch(() => {});
+    } else {
+      const q = encodeURIComponent(place.name + (place.address ? ` ${place.address}` : ''));
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`).catch(() => {});
+    }
+  };
+
+  const openDirections = () => {
+    if (place.lat != null && place.lng != null) {
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`).catch(() => {});
+    } else {
+      const q = encodeURIComponent(place.name);
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {});
     }
   };
 
@@ -57,6 +70,13 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
               <Text style={[styles.type, { color: accent }]}>{capitalize(place.type)}</Text>
             ) : null}
           </View>
+          <Pressable
+            style={({ pressed }) => [styles.saveHeaderBtn, saved && styles.saveHeaderBtnActive, pressed && { opacity: 0.7 }]}
+            onPress={() => setSaved((s) => !s)}
+            hitSlop={8}
+          >
+            <Bookmark size={18} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
+          </Pressable>
           <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
             <X size={20} color={color.ink} />
           </Pressable>
@@ -87,6 +107,27 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
             </View>
           )}
 
+          {/* Opening hours */}
+          {place.openingHours && (
+            <View style={styles.infoRow}>
+              <Clock size={15} color={color.mute} />
+              <Text style={styles.infoText}>{place.openingHours}</Text>
+            </View>
+          )}
+
+          {/* Map thumbnail area — tap to open */}
+          {place.lat != null && place.lng != null && (
+            <Pressable style={styles.mapThumb} onPress={openMap}>
+              <Navigation size={18} color={color.deep} />
+              <View>
+                <Text style={styles.mapThumbTitle}>View on map</Text>
+                <Text style={styles.mapThumbSub}>
+                  {place.lat.toFixed(4)}, {place.lng.toFixed(4)}
+                </Text>
+              </View>
+            </Pressable>
+          )}
+
           {/* Description */}
           {place.description && (
             <View style={styles.section}>
@@ -113,14 +154,14 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
           )}
 
           {/* Links */}
-          {(place.website || place.phone || (place.lat != null && place.lng != null)) && (
+          {(place.website || place.phone) && (
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Links</Text>
+              <Text style={styles.sectionLabel}>Contact</Text>
               <View style={styles.linkRow}>
                 {place.website && (
                   <Pressable style={styles.linkBtn} onPress={openWeb}>
                     <Globe size={15} color={color.deep} />
-                    <Text style={styles.linkText}>Website</Text>
+                    <Text style={styles.linkText} numberOfLines={1}>Website</Text>
                   </Pressable>
                 )}
                 {place.phone && (
@@ -129,24 +170,22 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
                     <Text style={styles.linkText}>{place.phone}</Text>
                   </Pressable>
                 )}
-                {place.lat != null && place.lng != null && (
-                  <Pressable style={styles.linkBtn} onPress={openMap}>
-                    <MapPin size={15} color={color.deep} />
-                    <Text style={styles.linkText}>Open in Maps</Text>
-                  </Pressable>
-                )}
               </View>
             </View>
           )}
 
           {/* Attribution */}
           <Text style={styles.attribution}>
-            Place data from OpenStreetMap contributors (ODbL)
+            Place data © OpenStreetMap contributors (ODbL)
           </Text>
         </ScrollView>
 
-        {/* Add to Plan CTA */}
+        {/* Footer actions */}
         <View style={styles.footer}>
+          <Pressable style={styles.dirBtn} onPress={openDirections}>
+            <Navigation size={18} color={color.deep} />
+            <Text style={styles.dirText}>Directions</Text>
+          </Pressable>
           <Pressable style={styles.addBtn} onPress={() => onAddToPlan(place)}>
             <Plus size={18} color={color.onInk} />
             <Text style={styles.addText}>Add to Plan</Text>
@@ -171,7 +210,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    maxHeight: '80%',
+    maxHeight: '82%',
     backgroundColor: color.paperRaised,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -189,7 +228,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: space.md,
+    gap: space.sm,
     paddingHorizontal: space.lg,
     paddingBottom: space.md,
     borderBottomWidth: 1,
@@ -211,6 +250,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
     textTransform: 'capitalize',
+  },
+  saveHeaderBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveHeaderBtnActive: {
+    backgroundColor: color.signal + '18',
   },
   closeBtn: {
     width: 32,
@@ -235,6 +285,25 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.mute,
     flex: 1,
+  },
+  mapThumb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: '#E2EDF0',
+    borderRadius: radius.md,
+    padding: space.md,
+  },
+  mapThumbTitle: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontSize: 13,
+  },
+  mapThumbSub: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 10,
+    marginTop: 2,
   },
   section: {
     gap: space.sm,
@@ -280,6 +349,7 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.deep,
     fontSize: 14,
+    flex: 1,
   },
   attribution: {
     ...t.small,
@@ -289,16 +359,35 @@ const styles = StyleSheet.create({
     marginTop: space.md,
   },
   footer: {
+    flexDirection: 'row',
+    gap: space.md,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
     borderTopWidth: 1,
     borderTopColor: color.haze,
+  },
+  dirBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    flex: 1,
+    borderRadius: radius.md,
+    paddingVertical: space.md + 2,
+    borderWidth: 1.5,
+    borderColor: color.deep,
+  },
+  dirText: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontWeight: '700',
   },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.sm,
+    flex: 2,
     backgroundColor: color.signal,
     borderRadius: radius.md,
     paddingVertical: space.md + 2,

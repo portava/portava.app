@@ -43,6 +43,7 @@ export interface DiscoveryPlace {
   address: string | null;
   website: string | null;
   phone: string | null;
+  openingHours: string | null;
 }
 
 interface CacheEntry {
@@ -258,10 +259,11 @@ async function queryOverpass(
           : null,
         lat:         elLat,
         lng:         elLng,
-        tags:        extractTags(tags),
-        address:     buildAddress(tags),
-        website:     tags.website ?? tags.url ?? null,
-        phone:       tags.phone ?? tags["contact:phone"] ?? null,
+        tags:         extractTags(tags),
+        address:      buildAddress(tags),
+        website:      tags.website ?? tags.url ?? null,
+        phone:        tags.phone ?? tags["contact:phone"] ?? null,
+        openingHours: tags.opening_hours ?? null,
       };
     })
     .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))

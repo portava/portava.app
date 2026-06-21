@@ -3,13 +3,15 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, BookmarkPlus, Plus,
+  Calendar, Waves, Navigation,
 } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryPlace } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
+import { ForYouTab } from '../../src/components/discovery/ForYouTab';
 import { DestinationBar } from '../../src/components/discovery/DestinationBar';
 import { AddToPlanSheet } from '../../src/components/AddToPlanSheet';
 import { listMyTrips } from '../../src/services/trips';
@@ -35,7 +37,9 @@ const TABS: HubTab[] = [
   { key: 'transport',  label: 'Transport',  Icon: Navigation  },
 ];
 
-// ── Add-to-plan prefill ───────────────────────────────────────────────────────
+const VALID_CATEGORY_KEYS = TABS.map((t) => t.key);
+
+// ── Add-to-plan helpers ───────────────────────────────────────────────────────
 
 type TripPlanCategory = 'accommodation' | 'activity' | 'dining' | 'transport' | 'meeting_point' | 'free_time' | 'other';
 
@@ -45,7 +49,7 @@ function discoveryCategoryToPlan(cat: string): TripPlanCategory {
   return 'activity';
 }
 
-// ── Trip picker modal (simple inline picker) ──────────────────────────────────
+// ── Trip picker modal ─────────────────────────────────────────────────────────
 
 interface TripOption {
   id: string;
@@ -53,22 +57,16 @@ interface TripOption {
   destinationCity: string;
 }
 
-interface TripPickerModalProps {
+function TripPickerModal({
+  visible, trips, onSelect, onClose,
+}: {
   visible: boolean;
   trips: TripOption[];
   onSelect: (trip: TripOption) => void;
   onClose: () => void;
-}
-
-function TripPickerModal({ visible, trips, onSelect, onClose }: TripPickerModalProps) {
+}) {
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent onRequestClose={onClose}>
       <Pressable style={tp.backdrop} onPress={onClose} />
       <View style={tp.sheet}>
         <View style={tp.handle} />
@@ -119,19 +117,27 @@ export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
 
-  const [activeTab, setActiveTab] = useState<DiscoveryCategory>('for_you');
+  // Deep-link: ?category=food navigates to that tab on mount
+  const params = useLocalSearchParams<{ category?: string }>();
+  const initialCategory = (
+    VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)
+      ? params.category as DiscoveryCategory
+      : 'for_you'
+  );
+
+  const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
   const [destination, setDestination] = useState('');
 
   // For "Add to plan" flow
-  const [trips, setTrips] = useState<TripOption[]>([]);
-  const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
-  const [detailVisible, setDetailVisible] = useState(false);
+  const [trips, setTrips]                     = useState<TripOption[]>([]);
+  const [selectedPlace, setSelectedPlace]     = useState<DiscoveryPlace | null>(null);
+  const [detailVisible, setDetailVisible]     = useState(false);
   const [tripPickerVisible, setTripPickerVisible] = useState(false);
   const [addSheetVisible, setAddSheetVisible] = useState(false);
-  const [activeTripId, setActiveTripId] = useState<string | null>(null);
-  const pendingPlace = useRef<DiscoveryPlace | null>(null);
+  const [activeTripId, setActiveTripId]       = useState<string | null>(null);
+  const pendingPlace                          = useRef<{ id: string; name: string; category: string; address?: string | null } | null>(null);
 
-  // Load trips + set default destination from most recent trip
+  // Load trips + set default destination from most recent active trip
   useEffect(() => {
     if (!isAuthed) return;
     listMyTrips().then((rows) => {
@@ -142,29 +148,34 @@ export default function DiscoveryHub() {
       }));
       setTrips(opts);
 
-      // Auto-set destination to first active/planning trip
       if (!destination) {
-        const active = rows.find(
-          (r) => r.status === 'planning' || r.status === 'active'
-        ) ?? rows[0];
+        const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
         if (active?.destinationCity) setDestination(active.destinationCity);
       }
     }).catch(() => {});
   }, [isAuthed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAddToPlan = useCallback((place: DiscoveryPlace) => {
+  // Re-apply deep-link category if params change (e.g. in-app navigation)
+  useEffect(() => {
+    if (params.category && VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)) {
+      setActiveTab(params.category as DiscoveryCategory);
+    }
+  }, [params.category]);
+
+  const openAddFlow = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
     pendingPlace.current = place;
     setDetailVisible(false);
     if (trips.length === 1) {
       setActiveTripId(trips[0]!.id);
       setAddSheetVisible(true);
-    } else if (trips.length > 1) {
-      setTripPickerVisible(true);
     } else {
-      // No trips yet
       setTripPickerVisible(true);
     }
   }, [trips]);
+
+  const handleAddToPlan = useCallback((place: DiscoveryPlace) => {
+    openAddFlow({ id: place.id, name: place.name, category: place.category, address: place.address });
+  }, [openAddFlow]);
 
   const handleTripSelected = (trip: TripOption) => {
     setTripPickerVisible(false);
@@ -177,6 +188,10 @@ export default function DiscoveryHub() {
     setDetailVisible(true);
   };
 
+  const handlePickDestination = (city: string) => {
+    setDestination(city);
+  };
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Header ── */}
@@ -185,10 +200,7 @@ export default function DiscoveryHub() {
           <Compass size={22} color={color.signal} />
           <Text style={styles.headerTitle}>Discover</Text>
         </View>
-        <DestinationBar
-          destination={destination}
-          onChangeDestination={setDestination}
-        />
+        <DestinationBar destination={destination} onChangeDestination={setDestination} />
       </View>
 
       {/* ── Tab bar ── */}
@@ -217,13 +229,34 @@ export default function DiscoveryHub() {
 
       {/* ── Active tab content ── */}
       <View style={{ flex: 1 }}>
-        <DiscoveryCategoryTab
-          key={`${activeTab}-${destination}`}
-          category={activeTab}
-          destination={destination}
-          onSelectPlace={handleSelectPlace}
-          onAddToPlan={handleAddToPlan}
-        />
+        {activeTab === 'for_you' ? (
+          destination ? (
+            <ForYouTab
+              key={destination}
+              destination={destination}
+              onAddToPlan={(item) => openAddFlow(item)}
+            />
+          ) : (
+            /* No destination → same fallback as OSM tabs */
+            <DiscoveryCategoryTab
+              key="for_you-empty"
+              category="for_you"
+              destination=""
+              onSelectPlace={handleSelectPlace}
+              onAddToPlan={handleAddToPlan}
+              onPickDestination={handlePickDestination}
+            />
+          )
+        ) : (
+          <DiscoveryCategoryTab
+            key={`${activeTab}-${destination}`}
+            category={activeTab}
+            destination={destination}
+            onSelectPlace={handleSelectPlace}
+            onAddToPlan={handleAddToPlan}
+            onPickDestination={handlePickDestination}
+          />
+        )}
       </View>
 
       {/* ── Modals ── */}
@@ -246,20 +279,14 @@ export default function DiscoveryHub() {
           visible={addSheetVisible}
           tripId={activeTripId}
           prefill={{
-            title: pendingPlace.current.name,
-            category: discoveryCategoryToPlan(pendingPlace.current.category),
+            title:        pendingPlace.current.name,
+            category:     discoveryCategoryToPlan(pendingPlace.current.category),
             locationName: pendingPlace.current.address ?? pendingPlace.current.name,
-            sourceType: 'place',
-            sourceId: pendingPlace.current.id,
+            sourceType:   'place',
+            sourceId:     pendingPlace.current.id,
           }}
-          onClose={() => {
-            setAddSheetVisible(false);
-            pendingPlace.current = null;
-          }}
-          onAdded={() => {
-            setAddSheetVisible(false);
-            pendingPlace.current = null;
-          }}
+          onClose={() => { setAddSheetVisible(false); pendingPlace.current = null; }}
+          onAdded={() => { setAddSheetVisible(false); pendingPlace.current = null; }}
         />
       ) : null}
     </View>

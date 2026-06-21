@@ -1,6 +1,6 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { MapPin, Plus, ChevronRight } from 'lucide-react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
+import { MapPin, Plus, ChevronRight, Bookmark, Navigation } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 
@@ -11,7 +11,18 @@ interface PlaceCardProps {
 }
 
 export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
-  const tagColor = categoryColor(place.category);
+  const [saved, setSaved] = useState(false);
+  const accent = categoryColor(place.category);
+
+  const openDirections = () => {
+    if (place.lat != null && place.lng != null) {
+      const url = `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`;
+      Linking.openURL(url).catch(() => {});
+    } else if (place.name) {
+      const query = encodeURIComponent(place.name);
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {});
+    }
+  };
 
   return (
     <Pressable
@@ -19,7 +30,7 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
       onPress={onPress}
     >
       {/* Left accent strip */}
-      <View style={[styles.strip, { backgroundColor: tagColor }]} />
+      <View style={[styles.strip, { backgroundColor: accent }]} />
 
       <View style={styles.body}>
         {/* Top row: name + chevron */}
@@ -31,8 +42,8 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
         {/* Type + distance */}
         <View style={styles.metaRow}>
           {place.type ? (
-            <View style={[styles.typePill, { backgroundColor: tagColor + '22' }]}>
-              <Text style={[styles.typeText, { color: tagColor }]} numberOfLines={1}>
+            <View style={[styles.typePill, { backgroundColor: accent + '22' }]}>
+              <Text style={[styles.typeText, { color: accent }]} numberOfLines={1}>
                 {capitalize(place.type)}
               </Text>
             </View>
@@ -47,6 +58,9 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
               </Text>
             </View>
           )}
+          {place.openingHours ? (
+            <Text style={styles.hours} numberOfLines={1}>{formatHoursShort(place.openingHours)}</Text>
+          ) : null}
         </View>
 
         {/* Description */}
@@ -69,18 +83,47 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
             ))}
           </View>
         )}
-      </View>
 
-      {/* Add to Plan */}
-      <Pressable
-        style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.7 }]}
-        onPress={onAddToPlan}
-        hitSlop={8}
-      >
-        <Plus size={16} color={color.signal} />
-      </Pressable>
+        {/* Action row */}
+        <View style={styles.actionRow}>
+          <Pressable
+            style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
+            onPress={onAddToPlan}
+            hitSlop={6}
+          >
+            <Plus size={14} color={color.signal} />
+            <Text style={[styles.actionText, { color: color.signal }]}>Plan</Text>
+          </Pressable>
+
+          {(place.lat != null || place.name) && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
+              onPress={openDirections}
+              hitSlop={6}
+            >
+              <Navigation size={14} color={color.deep} />
+              <Text style={[styles.actionText, { color: color.deep }]}>Directions</Text>
+            </Pressable>
+          )}
+
+          <Pressable
+            style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
+            onPress={() => setSaved((s) => !s)}
+            hitSlop={6}
+          >
+            <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
+          </Pressable>
+        </View>
+      </View>
     </Pressable>
   );
+}
+
+function formatHoursShort(hours: string): string {
+  if (!hours) return '';
+  // Show first token (e.g. "Mo-Fr 09:00-18:00" → "Mo-Fr 09:00-18:00")
+  // Common abbreviation: just show first 24 chars
+  return hours.length > 24 ? hours.slice(0, 24) + '…' : hours;
 }
 
 function capitalize(s: string) {
@@ -140,6 +183,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+    flexWrap: 'wrap',
   },
   typePill: {
     paddingHorizontal: space.sm,
@@ -159,6 +203,11 @@ const styles = StyleSheet.create({
   dist: {
     ...t.stamp,
     color: color.faint,
+    fontSize: 10,
+  },
+  hours: {
+    ...t.stamp,
+    color: color.mute,
     fontSize: 10,
   },
   desc: {
@@ -190,12 +239,37 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textTransform: 'capitalize',
   },
-  addBtn: {
-    width: 44,
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginTop: space.xs,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: color.haze,
+  },
+  actionText: {
+    ...t.stamp,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  saveBtn: {
+    marginLeft: 'auto',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
-    borderLeftWidth: 1,
-    borderLeftColor: color.haze,
+  },
+  saveBtnActive: {
+    backgroundColor: color.signal + '18',
   },
 });
 
