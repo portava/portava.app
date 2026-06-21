@@ -17,6 +17,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { resolveContext } from "../lib/privacyResolver.js";
+import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
 
 const router = Router();
 
@@ -104,6 +105,7 @@ function buildResponse(
   accessLevel: string,
   destination?: string,
   meetupContext?: { meetupId?: string; meetupTime?: string; meetupLocation?: string },
+  nearbyVenues?: NearbyVenue[],
 ): TelegraphCommandResponse {
   // Build meetup-aware context for food suggestions
   const hasMeetupCtx = !!meetupContext?.meetupId;
@@ -118,6 +120,8 @@ function buildResponse(
   const meal = getMealLabel(meetupContext?.meetupTime);
 
   const mealCap = meal === "breakfast" ? "Breakfast" : meal === "lunch" ? "Lunch" : "Dinner";
+  const hasRealVenues = nearbyVenues && nearbyVenues.length > 0;
+
   const findFoodSummary = hasMeetupCtx
     ? `${mealCap} options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
     : `Food recommendations${destination ? ` for ${destination}` : ""}. Tap to add to your trip plan.`;
@@ -125,37 +129,55 @@ function buildResponse(
   const mealVenueLabel = meal === "breakfast" ? "café or bakery" : meal === "lunch" ? "café or bistro" : "restaurant";
   const mealEstimate   = meal === "breakfast" ? "30–45 min" : meal === "lunch" ? "45 min–1 hour" : "1–1.5 hours";
 
-  const findFoodSuggestions: TelegraphCommandResponse["suggestions"] = hasMeetupCtx
-    ? [
-        {
-          title: `${mealCap} spot${nearbyRef}`,
-          reason: meetupLoc
-            ? `Close to ${meetupLoc} — easy to reach before your meetup`
-            : `Good option before your meetup${timeRef}`,
-          category: "food",
-          estimatedTime: mealEstimate,
-          priceLevel: "$$",
-        },
-        {
-          title: "Quick pre-meetup bite",
-          reason: `Something light and fast so you're ready${timeRef}`,
-          category: "food",
-          estimatedTime: "30–45 min",
-          priceLevel: "$",
-        },
-        {
-          title: `Local ${mealVenueLabel}${nearbyRef}`,
-          reason: "Traveler favourite for the area",
-          category: "food",
-          estimatedTime: "1 hour",
-          priceLevel: "$$",
-        },
+  // Build suggestions from real venue data when available; fall back to templates
+  const buildVenueSuggestions = (venues: NearbyVenue[]): TelegraphCommandResponse["suggestions"] =>
+    venues.map((v) => ({
+      title: v.name,
+      reason: [
+        formatDistance(v.distanceM),
+        v.cuisine,
+        meetupLoc ? `— easy to reach before your meetup` : null,
       ]
-    : [
-        { title: "Local street food market", reason: "Authentic flavours at budget prices", category: "food", estimatedTime: "1–2 hours", priceLevel: "$" },
-        { title: "Highly-rated restaurant nearby", reason: "Traveler favourite for the area", category: "food", estimatedTime: "1–1.5 hours", priceLevel: "$$" },
-        { title: "Late-night food spots", reason: "Great for after-activities eating", category: "food", estimatedTime: "45 min", priceLevel: "$" },
-      ];
+        .filter(Boolean)
+        .join(" · "),
+      category: "food",
+      estimatedTime: v.priceLevel === "$" ? "30–45 min" : "45 min–1 hour",
+      priceLevel: v.priceLevel,
+    }));
+
+  const findFoodSuggestions: TelegraphCommandResponse["suggestions"] = hasRealVenues
+    ? buildVenueSuggestions(nearbyVenues!)
+    : hasMeetupCtx
+      ? [
+          {
+            title: `${mealCap} spot${nearbyRef}`,
+            reason: meetupLoc
+              ? `Close to ${meetupLoc} — easy to reach before your meetup`
+              : `Good option before your meetup${timeRef}`,
+            category: "food",
+            estimatedTime: mealEstimate,
+            priceLevel: "$$",
+          },
+          {
+            title: "Quick pre-meetup bite",
+            reason: `Something light and fast so you're ready${timeRef}`,
+            category: "food",
+            estimatedTime: "30–45 min",
+            priceLevel: "$",
+          },
+          {
+            title: `Local ${mealVenueLabel}${nearbyRef}`,
+            reason: "Traveler favourite for the area",
+            category: "food",
+            estimatedTime: "1 hour",
+            priceLevel: "$$",
+          },
+        ]
+      : [
+          { title: "Local street food market", reason: "Authentic flavours at budget prices", category: "food", estimatedTime: "1–2 hours", priceLevel: "$" },
+          { title: "Highly-rated restaurant nearby", reason: "Traveler favourite for the area", category: "food", estimatedTime: "1–1.5 hours", priceLevel: "$$" },
+          { title: "Late-night food spots", reason: "Great for after-activities eating", category: "food", estimatedTime: "45 min", priceLevel: "$" },
+        ];
 
   const templates: Record<TelegraphIntent, { summary: string; suggestions: TelegraphCommandResponse["suggestions"]; actions: ProposedAction[] }> = {
     plan_day: {
@@ -317,7 +339,18 @@ router.post("/telegraph/commands", async (req, res) => {
   const commandId = genId();
   const intent = parseIntent(text);
   const meetupContext = meetupId ? { meetupId, meetupTime, meetupLocation } : undefined;
-  const response = buildResponse(commandId, intent, text, tripId ?? null, accessLevel, destination, meetupContext);
+
+  // Fetch real nearby venues from OSM when the intent is food-related and a location is known.
+  // Best-effort — never blocks the response; falls back to templates on any error.
+  let nearbyVenues: NearbyVenue[] | undefined;
+  if (intent === "find_food") {
+    const lookupLocation = meetupLocation ?? destination;
+    if (lookupLocation) {
+      nearbyVenues = await getNearbyVenues(lookupLocation).catch(() => undefined);
+    }
+  }
+
+  const response = buildResponse(commandId, intent, text, tripId ?? null, accessLevel, destination, meetupContext, nearbyVenues);
 
   // Store with owner userId — cross-user access rejected on all reads
   commandStore.set(commandId, { ...response, _userId: user.id });
