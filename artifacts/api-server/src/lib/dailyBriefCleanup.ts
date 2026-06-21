@@ -170,6 +170,8 @@ export async function purgeOldBriefs(opts?: {
   cutoff.setUTCDate(cutoff.getUTCDate() - retentionDays);
   const cutoffDate = cutoff.toISOString().slice(0, 10);
 
+  // ── Step 1: run the purge — this is the authoritative result ────────────────
+  let purgeResult: { deleted: number | null; error: unknown };
   try {
     const { error, count } = await client
       .from("daily_briefs")
@@ -178,32 +180,40 @@ export async function purgeOldBriefs(opts?: {
 
     if (error) {
       recordError(error);
-      return { deleted: null, error };
+      purgeResult = { deleted: null, error };
+    } else {
+      const deleted = count ?? 0;
+      recordSuccess(deleted);
+      logger.info({ deleted, cutoffDate }, "dailyBriefCleanup: purged old briefs");
+      purgeResult = { deleted, error: null };
     }
-
-    const deleted = count ?? 0;
-    recordSuccess(deleted);
-    logger.info({ deleted, cutoffDate }, "dailyBriefCleanup: purged old briefs");
-
-    // Persist last-run timestamp so the health check survives server restarts.
-    const sc = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
-    if (sc) {
-      const { error: upsertErr } = await sc
-        .from("job_health")
-        .upsert(
-          { job: "cleanup", last_run_at: _status.lastRunAt, updated_at: _status.lastRunAt },
-          { onConflict: "job" },
-        );
-      if (upsertErr) {
-        logger.warn({ err: upsertErr }, "dailyBriefCleanup: could not persist job health — table may not exist yet");
-      }
-    }
-
-    return { deleted, error: null };
   } catch (err) {
     recordError(err);
-    return { deleted: null, error: err };
+    purgeResult = { deleted: null, error: err };
   }
+
+  // ── Step 2: persist last-run timestamp (non-fatal, isolated from purge) ─────
+  // Runs only after a successful purge. Failures here NEVER change purgeResult.
+  if (purgeResult.error === null && _status.lastOutcome === "success") {
+    const sc = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
+    if (sc) {
+      try {
+        const { error: upsertErr } = await sc
+          .from("job_health")
+          .upsert(
+            { job: "cleanup", last_run_at: _status.lastRunAt, updated_at: _status.lastRunAt },
+            { onConflict: "job" },
+          );
+        if (upsertErr) {
+          logger.warn({ err: upsertErr }, "dailyBriefCleanup: could not persist job health — table may not exist yet");
+        }
+      } catch (persistErr) {
+        logger.warn({ err: persistErr }, "dailyBriefCleanup: could not persist job health");
+      }
+    }
+  }
+
+  return purgeResult;
 }
 
 // ─── Scheduler ───────────────────────────────────────────────────────────────
