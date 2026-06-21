@@ -7,9 +7,9 @@
  *
  * Privacy: only shown to accepted members; non-members see a graceful state.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, Pressable, ActivityIndicator, ScrollView, StyleSheet,
+  View, Text, Pressable, ActivityIndicator, ScrollView, StyleSheet, AppState,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
@@ -61,6 +61,21 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
   }, [tripId, date, onGapDays]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-fetch silently when the app returns to the foreground so users always
+  // see a fresh brief rather than a stale card from hours ago.
+  // Uses handleRefresh (not load) so existing content stays visible during the fetch.
+  const appStateRef = useRef(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextState;
+      if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+        handleRefresh();
+      }
+    });
+    return () => sub.remove();
+  }, [handleRefresh]);
 
   if (loading) {
     return (
