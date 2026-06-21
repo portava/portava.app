@@ -15,30 +15,59 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
 
-const RETENTION_DAYS = (() => {
-  const raw = process.env.DAILY_BRIEF_RETENTION_DAYS;
+// ─── Exported for unit testing ───────────────────────────────────────────────
+
+/**
+ * Parse DAILY_BRIEF_RETENTION_DAYS. Returns 60 (default) when the value is
+ * missing, non-numeric, zero, or negative.
+ */
+export function parseRetentionDays(raw: string | undefined): number {
   const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
-})();
+}
 
-const CLEANUP_INTERVAL_HOURS = (() => {
-  const raw = process.env.DAILY_BRIEF_CLEANUP_INTERVAL_HOURS;
+/**
+ * Parse DAILY_BRIEF_CLEANUP_INTERVAL_HOURS. Returns 24 (default) when the
+ * value is missing, non-numeric, zero, or negative. Accepts fractional values
+ * (e.g. 0.5 → every 30 minutes).
+ */
+export function parseIntervalHours(raw: string | undefined): number {
   const parsed = raw !== undefined ? parseFloat(raw) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 24;
-})();
+}
+
+// ─── Module-level constants (resolved once at startup) ───────────────────────
+
+const RETENTION_DAYS = parseRetentionDays(process.env.DAILY_BRIEF_RETENTION_DAYS);
+const CLEANUP_INTERVAL_HOURS = parseIntervalHours(process.env.DAILY_BRIEF_CLEANUP_INTERVAL_HOURS);
 const INTERVAL_MS = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1_000;
 const STARTUP_DELAY_MS = 30 * 1_000;
 
-async function purgeOldBriefs(): Promise<void> {
-  if (!isServiceClientReady) {
+// ─── Purge logic ─────────────────────────────────────────────────────────────
+
+/**
+ * Delete daily_briefs rows whose brief_date is older than `retentionDays`.
+ *
+ * Accepts optional overrides so unit tests can inject a fake Supabase client
+ * and a custom retention window without touching env vars or module state.
+ *
+ * Returns { deleted, error } so callers (and tests) can inspect the outcome.
+ * Never throws — errors are logged and returned.
+ */
+export async function purgeOldBriefs(opts?: {
+  client?: any;
+  retentionDays?: number;
+}): Promise<{ deleted: number | null; error: unknown }> {
+  const client = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
+  const retentionDays = opts?.retentionDays ?? RETENTION_DAYS;
+
+  if (!client) {
     logger.warn("dailyBriefCleanup: service client not ready — skipping purge");
-    return;
+    return { deleted: null, error: null };
   }
 
-  const client = getServiceClient()!;
-
   const cutoff = new Date();
-  cutoff.setUTCDate(cutoff.getUTCDate() - RETENTION_DAYS);
+  cutoff.setUTCDate(cutoff.getUTCDate() - retentionDays);
   const cutoffDate = cutoff.toISOString().slice(0, 10);
 
   try {
@@ -49,13 +78,18 @@ async function purgeOldBriefs(): Promise<void> {
 
     if (error) {
       logger.error({ err: error }, "dailyBriefCleanup: purge query failed");
-    } else {
-      logger.info({ deleted: count ?? 0, cutoffDate }, "dailyBriefCleanup: purged old briefs");
+      return { deleted: null, error };
     }
+
+    logger.info({ deleted: count ?? 0, cutoffDate }, "dailyBriefCleanup: purged old briefs");
+    return { deleted: count ?? 0, error: null };
   } catch (err) {
     logger.error({ err }, "dailyBriefCleanup: unexpected error during purge");
+    return { deleted: null, error: err };
   }
 }
+
+// ─── Scheduler ───────────────────────────────────────────────────────────────
 
 /**
  * Start the background cleanup scheduler.
