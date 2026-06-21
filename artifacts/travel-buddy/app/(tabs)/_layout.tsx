@@ -2,20 +2,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, AppState } from 'react-native';
 import { Tabs, router, usePathname, Link } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane, Bell } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane, Bell, MessageCircle } from 'lucide-react-native';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { getRequestCount } from '../../src/services/requests';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
+import { useUnreadCounts } from '../../src/hooks/useMessaging';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
+  { href: '/(tabs)/messages', label: 'Messages', icon: MessageCircle, match: ['/(tabs)/messages'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
-function DesktopSidebar({ requestCount }: { requestCount: number }) {
+function DesktopSidebar({ requestCount, unreadMessages }: { requestCount: number; unreadMessages: number }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
@@ -42,6 +44,11 @@ function DesktopSidebar({ requestCount }: { requestCount: number }) {
               {label === 'Passport' && requestCount > 0 && (
                 <View style={styles.sidebarBadge}>
                   <Text style={styles.sidebarBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+                </View>
+              )}
+              {label === 'Messages' && unreadMessages > 0 && (
+                <View style={styles.sidebarBadge}>
+                  <Text style={styles.sidebarBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
                 </View>
               )}
             </Pressable>
@@ -92,6 +99,7 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
   const [requestCount, setRequestCount] = useState(0);
+  const { messages: unreadMessages, refresh: refreshUnread } = useUnreadCounts();
 
   const refreshCount = useCallback(async () => {
     if (!isSupabaseConfigured) return;
@@ -153,6 +161,25 @@ export default function TabLayout() {
         listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
+        name="messages"
+        options={{
+          title: 'Messages',
+          tabBarIcon: ({ color: c }) => (
+            <View>
+              <MessageCircle size={22} color={c} />
+              {unreadMessages > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {unreadMessages > 99 ? '99+' : String(unreadMessages)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
+        }}
+        listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
+      />
+      <Tabs.Screen
         name="passport"
         options={{
           title: 'Passport',
@@ -176,7 +203,7 @@ export default function TabLayout() {
   if (isDesktop) {
     return (
       <View style={styles.desktopShell}>
-        <DesktopSidebar requestCount={requestCount} />
+        <DesktopSidebar requestCount={requestCount} unreadMessages={unreadMessages} />
         <View style={styles.desktopContent}>{tabs}</View>
       </View>
     );

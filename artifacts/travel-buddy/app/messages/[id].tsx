@@ -16,7 +16,7 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight, CheckCircle, MoreVertical } from 'lucide-react-native';
-import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
@@ -512,6 +512,12 @@ export default function TelegraphThread() {
       .maybeSingle()
       .then(({ data }) => setIsAcceptedMember(Boolean(data)));
   }, [id, threadType, userId]);
+
+  // Mark thread as read when the user opens it. Fire-and-forget.
+  useEffect(() => {
+    if (!id) return;
+    markThreadRead(id).catch(() => {});
+  }, [id]);
 
   const autoTranslate = langSettings?.auto_translate_messages ?? true;
   const defaultShowOriginal = langSettings?.show_original_messages ?? false;

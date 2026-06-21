@@ -290,6 +290,16 @@ export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary
   return apiGet('/api/me/threads');
 }
 
+export async function getUnreadCounts(): Promise<MsgResult<{ messages: number }>> {
+  return apiGet('/api/me/unread-counts');
+}
+
+export async function markThreadRead(
+  threadId: string,
+): Promise<MsgResult<{ ok: boolean; threadId: string; lastReadAt: string }>> {
+  return apiPost(`/api/threads/${threadId}/read`);
+}
+
 // ── Group chat ────────────────────────────────────────────────────────────────
 
 /**

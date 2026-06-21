@@ -16,6 +16,8 @@ import {
   acceptMessageRequest,
   declineMessageRequest,
   getMyThreads,
+  getUnreadCounts,
+  markThreadRead,
   getThreadMessages,
   sendMessage,
   retryTranslation,
@@ -31,6 +33,7 @@ import {
 
 const THREAD_POLL_MS = 3_000;
 const INBOX_POLL_MS = 7_000;
+const UNREAD_POLL_MS = 15_000;
 
 // ── Message permission (for profile / passport) ───────────────────────────────
 
@@ -239,6 +242,40 @@ export function useThreadMessages(threadId: string | null) {
 
   return { messages, loading, error, sending, reload, send, retry };
 }
+
+// ── Unread counts (for tab badge) ─────────────────────────────────────────────
+
+export function useUnreadCounts() {
+  const [messages, setMessages] = useState(0);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+  const refresh = useCallback(async () => {
+    const res = await getUnreadCounts();
+    if (res.ok && res.data) setMessages(res.data.messages ?? 0);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      appStateRef.current = next;
+      if (next === 'active') refresh();
+    });
+    const timer = setInterval(() => {
+      if (appStateRef.current === 'active') refresh();
+    }, UNREAD_POLL_MS);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [refresh]);
+
+  return { messages, refresh };
+}
+
+export { markThreadRead };
 
 // ── Language settings ─────────────────────────────────────────────────────────
 
