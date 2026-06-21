@@ -42,8 +42,12 @@ export function parseIntervalHours(raw: string | undefined): number {
 
 const RETENTION_DAYS = parseRetentionDays(process.env.DAILY_BRIEF_RETENTION_DAYS);
 const CLEANUP_INTERVAL_HOURS = parseIntervalHours(process.env.DAILY_BRIEF_CLEANUP_INTERVAL_HOURS);
-const INTERVAL_MS = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1_000;
-const STARTUP_DELAY_MS = 30 * 1_000;
+
+/** Exported for unit tests so they can advance fake timers by the right amount. */
+export const INTERVAL_MS = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1_000;
+
+/** Exported for unit tests so they can advance fake timers by the right amount. */
+export const STARTUP_DELAY_MS = 30 * 1_000;
 
 // ─── Status tracking ──────────────────────────────────────────────────────────
 
@@ -93,6 +97,15 @@ function recordSkipped(): void {
   _status.lastDeletedCount = null;
 }
 
+// ─── Test instrumentation ────────────────────────────────────────────────────
+
+/**
+ * Incremented every time purgeOldBriefs is invoked. Exported so scheduler
+ * unit tests can assert how many purge calls fired without relying on timing.
+ * Not meaningful in production — reads are always zero-cost.
+ */
+export let _purgeCallCount = 0;
+
 // ─── Purge logic ─────────────────────────────────────────────────────────────
 
 /**
@@ -108,6 +121,7 @@ export async function purgeOldBriefs(opts?: {
   client?: any;
   retentionDays?: number;
 }): Promise<{ deleted: number | null; error: unknown }> {
+  _purgeCallCount++;
   const client = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
   const retentionDays = opts?.retentionDays ?? RETENTION_DAYS;
 

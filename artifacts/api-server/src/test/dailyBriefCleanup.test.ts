@@ -5,13 +5,21 @@
  *   G1–G8:   parseRetentionDays — default fallback, valid overrides, edge cases
  *   G9–G16:  parseIntervalHours — default fallback, fractional values, edge cases
  *   G17–G24: purgeOldBriefs — fake Supabase client, cutoff date math, error handling
+ *   G25–G30: startDailyBriefCleanup — scheduler timing wiring via fake timers
  *
  * Runtime: node:test + node:assert/strict
  * Run: node --import tsx/esm --test src/test/dailyBriefCleanup.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { parseRetentionDays, parseIntervalHours, purgeOldBriefs } from "../lib/dailyBriefCleanup.js";
+
+// Namespace import so we can read live bindings (_purgeCallCount is a `let`
+// that increments on every purgeOldBriefs call; the namespace always reflects
+// the current value, which is what the scheduler tests need).
+import * as cleanup from "../lib/dailyBriefCleanup.js";
+
+const { startDailyBriefCleanup, STARTUP_DELAY_MS, INTERVAL_MS } = cleanup;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -198,5 +206,80 @@ describe("G — purgeOldBriefs", () => {
     await purgeOldBriefs({ client, retentionDays: 60 });
     const calls = client.getCalls();
     assert.ok(calls.some((c) => c.table === "daily_briefs"));
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G25–G30: startDailyBriefCleanup — scheduler timing wiring
+//
+// Uses node:test fake timers to control setTimeout/setInterval without real
+// delays. The key invariant: purgeOldBriefs increments _purgeCallCount
+// synchronously before any await, so ticking a fake timer immediately updates
+// the counter with no additional await needed.
+//
+// In the test environment SUPABASE_URL/SERVICE_ROLE_KEY are unset, so every
+// purgeOldBriefs call skips immediately (no network I/O) — the tests are
+// purely about whether the scheduler wires up the timers correctly.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("G — startDailyBriefCleanup scheduler", () => {
+  let handle: ReturnType<typeof setInterval>;
+
+  beforeEach(() => {
+    mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  });
+
+  afterEach(() => {
+    clearInterval(handle);
+    mock.timers.reset();
+  });
+
+  it("G25: returns a clearable interval handle", () => {
+    handle = startDailyBriefCleanup();
+    assert.doesNotThrow(() => clearInterval(handle));
+  });
+
+  it("G26: purge does not fire before STARTUP_DELAY_MS elapses", () => {
+    const before = cleanup._purgeCallCount;
+    handle = startDailyBriefCleanup();
+    mock.timers.tick(STARTUP_DELAY_MS - 1);
+    assert.equal(cleanup._purgeCallCount, before);
+  });
+
+  it("G27: initial purge fires exactly once after STARTUP_DELAY_MS", () => {
+    const before = cleanup._purgeCallCount;
+    handle = startDailyBriefCleanup();
+    mock.timers.tick(STARTUP_DELAY_MS);
+    assert.equal(cleanup._purgeCallCount, before + 1);
+  });
+
+  it("G28: interval fires once more after STARTUP_DELAY_MS + INTERVAL_MS", () => {
+    const before = cleanup._purgeCallCount;
+    handle = startDailyBriefCleanup();
+    // Tick past the initial delay and one full interval period.
+    // Expected: initial timeout (1) + first interval tick (1) = 2 additional calls.
+    mock.timers.tick(STARTUP_DELAY_MS + INTERVAL_MS);
+    assert.equal(cleanup._purgeCallCount, before + 2);
+  });
+
+  it("G29: interval fires again after a second INTERVAL_MS", () => {
+    const before = cleanup._purgeCallCount;
+    handle = startDailyBriefCleanup();
+    // Tick past the initial delay and two full interval periods.
+    // Expected: initial timeout (1) + two interval ticks (2) = 3 additional calls.
+    mock.timers.tick(STARTUP_DELAY_MS + INTERVAL_MS * 2);
+    assert.equal(cleanup._purgeCallCount, before + 3);
+  });
+
+  it("G30: clearing the returned handle stops further interval fires", () => {
+    handle = startDailyBriefCleanup();
+    // Fire the initial delayed purge.
+    mock.timers.tick(STARTUP_DELAY_MS);
+    const afterInitial = cleanup._purgeCallCount;
+    // Cancel the repeating interval.
+    clearInterval(handle);
+    // Tick through multiple interval periods — interval must not fire.
+    mock.timers.tick(INTERVAL_MS * 3);
+    assert.equal(cleanup._purgeCallCount, afterInitial);
   });
 });
