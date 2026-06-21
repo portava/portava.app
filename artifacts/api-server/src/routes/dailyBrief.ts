@@ -769,7 +769,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       const activeTripForStaleCheck = cachedActiveTripId ?? tripId;
       const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
       if (lastModified <= cached.builtAt) {
-        res.json({ access: "full", brief: { ...cached.brief, isStale: false }, fromCache: true });
+        res.json({ access: "full", brief: { ...cached.brief, isStale: false, generatedAt: cached.builtAt }, fromCache: true });
         return;
       }
       // Source data changed — fall through to rebuild
@@ -792,7 +792,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       if (lastModified <= stored.generatedAt) {
         // DB brief is still fresh — warm L1 and return
         setCachedBrief(user.id, date, stored.brief);
-        res.json({ access: "full", brief: { ...stored.brief, isStale: false }, fromCache: true });
+        res.json({ access: "full", brief: { ...stored.brief, isStale: false, generatedAt: stored.generatedAt }, fromCache: true });
         return;
       }
     }
@@ -821,10 +821,11 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   // Attach activeTripId to the brief so cache invalidation knows which trip to check
   const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
 
+  const nowMs = Date.now();
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: briefWithMeta });
+  res.json({ access: "full", brief: { ...briefWithMeta, generatedAt: nowMs } });
 });
 
 /* ===========================================================================
@@ -872,10 +873,11 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   });
 
   const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
+  const refreshedAt = Date.now();
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: briefWithMeta, refreshed: true });
+  res.json({ access: "full", brief: { ...briefWithMeta, generatedAt: refreshedAt }, refreshed: true });
 });
 
 /* ===========================================================================

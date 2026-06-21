@@ -119,6 +119,11 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
         <Text style={s.headerDateSub}>{formatDate(brief.date)}</Text>
       )}
 
+      {/* Last-refreshed timestamp */}
+      {brief.generatedAt ? (
+        <Text style={s.generatedAt}>Updated {formatGeneratedAt(brief.generatedAt)}</Text>
+      ) : null}
+
       {/* Summary */}
       <Text style={s.summary}>{brief.summaryText}</Text>
 
