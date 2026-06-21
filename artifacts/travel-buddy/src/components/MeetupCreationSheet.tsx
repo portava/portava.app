@@ -31,6 +31,7 @@ import {
   X, MapPin, CalendarClock, Users, Check, ChevronDown, ChevronUp,
   Plus, Trash2, Search,
 } from 'lucide-react-native';
+import { DatePickerField } from './DateTimePickerField';
 import {
   createMeetup, addTimeOption,
   type MeetupSummary, type TimeBlock, type MeetupVisibility,
@@ -49,7 +50,7 @@ const BLOCKS: { key: TimeBlock; label: string }[] = [
   { key: 'late',      label: 'Late night' },
 ];
 
-interface TimeSlot { date: string; block: TimeBlock | null; }
+interface TimeSlot { date: Date | null; block: TimeBlock | null; }
 
 interface Props {
   tripId?: string;
@@ -124,34 +125,33 @@ function BlockPicker({
   );
 }
 
+const TODAY_START = new Date();
+TODAY_START.setHours(0, 0, 0, 0);
+
 function TimeSlotRow({
   slot, index, onChange, onRemove, canRemove,
 }: {
   slot: TimeSlot; index: number;
   onChange: (s: TimeSlot) => void; onRemove: () => void; canRemove: boolean;
 }) {
+  const isPast = slot.date !== null && slot.date < TODAY_START;
   return (
-    <View style={sub.slotCard}>
+    <View style={[sub.slotCard, isPast && sub.slotCardPast]}>
       <View style={sub.slotHeader}>
         <Text style={sub.slotNum}>Slot {index + 1}</Text>
+        {isPast && <Text style={sub.slotPastWarning}>Date is in the past</Text>}
         {canRemove && (
           <Pressable onPress={onRemove} hitSlop={8}>
             <Trash2 size={14} color={color.mute} />
           </Pressable>
         )}
       </View>
-      <View style={sub.slotDateRow}>
-        <CalendarClock size={12} color={color.mute} />
-        <TextInput
-          style={sub.slotDateInput}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={color.faint}
-          value={slot.date}
-          onChangeText={(v) => onChange({ ...slot, date: v })}
-          maxLength={10}
-          keyboardType="numbers-and-punctuation"
-        />
-      </View>
+      <DatePickerField
+        value={slot.date}
+        onChange={(d) => onChange({ ...slot, date: d })}
+        minimumDate={TODAY_START}
+        placeholder="Pick a date"
+      />
       <BlockPicker small value={slot.block} onChange={(b) => onChange({ ...slot, block: b })} />
     </View>
   );
@@ -182,10 +182,10 @@ export function MeetupCreationSheet({
 
   // ── Time proposals ──
   const [proposeMode, setProposeMode] = useState(false);
-  const [slots, setSlots] = useState<TimeSlot[]>([{ date: '', block: null }]);
+  const [slots, setSlots] = useState<TimeSlot[]>([{ date: null, block: null }]);
 
-  // ── Legacy single-date (propose mode off) ──
-  const [approximateDate, setApproximateDate] = useState('');
+  // ── Single-date (propose mode off) ──
+  const [approximateDate, setApproximateDate] = useState<Date | null>(null);
   const [timeBlock, setTimeBlock] = useState<TimeBlock | null>(null);
 
   const defaultVisibility: MeetupVisibility =
@@ -259,7 +259,7 @@ export function MeetupCreationSheet({
 
   function addSlot() {
     if (slots.length >= 5) return;
-    setSlots((prev) => [...prev, { date: '', block: null }]);
+    setSlots((prev) => [...prev, { date: null, block: null }]);
   }
 
   function removeSlot(i: number) {
@@ -270,16 +270,37 @@ export function MeetupCreationSheet({
     setSlots((prev) => prev.map((x, idx) => (idx === i ? s : x)));
   }
 
+  function toISODate(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
   async function handleCreate() {
     const trimmed = title.trim();
     if (!trimmed) { setError('Please enter a title'); return; }
 
+    // Validate: single-date mode — past date check
+    if (!proposeMode && approximateDate && approximateDate < TODAY_START) {
+      setError('The selected date is in the past. Please choose a future date.');
+      return;
+    }
+
+    // Validate: propose mode — need at least one slot with a date
     const validSlots = proposeMode
-      ? slots.filter((s) => s.date.match(/^\d{4}-\d{2}-\d{2}$/))
+      ? slots.filter((s) => s.date !== null)
       : [];
 
     if (proposeMode && validSlots.length === 0) {
-      setError('Add at least one valid date (YYYY-MM-DD) to propose times.');
+      setError('Pick a date for at least one time slot.');
+      return;
+    }
+
+    // Validate: propose mode — no past dates
+    const pastSlots = validSlots.filter((s) => s.date! < TODAY_START);
+    if (pastSlots.length > 0) {
+      setError(`${pastSlots.length} slot${pastSlots.length > 1 ? 's are' : ' is'} in the past. Remove or update them first.`);
       return;
     }
 
@@ -290,7 +311,7 @@ export function MeetupCreationSheet({
       title: trimmed,
       description:     description.trim() || undefined,
       locationName:    locationName.trim() || undefined,
-      approximateDate: (!proposeMode && approximateDate.trim()) ? approximateDate.trim() : undefined,
+      approximateDate: (!proposeMode && approximateDate) ? toISODate(approximateDate) : undefined,
       timeBlock:       (!proposeMode && timeBlock) ? timeBlock : undefined,
       tripId,
       circleOwnerId,
@@ -311,7 +332,7 @@ export function MeetupCreationSheet({
       const slotResults = await Promise.all(
         validSlots.map((slot) =>
           addTimeOption(meetupId, {
-            proposedDate: slot.date,
+            proposedDate: toISODate(slot.date!),
             timeBlock:    slot.block ?? undefined,
           }),
         ),
@@ -538,17 +559,17 @@ export function MeetupCreationSheet({
               <View style={s.singleDate}>
                 <View style={s.labelRow}>
                   <CalendarClock size={12} color={color.mute} />
-                  <Text style={s.label}>Approximate date (YYYY-MM-DD)</Text>
+                  <Text style={s.label}>Approximate date</Text>
                 </View>
-                <TextInput
-                  style={s.input}
-                  placeholder="e.g. 2026-07-04"
-                  placeholderTextColor={color.faint}
+                <DatePickerField
                   value={approximateDate}
-                  onChangeText={setApproximateDate}
-                  maxLength={10}
-                  keyboardType="numbers-and-punctuation"
+                  onChange={setApproximateDate}
+                  minimumDate={TODAY_START}
+                  placeholder="Pick a date (optional)"
                 />
+                {approximateDate && approximateDate < TODAY_START && (
+                  <Text style={s.fieldWarning}>This date is in the past</Text>
+                )}
                 <Text style={s.label}>Time of day</Text>
                 <BlockPicker value={timeBlock} onChange={setTimeBlock} />
               </View>
@@ -616,10 +637,10 @@ const sub = StyleSheet.create({
   blockBtnText:     { ...t.small, fontWeight: '700', color: color.ink },
   blockBtnTextActive: { color: color.onInk },
   slotCard:         { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm },
+  slotCardPast:     { borderColor: '#FCA5A5', backgroundColor: '#FFF5F5' },
   slotHeader:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   slotNum:          { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
-  slotDateRow:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  slotDateInput:    { flex: 1, backgroundColor: color.paperRaised, borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 7, ...t.body, color: color.ink, fontSize: 14 },
+  slotPastWarning:  { ...t.small, color: '#DC2626', fontSize: 11, flex: 1, textAlign: 'center' },
 });
 
 // ── Main styles ───────────────────────────────────────────────────────────────
@@ -656,6 +677,7 @@ const s = StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, paddingHorizontal: 2, marginTop: space.sm },
   sectionHeaderText:{ ...t.small, fontWeight: '700', color: color.signal, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
   sectionHeaderHint:{ ...t.small, color: color.mute, fontSize: 10, fontStyle: 'italic' },
+  fieldWarning:     { ...t.small, color: '#DC2626', fontSize: 11, marginTop: -space.xs },
   emptyNote:        { ...t.small, color: color.faint, textAlign: 'center', paddingVertical: space.md },
   proposeHeader:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   proposeHint:      { ...t.small, color: color.mute, fontSize: 11, marginTop: -space.sm },
