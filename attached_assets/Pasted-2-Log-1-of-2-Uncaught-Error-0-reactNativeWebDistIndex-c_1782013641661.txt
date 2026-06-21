@@ -1,0 +1,87 @@
+2
+
+
+Log 1 of 2
+
+Uncaught Error
+(0 , _reactNativeWebDistIndex.codegenNativeComponent) is not a function
+Source
+ 
+ 100 |
+ }
+ 
+ 101 |
+>
+ 102 |
+ 
+export
+ 
+default
+ codegenNativeComponent
+<
+PolygonFabricNativeProps
+>
+(
+ 
+     |
+                                      
+^
+ 
+ 103 |
+   
+'RNMapsGooglePolygon'
+,
+ 
+ 104 |
+   {}
+,
+ 
+ 105 |
+ ) 
+as
+ 
+HostComponent
+<
+PolygonFabricNativeProps
+>
+;
+Call Stack
+<global>
+node_modules/.pnpm/react-native-maps@1.27.2_react-native-web@0.21.2_react-dom@19.1.0_react@19.1.0__react@1_45754e963a327aab8b57d76946ecc3ac/node_modules/react-native-maps/src/specs/NativeComponentGooglePolygon.ts:102:38
+loadModuleImplementation
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:248:36
+guardedLoadModule
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:163:16
+metroRequire
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:74:75
+<global>
+node_modules/.pnpm/react-native-maps@1.27.2_react-native-web@0.21.2_react-dom@19.1.0_react@19.1.0__react@1_45754e963a327aab8b57d76946ecc3ac/node_modules/react-native-maps/src/decorateMapComponent.ts:23
+loadModuleImplementation
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:248:36
+guardedLoadModule
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:163:16
+metroRequire
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:74:75
+<global>
+node_modules/.pnpm/react-native-maps@1.27.2_react-native-web@0.21.2_react-dom@19.1.0_react@19.1.0__react@1_45754e963a327aab8b57d76946ecc3ac/node_modules/react-native-maps/src/MapMarker.tsx:11
+loadModuleImplementation
+node_modules/.pnpm/@expo+cli@54.0.25_expo-router@6.0.24_expo@54.0.35_react-native@0.81.5_@babel+core@7.29._92236ced387c245b7b1c87da68a99289/node_modules/@expo/cli/build/metro-require/require.js:248:36
+Collapse all 10 frames
+Component Stack
+ContextNavigator
+node_modules/.pnpm/expo-router@6.0.24_@expo+metro-runtime@6.1.2_@types+react-dom@19.1.11_@types+react@19.1_8472e5b30deff9f5532c2616249b5deb/node_modules/expo-router/build/ExpoRoot.js:95:29
+ExpoRoot
+node_modules/.pnpm/expo-router@6.0.24_@expo+metro-runtime@6.1.2_@types+react-dom@19.1.11_@types+react@19.1_8472e5b30deff9f5532c2616249b5deb/node_modules/expo-router/build/ExpoRoot.js:68:30
+_HelmetProvider#constructor
+node_modules/.pnpm/expo-router@6.0.24_@expo+metro-runtime@6.1.2_@types+react-dom@19.1.11_@types+react@19.1_8472e5b30deff9f5532c2616249b5deb/node_modules/expo-router/vendor/react-helmet-async/lib/index.js:483:5
+App
+<anonymous>:-1:0
+LogBoxStateSubscription#constructor
+node_modules/.pnpm/@expo+metro-runtime@6.1.2_expo@54.0.35_react-dom@19.1.0_react@19.1.0__react-native@0.81_802d426c31fa53b23598173aa41d5111/node_modules/@expo/metro-runtime/src/error-overlay/Data/LogBoxData.tsx:365:7
+ErrorOverlay
+<anonymous>:-1:0
+withDevTools(ErrorOverlay)
+<anonymous>:-1:0
+AppContainer
+shim:react-native-web/dist/exports/AppRegistry/AppContainer.js
+Collapse all 8 frames
