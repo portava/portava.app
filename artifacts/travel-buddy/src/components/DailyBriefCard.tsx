@@ -12,7 +12,7 @@ import {
   View, Text, Pressable, ActivityIndicator, ScrollView, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket } from 'lucide-react-native';
+import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { fetchDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
@@ -98,6 +98,9 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
 
       {/* Summary */}
       <Text style={s.summary}>{brief.summaryText}</Text>
+
+      {/* Weather banner */}
+      {brief.weatherSummary ? <WeatherBanner summary={brief.weatherSummary} /> : null}
 
       {/* Warnings */}
       {brief.warnings?.length > 0 && (
@@ -214,6 +217,21 @@ function CompactBriefCard({ brief, tripId }: { brief: any; tripId: string }) {
       <Pressable style={sc.btn} onPress={() => router.push(`/trip/${tripId}`)}>
         <Text style={sc.btnText}>Full Brief</Text>
       </Pressable>
+    </View>
+  );
+}
+
+function WeatherBanner({ summary }: { summary: string }) {
+  const lower = summary.toLowerCase();
+  const isRainy = lower.includes('rain') || lower.includes('shower') || lower.includes('thunderstorm');
+  const isSunny = lower.includes('sunny') || lower.includes('clear sky');
+  const bgColor = isRainy ? '#E3F2FD' : isSunny ? '#FFF8E1' : '#EFF6FF';
+  const iconColor = isRainy ? '#1565C0' : isSunny ? '#F59E0B' : '#3B82F6';
+  const Icon = isRainy ? CloudRain : isSunny ? Sun : Cloud;
+  return (
+    <View style={[s.weatherBanner, { backgroundColor: bgColor }]}>
+      <Icon size={12} color={iconColor} />
+      <Text style={[s.weatherText, { color: iconColor }]} numberOfLines={2}>{summary}</Text>
     </View>
   );
 }
@@ -353,6 +371,8 @@ const s = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   refreshBtn: { padding: 4 },
   summary: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 18, padding: space.lg, paddingBottom: space.sm },
+  weatherBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingHorizontal: space.lg, paddingVertical: 7 },
+  weatherText: { ...t.small, fontSize: 11, lineHeight: 16, flex: 1 },
   warningRow: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFF8E1', paddingHorizontal: space.lg, paddingVertical: 6 },
   warningText: { ...t.small, color: color.warn, fontSize: 11, flex: 1 },
   section: { paddingHorizontal: space.lg, paddingTop: space.md },
