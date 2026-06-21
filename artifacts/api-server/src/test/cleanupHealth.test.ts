@@ -8,6 +8,9 @@
  *   H4: cleanupStatus = "critical" when job ran 55 h ago
  *   H5: cleanupStatus = "critical" when job has never run (no row)
  *   H6: cleanupStatus = "critical" when job_health query fails
+ *   H7: returns HTTP 200 even when cleanupStatus is "critical" (critical state is not a server error)
+ *   H8: returns HTTP 200 even when cleanupStatus is "overdue"
+ *   H9: response shape matches the documented contract exactly — no extra or missing fields
  *
  * Runtime: node:test + fetch() on a real in-process Express server.
  * Fake job_health client injected via _setTestJobHealthClient so no live
@@ -92,7 +95,7 @@ afterEach(() => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// H1–H6: GET /api/healthz/cleanup
+// H1–H9: GET /api/healthz/cleanup
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe("H — GET /api/healthz/cleanup", () => {
@@ -144,5 +147,59 @@ describe("H — GET /api/healthz/cleanup", () => {
     const res = await fetch(`${base}/healthz/cleanup`);
     const body = await res.json() as Record<string, unknown>;
     assert.equal(body.cleanupStatus, "critical");
+  });
+
+  it("H7: HTTP 200 even when cleanupStatus is 'critical' — health endpoints must always respond", async () => {
+    // No row = critical; endpoint must still return 200, not 5xx or 4xx.
+    _setTestJobHealthClient(makeJobHealthClient(null));
+    const res = await fetch(`${base}/healthz/cleanup`);
+    assert.equal(res.status, 200, "expected 200 even for critical cleanup status");
+    const body = await res.json() as Record<string, unknown>;
+    assert.equal(body.cleanupStatus, "critical");
+  });
+
+  it("H8: HTTP 200 even when cleanupStatus is 'overdue'", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(30 * 60));
+    const res = await fetch(`${base}/healthz/cleanup`);
+    assert.equal(res.status, 200, "expected 200 even for overdue cleanup status");
+    const body = await res.json() as Record<string, unknown>;
+    assert.equal(body.cleanupStatus, "overdue");
+  });
+
+  it("H9: response contains exactly the five documented fields — no extras, no missing", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(60)); // ok
+    const res = await fetch(`${base}/healthz/cleanup`);
+    assert.equal(res.status, 200);
+
+    const body = await res.json() as Record<string, unknown>;
+    const EXPECTED_KEYS = new Set([
+      "cleanupStatus",
+      "lastRunAt",
+      "lastOutcome",
+      "lastDeletedCount",
+      "consecutiveFailures",
+    ]);
+
+    const actualKeys = new Set(Object.keys(body));
+
+    // All required keys must be present.
+    for (const key of EXPECTED_KEYS) {
+      assert.ok(actualKeys.has(key), `missing required field: ${key}`);
+    }
+
+    // No extra keys beyond the documented contract.
+    for (const key of actualKeys) {
+      assert.ok(EXPECTED_KEYS.has(key), `unexpected extra field in response: ${key}`);
+    }
+
+    // Type guards for the fields that have fixed types.
+    assert.ok(
+      ["ok", "overdue", "critical"].includes(body.cleanupStatus as string),
+      "cleanupStatus must be 'ok' | 'overdue' | 'critical'",
+    );
+    assert.ok(
+      typeof body.consecutiveFailures === "number",
+      "consecutiveFailures must be a number",
+    );
   });
 });
