@@ -25,6 +25,10 @@ function navigateToThread(item: ThreadSummary) {
   const params = new URLSearchParams({ title, threadType: item.threadType });
   if (item.tripId) params.set('contextId', item.tripId);
   else if (item.circleOwnerId) params.set('contextId', item.circleOwnerId);
+  // For DM threads, pass the other user's ID so the thread screen can offer a block option
+  if (item.threadType === 'direct' && item.otherMembers[0]?.id) {
+    params.set('otherUserId', item.otherMembers[0].id);
+  }
   router.push(`/messages/${item.id}?${params.toString()}`);
 }
 

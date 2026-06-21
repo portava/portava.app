@@ -115,6 +115,8 @@ export default function Settings() {
     if (label === 'Log out') {
       await signOut();
       router.replace('/(auth)/sign-in');
+    } else if (label === 'Blocked accounts') {
+      router.push('/blocked-users');
     }
   }
 

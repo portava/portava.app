@@ -92,9 +92,15 @@ export async function canMessage(
 
   if (senderId === recipientId) return deny('self', emptyCtx);
 
-  // TODO: Check block table when it exists (Phase 2).
-  // const blocked = await checkBlock(sc, senderId, recipientId);
-  // if (blocked) return deny('blocked', emptyCtx);
+  // Block check — sc is the service-role client so it bypasses RLS and can
+  // read blocks rows regardless of which user is blocker_id.
+  const { data: blockRow } = await sc
+    .from('blocks')
+    .select('blocker_id')
+    .or(`and(blocker_id.eq.${senderId},blocked_id.eq.${recipientId}),and(blocker_id.eq.${recipientId},blocked_id.eq.${senderId})`)
+    .limit(1)
+    .maybeSingle();
+  if (blockRow) return deny('blocked', emptyCtx);
 
   // Fetch all relationship data in parallel.
   // Trip check uses a two-step query (wrapped in an async closure) so it can

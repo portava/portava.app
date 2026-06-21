@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
-import { Users, CheckCircle, UserPlus, Clock, UserCheck, MessageCircle, X } from 'lucide-react-native';
+import { Users, CheckCircle, UserPlus, Clock, UserCheck, MessageCircle, X, MoreVertical, ShieldAlert } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { getProfileByHandle } from '../../src/services/friends';
@@ -20,6 +20,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { blockUser } from '../../src/services/blocks';
 
 interface PublicProfile {
   id: string;
@@ -205,6 +206,63 @@ function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   return null;
 }
 
+function KebabMenu({ profile, onBlocked }: { profile: PublicProfile; onBlocked: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+
+  function handleBlock() {
+    setOpen(false);
+    Alert.alert(
+      'Block user',
+      `Block ${profile.name ?? `@${profile.handle}`}? They won't be able to message you, follow you, or see your profile. You can unblock them any time in Settings.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: async () => {
+            setBlocking(true);
+            const res = await blockUser(profile.id);
+            setBlocking(false);
+            if (res.ok) {
+              onBlocked();
+            } else {
+              Alert.alert('Error', res.error ?? 'Could not block user');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  return (
+    <>
+      <Pressable
+        hitSlop={12}
+        onPress={() => setOpen(true)}
+        style={{ padding: 4 }}
+        disabled={blocking}
+      >
+        {blocking
+          ? <ActivityIndicator size="small" color={color.mute} />
+          : <MoreVertical size={20} color={color.mute} />
+        }
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={s.menuOverlay} onPress={() => setOpen(false)}>
+          <View style={s.menuCard}>
+            <Pressable style={s.menuItem} onPress={handleBlock}>
+              <ShieldAlert size={16} color={color.signal} />
+              <Text style={[s.menuItemText, { color: color.signal }]}>Block user</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
 export default function Profile() {
   const { handle } = useLocalSearchParams<{ handle: string }>();
   const { userId: currentUserId } = useSession();
@@ -224,6 +282,10 @@ export default function Profile() {
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
   useFocusEffect(useCallback(() => { loadProfile(); }, [loadProfile]));
+
+  function handleBlocked() {
+    router.back();
+  }
 
   if (loading) {
     return (
@@ -252,7 +314,11 @@ export default function Profile() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title={`@${profile.handle}`} back />
+      <ScreenHeader
+        title={`@${profile.handle}`}
+        back
+        right={!isOwn ? <KebabMenu profile={profile} onBlocked={handleBlocked} /> : undefined}
+      />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md }}>
 
         <View style={s.heroRow}>
@@ -399,4 +465,8 @@ const s = StyleSheet.create({
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalTitle: { ...t.heading, color: color.ink },
   composerInput: { ...t.body, color: color.ink, backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, minHeight: 80, textAlignVertical: 'top' },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(17,17,15,0.3)', alignItems: 'flex-end', paddingTop: 60, paddingRight: space.lg },
+  menuCard: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, minWidth: 160, overflow: 'hidden' },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
+  menuItemText: { ...t.body, fontSize: 14, fontWeight: '600' },
 });

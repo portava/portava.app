@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight, CheckCircle } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight, CheckCircle, MoreVertical } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -26,6 +26,7 @@ import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
+import { blockUser } from '../../src/services/blocks';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -454,7 +455,7 @@ interface MeetupSheetCtx {
 }
 
 export default function TelegraphThread() {
-  const { id, title, threadType, contextId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string }>();
+  const { id, title, threadType, contextId, otherUserId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { messages, loading, error, sending, send, reload } = useThreadMessages(id ?? null);
@@ -465,7 +466,29 @@ export default function TelegraphThread() {
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
+  const [blockingUser, setBlockingUser] = useState(false);
   const listRef = useRef<FlatList>(null);
+
+  function handleBlockPress() {
+    if (!otherUserId || blockingUser) return;
+    Alert.alert(
+      'Block user?',
+      'They won\'t be able to message you or see your profile. You can manage blocks in Settings → Blocked accounts.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: async () => {
+            setBlockingUser(true);
+            await blockUser(otherUserId);
+            setBlockingUser(false);
+            router.replace('/messages');
+          },
+        },
+      ],
+    );
+  }
 
   // Resolve display name once (for the planned-by label in meetup cards)
   useEffect(() => {
@@ -622,6 +645,11 @@ export default function TelegraphThread() {
             <Text style={styles.headerTag}>Telegraph</Text>
           </View>
         </View>
+        {threadType === 'direct' && otherUserId ? (
+          <Pressable style={styles.headerMenuBtn} onPress={handleBlockPress} hitSlop={8}>
+            <MoreVertical size={20} color={color.mute} />
+          </Pressable>
+        ) : null}
       </View>
 
       <FlatList
@@ -747,6 +775,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   backBtn: { padding: 4 },
+  headerMenuBtn: { padding: 4, marginLeft: 4 },
   headerIconBadge: {
     width: 26,
     height: 26,

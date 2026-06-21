@@ -23,9 +23,20 @@ router.post("/users/:userId/follow", async (req, res) => {
   const { client, user } = auth;
   const target = req.params.userId;
 
-  // (No block table yet; blocked=false. Hook left for Phase 2.)
   const targetExists = isUuid(target) ? await profileExists(client, target) : false;
-  const decision = decideFollow(user.id, target, { targetExists, blocked: false });
+  // Block check — `client` here is the service-role client (bypasses RLS) so both
+  // directions are visible regardless of which user is blocker_id.
+  let blocked = false;
+  if (targetExists) {
+    const { data: blockRow } = await client
+      .from("blocks")
+      .select("blocker_id")
+      .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${target}),and(blocker_id.eq.${target},blocked_id.eq.${user.id})`)
+      .limit(1)
+      .maybeSingle();
+    blocked = Boolean(blockRow);
+  }
+  const decision = decideFollow(user.id, target, { targetExists, blocked });
   if (!decision.ok) {
     const map: Record<string, any> = {
       unauthenticated: "unauthenticated",
