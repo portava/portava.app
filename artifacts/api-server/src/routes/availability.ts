@@ -312,9 +312,6 @@ async function sendAvailabilityNudges(
     existingAvMap[(row as any).user_id] = (row as any).open_days ?? {};
   }
 
-  // Representative nudge date: the earliest free date
-  const nudgeDate = freeDates.slice().sort()[0];
-
   const rows: Array<{
     sender_id: string;
     recipient_id: string;
@@ -325,42 +322,53 @@ async function sendAvailabilityNudges(
 
   for (const recipientId of recipientIds) {
     const theirDays = existingAvMap[recipientId] ?? {};
-    // Skip if they have ANY explicit availability entry for that day (free or busy).
-    // An empty array means "busy/unavailable" — the user has already set their status.
-    const alreadyMarked = freeDates.some((d) =>
-      Object.prototype.hasOwnProperty.call(theirDays, d),
+    // Find the first free date the recipient hasn't explicitly set at all.
+    // Any explicit entry (empty or non-empty array) means they've already
+    // recorded their status for that day — free or busy.
+    const firstUnmarked = freeDates.find(
+      (d) => !Object.prototype.hasOwnProperty.call(theirDays, d),
     );
-    if (alreadyMarked) continue;
+    if (!firstUnmarked) continue; // all dates already have an explicit entry
 
     rows.push({
       sender_id: senderId,
       recipient_id: recipientId,
       trip_id: tripId,
-      nudge_date: nudgeDate,
+      nudge_date: firstUnmarked,
       sent_on: today,
     });
   }
 
   if (rows.length === 0) return;
 
-  // ignoreDuplicates: rate-limit — one nudge per recipient per trip per day
-  const { error } = await sc
+  // INSERT ... ON CONFLICT DO NOTHING RETURNING *  — only newly-inserted rows
+  // come back.  This is how we dedupe push without a separate pre-check:
+  // recipients who already got a nudge today are silently skipped AND omitted
+  // from the returned set, so they won't receive a duplicate push either.
+  const { data: insertedRows, error } = await sc
     .from("availability_nudges")
-    .upsert(rows, { onConflict: "recipient_id,trip_id,sent_on", ignoreDuplicates: true });
+    .upsert(rows, { onConflict: "recipient_id,trip_id,sent_on", ignoreDuplicates: true })
+    .select("recipient_id, nudge_date");
 
   if (error) {
     logger.warn({ err: error, tripId, senderId }, "availability nudge insert failed");
     return;
   }
 
-  logger.info({ count: rows.length, tripId, nudgeDate }, "availability nudges sent");
+  const newRows = insertedRows ?? [];
+  logger.info({ inserted: newRows.length, attempted: rows.length, tripId }, "availability nudges");
 
-  // ── Push notifications ──────────────────────────────────────────────────────
-  // Fetch push tokens and sender profile for the notification body.
-  const finalRecipientIds = rows.map((r) => r.recipient_id);
+  if (newRows.length === 0) return; // all were duplicates — no push needed
+
+  // ── Push notifications (only for newly-created nudges) ─────────────────────
+  const newRecipientIds = (newRows as any[]).map((r) => r.recipient_id as string);
+  // Representative date for the push body: earliest nudge_date across new rows
+  const nudgeDate = (newRows as any[])
+    .map((r) => r.nudge_date as string)
+    .sort()[0];
 
   const [{ data: tokenRows }, { data: senderProfile }, { data: tripRow }] = await Promise.all([
-    sc.from("profiles").select("id, expo_push_token").in("id", finalRecipientIds),
+    sc.from("profiles").select("id, expo_push_token").in("id", newRecipientIds),
     sc.from("profiles").select("name, handle").eq("id", senderId).single(),
     sc.from("trips").select("title").eq("id", tripId).single(),
   ]);
