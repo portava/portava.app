@@ -29,6 +29,8 @@ export interface DiscoveryPlace {
   website: string | null;
   phone: string | null;
   openingHours: string | null;
+  rating: number | null;
+  isOpenNow: boolean | null;
 }
 
 export interface DiscoveryFilters {
@@ -58,6 +60,8 @@ export async function getDiscoveryPlaces(
     category,
     radiusKm: String(filters.radiusKm),
     page: String(page),
+    ...(filters.openNow ? { openNow: '1' } : {}),
+    ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
   });
 
   try {

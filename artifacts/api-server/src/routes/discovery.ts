@@ -44,6 +44,8 @@ export interface DiscoveryPlace {
   website: string | null;
   phone: string | null;
   openingHours: string | null;
+  rating: number | null;
+  isOpenNow: boolean | null;
 }
 
 interface CacheEntry {
@@ -200,6 +202,27 @@ function extractTags(tags: Record<string, string>): string[] {
   return [...new Set(out)].filter(Boolean).slice(0, 3);
 }
 
+function parseRating(tags: Record<string, string>): number | null {
+  const raw = tags["stars"] ?? tags["rating"] ?? null;
+  if (!raw) return null;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+}
+
+/** Best-effort open-now check from an OSM opening_hours string. */
+function determineOpenNow(hours: string | null): boolean | null {
+  if (!hours) return null;
+  const now = new Date();
+  const dayAbbr = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][now.getDay()];
+  if (dayAbbr && !hours.includes(dayAbbr)) return false;
+  const match = hours.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
+  if (!match) return null; // present but unparseable — unknown
+  const hh    = now.getHours() * 100 + now.getMinutes();
+  const open  = parseInt(match[1]!) * 100 + parseInt(match[2]!);
+  const close = parseInt(match[3]!) * 100 + parseInt(match[4]!);
+  return hh >= open && hh <= close;
+}
+
 function buildAddress(tags: Record<string, string>): string | null {
   const parts: string[] = [];
   if (tags["addr:housenumber"] && tags["addr:street"]) {
@@ -264,6 +287,8 @@ async function queryOverpass(
         website:      tags.website ?? tags.url ?? null,
         phone:        tags.phone ?? tags["contact:phone"] ?? null,
         openingHours: tags.opening_hours ?? null,
+        rating:       parseRating(tags),
+        isOpenNow:    determineOpenNow(tags.opening_hours ?? null),
       };
     })
     .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
@@ -287,12 +312,33 @@ router.get("/discovery", async (req, res) => {
   const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || 10));
   const page      = Math.max(1, parseInt(req.query.page as string) || 1);
   const radiusM   = Math.round(radiusKm * 1000);
+  const openNow   = req.query.openNow === "1";
+  const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
 
   const key    = cacheKey(destination, category, radiusKm);
   const cached = cache.get(key);
+  /** Apply openNow / minRating filters to a set of places */
+  function applyFilters(raw: DiscoveryPlace[]): DiscoveryPlace[] {
+    let list = raw;
+    if (openNow) {
+      list = list.filter((p) => {
+        if (p.isOpenNow === null) return true; // no data → optimistic include
+        return p.isOpenNow === true;
+      });
+    }
+    if (minRating !== null && Number.isFinite(minRating)) {
+      list = list.filter((p) => {
+        if (p.rating === null) return true; // no rating data → include
+        return p.rating >= minRating!;
+      });
+    }
+    return list;
+  }
+
   if (cached && isFresh(cached)) {
-    const slice = cached.places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    res.json({ places: slice, total: cached.places.length, destination, cached: true });
+    const filtered = applyFilters(cached.places);
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    res.json({ places: slice, total: filtered.length, destination, cached: true });
     return;
   }
 
@@ -310,8 +356,9 @@ router.get("/discovery", async (req, res) => {
       cache.set(key, { places, cachedAt: Date.now() });
     }
 
-    const slice = places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    res.json({ places: slice, total: places.length, destination, cached: false });
+    const filtered = applyFilters(places);
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    res.json({ places: slice, total: filtered.length, destination, cached: false });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     res.json({ places: [], total: 0, destination, cached: false });
