@@ -181,6 +181,84 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /me/trip-invites/pending  — list pending trip invitations for the caller
+ * ===========================================================================
+ * Returns every trip_members row where role = 'invited' for the current user,
+ * enriched with trip details (name, destination, dates) and inviter profile.
+ */
+router.get("/me/trip-invites/pending", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Get all invited memberships for this user
+  const { data: inviteRows, error: invErr } = await sc
+    .from("trip_members")
+    .select("trip_id, created_at")
+    .eq("user_id", user.id)
+    .eq("role", "invited");
+
+  if (invErr) { sendError(res, "db_error", invErr.message); return; }
+  if (!inviteRows || inviteRows.length === 0) {
+    res.status(200).json({ invites: [] });
+    return;
+  }
+
+  const tripIds = inviteRows.map((r: any) => r.trip_id as string);
+
+  // Fetch trip details
+  const { data: trips, error: tripsErr } = await sc
+    .from("trips")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id")
+    .in("id", tripIds);
+
+  if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
+
+  const tripMap: Record<string, any> = {};
+  for (const t of trips ?? []) tripMap[(t as any).id] = t;
+
+  // Collect unique owner IDs to resolve inviter profiles
+  const ownerIds = [...new Set((trips ?? []).map((t: any) => t.owner_id as string))];
+  const profileMap: Record<string, any> = {};
+  if (ownerIds.length > 0) {
+    const { data: profiles } = await sc
+      .from("profiles")
+      .select("id, handle, name, avatar_url")
+      .in("id", ownerIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+  }
+
+  const invites = inviteRows
+    .map((row: any) => {
+      const trip = tripMap[row.trip_id];
+      if (!trip) return null;
+      const inviter = profileMap[trip.owner_id] ?? null;
+      return {
+        tripId:             trip.id,
+        tripTitle:          trip.title,
+        destinationCity:    trip.destination_city,
+        destinationCountry: trip.destination_country ?? null,
+        startDate:          trip.start_date ?? null,
+        endDate:            trip.end_date ?? null,
+        coverUrl:           trip.cover_url ?? null,
+        invitedAt:          row.created_at,
+        inviter: inviter ? {
+          id:        inviter.id,
+          name:      inviter.name,
+          handle:    inviter.handle,
+          avatarUrl: inviter.avatar_url ?? null,
+        } : null,
+      };
+    })
+    .filter(Boolean);
+
+  res.status(200).json({ invites });
+});
+
+/* ===========================================================================
  * POST /trips/:tripId/invite  — trip owner invites a user
  * ===========================================================================
  * Reuses the existing trip_members table with role='invited'.

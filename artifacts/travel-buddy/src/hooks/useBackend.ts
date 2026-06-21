@@ -6,7 +6,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { getSessionUserId, onAuthChange } from '../services/auth';
-import { listMyTrips, getTrip, type TripRow } from '../services/trips';
+import { listMyTrips, getTrip, type TripRow, getPendingTripInvites, type TripInvite } from '../services/trips';
 
 export function useSession() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -60,4 +60,24 @@ export function useTrip(id: string | undefined) {
   }, [id]);
 
   return { data, loading, error };
+}
+
+export function usePendingTripInvites() {
+  const [invites, setInvites] = useState<TripInvite[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      setInvites(await getPendingTripInvites());
+    } catch {
+      setInvites([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  return { invites, loading, reload };
 }

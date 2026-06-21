@@ -176,6 +176,72 @@ export async function deleteTrip(id: string): Promise<boolean> {
   return !error;
 }
 
+/* ---------- Trip Invites ---------- */
+
+export interface TripInvite {
+  tripId: string;
+  tripTitle: string;
+  destinationCity: string;
+  destinationCountry: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  coverUrl: string | null;
+  invitedAt: string;
+  inviter: {
+    id: string;
+    name: string;
+    handle: string;
+    avatarUrl: string | null;
+  } | null;
+}
+
+async function freshToken(): Promise<string | null> {
+  const { data: refreshed } = await supabase.auth.refreshSession();
+  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+  return session?.access_token ?? null;
+}
+
+export async function getPendingTripInvites(): Promise<TripInvite[]> {
+  if (!isSupabaseConfigured) return [];
+  const token = await freshToken();
+  if (!token) return [];
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/me/trip-invites/pending`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.invites ?? []) as TripInvite[];
+}
+
+export async function acceptTripInvite(tripId: string): Promise<void> {
+  const token = await freshToken();
+  if (!token) throw new Error('Not authenticated');
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/accept-invite`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function declineTripInvite(tripId: string): Promise<void> {
+  const token = await freshToken();
+  if (!token) throw new Error('Not authenticated');
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/decline-invite`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function addMember(tripId: string, userId: string, role: 'member' | 'invited' = 'member'): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   const { error } = await supabase.from('trip_members').insert({ trip_id: tripId, user_id: userId, role });

@@ -1,13 +1,20 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import {
+  View, Text, ScrollView, Pressable, Image,
+  ActivityIndicator, StyleSheet, Alert,
+} from 'react-native';
 import { router } from 'expo-router';
-import { Plus, Users, CalendarDays, MapPin, CalendarClock, ChevronRight } from 'lucide-react-native';
+import {
+  Plus, Users, CalendarDays, MapPin, CalendarClock,
+  ChevronRight, Check, X, UserCircle,
+} from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { trips as mockTrips } from '../../src/data/cebu';
 import { useSession } from '../../src/context/SessionContext';
-import { useMyTrips } from '../../src/hooks/useBackend';
+import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 
 function MeetupsShortcut() {
   return (
@@ -21,6 +28,113 @@ function MeetupsShortcut() {
       </View>
       <ChevronRight size={18} color={color.mute} />
     </Pressable>
+  );
+}
+
+function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void }) {
+  const [busy, setBusy] = React.useState<'accept' | 'decline' | null>(null);
+
+  async function handle(action: 'accept' | 'decline') {
+    setBusy(action);
+    try {
+      if (action === 'accept') {
+        await acceptTripInvite(invite.tripId);
+      } else {
+        await declineTripInvite(invite.tripId);
+      }
+      onDone();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
+      setBusy(null);
+    }
+  }
+
+  const dateStr = invite.startDate
+    ? invite.endDate
+      ? `${invite.startDate} – ${invite.endDate}`
+      : invite.startDate
+    : 'Dates TBD';
+
+  const destination = invite.destinationCountry
+    ? `${invite.destinationCity}, ${invite.destinationCountry}`
+    : invite.destinationCity;
+
+  return (
+    <View style={styles.inviteCard}>
+      {invite.coverUrl ? (
+        <Image source={{ uri: invite.coverUrl }} style={styles.inviteCover} />
+      ) : (
+        <View style={[styles.inviteCover, styles.inviteCoverPlaceholder]}>
+          <MapPin size={22} color={color.onInk} />
+        </View>
+      )}
+      <View style={styles.inviteBody}>
+        <View style={styles.inviteInviterRow}>
+          {invite.inviter?.avatarUrl ? (
+            <Image source={{ uri: invite.inviter.avatarUrl }} style={styles.inviterAvatar} />
+          ) : (
+            <View style={styles.inviterAvatarPlaceholder}>
+              <UserCircle size={14} color={color.mute} />
+            </View>
+          )}
+          <Text style={styles.inviterLabel} numberOfLines={1}>
+            <Text style={styles.inviterName}>{invite.inviter?.name ?? 'Someone'}</Text>
+            {' invited you'}
+          </Text>
+        </View>
+        <Text style={styles.inviteTitle} numberOfLines={1}>{invite.tripTitle}</Text>
+        <View style={styles.inviteMeta}>
+          <MapPin size={12} color={color.mute} />
+          <Text style={styles.inviteMetaText} numberOfLines={1}>{destination}</Text>
+        </View>
+        <View style={styles.inviteMeta}>
+          <CalendarDays size={12} color={color.mute} />
+          <Text style={styles.inviteMetaText}>{dateStr}</Text>
+        </View>
+        <View style={styles.inviteActions}>
+          <Pressable
+            style={[styles.inviteBtn, styles.inviteBtnDecline]}
+            onPress={() => handle('decline')}
+            disabled={busy !== null}
+          >
+            {busy === 'decline'
+              ? <ActivityIndicator size={14} color={color.mute} />
+              : <X size={14} color={color.mute} />}
+            <Text style={styles.inviteBtnDeclineText}>Decline</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.inviteBtn, styles.inviteBtnAccept]}
+            onPress={() => handle('accept')}
+            disabled={busy !== null}
+          >
+            {busy === 'accept'
+              ? <ActivityIndicator size={14} color={color.onInk} />
+              : <Check size={14} color={color.onInk} />}
+            <Text style={styles.inviteBtnAcceptText}>Accept</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
+  const { invites, reload } = usePendingTripInvites();
+
+  if (!invites.length) return null;
+
+  async function handleDone() {
+    await reload();
+    onAccepted();
+  }
+
+  return (
+    <View style={styles.inviteSection}>
+      <Text style={styles.inviteSectionTitle}>Trip Invites</Text>
+      {invites.map((inv) => (
+        <InviteCard key={inv.tripId} invite={inv} onDone={handleDone} />
+      ))}
+    </View>
   );
 }
 
@@ -44,6 +158,7 @@ export default function Trips() {
       />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
         <MeetupsShortcut />
+        {live && <PendingInvitesSection onAccepted={reload} />}
         {live ? (
           <LiveTrips trips={realTrips} loading={loading} error={error} />
         ) : (
@@ -154,4 +269,48 @@ const styles = StyleSheet.create({
   bigEmpty: { alignItems: 'center', gap: space.sm, padding: space.xxl, backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze },
   bigEmptyTitle: { ...t.title, color: color.ink, fontSize: 18 },
   bigEmptySub: { ...t.small, color: color.mute, textAlign: 'center' },
+
+  inviteSection: { gap: space.sm },
+  inviteSectionTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
+  inviteCard: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.haze,
+    ...shadow.card,
+  },
+  inviteCover: { width: '100%', height: 90 },
+  inviteCoverPlaceholder: {
+    backgroundColor: color.deep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inviteBody: { padding: space.md, gap: space.sm },
+  inviteInviterRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  inviterAvatar: { width: 20, height: 20, borderRadius: 10 },
+  inviterAvatarPlaceholder: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  inviterLabel: { ...t.small, color: color.mute, flex: 1 },
+  inviterName: { fontWeight: '600', color: color.ink },
+  inviteTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
+  inviteMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  inviteMetaText: { ...t.small, color: color.mute },
+  inviteActions: { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
+  inviteBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+  },
+  inviteBtnDecline: {
+    backgroundColor: color.haze,
+  },
+  inviteBtnDeclineText: { ...t.small, color: color.mute, fontWeight: '600' },
+  inviteBtnAccept: {
+    backgroundColor: color.ink,
+  },
+  inviteBtnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700' },
 });
