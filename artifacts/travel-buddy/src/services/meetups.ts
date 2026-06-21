@@ -37,6 +37,7 @@ export interface TimeOptionVotes { yes: number; maybe: number; no: number; myVot
 export interface MeetupTimeOption {
   id: string;
   proposedDate: string;
+  proposedTime: string | null;
   timeBlock: TimeBlock | null;
   label: string | null;
   confirmed: boolean;
@@ -199,7 +200,7 @@ export async function rsvpMeetup(
 
 export async function addTimeOption(
   meetupId: string,
-  params: { proposedDate: string; timeBlock?: TimeBlock; label?: string },
+  params: { proposedDate: string; proposedTime?: string; timeBlock?: TimeBlock; label?: string },
 ): Promise<MeetupResult<MeetupTimeOption>> {
   return apiCall(`/api/meetups/${meetupId}/time-options`, 'POST', params as Record<string, unknown>);
 }

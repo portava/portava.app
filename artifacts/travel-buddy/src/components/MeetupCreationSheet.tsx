@@ -50,7 +50,7 @@ const BLOCKS: { key: TimeBlock; label: string }[] = [
   { key: 'late',      label: 'Late night' },
 ];
 
-interface TimeSlot { date: Date | null; block: TimeBlock | null; }
+interface TimeSlot { date: Date | null; block: TimeBlock | null; proposedTime: Date | null; }
 
 interface Props {
   tripId?: string;
@@ -152,7 +152,27 @@ function TimeSlotRow({
         minimumDate={TODAY_START}
         placeholder="Pick a date"
       />
-      <BlockPicker small value={slot.block} onChange={(b) => onChange({ ...slot, block: b })} />
+      <View style={sub.slotTimeRow}>
+        <View style={{ flex: 1 }}>
+          <DatePickerField
+            mode="time"
+            value={slot.proposedTime}
+            onChange={(t) => onChange({ ...slot, proposedTime: t, block: null })}
+            onClear={() => onChange({ ...slot, proposedTime: null })}
+            placeholder="Pick a time (optional)"
+          />
+        </View>
+      </View>
+      <View style={slot.proposedTime ? sub.blockRowDimmed : undefined}>
+        <BlockPicker
+          small
+          value={slot.proposedTime ? null : slot.block}
+          onChange={(b) => { if (!slot.proposedTime) onChange({ ...slot, block: b }); }}
+        />
+      </View>
+      {slot.proposedTime && (
+        <Text style={sub.slotTimeNote}>Block ignored — exact time set above</Text>
+      )}
     </View>
   );
 }
@@ -182,7 +202,7 @@ export function MeetupCreationSheet({
 
   // ── Time proposals ──
   const [proposeMode, setProposeMode] = useState(false);
-  const [slots, setSlots] = useState<TimeSlot[]>([{ date: null, block: null }]);
+  const [slots, setSlots] = useState<TimeSlot[]>([{ date: null, block: null, proposedTime: null }]);
 
   // ── Single-date (propose mode off) ──
   const [approximateDate, setApproximateDate] = useState<Date | null>(null);
@@ -260,7 +280,7 @@ export function MeetupCreationSheet({
 
   function addSlot() {
     if (slots.length >= 5) return;
-    setSlots((prev) => [...prev, { date: null, block: null }]);
+    setSlots((prev) => [...prev, { date: null, block: null, proposedTime: null }]);
   }
 
   function removeSlot(i: number) {
@@ -343,12 +363,17 @@ export function MeetupCreationSheet({
     // Post each valid time slot; collect any failures
     if (proposeMode && validSlots.length > 0) {
       const slotResults = await Promise.all(
-        validSlots.map((slot) =>
-          addTimeOption(meetupId, {
+        validSlots.map((slot) => {
+          const pt = slot.proposedTime;
+          const proposedTime = pt
+            ? `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`
+            : undefined;
+          return addTimeOption(meetupId, {
             proposedDate: toISODate(slot.date!),
-            timeBlock:    slot.block ?? undefined,
-          }),
-        ),
+            proposedTime,
+            timeBlock: proposedTime ? undefined : (slot.block ?? undefined),
+          });
+        }),
       );
 
       const failed = slotResults.filter((r) => !r.ok);
@@ -681,6 +706,9 @@ const sub = StyleSheet.create({
   slotHeader:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   slotNum:          { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
   slotPastWarning:  { ...t.small, color: '#DC2626', fontSize: 11, flex: 1, textAlign: 'center' },
+  slotTimeRow:      { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  blockRowDimmed:   { opacity: 0.35 },
+  slotTimeNote:     { ...t.small, color: color.mute, fontSize: 10, fontStyle: 'italic' },
 });
 
 // ── Main styles ───────────────────────────────────────────────────────────────

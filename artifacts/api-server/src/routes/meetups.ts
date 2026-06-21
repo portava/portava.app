@@ -338,6 +338,7 @@ router.get("/meetups/:meetupId", async (req, res) => {
     timeOptions:     (options ?? []).map((o: any) => ({
       id:            o.id,
       proposedDate:  o.proposed_date,
+      proposedTime:  o.proposed_time ?? null,
       timeBlock:     o.time_block ?? null,
       label:         o.label ?? null,
       confirmed:     o.confirmed ?? false,
@@ -573,9 +574,10 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
 // ── POST /api/meetups/:meetupId/time-options ─────────────────────────────────
 
 const TimeOptionSchema = z.object({
-  proposedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
-  timeBlock:    z.enum(["morning","afternoon","evening","late"]).optional(),
-  label:        z.string().max(200).optional(),
+  proposedDate:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+  proposedTime:  z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Must be HH:MM or HH:MM:SS").optional(),
+  timeBlock:     z.enum(["morning","afternoon","evening","late"]).optional(),
+  label:         z.string().max(200).optional(),
 });
 
 router.post("/meetups/:meetupId/time-options", async (req, res) => {
@@ -607,20 +609,27 @@ router.post("/meetups/:meetupId/time-options", async (req, res) => {
 
   const { data: option, error } = await client
     .from("meetup_time_options")
-    .insert({ meetup_id: meetupId, proposed_date: b.proposedDate, time_block: b.timeBlock ?? null, label: b.label ?? null })
+    .insert({
+      meetup_id:     meetupId,
+      proposed_date: b.proposedDate,
+      proposed_time: b.proposedTime ?? null,
+      time_block:    b.proposedTime ? null : (b.timeBlock ?? null),
+      label:         b.label ?? null,
+    })
     .select("*")
     .single();
 
   if (error) { req.log.error({ err: error }, "add time option"); sendError(res, "db_error", error.message); return; }
 
   res.status(201).json({
-    id: (option as any).id,
+    id:           (option as any).id,
     meetupId,
     proposedDate: (option as any).proposed_date,
-    timeBlock: (option as any).time_block ?? null,
-    label: (option as any).label ?? null,
-    confirmed: false,
-    votes: { yes: 0, maybe: 0, no: 0, myVote: null },
+    proposedTime: (option as any).proposed_time ?? null,
+    timeBlock:    (option as any).time_block ?? null,
+    label:        (option as any).label ?? null,
+    confirmed:    false,
+    votes:        { yes: 0, maybe: 0, no: 0, myVote: null },
   });
 });
 
@@ -695,12 +704,20 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
     .from("meetup_time_options").select("*").eq("id", parsed.data.optionId).eq("meetup_id", meetupId).maybeSingle();
   if (!option) { sendError(res, "not_found", "Time option not found in this meetup"); return; }
 
-  // Build starts_at from proposed_date + time_block
-  const date = (option as any).proposed_date;
-  const block = (option as any).time_block;
-  const blockHour: Record<string, number> = { morning: 9, afternoon: 13, evening: 18, late: 22 };
-  const hour = block ? (blockHour[block] ?? 18) : 18;
-  const startsAt = `${date}T${String(hour).padStart(2, "0")}:00:00`;
+  // Build starts_at: exact proposed_time takes priority over time_block
+  const date = (option as any).proposed_date as string;
+  const proposedTime = (option as any).proposed_time as string | null;
+  const block = (option as any).time_block as string | null;
+  let startsAt: string;
+  if (proposedTime) {
+    // proposedTime is HH:MM:SS from Postgres TIME column; normalise to HH:MM:00
+    const [h = "00", m = "00"] = proposedTime.split(":");
+    startsAt = `${date}T${h.padStart(2, "0")}:${m.padStart(2, "0")}:00`;
+  } else {
+    const blockHour: Record<string, number> = { morning: 9, afternoon: 13, evening: 18, late: 22 };
+    const hour = block ? (blockHour[block] ?? 18) : 18;
+    startsAt = `${date}T${String(hour).padStart(2, "0")}:00:00`;
+  }
 
   const now = new Date().toISOString();
   // Clear any previously confirmed options for this meetup first (single winner)

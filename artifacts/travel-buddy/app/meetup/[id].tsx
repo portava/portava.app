@@ -67,6 +67,21 @@ const BLOCK_LABELS: Record<string, string> = {
   evening: 'Evening (17–22)', late: 'Late night (22+)',
 };
 
+function formatProposedTime(timeStr: string): string {
+  const parts = timeStr.split(':');
+  const h = parseInt(parts[0] ?? '0', 10);
+  const m = parseInt(parts[1] ?? '0', 10);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function timeOptionPill(opt: import('../../src/services/meetups').MeetupTimeOption): string {
+  if (opt.proposedTime) return formatProposedTime(opt.proposedTime);
+  if (opt.timeBlock) return BLOCK_LABELS[opt.timeBlock] ?? opt.timeBlock;
+  return 'Time TBD';
+}
+
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
   active:    { bg: '#E0F2FE', fg: '#0369A1' },
   confirmed: { bg: '#DCFCE7', fg: '#16A34A' },
@@ -522,11 +537,7 @@ export default function MeetupScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <CalendarClock size={14} color={color.signal} />
                 <Text style={s.optionDate}>{relDate(meetup.timeOptions[0].proposedDate)}</Text>
-                {meetup.timeOptions[0].timeBlock && (
-                  <Text style={s.optionBlock}>
-                    {BLOCK_LABELS[meetup.timeOptions[0].timeBlock] ?? meetup.timeOptions[0].timeBlock}
-                  </Text>
-                )}
+                <Text style={s.optionBlock}>{timeOptionPill(meetup.timeOptions[0])}</Text>
               </View>
               {meetup.timeOptions[0].label ? <Text style={s.optionLabel}>{meetup.timeOptions[0].label}</Text> : null}
               <Text style={s.voteHint}>Use the RSVP section above to confirm attendance</Text>
@@ -555,7 +566,7 @@ export default function MeetupScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                     {opt.confirmed && <Trophy size={13} color="#16A34A" />}
                     <Text style={s.optionDate}>{relDate(opt.proposedDate)}</Text>
-                    {opt.timeBlock && <Text style={s.optionBlock}>{opt.timeBlock}</Text>}
+                    <Text style={s.optionBlock}>{timeOptionPill(opt)}</Text>
                   </View>
                   {opt.label ? <Text style={s.optionLabel}>{opt.label}</Text> : null}
                   <VoteBar votes={opt.votes} />
