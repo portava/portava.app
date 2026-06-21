@@ -13,6 +13,12 @@ const ALLOWED_AVATAR_MIME: Record<string, string> = {
 };
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5 MB
 
+const SUPPORTED_LANGUAGE_CODES = new Set([
+  'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'zh-TW',
+  'pt', 'it', 'ru', 'ar', 'th', 'vi', 'id', 'tl',
+  'sv', 'nl', 'pl', 'tr', 'hi',
+]);
+
 const RESERVED_USERNAMES = new Set([
   "admin", "support", "system", "travelbuddy", "passport", "official",
   "root", "api", "settings", "login", "signup", "help", "me", "user",
@@ -32,7 +38,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language";
 
 function mapProfile(r: any) {
   return {
@@ -66,6 +72,7 @@ function mapProfile(r: any) {
     availabilityTags: r.availability_tags ?? [],
     planningStyle: r.planning_style ?? null,
     publicSocialLinks: r.public_social_links ?? {},
+    preferredLanguage: r.preferred_language ?? null,
   };
 }
 
@@ -124,6 +131,7 @@ const patchProfileSchema = z.object({
   availabilityTags: z.array(z.string().max(50)).max(4).optional(),
   planningStyle: z.string().max(50).nullish(),
   publicSocialLinks: z.record(z.string().max(300)).optional(),
+  preferredLanguage: z.string().max(20).nullish(),
 });
 
 router.patch("/me/profile", async (req, res) => {
@@ -161,6 +169,13 @@ router.patch("/me/profile", async (req, res) => {
   if (p.planningStyle !== undefined) row.planning_style = p.planningStyle;
   if (p.publicSocialLinks !== undefined) row.public_social_links = p.publicSocialLinks;
   if (p.coverUrl !== undefined) row.cover_photo_url = p.coverUrl;
+  if (p.preferredLanguage !== undefined) {
+    if (p.preferredLanguage !== null && !SUPPORTED_LANGUAGE_CODES.has(p.preferredLanguage)) {
+      sendError(res, "invalid_payload", `Unsupported language code: "${p.preferredLanguage}". Supported: ${[...SUPPORTED_LANGUAGE_CODES].join(", ")}`);
+      return;
+    }
+    row.preferred_language = p.preferredLanguage ?? null;
+  }
 
   if (p.username !== undefined) {
     const v = validateUsername(p.username);

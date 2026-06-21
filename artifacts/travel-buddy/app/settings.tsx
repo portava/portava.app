@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
-import { Zap, Brain } from 'lucide-react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { Zap, Brain, Globe } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, type as t, radius, layout } from '../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../src/services/intelligence';
+import { getMyProfile } from '../src/services/profile';
+import { SUPPORTED_LANGUAGES } from './language-picker';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
@@ -14,6 +16,10 @@ export default function Settings() {
   const [telegraphDM, setTelegraphDM] = useState(true);
   const [telegraphTrip, setTelegraphTrip] = useState(true);
   const [telegraphCircle, setTelegraphCircle] = useState(true);
+
+  const [preferredLanguage, setPreferredLanguage] = useState<string | null>(null);
+  const isMounted = useRef(true);
+  useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; }; }, []);
 
   const [prefLoading, setPrefLoading] = useState(false);
   const [prefSaving, setPrefSaving] = useState(false);
@@ -27,6 +33,14 @@ export default function Settings() {
   const [prefTimes, setPrefTimes] = useState<string[]>([]);
 
   const live = configured && isAuthed;
+
+  const loadLanguage = useCallback(async () => {
+    if (!live) return;
+    const result = await getMyProfile();
+    if (result.ok && result.data && isMounted.current) {
+      setPreferredLanguage((result.data as any).preferredLanguage ?? null);
+    }
+  }, [live]);
 
   const loadPrefs = useCallback(async () => {
     if (!live) return;
@@ -46,6 +60,9 @@ export default function Settings() {
   }, [live]);
 
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
+  useEffect(() => { loadLanguage(); }, [loadLanguage]);
+
+  useFocusEffect(useCallback(() => { loadLanguage(); }, [loadLanguage]));
 
   async function savePref(patch: Record<string, any>) {
     if (!live) return;
@@ -341,6 +358,38 @@ export default function Settings() {
           )}
         </View>
 
+        {/* Language section */}
+        {live && (
+          <View style={{ gap: space.sm }}>
+            <View style={styles.sectionHeader}>
+              <Globe size={13} color={color.deep} />
+              <Text style={styles.h}>Language</Text>
+            </View>
+            <Text style={styles.sectionDesc}>
+              Incoming messages will be translated into your chosen language. Clear the selection to use your device locale.
+            </Text>
+            <Pressable
+              style={({ pressed }) => [styles.langRow, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() =>
+                router.push({
+                  pathname: '/language-picker' as any,
+                  params: { current: preferredLanguage ?? '' },
+                })
+              }
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.langRowLabel}>Translation language</Text>
+                <Text style={styles.langRowValue}>
+                  {preferredLanguage
+                    ? (SUPPORTED_LANGUAGES.find((l) => l.code === preferredLanguage)?.name ?? preferredLanguage)
+                    : 'Device locale (default)'}
+                </Text>
+              </View>
+              <Text style={styles.langChevron}>›</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Standard settings groups */}
         {BASIC_GROUPS.map((g) => (
           <View key={g.h} style={{ gap: space.sm }}>
@@ -419,4 +468,12 @@ const styles = StyleSheet.create({
   row: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.lg },
   item: { ...t.body, color: color.ink },
   logout: { color: color.signal, fontWeight: '700' },
+  langRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
+    borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: space.md,
+  },
+  langRowLabel: { ...t.body, color: color.ink, fontSize: 14 },
+  langRowValue: { ...t.small, color: color.mute, fontSize: 12, marginTop: 2 },
+  langChevron: { fontSize: 22, color: color.mute, lineHeight: 26 },
 });

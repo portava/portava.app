@@ -135,15 +135,19 @@ export async function translateMessageForThread(
       .eq('id', messageId);
 
     // 3. Fetch recipient language preferences.
+    // preferred_language (user-chosen in Settings) takes priority over
+    // preferred_message_language (legacy auto-translate field).
     const { data: profiles } = await sc
       .from('profiles')
-      .select('id, preferred_message_language, auto_translate_messages')
+      .select('id, preferred_language, preferred_message_language, auto_translate_messages')
       .in('id', recipientIds);
 
     const profileMap: Record<string, { preferredLanguage: string; autoTranslate: boolean }> = {};
     for (const p of profiles ?? []) {
+      const explicitLang = (p as any).preferred_language as string | null;
+      const legacyLang = (p as any).preferred_message_language as string | null;
       profileMap[(p as any).id] = {
-        preferredLanguage: (p as any).preferred_message_language ?? 'en',
+        preferredLanguage: explicitLang ?? legacyLang ?? 'en',
         autoTranslate: (p as any).auto_translate_messages ?? true,
       };
     }
