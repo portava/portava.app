@@ -181,10 +181,28 @@ export function useThreadMessages(threadId: string | null) {
     const incoming = [...(res.data.messages ?? [])].reverse();
     if (incoming.length === 0) return;
     setMessages((prev) => {
+      const incomingById = new Map(incoming.map((m) => [m.id, m]));
       const existingIds = new Set(prev.map((m) => m.id));
       const fresh = incoming.filter((m) => !existingIds.has(m.id));
-      if (fresh.length === 0) return prev;
-      return [...prev, ...fresh];
+
+      // Merge translation updates for existing messages whose status resolved
+      // since the last render (pending → translated/failed/skipped).
+      // Only replace the entry when status actually changes to avoid flicker.
+      let hasTranslationUpdate = false;
+      const updated = prev.map((m) => {
+        if (m.translationStatus === 'pending') {
+          const refreshed = incomingById.get(m.id);
+          if (refreshed && refreshed.translationStatus !== 'pending') {
+            hasTranslationUpdate = true;
+            return refreshed;
+          }
+        }
+        return m;
+      });
+
+      if (fresh.length === 0 && !hasTranslationUpdate) return prev;
+      if (fresh.length === 0) return updated;
+      return [...updated, ...fresh];
     });
   }, [threadId]);
 
