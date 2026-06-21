@@ -42,6 +42,12 @@ A social travel passport mobile app — log trips, track destinations, and share
 - Create and manage trips (destination, dates, status, visibility)
 - View trip details; social passport for sharing travel history
 
+## Applied migrations
+
+| Migration | Description | Applied |
+|-----------|-------------|---------|
+| `0013_daily_briefs_cleanup.sql` | `daily_briefs_brief_date_idx` index on `daily_briefs(brief_date)` — keeps the nightly purge DELETE fast as the table grows | 2026-06-21 |
+
 ## Gotchas
 
 - After any `pnpm add` in a workspace sibling (e.g. `api-server`), restart the `expo` workflow — pnpm temp dirs can crash Metro if it's already running.
