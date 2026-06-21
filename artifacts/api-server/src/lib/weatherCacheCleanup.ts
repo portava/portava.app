@@ -60,7 +60,7 @@ export async function purgeOldWeatherCache(opts?: {
     const { error, count } = await client
       .from("weather_cache")
       .delete({ count: "exact" })
-      .lt("cached_at", cutoff);
+      .lt("fetched_at", cutoff);
 
     if (error) {
       logger.error({ err: error }, "weatherCacheCleanup: purge failed");

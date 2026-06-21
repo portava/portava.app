@@ -47,7 +47,15 @@ router.get("/healthz/cleanup", async (_req, res) => {
  * the number of rows deleted. No external auth required; intended for
  * server-side or scheduled invocation only (not exposed to mobile clients).
  */
-router.post("/admin/cleanup/weather-cache", async (_req, res) => {
+router.post("/admin/cleanup/weather-cache", async (req, res) => {
+  const secret = process.env.CLEANUP_ADMIN_SECRET;
+  if (secret) {
+    const provided = req.headers["x-cleanup-secret"];
+    if (provided !== secret) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+  }
   const { deleted, error } = await purgeOldWeatherCache();
   if (error) {
     logger.error({ err: error }, "admin/cleanup/weather-cache: purge failed");
