@@ -666,7 +666,7 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
   const { meetupId } = req.params;
   if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
 
-  const { data: meetup } = await client.from("meetups").select("creator_id, status, title, trip_id, circle_owner_id").eq("id", meetupId).maybeSingle();
+  const { data: meetup } = await client.from("meetups").select("creator_id, status, title, trip_id, circle_owner_id, location_name").eq("id", meetupId).maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
   if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can confirm the time"); return; }
   if ((meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Meetup is cancelled"); return; }
@@ -707,6 +707,7 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
     (meetup as any).circle_owner_id as string | null,
     user.id,
     startsAt,
+    (meetup as any).location_name as string | null,
   ).catch(() => {});
 
   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
@@ -840,6 +841,7 @@ async function postConfirmTimeSystemMessage(
   circleOwnerId: string | null,
   creatorId: string,
   startsAt: string,
+  locationName: string | null = null,
 ): Promise<void> {
   let threadId: string | null = null;
   if (tripId) {
@@ -861,20 +863,39 @@ async function postConfirmTimeSystemMessage(
   }
   if (!threadId) return;
 
+  // Fetch creator's display name for the human-readable message
+  const { data: profile } = await client
+    .from("profiles")
+    .select("name, handle")
+    .eq("id", creatorId)
+    .maybeSingle();
+  const creatorName: string = (profile as any)?.name ?? (profile as any)?.handle ?? "Someone";
+
   const confirmedDate = new Date(startsAt).toLocaleDateString("en-US", {
     weekday: "short", month: "short", day: "numeric",
   });
+  const confirmedTime = new Date(startsAt).toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit",
+  });
+
+  // Build human-readable text: "Andre confirmed the meetup: Dinner — Fri, Jun 20 at 6:00 PM — Ximending"
+  const parts: string[] = [`${title} — ${confirmedDate} at ${confirmedTime}`];
+  if (locationName) parts.push(locationName);
+  const text = `${creatorName} confirmed the meetup: ${parts.join(" — ")}`;
+
   const body = JSON.stringify({
     type: "meetup_confirmed",
     meetupId,
     title,
     startsAt,
-    text: `✅ Time confirmed for "${title}": ${confirmedDate}`,
+    locationName: locationName ?? undefined,
+    creatorName,
+    text,
   });
 
   await client
     .from("messages")
-    .insert({ thread_id: threadId, sender_id: creatorId, body, msg_type: "system", subtype: "meetup" });
+    .insert({ thread_id: threadId, sender_id: creatorId, body, msg_type: "system", subtype: "meetup_confirmed" });
 }
 
 async function postMeetupSystemMessage(

@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight } from 'lucide-react-native';
+import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight, CheckCircle } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -34,13 +34,16 @@ function formatTime(iso: string): string {
 // ── Meetup card ───────────────────────────────────────────────────────────────
 
 interface MeetupCardPayload {
-  type: 'meetup_card';
+  type: 'meetup_card' | 'meetup_confirmed';
   meetupId: string;
   title: string;
   locationName?: string;
   timeBlock?: string;
   approximateDate?: string;
   plannedByName?: string;
+  isConfirmed?: boolean;
+  confirmedTime?: string;
+  creatorName?: string;
 }
 
 function parseMeetupCard(
@@ -50,7 +53,22 @@ function parseMeetupCard(
   if (!body.startsWith('{')) return null;
   try {
     const obj = JSON.parse(body);
-    // Primary: structured system message with meetup subtype
+    // Confirmation system message: subtype = 'meetup_confirmed'
+    if (msg?.msgType === 'system' && msg?.subtype === 'meetup_confirmed') {
+      if (obj.meetupId && obj.title) {
+        return {
+          type: 'meetup_confirmed',
+          meetupId: obj.meetupId,
+          title: obj.title,
+          locationName: obj.locationName,
+          creatorName: obj.creatorName,
+          confirmedTime: obj.startsAt,
+          isConfirmed: true,
+        };
+      }
+      return null;
+    }
+    // Primary: structured system message with meetup subtype (creation card)
     if (msg?.msgType === 'system' && msg?.subtype === 'meetup') {
       if (obj.meetupId && obj.title) return { type: 'meetup_card', ...obj } as MeetupCardPayload;
       return null;
@@ -132,20 +150,39 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
     }
   }
 
-  const when = [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
+  const isConfirmed = payload.isConfirmed ?? false;
+  const when = isConfirmed
+    ? (payload.confirmedTime
+        ? new Date(payload.confirmedTime).toLocaleString(undefined, {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit',
+          })
+        : null)
+    : [payload.approximateDate, payload.timeBlock].filter(Boolean).join(' · ');
   const rsvpLabel = counts
     ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
     : null;
-  const showRsvpButtons = isAuthed && !isCancelled;
+  const showRsvpButtons = isAuthed && !isCancelled && !isConfirmed;
 
   return (
     <Pressable
-      style={[mc.card, mine && mc.cardMine]}
+      style={[mc.card, mine && mc.cardMine, isConfirmed && mc.cardConfirmed]}
       onPress={() => router.push(`/meetup/${payload.meetupId}` as any)}
     >
       <View style={mc.row}>
-        <View style={mc.icon}><CalendarClock size={14} color={color.signal} /></View>
-        <Text style={mc.label}>Meetup</Text>
+        <View style={[mc.icon, isConfirmed && mc.iconConfirmed]}>
+          {isConfirmed
+            ? <CheckCircle size={14} color={color.success} />
+            : <CalendarClock size={14} color={color.signal} />}
+        </View>
+        <Text style={[mc.label, isConfirmed && mc.labelConfirmed]}>
+          {isConfirmed ? 'Confirmed' : 'Meetup'}
+        </Text>
+        {!isConfirmed && (
+          <View style={mc.pendingBadge}>
+            <Text style={mc.pendingBadgeText}>Voting in progress</Text>
+          </View>
+        )}
       </View>
 
       {/* Creator row — shown once getMeetup() resolves */}
@@ -166,7 +203,9 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       ) : null}
       {when ? (
         <View style={mc.metaRow}>
-          <Text style={mc.meta}>🗓 {when}</Text>
+          <Text style={[mc.meta, isConfirmed && mc.metaConfirmed]}>
+            {isConfirmed ? '✅' : '🗓'} {when}
+          </Text>
         </View>
       ) : null}
       {rsvpLabel ? (
@@ -175,7 +214,12 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         </View>
       ) : null}
 
-      {showRsvpButtons ? (
+      {isConfirmed ? (
+        <View style={mc.footer}>
+          <Text style={[mc.see, mine && mc.seeMine]}>Tap to view details</Text>
+          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.success} />
+        </View>
+      ) : showRsvpButtons ? (
         <View style={mc.rsvpRow}>
           {RSVP_BTNS.map((opt) => {
             const isActive = myRsvp === opt.key;
@@ -209,13 +253,20 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
 const mc = StyleSheet.create({
   card: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 280 },
   cardMine: { backgroundColor: color.signal + '22', borderColor: color.signal + '55' },
+  cardConfirmed: { borderColor: color.success + '55', backgroundColor: color.success + '0A' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   icon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  iconConfirmed: { backgroundColor: color.success + '22' },
   label: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
+  labelConfirmed: { color: color.success },
+  pendingBadge: { marginLeft: 'auto', backgroundColor: '#FFF3CD', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  pendingBadgeText: { fontSize: 9, fontWeight: '600', color: '#856404', letterSpacing: 0.3 },
   title: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   titleMine: { color: color.ink },
   metaRow: { flexDirection: 'row', alignItems: 'center' },
   meta: { ...t.small, color: color.mute, fontSize: 11 },
+  metaConfirmed: { color: color.success, fontWeight: '600' },
+  plannedBy: { ...t.small, color: color.faint, fontSize: 10, fontStyle: 'italic' },
   creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   creatorText: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
