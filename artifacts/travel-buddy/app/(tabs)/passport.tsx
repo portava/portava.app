@@ -1,11 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Bell } from 'lucide-react-native';
+import { Bell, Share2 } from 'lucide-react-native';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { useRequestCount } from '../../src/hooks/useRequests';
+import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
 import { CompactStatsRow } from '../../src/components/CompactStatsRow';
@@ -17,6 +18,7 @@ import { AboutTab } from '../../src/components/AboutTab';
 import { PassportSettingsSheet } from '../../src/components/PassportSettingsSheet';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
+import { PassportShareCard } from '../../src/components/PassportShareCard';
 import { mockPassport } from '../../src/data/passport';
 import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
@@ -171,6 +173,7 @@ function PassportContent({
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { count: requestCount, reload: reloadCount } = useRequestCount();
+  const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
 
   useFocusEffect(useCallback(() => {
     reloadCount();
@@ -247,6 +250,24 @@ function PassportContent({
         </View>
       </ScrollView>
 
+      {/* Off-screen share card (captured by usePassportShare) */}
+      <View
+        style={styles.offScreen}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        <PassportShareCard
+          ref={cardRef}
+          displayName={profile.displayName ?? profile.name ?? null}
+          username={profile.username ?? null}
+          avatarUrl={profile.avatarUrl ?? null}
+          tripCount={trips.length}
+          stampCount={verifiedStamps}
+          tagline={profile.bio ?? null}
+        />
+      </View>
+
       {/* Owner action menu */}
       <OwnerActionMenu
         visible={menuOpen}
@@ -266,6 +287,21 @@ function PassportContent({
           onSaved={handleSaved}
         />
       )}
+
+      {/* Share button — top-right, next to bell */}
+      <Pressable
+        style={[styles.shareBtn, { top: insets.top + space.sm }]}
+        onPress={share}
+        disabled={sharing}
+        hitSlop={8}
+        accessibilityLabel="Share Passport"
+      >
+        {sharing ? (
+          <ActivityIndicator size="small" color={color.ink} />
+        ) : (
+          <Share2 size={18} color={color.ink} />
+        )}
+      </Pressable>
 
       {/* Notifications bell — absolutely positioned top-right */}
       <Pressable
@@ -287,6 +323,27 @@ function PassportContent({
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
+
+  offScreen: {
+    position: 'absolute',
+    left: -9999,
+    top: -9999,
+    opacity: 0,
+  },
+
+  shareBtn: {
+    position: 'absolute',
+    right: space.lg + 38 + space.sm,
+    zIndex: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bellBtn: {
     position: 'absolute',
     right: space.lg,

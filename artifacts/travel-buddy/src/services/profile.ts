@@ -205,19 +205,52 @@ export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise
   }
 }
 
-/* ---------- Public passport ---------- */
+/* ---------- Public profile (share card) ---------- */
 
-export async function getPublicPassport(username: string): Promise<ProfileResult<PublicProfile | { private: true }>> {
+export interface PublicProfileCard {
+  id?: string;
+  username: string | null;
+  displayName: string | null;
+  bio?: string | null;
+  avatarUrl: string | null;
+  coverUrl: string | null;
+  tripCount: number;
+  stampCount: number;
+  visibility: string;
+  private?: boolean;
+}
+
+export async function getPublicProfile(username: string): Promise<ProfileResult<PublicProfileCard>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error' };
   }
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/users/${encodeURIComponent(username)}/profile`,
+    );
+    if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Public passport ---------- */
+
+export async function getPublicPassport(username: string): Promise<ProfileResult<PublicProfile | { private: true }>> {
+  if (!apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error' };
+  }
 
   try {
     const res = await fetch(
       `${apiBase()}/api/users/${encodeURIComponent(username)}/passport`,
-      { headers: { Authorization: `Bearer ${token}` } },
     );
     if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
     if (!res.ok) {
@@ -232,14 +265,11 @@ export async function getPublicPassport(username: string): Promise<ProfileResult
 }
 
 export async function getPublicPostcards(username: string): Promise<ProfileResult<PassportPostcard[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (!apiBase()) return { ok: true, data: [] };
 
   try {
     const res = await fetch(
       `${apiBase()}/api/users/${encodeURIComponent(username)}/passport/postcards`,
-      { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();

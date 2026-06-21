@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
 
@@ -51,21 +52,25 @@ function mapPostcard(r: any, includePrivate = false) {
 }
 
 /* ===========================================================================
- * GET /users/:username/passport — public passport lookup
+ * GET /users/:username/passport — public passport lookup (no auth required)
  * ===========================================================================
+ * Uses the service-role client so unauthenticated callers can view public
+ * passports. Private profiles return { private: true } — not a 403.
  */
 router.get("/users/:username/passport", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { client } = auth;
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
 
-  const username = req.params.username.toLowerCase().trim();
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
   if (!username || username.length < 1) {
     sendError(res, "invalid_payload", "Invalid username");
     return;
   }
 
-  const { data, error } = await client
+  const { data, error } = await sc
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
     .eq("username", username)
@@ -90,18 +95,21 @@ router.get("/users/:username/passport", async (req, res) => {
 });
 
 /* ===========================================================================
- * GET /users/:username/passport/postcards — public postcard wall
+ * GET /users/:username/passport/postcards — public postcard wall (no auth required)
  * ===========================================================================
- * Only returns active public postcards. Never exposes exact GPS.
+ * Uses service-role client so recipients of a share link can view postcards
+ * without logging in. Never exposes exact GPS.
  */
 router.get("/users/:username/passport/postcards", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { client } = auth;
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
 
-  const username = req.params.username.toLowerCase().trim();
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
 
-  const { data: profile, error: profileErr } = await client
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, passport_visibility")
     .eq("username", username)
@@ -116,7 +124,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     return;
   }
 
-  const { data, error } = await client
+  const { data, error } = await sc
     .from("passport_postcards")
     .select(PUBLIC_POSTCARD_COLUMNS)
     .eq("user_id", profile.id)
@@ -287,6 +295,70 @@ router.patch("/passport/postcards/:id/remove", async (req, res) => {
     return;
   }
   res.status(204).send();
+});
+
+/* ===========================================================================
+ * GET /users/:username/profile — public profile card (for share link preview)
+ * ===========================================================================
+ * Returns displayName, username, avatarUrl, coverUrl, tripCount, stampCount,
+ * and visibility. Returns 404 for unknown usernames. Returns a minimal stub
+ * for private profiles instead of a full 403.
+ */
+router.get("/users/:username/profile", async (req, res) => {
+  const sc = getServiceClient();
+
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
+  if (!username) {
+    sendError(res, "invalid_payload", "Invalid username");
+    return;
+  }
+
+  const { data: profile, error: profileErr } = sc
+    ? await sc.from("profiles")
+        .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio")
+        .eq("username", username)
+        .maybeSingle()
+    : { data: null, error: new Error("No service client") };
+
+  if (profileErr || !profile) {
+    res.status(404).json({ error: "not_found", message: "User not found" });
+    return;
+  }
+
+  if (profile.passport_visibility === "private") {
+    res.status(200).json({
+      private: true,
+      username: profile.username,
+      displayName: profile.display_name ?? profile.name ?? null,
+      avatarUrl: null,
+      coverUrl: null,
+      tripCount: 0,
+      stampCount: 0,
+      visibility: "private",
+    });
+    return;
+  }
+
+  const [{ count: tripCount }, { count: stampCount }] = await Promise.all([
+    sc
+      ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id)
+      : Promise.resolve({ count: 0 }),
+    sc
+      ? sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false)
+      : Promise.resolve({ count: 0 }),
+  ]);
+
+  res.status(200).json({
+    id: profile.id,
+    username: profile.username ?? null,
+    displayName: profile.display_name ?? profile.name ?? null,
+    bio: profile.bio ?? null,
+    avatarUrl: profile.avatar_url ?? null,
+    coverUrl: profile.cover_photo_url ?? null,
+    tripCount: tripCount ?? 0,
+    stampCount: stampCount ?? 0,
+    visibility: profile.passport_visibility ?? "public",
+  });
 });
 
 /* ===========================================================================

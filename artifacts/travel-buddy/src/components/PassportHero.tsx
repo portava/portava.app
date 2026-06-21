@@ -74,7 +74,7 @@ export function PassportHero({
           <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuBtn}>
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
-        ) : !isOwner ? (
+        ) : !isOwner && onFollowPress !== undefined ? (
           <Pressable
             onPress={onFollowPress}
             hitSlop={8}
