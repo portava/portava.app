@@ -134,6 +134,7 @@ export async function createMeetup(params: {
   locationName?: string;
   approximateDate?: string;
   timeBlock?: TimeBlock;
+  startsAt?: string;
   tripId?: string;
   circleOwnerId?: string;
   visibility?: MeetupVisibility;
@@ -161,6 +162,7 @@ export async function updateMeetup(
     locationName: string | null;
     approximateDate: string | null;
     timeBlock: TimeBlock | null;
+    startsAt: string | null;
     status: MeetupStatus;
   }>,
 ): Promise<MeetupResult<MeetupSummary>> {

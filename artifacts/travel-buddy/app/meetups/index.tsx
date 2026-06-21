@@ -24,9 +24,10 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 
 function formatDate(m: MeetupListItem): string {
   if (m.startsAt) {
-    return new Date(m.startsAt).toLocaleDateString(undefined, {
-      weekday: 'short', month: 'short', day: 'numeric',
-    });
+    const d = new Date(m.startsAt);
+    const datePart = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${datePart} · ${timePart}`;
   }
   if (m.approximateDate) {
     return new Date(m.approximateDate + 'T12:00:00').toLocaleDateString(undefined, {

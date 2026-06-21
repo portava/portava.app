@@ -23,6 +23,7 @@ interface Props {
   onChange: (date: Date) => void;
   minimumDate?: Date;
   placeholder?: string;
+  mode?: 'date' | 'time';
 }
 
 function formatDate(d: Date): string {
@@ -34,8 +35,12 @@ function formatDate(d: Date): string {
   });
 }
 
+function formatTime(d: Date): string {
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function DatePickerField({
-  value, onChange, minimumDate, placeholder = 'Pick a date',
+  value, onChange, minimumDate, placeholder = 'Pick a date', mode = 'date',
 }: Props) {
   const [show, setShow] = useState(false);
 
@@ -58,16 +63,16 @@ export function DatePickerField({
       >
         <CalendarClock size={14} color={value ? color.signal : color.faint} />
         <Text style={[s.fieldText, !value && s.placeholder]}>
-          {value ? formatDate(value) : placeholder}
+          {value ? (mode === 'time' ? formatTime(value) : formatDate(value)) : placeholder}
         </Text>
       </Pressable>
 
       {show && (
         <>
           <DateTimePicker
-            mode="date"
-            value={value ?? minimumDate ?? new Date()}
-            minimumDate={minimumDate}
+            mode={mode}
+            value={value ?? (mode === 'time' ? new Date() : (minimumDate ?? new Date()))}
+            minimumDate={mode === 'date' ? minimumDate : undefined}
             display={Platform.OS === 'ios' ? 'spinner' : 'default'}
             onChange={handleChange}
           />

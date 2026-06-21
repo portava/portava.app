@@ -96,6 +96,7 @@ const CreateMeetupSchema = z.object({
   locationName: z.string().max(300).optional(),
   approximateDate: z.string().optional(), // YYYY-MM-DD
   timeBlock:    z.enum(["morning","afternoon","evening","late"]).optional(),
+  startsAt:     z.string().optional(),    // ISO datetime when exact time is set
   tripId:       z.string().regex(UUID).optional(),
   circleOwnerId: z.string().regex(UUID).optional(),
   visibility:   z.enum(["invitees","trip","circle","friends"]).default("invitees"),
@@ -137,7 +138,8 @@ router.post("/meetups", async (req, res) => {
       description:      b.description ?? null,
       location_name:    b.locationName ?? null,
       approximate_date: b.approximateDate ?? null,
-      time_block:       b.timeBlock ?? null,
+      time_block:       b.startsAt ? null : (b.timeBlock ?? null),
+      starts_at:        b.startsAt ?? null,
       trip_id:          b.tripId ?? null,
       circle_owner_id:  b.circleOwnerId ?? null,
       visibility:       b.visibility,
@@ -352,6 +354,7 @@ const UpdateMeetupSchema = z.object({
   locationName:    z.string().max(300).nullable().optional(),
   approximateDate: z.string().nullable().optional(),
   timeBlock:       z.enum(["morning","afternoon","evening","late"]).nullable().optional(),
+  startsAt:        z.string().nullable().optional(),
   status:          z.enum(["draft","active","confirmed","cancelled"]).optional(),
 });
 
@@ -377,6 +380,7 @@ router.patch("/meetups/:meetupId", async (req, res) => {
   if (b.locationName    !== undefined) patch.location_name    = b.locationName;
   if (b.approximateDate !== undefined) patch.approximate_date = b.approximateDate;
   if (b.timeBlock       !== undefined) patch.time_block       = b.timeBlock;
+  if (b.startsAt        !== undefined) patch.starts_at        = b.startsAt;
   if (b.status          !== undefined) patch.status           = b.status;
 
   const { data: updated, error } = await client

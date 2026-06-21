@@ -45,6 +45,23 @@ function relDate(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function relDateTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${datePart} · ${timePart}`;
+}
+
+function combineDateTime(date: Date, time: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const h = String(time.getHours()).padStart(2, '0');
+  const min = String(time.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day}T${h}:${min}:00`;
+}
+
 const BLOCK_LABELS: Record<string, string> = {
   morning: 'Morning (8–12)', afternoon: 'Afternoon (12–17)',
   evening: 'Evening (17–22)', late: 'Late night (22+)',
@@ -97,6 +114,7 @@ export default function MeetupScreen() {
   const [editLocation, setEditLocation] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editDate, setEditDate] = useState<Date | null>(null);
+  const [editExactTime, setEditExactTime] = useState<Date | null>(null);
   const [editTimeBlock, setEditTimeBlock] = useState<TimeBlock | null>(null);
 
   function startEdit() {
@@ -104,20 +122,31 @@ export default function MeetupScreen() {
     setEditTitle(meetup.title);
     setEditLocation(meetup.locationName ?? '');
     setEditDesc(meetup.description ?? '');
-    setEditDate(meetup.approximateDate ? new Date(meetup.approximateDate + 'T12:00:00') : null);
-    setEditTimeBlock(meetup.timeBlock ?? null);
+    if (meetup.approximateDate) {
+      setEditDate(new Date(meetup.approximateDate + 'T12:00:00'));
+    } else if (meetup.startsAt) {
+      setEditDate(new Date(meetup.startsAt));
+    } else {
+      setEditDate(null);
+    }
+    setEditExactTime(meetup.startsAt ? new Date(meetup.startsAt) : null);
+    setEditTimeBlock(meetup.startsAt ? null : (meetup.timeBlock ?? null));
     setEditing(true);
   }
 
   async function handleSaveEdit() {
     if (!id || !meetup || actioning) return;
     setActioning('edit');
+    const newStartsAt = (editDate && editExactTime)
+      ? combineDateTime(editDate, editExactTime)
+      : null;
     const res = await updateMeetup(id, {
       title:           editTitle.trim() || meetup.title,
       locationName:    editLocation.trim() || null,
       description:     editDesc.trim() || null,
       approximateDate: editDate ? toISODate(editDate) : null,
-      timeBlock:       editTimeBlock,
+      timeBlock:       editExactTime ? null : editTimeBlock,
+      startsAt:        newStartsAt,
     });
     setActioning(null);
     if (res.ok) {
@@ -127,7 +156,8 @@ export default function MeetupScreen() {
         locationName:    editLocation.trim() || null,
         description:     editDesc.trim() || null,
         approximateDate: editDate ? toISODate(editDate) : null,
-        timeBlock:       editTimeBlock,
+        timeBlock:       editExactTime ? null : editTimeBlock,
+        startsAt:        newStartsAt,
       } : prev);
       setEditing(false);
     } else {
@@ -319,15 +349,29 @@ export default function MeetupScreen() {
                 minimumDate={TODAY_START}
                 placeholder="Pick a date"
               />
-              <Text style={s.editLabel}>Time of day (optional)</Text>
-              <View style={s.blockRow}>
+              <Text style={s.editLabel}>Exact time (optional)</Text>
+              <DatePickerField
+                mode="time"
+                value={editExactTime}
+                onChange={(t) => { setEditExactTime(t); setEditTimeBlock(null); }}
+                placeholder="Pick a time"
+              />
+              {editExactTime && (
+                <Pressable onPress={() => setEditExactTime(null)}>
+                  <Text style={s.clearTimeText}>Clear exact time</Text>
+                </Pressable>
+              )}
+              <Text style={s.editLabel}>
+                {editExactTime ? 'Time of day (overridden by exact time above)' : 'Time of day (optional)'}
+              </Text>
+              <View style={[s.blockRow, editExactTime ? { opacity: 0.35 } : null]}>
                 {BLOCK_OPTIONS.map((opt) => {
-                  const active = editTimeBlock === opt.key;
+                  const active = !editExactTime && editTimeBlock === opt.key;
                   return (
                     <Pressable
                       key={opt.key}
                       style={[s.blockBtn, active && s.blockBtnActive]}
-                      onPress={() => setEditTimeBlock(active ? null : opt.key)}
+                      onPress={() => { if (!editExactTime) setEditTimeBlock(active ? null : opt.key); }}
                     >
                       <Text style={[s.blockBtnText, active && s.blockBtnTextActive]}>
                         {opt.label}
@@ -372,8 +416,10 @@ export default function MeetupScreen() {
               <View style={s.metaRow}>
                 <CalendarClock size={14} color={color.mute} />
                 <Text style={s.metaText}>
-                  {meetup.startsAt ? relDate(meetup.startsAt) : relDate(meetup.approximateDate ?? '')}
-                  {meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}
+                  {meetup.startsAt
+                    ? relDateTime(meetup.startsAt)
+                    : `${relDate(meetup.approximateDate ?? '')}${meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}`
+                  }
                 </Text>
               </View>
             ) : meetup.isCreator && !isCancelled ? (
@@ -568,6 +614,7 @@ const s = StyleSheet.create({
   blockBtnActive: { backgroundColor: color.signal, borderColor: color.signal },
   blockBtnText:   { ...t.small, fontWeight: '700', color: color.ink },
   blockBtnTextActive: { color: color.onInk },
+  clearTimeText:  { ...t.small, color: color.signal, fontWeight: '700', textAlign: 'right', marginTop: 2 },
 
   scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },

@@ -186,6 +186,7 @@ export function MeetupCreationSheet({
 
   // ── Single-date (propose mode off) ──
   const [approximateDate, setApproximateDate] = useState<Date | null>(null);
+  const [exactTime, setExactTime] = useState<Date | null>(null);
   const [timeBlock, setTimeBlock] = useState<TimeBlock | null>(null);
 
   const defaultVisibility: MeetupVisibility =
@@ -277,6 +278,15 @@ export function MeetupCreationSheet({
     return `${y}-${m}-${day}`;
   }
 
+  function combineDateTime(date: Date, time: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const h = String(time.getHours()).padStart(2, '0');
+    const min = String(time.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${day}T${h}:${min}:00`;
+  }
+
   async function handleCreate() {
     const trimmed = title.trim();
     if (!trimmed) { setError('Please enter a title'); return; }
@@ -312,7 +322,10 @@ export function MeetupCreationSheet({
       description:     description.trim() || undefined,
       locationName:    locationName.trim() || undefined,
       approximateDate: (!proposeMode && approximateDate) ? toISODate(approximateDate) : undefined,
-      timeBlock:       (!proposeMode && timeBlock) ? timeBlock : undefined,
+      timeBlock:       (!proposeMode && !exactTime && timeBlock) ? timeBlock : undefined,
+      startsAt:        (!proposeMode && approximateDate && exactTime)
+        ? combineDateTime(approximateDate, exactTime)
+        : undefined,
       tripId,
       circleOwnerId,
       visibility:      defaultVisibility,
@@ -570,8 +583,28 @@ export function MeetupCreationSheet({
                 {approximateDate && approximateDate < TODAY_START && (
                   <Text style={s.fieldWarning}>This date is in the past</Text>
                 )}
-                <Text style={s.label}>Time of day</Text>
-                <BlockPicker value={timeBlock} onChange={setTimeBlock} />
+                <View style={s.timeLabelRow}>
+                  <Text style={s.label}>Exact time</Text>
+                  <Text style={s.labelHint}>(optional)</Text>
+                </View>
+                <DatePickerField
+                  mode="time"
+                  value={exactTime}
+                  onChange={(t) => { setExactTime(t); setTimeBlock(null); }}
+                  placeholder="Pick a time"
+                />
+                {exactTime && (
+                  <Pressable onPress={() => setExactTime(null)}>
+                    <Text style={s.clearTimeLink}>Clear exact time</Text>
+                  </Pressable>
+                )}
+                <Text style={s.label}>
+                  {exactTime ? 'Time of day (overridden by exact time above)' : 'Time of day'}
+                </Text>
+                <BlockPicker
+                  value={exactTime ? null : timeBlock}
+                  onChange={(b) => { setTimeBlock(b); setExactTime(null); }}
+                />
               </View>
             ) : (
               <View style={{ gap: space.sm }}>
@@ -656,6 +689,9 @@ const s = StyleSheet.create({
   body:             { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   labelRow:         { flexDirection: 'row', alignItems: 'center', gap: 4 },
   label:            { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
+  timeLabelRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  labelHint:        { ...t.small, color: color.mute, fontSize: 11 },
+  clearTimeLink:    { ...t.small, color: color.signal, fontWeight: '700', textAlign: 'right', marginTop: 2 },
   input:            { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm + 2, ...t.body, color: color.ink },
   divider:          { height: 1, backgroundColor: color.haze, marginVertical: space.xs },
   sectionToggle:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
