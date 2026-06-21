@@ -124,3 +124,72 @@ export async function tripExists(client: SupabaseClient, tripId: string): Promis
   if (error) return false;
   return Boolean(data);
 }
+
+/** Discriminated union returned by canEditPlanItem. */
+export type CanEditPlanItemResult =
+  | { permitted: true;  role: "owner" | "member"; creatorId: string }
+  | { permitted: false; code: ApiErrorCode; message: string };
+
+/**
+ * Single authoritative check for edit / remove / reorder operations on a
+ * trip plan item.  Consolidates item-fetch + membership-check + ownership
+ * rule so every mutating route applies the same logic from one place.
+ *
+ * Rules (default, ownerOnly = false):
+ *   - Item must exist and not be soft-deleted  → not_found
+ *   - Caller must be an accepted member         → not_member
+ *   - Trip owner may edit any item              → permitted
+ *   - Member may only edit their own item       → forbidden if creator_id ≠ userId
+ *
+ * When ownerOnly = true (reorder):
+ *   - Item must exist and not be soft-deleted   → not_found
+ *   - Caller must be accepted member            → not_member
+ *   - Caller must be trip owner                 → forbidden otherwise
+ *
+ * No HTTP response is written; callers inspect the result and decide.
+ */
+export async function canEditPlanItem(
+  client: SupabaseClient,
+  tripId: string,
+  itemId: string,
+  userId: string,
+  ownerOnly = false,
+): Promise<CanEditPlanItemResult> {
+  const { data: item } = await client
+    .from("trip_plan_items")
+    .select("creator_id")
+    .eq("id", itemId)
+    .eq("trip_id", tripId)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { permitted: false, code: "not_found", message: "Plan item not found" };
+  }
+
+  const { data: membership } = await client
+    .from("trip_members")
+    .select("role")
+    .eq("trip_id", tripId)
+    .eq("user_id", userId)
+    .in("role", ["owner", "member"])
+    .maybeSingle();
+  if (!membership) {
+    return { permitted: false, code: "not_member", message: "Not a trip member" };
+  }
+
+  const role = (membership as { role: string }).role as "owner" | "member";
+  const creatorId = (item as { creator_id: string }).creator_id;
+
+  if (ownerOnly) {
+    if (role !== "owner") {
+      return { permitted: false, code: "forbidden", message: "Only the trip owner can reorder plan items" };
+    }
+    return { permitted: true, role, creatorId };
+  }
+
+  if (role !== "owner" && creatorId !== userId) {
+    return { permitted: false, code: "forbidden", message: "You can only edit your own plan items" };
+  }
+
+  return { permitted: true, role, creatorId };
+}

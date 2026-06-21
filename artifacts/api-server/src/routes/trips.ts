@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
-import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, sendError, canEditPlanItem } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 
@@ -553,30 +553,8 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const patch = parsed.data;
 
-  const { data: item } = await client
-    .from("trip_plan_items")
-    .select("creator_id")
-    .eq("id", itemId)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .maybeSingle();
-  if (!item) { sendError(res, "not_found", "Plan item not found"); return; }
-
-  // Owner can edit any item; member can only edit their own
-  const isOwner = await isAcceptedTripMember(client, tripId, user.id);
-  if (!isOwner) { sendError(res, "not_member", "Not a trip member"); return; }
-
-  const { data: membership } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", user.id)
-    .in("role", ["owner", "member"])
-    .maybeSingle();
-  const role = (membership as any)?.role ?? "member";
-  if (role !== "owner" && (item as any).creator_id !== user.id) {
-    sendError(res, "forbidden", "You can only edit your own plan items"); return;
-  }
+  const auth = await canEditPlanItem(client, tripId, itemId, user.id);
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (patch.title             !== undefined) dbPatch.title               = patch.title;
@@ -614,28 +592,8 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   const { tripId, itemId } = req.params;
   if (!UUID.test(tripId) || !UUID.test(itemId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
 
-  const { data: item } = await client
-    .from("trip_plan_items")
-    .select("creator_id, source_type, source_id")
-    .eq("id", itemId)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .maybeSingle();
-  if (!item) { sendError(res, "not_found", "Plan item not found"); return; }
-
-  const { data: membership } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", user.id)
-    .in("role", ["owner", "member"])
-    .maybeSingle();
-  if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
-
-  const role = (membership as any)?.role ?? "member";
-  if (role !== "owner" && (item as any).creator_id !== user.id) {
-    sendError(res, "forbidden", "You can only remove your own plan items"); return;
-  }
+  const auth = await canEditPlanItem(client, tripId, itemId, user.id);
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
   // Soft-delete only — source record is NOT deleted
   const { error } = await client
@@ -658,28 +616,8 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   const { tripId, itemId } = req.params;
   if (!UUID.test(tripId) || !UUID.test(itemId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
 
-  const { data: item } = await client
-    .from("trip_plan_items")
-    .select("creator_id")
-    .eq("id", itemId)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .maybeSingle();
-  if (!item) { sendError(res, "not_found", "Plan item not found"); return; }
-
-  const { data: membership } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", user.id)
-    .in("role", ["owner", "member"])
-    .maybeSingle();
-  if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
-
-  const role = (membership as any)?.role ?? "member";
-  if (role !== "owner" && (item as any).creator_id !== user.id) {
-    sendError(res, "forbidden", "You can only remove your own plan items"); return;
-  }
+  const auth = await canEditPlanItem(client, tripId, itemId, user.id);
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
   const { error } = await client
     .from("trip_plan_items")
@@ -704,24 +642,9 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const parsed = ReorderSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "sortOrder must be an integer"); return; }
 
-  // Only owner can reorder
-  const { data: membership } = await client
-    .from("trip_members")
-    .select("role")
-    .eq("trip_id", tripId)
-    .eq("user_id", user.id)
-    .eq("role", "owner")
-    .maybeSingle();
-  if (!membership) { sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return; }
-
-  const { data: item } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("id", itemId)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .maybeSingle();
-  if (!item) { sendError(res, "not_found", "Plan item not found"); return; }
+  // Only the trip owner can reorder items
+  const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
   const { error } = await client
     .from("trip_plan_items")

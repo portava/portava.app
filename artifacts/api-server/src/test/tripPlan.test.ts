@@ -25,7 +25,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient, canEditPlanItem } from "../lib/http.js";
 import tripsRouter from "../routes/trips.js";
 import planRouter from "../routes/plan.js";
 
@@ -256,6 +256,14 @@ async function patch(port: number, path: string, token?: string, body?: unknown)
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function del(port: number, path: string, token?: string) {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "DELETE", headers });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -497,6 +505,217 @@ describe("POST /plan/items — creator_id from token", () => {
     });
     assert.equal(r.status, 201);
     assert.equal(r.body.creatorId, BOB_ID, "creator must always be set from JWT, not body");
+    await close();
+  });
+});
+
+// ── canEditPlanItem — unit tests ──────────────────────────────────────────────
+
+function makeMiniClient(items: any[], members: any[]) {
+  return {
+    from(table: string) {
+      const source = table === "trip_plan_items" ? items : members;
+      const filters: Array<(r: any) => boolean> = [];
+      const b: any = {
+        select() { return b; },
+        eq(c: string, v: any) { filters.push((r: any) => r[c] === v); return b; },
+        in(c: string, vs: any[]) { filters.push((r: any) => vs.includes(r[c])); return b; },
+        is(c: string, v: any) {
+          filters.push((r: any) => v === null ? r[c] == null : r[c] === v);
+          return b;
+        },
+        async maybeSingle() {
+          return { data: source.filter((r) => filters.every((f) => f(r)))[0] ?? null, error: null };
+        },
+      };
+      return b;
+    },
+  };
+}
+
+function planItem(id: string, tripId: string, creatorId: string, removedAt: string | null = null) {
+  return { id, trip_id: tripId, creator_id: creatorId, removed_at: removedAt };
+}
+
+function membership(tripId: string, userId: string, role: string) {
+  return { trip_id: tripId, user_id: userId, role };
+}
+
+describe("canEditPlanItem — unit tests", () => {
+  it("A. not_found when item does not exist", async () => {
+    const client = makeMiniClient([], [membership(TRIP_ID, ALICE_ID, "owner")]);
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, ALICE_ID);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "not_found");
+  });
+
+  it("B. not_found when item is soft-deleted (removed_at set)", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, ALICE_ID, "2026-06-01T00:00:00Z")],
+      [membership(TRIP_ID, ALICE_ID, "owner")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, ALICE_ID);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "not_found");
+  });
+
+  it("C. not_member when user has no accepted membership", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, ALICE_ID)],
+      [],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, BOB_ID);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "not_member");
+  });
+
+  it("D. not_member when user is only invited (not accepted)", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, ALICE_ID)],
+      [membership(TRIP_ID, BOB_ID, "invited")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, BOB_ID);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "not_member");
+  });
+
+  it("E. forbidden when member tries to edit another member's item", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, ALICE_ID)],
+      [membership(TRIP_ID, BOB_ID, "member")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, BOB_ID);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "forbidden");
+  });
+
+  it("F. permitted when member edits their own item", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, BOB_ID)],
+      [membership(TRIP_ID, BOB_ID, "member")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, BOB_ID);
+    assert.equal(r.permitted, true);
+    if (r.permitted) {
+      assert.equal(r.role, "member");
+      assert.equal(r.creatorId, BOB_ID);
+    }
+  });
+
+  it("G. permitted when owner edits another member's item", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, BOB_ID)],
+      [membership(TRIP_ID, ALICE_ID, "owner")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, ALICE_ID);
+    assert.equal(r.permitted, true);
+    if (r.permitted) assert.equal(r.role, "owner");
+  });
+
+  it("H. ownerOnly=true: forbidden for member even editing their own item", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, BOB_ID)],
+      [membership(TRIP_ID, BOB_ID, "member")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, BOB_ID, true);
+    assert.equal(r.permitted, false);
+    assert.equal((r as any).code, "forbidden");
+  });
+
+  it("I. ownerOnly=true: permitted for trip owner", async () => {
+    const client = makeMiniClient(
+      [planItem(ITEM_ID_1, TRIP_ID, BOB_ID)],
+      [membership(TRIP_ID, ALICE_ID, "owner")],
+    );
+    const r = await canEditPlanItem(client as any, TRIP_ID, ITEM_ID_1, ALICE_ID, true);
+    assert.equal(r.permitted, true);
+    if (r.permitted) assert.equal(r.role, "owner");
+  });
+});
+
+// ── DELETE /plan/items/:itemId — REST soft-delete permissions ─────────────────
+
+describe("DELETE /api/trips/:tripId/plan/items/:itemId — permissions", () => {
+  it("16. member cannot delete another member's item (403)", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member", [CAROL_ID]: "member" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Bob item", category: "activity", status: "tentative",
+      source_type: "manual", source_id: null, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    const { port, close } = await startServer(s);
+    const r = await del(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "carol-tok");
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("17. member can delete their own item (204)", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await del(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "bob-tok");
+    assert.equal(r.status, 204);
+    const dbItem = s.trip_plan_items.find((i) => i.id === ITEM_ID_1)!;
+    assert.ok(dbItem.removed_at, "removed_at should be set after DELETE");
+    await close();
+  });
+
+  it("18. owner can delete any member's item (204)", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await del(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok");
+    assert.equal(r.status, 204);
+    await close();
+  });
+});
+
+// ── PATCH /remove — additional permission scenarios ───────────────────────────
+
+describe("PATCH /remove — additional permission scenarios", () => {
+  it("19. member cannot remove another member's item (403)", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member", [CAROL_ID]: "member" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Bob item", category: "activity", status: "tentative",
+      source_type: "manual", source_id: null, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/remove`, "carol-tok");
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("20. owner can remove any member's item (200)", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/remove`, "alice-tok");
+    assert.equal(r.status, 200);
+    await close();
+  });
+});
+
+// ── POST /reorder — owner-only enforcement ────────────────────────────────────
+
+describe("POST /plan/items/:itemId/reorder — owner-only", () => {
+  it("21. member cannot reorder items (403)", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/reorder`, "bob-tok", { sortOrder: 2000 });
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("22. owner can reorder any item (200)", async () => {
+    const s = stateWithItem(BOB_ID);
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/reorder`, "alice-tok", { sortOrder: 5000 });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sortOrder, 5000);
     await close();
   });
 });
