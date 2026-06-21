@@ -117,19 +117,23 @@ function buildResponse(
   const timeRef = meetupTimeStr ? ` at ${meetupTimeStr}` : "";
   const meal = getMealLabel(meetupContext?.meetupTime);
 
+  const mealCap = meal === "breakfast" ? "Breakfast" : meal === "lunch" ? "Lunch" : "Dinner";
   const findFoodSummary = hasMeetupCtx
-    ? `${meal === "lunch" ? "Lunch" : "Dinner"} options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
+    ? `${mealCap} options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
     : `Food recommendations${destination ? ` for ${destination}` : ""}. Tap to add to your trip plan.`;
+
+  const mealVenueLabel = meal === "breakfast" ? "café or bakery" : meal === "lunch" ? "café or bistro" : "restaurant";
+  const mealEstimate   = meal === "breakfast" ? "30–45 min" : meal === "lunch" ? "45 min–1 hour" : "1–1.5 hours";
 
   const findFoodSuggestions: TelegraphCommandResponse["suggestions"] = hasMeetupCtx
     ? [
         {
-          title: `${meal === "lunch" ? "Lunch" : "Dinner"} spot${nearbyRef}`,
+          title: `${mealCap} spot${nearbyRef}`,
           reason: meetupLoc
             ? `Close to ${meetupLoc} — easy to reach before your meetup`
             : `Good option before your meetup${timeRef}`,
           category: "food",
-          estimatedTime: meal === "lunch" ? "45 min–1 hour" : "1–1.5 hours",
+          estimatedTime: mealEstimate,
           priceLevel: "$$",
         },
         {
@@ -140,7 +144,7 @@ function buildResponse(
           priceLevel: "$",
         },
         {
-          title: `Local ${meal === "lunch" ? "café or bistro" : "restaurant"}${nearbyRef}`,
+          title: `Local ${mealVenueLabel}${nearbyRef}`,
           reason: "Traveler favourite for the area",
           category: "food",
           estimatedTime: "1 hour",
@@ -267,12 +271,14 @@ function formatMeetupTime(iso: string): string {
   }
 }
 
-/** Return "lunch" for midday meetups (11–13 h), "dinner" otherwise. */
-function getMealLabel(iso?: string): "lunch" | "dinner" {
+/** Return the appropriate meal label based on the meetup hour. */
+function getMealLabel(iso?: string): "breakfast" | "lunch" | "dinner" {
   if (!iso) return "dinner";
   try {
     const h = new Date(iso).getHours();
-    return h >= 11 && h < 14 ? "lunch" : "dinner";
+    if (h >= 7 && h < 11) return "breakfast";
+    if (h >= 11 && h < 14) return "lunch";
+    return "dinner";
   } catch {
     return "dinner";
   }

@@ -233,13 +233,14 @@ export function buildDailyBrief(opts: {
       params: { prompt: `Help me plan today${dest}` },
     });
   }
-  // Upcoming meetup action: suggest nearby food if meetup is at lunch (11–13) or dinner (17+) time
+  // Upcoming meetup action: suggest nearby food if meetup is at breakfast (7–10), lunch (11–13), or dinner (17+)
   for (const m of upcomingMeetups24h.slice(0, 1)) {
     const meetupHour = new Date(m.proposedTime).getHours();
-    const isLunch  = meetupHour >= 11 && meetupHour < 14;
-    const isDinner = meetupHour >= 17;
-    if (isLunch || isDinner) {
-      const meal = isLunch ? "lunch" : "dinner";
+    const isBreakfast = meetupHour >= 7 && meetupHour < 11;
+    const isLunch     = meetupHour >= 11 && meetupHour < 14;
+    const isDinner    = meetupHour >= 17;
+    if (isBreakfast || isLunch || isDinner) {
+      const meal = isBreakfast ? "breakfast" : isLunch ? "lunch" : "dinner";
       const dest = destination ? ` in ${destination}` : "";
       const locationHint = m.locationName ?? null;
       // Structured params let Telegraph generate location/time-aware food suggestions.
