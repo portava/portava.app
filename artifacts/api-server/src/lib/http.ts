@@ -152,6 +152,59 @@ export async function tripExists(client: SupabaseClient, tripId: string): Promis
   return Boolean(data);
 }
 
+// ---------------------------------------------------------------------------
+// Plan editing permission
+// ---------------------------------------------------------------------------
+
+export type PlanEditPermission = "owner_only" | "all_members" | "specific_members";
+
+/**
+ * Checks whether `userId` has trip-level permission to add or edit plan items.
+ *
+ * Rules:
+ *   - Trip owner is always permitted.
+ *   - 'all_members': any accepted member is permitted.
+ *   - 'owner_only': only the owner is permitted.
+ *   - 'specific_members': owner + users listed in plan_editors are permitted.
+ *
+ * Returns true/false. Does NOT write any HTTP response.
+ * Returns null when the trip is not found (caller should treat as 403/404).
+ */
+export async function canEditPlan(
+  client: SupabaseClient,
+  tripId: string,
+  userId: string,
+): Promise<boolean | null> {
+  const { data: trip } = await client
+    .from("trips")
+    .select("owner_id, plan_edit_permission")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (!trip) return null;
+
+  const ownerId  = (trip as any).owner_id as string;
+  const perm     = ((trip as any).plan_edit_permission as PlanEditPermission | null) ?? "all_members";
+
+  if (userId === ownerId) return true;
+
+  const membership = await requireTripMember(client, tripId, userId);
+  if (!membership) return false;
+
+  if (perm === "all_members") return true;
+  if (perm === "owner_only")  return false;
+
+  // specific_members: check plan_editors table
+  const { data: editorRow } = await client
+    .from("plan_editors")
+    .select("user_id")
+    .eq("trip_id", tripId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  return Boolean(editorRow);
+}
+
 /** Discriminated union returned by canEditPlanItem. */
 export type CanEditPlanItemResult =
   | { permitted: true;  role: "owner" | "member"; creatorId: string }

@@ -57,12 +57,47 @@ export interface UpdatePlanItemPayload {
   sortOrder?: number;
 }
 
-export async function fetchTripPlan(tripId: string): Promise<TripPlanItem[]> {
-  if (!isSupabaseConfigured) return [];
+export type PlanEditPermission = 'owner_only' | 'all_members' | 'specific_members';
+
+export interface TripPlanResult {
+  items: TripPlanItem[];
+  canEdit: boolean;
+}
+
+export async function fetchTripPlan(tripId: string): Promise<TripPlanResult> {
+  if (!isSupabaseConfigured) return { items: [], canEdit: false };
   const res = await authedFetch(planUrl(tripId));
   if (!res.ok) throw new Error(`fetchTripPlan ${res.status}`);
   const json = await res.json();
-  return json.items as TripPlanItem[];
+  return { items: json.items as TripPlanItem[], canEdit: json.canEdit === true };
+}
+
+export interface TripPlanPermissionResult {
+  planEditPermission: PlanEditPermission;
+  planEditors: string[];
+  canEdit: boolean;
+  isOwner: boolean;
+}
+
+export async function fetchTripPlanPermission(tripId: string): Promise<TripPlanPermissionResult> {
+  const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/plan-permission`);
+  if (!res.ok) throw new Error(`fetchTripPlanPermission ${res.status}`);
+  return res.json();
+}
+
+export async function updateTripPlanPermission(
+  tripId: string,
+  planEditPermission: PlanEditPermission,
+  planEditors?: string[],
+): Promise<void> {
+  const res = await authedFetch(`${apiBase()}/api/trips/${tripId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ planEditPermission, planEditors }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message ?? `updateTripPlanPermission ${res.status}`);
+  }
 }
 
 export async function fetchTripPlanMap(tripId: string): Promise<TripPlanItem[]> {

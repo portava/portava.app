@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle } from 'lucide-react-native';
+import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
 import { fetchTripPlan, fetchTripPlanMap } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
@@ -12,6 +12,7 @@ import { AddToPlanSheet } from './AddToPlanSheet';
 import { TimelineView, type DayBucket } from './itinerary/TimelineView';
 import { ItineraryMapView } from './itinerary/MapView';
 import { PlanItemSheet } from './itinerary/PlanItemSheet';
+import { TripPlanSettingsSheet } from './TripPlanSettingsSheet';
 
 // ── Category filter data ───────────────────────────────────────────────────────
 
@@ -205,10 +206,12 @@ export function TripPlanSection({
 }) {
   const [items, setItems] = useState<TripPlanItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const [mapItems, setMapItems] = useState<TripPlanItem[]>([]);
   const [mapLoading, setMapLoading] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeDay, setActiveDay] = useState<string>('all');
   const [activeCat, setActiveCat] = useState<TripPlanCategory | 'all'>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
@@ -239,8 +242,9 @@ export function TripPlanSection({
     setLoading(true);
     setAccessDenied(false);
     try {
-      const data = await fetchTripPlan(tripId);
-      setItems(data);
+      const result = await fetchTripPlan(tripId);
+      setItems(result.items);
+      setCanEdit(result.canEdit);
     } catch (e: any) {
       const msg = (e.message ?? '').toLowerCase();
       if (msg.includes('403') || msg.includes('401') || msg.includes('forbidden') || msg.includes('unauthorized')) {
@@ -359,13 +363,28 @@ export function TripPlanSection({
             <Pressable style={ps.refreshBtn} onPress={load} hitSlop={8}>
               <RotateCcw size={15} color={color.mute} />
             </Pressable>
-            <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
-              <Plus size={15} color={color.onInk} />
-              <Text style={ps.addBtnText}>Add</Text>
-            </Pressable>
+            {isOwner && (
+              <Pressable style={ps.settingsBtn} onPress={() => setSettingsOpen(true)} hitSlop={8}>
+                <Settings2 size={15} color={color.mute} />
+              </Pressable>
+            )}
+            {canEdit && (
+              <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
+                <Plus size={15} color={color.onInk} />
+                <Text style={ps.addBtnText}>Add</Text>
+              </Pressable>
+            )}
           </>
         )}
       </View>
+
+      {/* Read-only notice for members without edit permission */}
+      {!loading && !accessDenied && !canEdit && !isOwner && items.length > 0 && (
+        <View style={ps.readOnlyBanner}>
+          <Lock size={12} color={color.mute} />
+          <Text style={ps.readOnlyText}>Only the organizer can edit this plan</Text>
+        </View>
+      )}
 
       {/* Warning summary banner */}
       {!loading && !accessDenied && warnCount > 0 && (
@@ -415,11 +434,15 @@ export function TripPlanSection({
         <View style={ps.empty}>
           <Text style={ps.emptyTitle}>No plans yet.</Text>
           <Text style={ps.emptyBody}>
-            Add places, meetups, or activities to build your day-by-day itinerary.
+            {canEdit
+              ? 'Add places, meetups, or activities to build your day-by-day itinerary.'
+              : 'The organizer hasn\'t added any items yet.'}
           </Text>
-          <Pressable style={ps.emptyBtn} onPress={() => setAddSheetOpen(true)}>
-            <Text style={ps.emptyBtnText}>Add your first item</Text>
-          </Pressable>
+          {canEdit && (
+            <Pressable style={ps.emptyBtn} onPress={() => setAddSheetOpen(true)}>
+              <Text style={ps.emptyBtnText}>Add your first item</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -430,6 +453,7 @@ export function TripPlanSection({
           tripId={tripId}
           currentUserId={currentUserId}
           isOwner={isOwner}
+          canEdit={canEdit}
           onItemPress={handleItemPress}
           onEditPress={handleEditPress}
           onItemsChanged={handleItemsChanged}
@@ -455,6 +479,7 @@ export function TripPlanSection({
         tripId={tripId}
         currentUserId={currentUserId}
         isOwner={isOwner}
+        canEdit={canEdit}
         startInEditMode={detailStartInEditMode}
         onClose={() => { setDetailItem(null); setDetailStartInEditMode(false); }}
         onUpdated={(updated) => {
@@ -477,6 +502,14 @@ export function TripPlanSection({
         onClose={() => setAddSheetOpen(false)}
         onAdded={handleAdded}
       />
+
+      {/* Plan settings — owner only */}
+      <TripPlanSettingsSheet
+        visible={settingsOpen}
+        tripId={tripId}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={load}
+      />
     </View>
   );
 }
@@ -484,12 +517,15 @@ export function TripPlanSection({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const ps = StyleSheet.create({
-  wrap:       { marginTop: space.lg },
-  head:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, marginBottom: space.sm, gap: 8 },
-  title:      { ...t.title, color: color.ink, fontSize: 20 },
-  refreshBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
-  addBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
-  addBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
+  wrap:           { marginTop: space.lg },
+  head:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, marginBottom: space.sm, gap: 8 },
+  title:          { ...t.title, color: color.ink, fontSize: 20 },
+  refreshBtn:     { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
+  settingsBtn:    { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
+  addBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
+  addBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
+  readOnlyBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.haze, borderRadius: radius.md },
+  readOnlyText:   { ...t.small, color: color.mute, flex: 1 },
   warnBanner:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, backgroundColor: '#FFFBEB', borderRadius: radius.md, borderWidth: 1, borderColor: '#F5D77B', paddingHorizontal: space.md, paddingVertical: 8 },
   warnBannerText: { ...t.small, color: '#8B5E00', fontWeight: '600' as const, flex: 1 },
   warnBannerLink: { ...t.small, color: '#F59E0B', fontWeight: '700' as const },

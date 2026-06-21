@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
-import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 
@@ -254,6 +254,123 @@ router.get("/me/trip-invites/pending", async (req, res) => {
 });
 
 /* ===========================================================================
+ * PATCH /trips/:tripId  — update trip plan-edit permission (owner only)
+ * ===========================================================================
+ * Accepts: { planEditPermission, planEditors? }
+ * planEditors is the full replacement list of user IDs for specific_members mode.
+ */
+const PlanEditPermissionEnum = ["owner_only", "all_members", "specific_members"] as const;
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+const PatchTripSchema = z.object({
+  planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
+  planEditors: z.array(z.string().regex(UUID_RE)).optional(),
+});
+
+router.patch("/trips/:tripId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const parsed = PatchTripSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const { planEditPermission, planEditors } = parsed.data;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Only the trip owner may change plan permissions
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can change plan permissions"); return; }
+
+  if (planEditPermission !== undefined) {
+    const { error } = await sc.from("trips").update({ plan_edit_permission: planEditPermission }).eq("id", tripId);
+    if (error) { sendError(res, "db_error", error.message); return; }
+  }
+
+  // Replace plan_editors list when provided (always a full replacement)
+  if (planEditors !== undefined) {
+    // Delete existing editors then insert new list
+    const { error: delErr } = await sc.from("plan_editors").delete().eq("trip_id", tripId);
+    if (delErr) { sendError(res, "db_error", delErr.message); return; }
+
+    if (planEditors.length > 0) {
+      const rows = planEditors.map((uid) => ({ trip_id: tripId, user_id: uid }));
+      const { error: insErr } = await sc.from("plan_editors").insert(rows);
+      if (insErr) { sendError(res, "db_error", insErr.message); return; }
+    }
+  }
+
+  // Return current state
+  const { data: updated } = await sc
+    .from("trips")
+    .select("id, plan_edit_permission")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  const { data: editorRows } = await sc
+    .from("plan_editors")
+    .select("user_id")
+    .eq("trip_id", tripId);
+
+  res.json({
+    tripId,
+    planEditPermission: (updated as any)?.plan_edit_permission ?? "all_members",
+    planEditors: (editorRows ?? []).map((r: any) => r.user_id as string),
+  });
+});
+
+/* ===========================================================================
+ * GET /trips/:tripId/plan-permission  — get current plan permission for caller
+ * ===========================================================================
+ * Returns { planEditPermission, planEditors, canEdit } for the calling user.
+ */
+router.get("/trips/:tripId/plan-permission", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const member = await isAcceptedTripMember(client, tripId, user.id);
+  if (!member) { sendError(res, "not_member", "Not a trip member"); return; }
+
+  const { data: trip } = await sc
+    .from("trips")
+    .select("owner_id, plan_edit_permission")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const perm    = ((trip as any).plan_edit_permission as PlanEditPermission) ?? "all_members";
+  const ownerId = (trip as any).owner_id as string;
+
+  const { data: editorRows } = await sc
+    .from("plan_editors")
+    .select("user_id")
+    .eq("trip_id", tripId);
+
+  const editorIds = (editorRows ?? []).map((r: any) => r.user_id as string);
+
+  let canEdit = false;
+  if (user.id === ownerId)           canEdit = true;
+  else if (perm === "all_members")   canEdit = true;
+  else if (perm === "owner_only")    canEdit = false;
+  else canEdit = editorIds.includes(user.id);
+
+  res.json({ planEditPermission: perm, planEditors: editorIds, canEdit, isOwner: user.id === ownerId });
+});
+
+/* ===========================================================================
  * POST /trips/:tripId/invite  — trip owner invites a user
  * ===========================================================================
  * Reuses the existing trip_members table with role='invited'.
@@ -485,10 +602,18 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view the plan"); return; }
 
-  // Fetch trip dates for outside_trip_dates warning (graceful if missing)
-  const { data: trip } = await client.from("trips").select("start_date,end_date").eq("id", tripId).maybeSingle();
+  // Fetch trip metadata (dates + plan permission)
+  const { data: trip } = await client
+    .from("trips")
+    .select("start_date,end_date,owner_id,plan_edit_permission")
+    .eq("id", tripId)
+    .maybeSingle();
   const tripStartDate = (trip as any)?.start_date ?? null;
   const tripEndDate   = (trip as any)?.end_date   ?? null;
+
+  // Resolve caller's edit permission for this trip
+  const editAllowed = await canEditPlan(client, tripId, user.id);
+  const canEdit = editAllowed === true;
 
   const { data, error } = await client
     .from("trip_plan_items")
@@ -520,7 +645,10 @@ router.get("/trips/:tripId/plan", async (req, res) => {
 
   const warnMap = computeWarnings(rows, tripStartDate, tripEndDate, cancelledMeetupIds);
 
-  res.json({ items: rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })) });
+  res.json({
+    items: rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })),
+    canEdit,
+  });
 });
 
 // ── GET /trips/:tripId/plan/map — only items with safe public coordinates ──────
@@ -563,8 +691,9 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
   const { tripId } = req.params;
   if (!UUID.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
 
-  const member = await isAcceptedTripMember(client, tripId, user.id);
-  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to add plan items on this trip"); return; }
 
   const parsed = CreatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
@@ -626,6 +755,11 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const patch = parsed.data;
 
+  // Check trip-level plan edit permission first
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
@@ -665,6 +799,10 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   const { tripId, itemId } = req.params;
   if (!UUID.test(tripId) || !UUID.test(itemId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
 
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
@@ -689,6 +827,10 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   const { tripId, itemId } = req.params;
   if (!UUID.test(tripId) || !UUID.test(itemId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
 
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
@@ -702,7 +844,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   res.status(204).send();
 });
 
-// ── POST /trips/:tripId/plan/items/:itemId/reorder — owner/admin only ─────────
+// ── POST /trips/:tripId/plan/items/:itemId/reorder — plan-edit permission ─────
 
 router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const ctx = await requireUser(req, res);
@@ -715,16 +857,21 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const parsed = ReorderSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "sortOrder must be an integer"); return; }
 
-  // Only the trip owner can reorder items
-  const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
-  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+  // Reorder requires trip-level plan edit permission (same as add/edit/delete)
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to reorder plan items"); return; }
 
-  const { error } = await client
+  const { data: updated, error } = await client
     .from("trip_plan_items")
     .update({ sort_order: parsed.data.sortOrder, updated_at: new Date().toISOString() })
-    .eq("id", itemId);
+    .eq("id", itemId)
+    .eq("trip_id", tripId)
+    .select("id")
+    .maybeSingle();
 
   if (error) { req.log.error({ err: error }, "reorder plan item"); sendError(res, "db_error", error.message); return; }
+  if (!updated) { sendError(res, "not_found", "Plan item not found in this trip"); return; }
 
   res.json({ status: "reordered", itemId, sortOrder: parsed.data.sortOrder });
 });

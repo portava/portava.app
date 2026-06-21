@@ -6,7 +6,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
 
 const router = Router();
 
@@ -30,9 +30,12 @@ router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const { tripId } = parsed.data;
 
-  // Caller must be an accepted trip member
+  // Caller must be an accepted trip member with plan edit permission
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
   // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
   const { data: meetup } = await client
@@ -97,6 +100,9 @@ router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
 
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
   // Fetch place row — public-safe columns only (name, category, location_name)
   // NOTE: approximate_lat / approximate_lng are intentionally NOT fetched.

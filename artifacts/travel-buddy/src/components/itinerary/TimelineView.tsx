@@ -90,6 +90,7 @@ interface PlanItemCardProps {
   item: TripPlanItem;
   currentUserId: string;
   isOwner: boolean;
+  canEdit: boolean;
   tripId: string;
   onPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
@@ -103,21 +104,21 @@ interface PlanItemCardProps {
 }
 
 function PlanItemCard({
-  item, currentUserId, isOwner, tripId,
+  item, currentUserId, isOwner, canEdit, tripId,
   onPress, onEditPress, onRemove, onMarkDone, onMarkTentative, onEdited, onMoveToUnscheduled,
   dragHandlers, isDragging,
 }: PlanItemCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const cat = CAT_STYLE[item.category] ?? CAT_STYLE.other;
   const statusStyle = STATUS_STYLE[item.status] ?? STATUS_STYLE.tentative;
-  const canAct = isOwner || item.creatorId === currentUserId;
+  const canAct = canEdit && (isOwner || item.creatorId === currentUserId);
   const timeStr = fmtTime(item.startsAt);
   const hasWarnings = item.warnings && item.warnings.length > 0;
 
   return (
     <>
       <View style={[ic.row, isDragging && ic.rowDragging]}>
-        {isOwner && dragHandlers && (
+        {canEdit && dragHandlers && (
           <View style={ic.handle} {...dragHandlers}>
             <GripVertical size={18} color={isDragging ? color.deep : color.faint} />
           </View>
@@ -234,6 +235,7 @@ interface DraggableItemListProps {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  canEdit: boolean;
   onItemPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
@@ -246,7 +248,7 @@ interface DraggableItemListProps {
 }
 
 function DraggableItemList({
-  items, tripId, currentUserId, isOwner,
+  items, tripId, currentUserId, isOwner, canEdit,
   onItemPress, onEditPress, onItemsChanged,
   onRemove, onMarkDone, onMarkTentative, onMoveToUnscheduled,
   firstWarnedId, warnedItemRef,
@@ -308,7 +310,7 @@ function DraggableItemList({
 
   // Build one PanResponder per slot; recreate when order changes so index is correct.
   const panResponders = useMemo(() => {
-    if (!isOwner) return [];
+    if (!canEdit) return [];
     return order.map((_, slotIdx) =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
@@ -369,7 +371,7 @@ function DraggableItemList({
       }),
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order, isOwner]);
+  }, [order, canEdit]);
 
   return (
     <>
@@ -383,6 +385,7 @@ function DraggableItemList({
             item={item}
             currentUserId={currentUserId}
             isOwner={isOwner}
+            canEdit={canEdit}
             tripId={tripId}
             onPress={onItemPress}
             onEditPress={onEditPress}
@@ -417,7 +420,7 @@ function DraggableItemList({
 // ── Day group ─────────────────────────────────────────────────────────────────
 
 function DayGroup({
-  bucket, tripStartDate, tripId, currentUserId, isOwner,
+  bucket, tripStartDate, tripId, currentUserId, isOwner, canEdit,
   onItemPress, onEditPress, onItemsChanged, firstWarnedId, warnedItemRef,
 }: {
   bucket: DayBucket;
@@ -425,6 +428,7 @@ function DayGroup({
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  canEdit: boolean;
   onItemPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
@@ -494,6 +498,7 @@ function DayGroup({
           tripId={tripId}
           currentUserId={currentUserId}
           isOwner={isOwner}
+          canEdit={canEdit}
           onItemPress={onItemPress}
           onEditPress={onEditPress}
           onItemsChanged={onItemsChanged}
@@ -517,6 +522,7 @@ export interface TimelineViewProps {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  canEdit: boolean;
   onItemPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
@@ -525,7 +531,7 @@ export interface TimelineViewProps {
 }
 
 export function TimelineView({
-  buckets, tripStartDate, tripId, currentUserId, isOwner, onItemPress, onEditPress, onItemsChanged,
+  buckets, tripStartDate, tripId, currentUserId, isOwner, canEdit, onItemPress, onEditPress, onItemsChanged,
   firstWarnedId, warnedItemRef,
 }: TimelineViewProps) {
   if (buckets.length === 0 || buckets.every((b) => b.items.length === 0)) {
@@ -546,6 +552,7 @@ export function TimelineView({
           tripId={tripId}
           currentUserId={currentUserId}
           isOwner={isOwner}
+          canEdit={canEdit}
           onItemPress={onItemPress}
           onEditPress={onEditPress}
           onItemsChanged={onItemsChanged}

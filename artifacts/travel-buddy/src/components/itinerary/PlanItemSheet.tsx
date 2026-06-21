@@ -231,6 +231,8 @@ export interface PlanItemSheetProps {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  /** Whether the current user has trip-level plan edit permission. */
+  canEdit?: boolean;
   /** When true, the sheet opens directly in edit mode (e.g. from the "Edit" context menu action). */
   startInEditMode?: boolean;
   onClose: () => void;
@@ -239,7 +241,7 @@ export interface PlanItemSheetProps {
 }
 
 export function PlanItemSheet({
-  item, tripId, currentUserId, isOwner, startInEditMode, onClose, onUpdated, onRemoved,
+  item, tripId, currentUserId, isOwner, canEdit = true, startInEditMode, onClose, onUpdated, onRemoved,
 }: PlanItemSheetProps) {
   const [editing, setEditing] = useState(false);
 
@@ -251,7 +253,7 @@ export function PlanItemSheet({
 
   if (!item) return null;
 
-  const canAct = isOwner || item.creatorId === currentUserId;
+  const canAct = canEdit && (isOwner || item.creatorId === currentUserId);
   const cat = CAT_COLOR[item.category] ?? CAT_COLOR.other;
   const st  = STATUS_COLOR[item.status] ?? STATUS_COLOR.tentative;
   const dateTimeStr = fmtDateTime(item.dayDate, item.startsAt);
