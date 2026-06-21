@@ -5,9 +5,12 @@
  * Uses the same authedFetch / freshToken pattern as tripPlan.ts —
  * the token is fetched internally; callers do not need to pass it.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+const weatherKey = (tripId: string) => `weather_summary:${tripId}`;
 
 async function freshToken(): Promise<string | null> {
   const { data: refreshed } = await supabase.auth.refreshSession();
@@ -38,6 +41,16 @@ export async function fetchDailyBrief(
     const qs = date ? `?date=${date}` : '';
     const res = await authedFetch(`/api/trips/${tripId}/daily-brief${qs}`);
     const data = await res.json();
+    if (res.ok) {
+      if (data.weatherSummary) {
+        // Persist the latest summary so it survives Open-Meteo downtime
+        AsyncStorage.setItem(weatherKey(tripId), data.weatherSummary).catch(() => {});
+      } else {
+        // Open-Meteo unavailable — restore last known summary (best-effort)
+        const cached = await AsyncStorage.getItem(weatherKey(tripId));
+        if (cached) data.weatherSummary = cached;
+      }
+    }
     return { ok: res.ok, data };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'network_error' };

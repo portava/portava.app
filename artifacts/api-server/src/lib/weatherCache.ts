@@ -2,8 +2,12 @@
  * Weather context helper — Open-Meteo (free, no API key required).
  *
  * Geocodes a destination name → lat/lng, then fetches a daily forecast for
- * the requested date range. Results are cached in-memory per
- * destination+date-range with a 6-hour TTL.
+ * the requested date range. Results are cached at two layers:
+ *   1. In-memory Map (fast, lost on restart)     — 6-hour TTL
+ *   2. Supabase weather_cache table (durable)    — 6-hour TTL
+ *
+ * Read order on cache miss: memory → DB → Open-Meteo.
+ * Write order on fresh fetch: memory + DB (best-effort, upsert).
  *
  * Privacy: only the destination name (and derived lat/lng) is sent to
  * external APIs. No user identifiers or private trip data leave this server.
@@ -11,6 +15,8 @@
  * Graceful degradation: any error or timeout returns null — callers must
  * treat the result as optional.
  */
+
+import { getServiceClient } from './supabase';
 
 const GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search";
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
@@ -34,18 +40,69 @@ export interface WeatherContext {
 
 interface CacheEntry {
   context: WeatherContext;
-  cachedAt: number;
+  cachedAt: number; // Unix ms
 }
 
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(destination: string, startDate: string, endDate: string): string {
+function memKey(destination: string, startDate: string, endDate: string): string {
   return `${destination.toLowerCase()}:${startDate}:${endDate}`;
+}
+
+function dbDateKey(startDate: string, endDate: string): string {
+  return `${startDate}:${endDate}`;
 }
 
 function isFresh(entry: CacheEntry): boolean {
   return Date.now() - entry.cachedAt < CACHE_TTL_MS;
 }
+
+/* ── DB helpers ───────────────────────────────────────────────────────────── */
+
+async function dbGet(destination: string, dateKey: string): Promise<CacheEntry | null> {
+  const client = getServiceClient();
+  if (!client) return null;
+  try {
+    const { data, error } = await client
+      .from('weather_cache')
+      .select('brief_summary, forecasts_json, fetched_at')
+      .eq('destination', destination.toLowerCase())
+      .eq('date_key', dateKey)
+      .single();
+    if (error || !data) return null;
+    const cachedAt = new Date(data.fetched_at as string).getTime();
+    if (Date.now() - cachedAt >= CACHE_TTL_MS) return null;
+    const context: WeatherContext = {
+      destination,
+      forecasts: data.forecasts_json as DailyWeather[],
+      briefSummary: data.brief_summary as string,
+    };
+    return { context, cachedAt };
+  } catch {
+    return null;
+  }
+}
+
+async function dbSet(destination: string, dateKey: string, entry: CacheEntry): Promise<void> {
+  const client = getServiceClient();
+  if (!client) return;
+  try {
+    await client.from('weather_cache').upsert(
+      {
+        destination: destination.toLowerCase(),
+        date_key: dateKey,
+        brief_summary: entry.context.briefSummary,
+        forecasts_json: entry.context.forecasts,
+        fetched_at: new Date(entry.cachedAt).toISOString(),
+      },
+      { onConflict: 'destination,date_key' },
+    );
+  } catch {
+    // best-effort — never block the response
+  }
+}
+
+/* ── Utility ──────────────────────────────────────────────────────────────── */
 
 function wmoSummary(code: number): string {
   if (code === 0) return "Clear sky";
@@ -100,6 +157,8 @@ async function geocode(destination: string): Promise<{ lat: number; lng: number 
   return { lat: r.latitude as number, lng: r.longitude as number };
 }
 
+/* ── Public API ───────────────────────────────────────────────────────────── */
+
 export async function getWeatherContext(
   destination: string,
   startDate?: string,
@@ -109,10 +168,21 @@ export async function getWeatherContext(
   const start = startDate ?? today;
   const end = endDate && endDate >= start ? endDate : start;
 
-  const key = cacheKey(destination, start, end);
-  const cached = cache.get(key);
-  if (cached && isFresh(cached)) return cached.context;
+  const key = memKey(destination, start, end);
+  const dateKey = dbDateKey(start, end);
 
+  // 1. In-memory cache (fastest)
+  const memEntry = cache.get(key);
+  if (memEntry && isFresh(memEntry)) return memEntry.context;
+
+  // 2. DB cache (survives server restart)
+  const dbEntry = await dbGet(destination, dateKey);
+  if (dbEntry) {
+    cache.set(key, dbEntry);
+    return dbEntry.context;
+  }
+
+  // 3. Live fetch from Open-Meteo
   try {
     const coords = await geocode(destination);
     if (!coords) return null;
@@ -143,7 +213,12 @@ export async function getWeatherContext(
       forecasts,
       briefSummary: buildBriefSummary(forecasts),
     };
-    cache.set(key, { context, cachedAt: Date.now() });
+    const entry: CacheEntry = { context, cachedAt: Date.now() };
+
+    // Write to both layers (DB is best-effort — don't await to block response)
+    cache.set(key, entry);
+    dbSet(destination, dateKey, entry).catch(() => {});
+
     return context;
   } catch {
     return null;
