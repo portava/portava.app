@@ -417,6 +417,19 @@ export default function MeetupScreen() {
                 <MapPin size={14} color={color.mute} />
                 <Text style={s.metaText}>{meetup.locationName}</Text>
               </View>
+            ) : meetup.isCreator && meetup.status === 'confirmed' && !isCancelled ? (
+              <View style={s.noDateRow}>
+                <MapPin size={14} color={color.faint} />
+                <Text style={s.noDateText}>No location set</Text>
+                <Pressable style={s.noDateChip} onPress={startEdit}>
+                  <Text style={s.noDateChipText}>Add one?</Text>
+                </Pressable>
+              </View>
+            ) : !meetup.isCreator ? (
+              <View style={s.metaRow}>
+                <MapPin size={14} color={color.faint} />
+                <Text style={s.locTbdText}>Location TBD</Text>
+              </View>
             ) : null}
 
             {(meetup.startsAt ?? meetup.approximateDate) ? (
@@ -643,6 +656,7 @@ const s = StyleSheet.create({
   noDateText:     { ...t.body, color: color.faint, flex: 1 },
   noDateChip:     { paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
   noDateChipText: { ...t.small, color: color.signal, fontWeight: '700' },
+  locTbdText:     { ...t.body, color: color.faint, fontStyle: 'italic' },
 
   countsRow: { flexDirection: 'row', gap: space.lg },
   countItem: { alignItems: 'center', gap: 2 },
