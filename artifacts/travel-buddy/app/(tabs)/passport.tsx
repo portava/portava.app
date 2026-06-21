@@ -61,9 +61,13 @@ export default function PassportScreen() {
     setSettingsOpen(true);
   }, []);
 
-  const handleSaved = useCallback((updated: OwnProfile) => {
+  const handleSaved = useCallback((_updated: OwnProfile) => {
     reload();
   }, [reload]);
+
+  const handleEditProfile = useCallback(() => {
+    router.push('/profile/edit' as any);
+  }, []);
 
   const handleViewAsPublic = useCallback(() => {
     const username = profile?.username;
@@ -110,7 +114,9 @@ export default function PassportScreen() {
       openSettings={openSettings}
       actions={actions}
       handleSaved={handleSaved}
+      handleEditProfile={handleEditProfile}
       handleViewAsPublic={handleViewAsPublic}
+      reload={reload}
       insets={insets}
     />;
   }
@@ -131,7 +137,9 @@ export default function PassportScreen() {
       openSettings={openSettings}
       actions={actions}
       handleSaved={handleSaved}
+      handleEditProfile={handleEditProfile}
       handleViewAsPublic={handleViewAsPublic}
+      reload={reload}
       insets={insets}
     />
   );
@@ -140,7 +148,7 @@ export default function PassportScreen() {
 function PassportContent({
   profile, postcards, stamps, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
-  settingsSection, openSettings, actions, handleSaved, handleViewAsPublic, insets,
+  settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -156,13 +164,18 @@ function PassportContent({
   openSettings: (s?: 'profile' | 'passport' | 'preferences' | 'safety') => void;
   actions: ReturnType<typeof usePostcardActions>;
   handleSaved: (p: OwnProfile) => void;
+  handleEditProfile: () => void;
   handleViewAsPublic: () => void;
+  reload: () => void;
   insets: { top: number; bottom: number };
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { count: requestCount, reload: reloadCount } = useRequestCount();
 
-  useFocusEffect(useCallback(() => { reloadCount(); }, [reloadCount]));
+  useFocusEffect(useCallback(() => {
+    reloadCount();
+    reload();
+  }, [reloadCount, reload]));
 
   return (
     <View style={{ flex: 1 }}>
@@ -239,7 +252,7 @@ function PassportContent({
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         username={profile.username}
-        onEditProfile={() => openSettings('profile')}
+        onEditProfile={() => { setMenuOpen(false); handleEditProfile(); }}
         onSettings={() => openSettings('passport')}
         onViewAsPublic={handleViewAsPublic}
       />

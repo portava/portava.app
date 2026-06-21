@@ -66,8 +66,9 @@ export interface UpdateProfileInput {
   homeCity?: string;
   homeCountry?: string;
   interests?: string[];
-  passportVisibility?: 'public' | 'private';
+  passportVisibility?: 'public' | 'followers_only' | 'private';
   avatarUrl?: string;
+  coverUrl?: string;
   travelStyle?: string;
   openToMeet?: boolean;
   spokenLanguages?: string[];
@@ -149,6 +150,45 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
 
   try {
     const res = await fetch(`${apiBase()}/api/me/avatar/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': mimeType, Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
+    }
+    const body = await res.json();
+    return { ok: true, data: { url: body.url } };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Cover photo upload ---------- */
+
+export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string }>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  let blob: Blob;
+  try {
+    const resp = await fetch(uri);
+    blob = await resp.blob();
+  } catch (e) {
+    return { ok: false, data: null, errorKind: 'read_failed', message: 'Failed to read image file' };
+  }
+
+  if (blob.size > 10 * 1024 * 1024) {
+    return { ok: false, data: null, errorKind: 'too_large', message: 'Cover photo must be under 10 MB' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/cover/upload`, {
       method: 'POST',
       headers: { 'Content-Type': mimeType, Authorization: `Bearer ${token}` },
       body: blob,

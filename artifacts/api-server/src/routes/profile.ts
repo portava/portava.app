@@ -108,8 +108,9 @@ const patchProfileSchema = z.object({
   homeCity: z.string().max(100).optional(),
   homeCountry: z.string().max(100).optional(),
   interests: z.array(z.string().max(50)).max(20).optional(),
-  passportVisibility: z.enum(["public", "private"]).optional(),
+  passportVisibility: z.enum(["public", "followers_only", "private"]).optional(),
   avatarUrl: z.string().url().optional(),
+  coverUrl: z.string().url().optional(),
   travelStyle: z.string().max(50).optional(),
   openToMeet: z.boolean().optional(),
   spokenLanguages: z.array(z.string().max(50)).max(20).optional(),
@@ -159,6 +160,7 @@ router.patch("/me/profile", async (req, res) => {
   if (p.availabilityTags !== undefined) row.availability_tags = p.availabilityTags;
   if (p.planningStyle !== undefined) row.planning_style = p.planningStyle;
   if (p.publicSocialLinks !== undefined) row.public_social_links = p.publicSocialLinks;
+  if (p.coverUrl !== undefined) row.cover_photo_url = p.coverUrl;
 
   if (p.username !== undefined) {
     const v = validateUsername(p.username);
@@ -282,6 +284,63 @@ router.post(
 
     if (error) {
       req.log.error({ err: error, path }, "Avatar upload failed");
+      sendError(res, "db_error", `Upload failed: ${error.message}`);
+      return;
+    }
+
+    const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    res.status(201).json({ url: urlData.publicUrl, path });
+  },
+);
+
+/* ===========================================================================
+ * POST /me/cover/upload — upload cover photo image
+ * ===========================================================================
+ * Accepts raw binary body, Content-Type = MIME. ≤10 MB. jpeg/png/webp only.
+ * Uploads to profile-media bucket at covers/{userId}/cover.{ext} (fixed path,
+ * so each upload replaces the previous one). Returns { url }.
+ * Does NOT update cover_photo_url on the profile row —
+ * caller must follow up with PATCH /me/profile { coverUrl }.
+ */
+const MAX_COVER_BYTES = 10 * 1024 * 1024; // 10 MB
+
+router.post(
+  "/me/cover/upload",
+  (req, res, next) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
+    req.on("error", next);
+  },
+  async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+
+    const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    const ext = ALLOWED_AVATAR_MIME[mimeType];
+    if (!ext) {
+      sendError(res, "invalid_payload", `Unsupported cover type: ${mimeType}. Use jpeg, png, or webp.`);
+      return;
+    }
+    const rawBody: Buffer = (req as any).rawBody;
+    if (!rawBody || rawBody.length === 0) {
+      sendError(res, "invalid_payload", "Empty file body");
+      return;
+    }
+    if (rawBody.length > MAX_COVER_BYTES) {
+      sendError(res, "invalid_payload", `Cover too large (${Math.round(rawBody.length / 1024 / 1024)}MB; max 10MB)`);
+      return;
+    }
+
+    const path = `covers/${user.id}/cover.${ext}`;
+
+    const { error } = await client.storage
+      .from(AVATAR_BUCKET)
+      .upload(path, rawBody, { contentType: mimeType, upsert: true });
+
+    if (error) {
+      req.log.error({ err: error, path }, "Cover upload failed");
       sendError(res, "db_error", `Upload failed: ${error.message}`);
       return;
     }

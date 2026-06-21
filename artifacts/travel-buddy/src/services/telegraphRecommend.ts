@@ -50,7 +50,7 @@ export async function getForYouRecommendations(
         destination: params.destination,
         interests: params.interests ?? ['food', 'culture', 'adventure'],
         travelStyle: params.travelStyle ?? 'explorer',
-        count: params.count ?? 5,
+        count: params.count ?? 8,
       }),
     });
 

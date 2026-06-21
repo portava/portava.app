@@ -437,7 +437,7 @@ export interface OwnProfile {
   verified: boolean;
   openToMeet: boolean;
   isPrivate: boolean;
-  passportVisibility: 'public' | 'private';
+  passportVisibility: 'public' | 'followers_only' | 'private';
   coverPhotoUrl: string | null;
   usernameUpdatedAt: ISODate | null;
   createdAt: ISODate | null;
