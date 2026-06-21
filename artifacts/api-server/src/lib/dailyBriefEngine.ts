@@ -233,25 +233,28 @@ export function buildDailyBrief(opts: {
       params: { prompt: `Help me plan today${dest}` },
     });
   }
-  // Upcoming meetup action: suggest nearby dinner if meetup is in the evening
+  // Upcoming meetup action: suggest nearby food if meetup is at lunch (11–13) or dinner (17+) time
   for (const m of upcomingMeetups24h.slice(0, 1)) {
     const meetupHour = new Date(m.proposedTime).getHours();
-    if (meetupHour >= 17) {
+    const isLunch  = meetupHour >= 11 && meetupHour < 14;
+    const isDinner = meetupHour >= 17;
+    if (isLunch || isDinner) {
+      const meal = isLunch ? "lunch" : "dinner";
       const dest = destination ? ` in ${destination}` : "";
       const locationHint = m.locationName ?? null;
       // Structured params let Telegraph generate location/time-aware food suggestions.
       // prompt is kept as a human-readable fallback for clients that ignore the structured fields.
       const params: Record<string, string> = {
         prompt: locationHint
-          ? `Find dinner options near ${locationHint} before my ${m.title} meetup`
-          : `Find dinner options before my ${m.title} meetup${dest}`,
+          ? `Find ${meal} options near ${locationHint} before my ${m.title} meetup`
+          : `Find ${meal} options before my ${m.title} meetup${dest}`,
         meetupId: m.id,
         meetupTime: m.proposedTime,
       };
       if (locationHint) params.meetupLocation = locationHint;
       quickActions.push({
         id: `qa_premeetup_${m.id}`,
-        label: "Find dinner nearby",
+        label: `Find ${meal} nearby`,
         kind: "ask_telegraph",
         params,
       });

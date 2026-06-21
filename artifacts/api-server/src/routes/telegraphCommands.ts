@@ -115,20 +115,21 @@ function buildResponse(
       ? ` in ${destination}`
       : "";
   const timeRef = meetupTimeStr ? ` at ${meetupTimeStr}` : "";
+  const meal = getMealLabel(meetupContext?.meetupTime);
 
   const findFoodSummary = hasMeetupCtx
-    ? `Dinner options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
+    ? `${meal === "lunch" ? "Lunch" : "Dinner"} options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
     : `Food recommendations${destination ? ` for ${destination}` : ""}. Tap to add to your trip plan.`;
 
   const findFoodSuggestions: TelegraphCommandResponse["suggestions"] = hasMeetupCtx
     ? [
         {
-          title: `Dinner spot${nearbyRef}`,
+          title: `${meal === "lunch" ? "Lunch" : "Dinner"} spot${nearbyRef}`,
           reason: meetupLoc
             ? `Close to ${meetupLoc} — easy to reach before your meetup`
             : `Good option before your meetup${timeRef}`,
           category: "food",
-          estimatedTime: "1–1.5 hours",
+          estimatedTime: meal === "lunch" ? "45 min–1 hour" : "1–1.5 hours",
           priceLevel: "$$",
         },
         {
@@ -139,7 +140,7 @@ function buildResponse(
           priceLevel: "$",
         },
         {
-          title: `Local restaurant${nearbyRef}`,
+          title: `Local ${meal === "lunch" ? "café or bistro" : "restaurant"}${nearbyRef}`,
           reason: "Traveler favourite for the area",
           category: "food",
           estimatedTime: "1 hour",
@@ -263,6 +264,17 @@ function formatMeetupTime(iso: string): string {
     return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
   } catch {
     return "";
+  }
+}
+
+/** Return "lunch" for midday meetups (11–13 h), "dinner" otherwise. */
+function getMealLabel(iso?: string): "lunch" | "dinner" {
+  if (!iso) return "dinner";
+  try {
+    const h = new Date(iso).getHours();
+    return h >= 11 && h < 14 ? "lunch" : "dinner";
+  } catch {
+    return "dinner";
   }
 }
 
