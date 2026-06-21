@@ -3,9 +3,9 @@
 -- Stores per-trip availability nudge notifications.
 --
 -- When a trip member marks specific dates as free, fellow members who have not
--- yet marked that day receive a nudge. The unique constraint enforces the
--- rate-limit: one nudge per (sender, recipient, trip) per calendar day, so
--- multiple PATCH calls in a single day don't spam recipients.
+-- yet explicitly set their availability for that day receive one nudge.
+-- Rate limit: one nudge per (recipient, trip) per calendar day, enforced by
+-- the unique constraint — regardless of how many senders mark themselves free.
 
 CREATE TABLE IF NOT EXISTS availability_nudges (
   id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS availability_nudges (
   nudge_date   DATE         NOT NULL,  -- representative free date being announced
   sent_on      DATE         NOT NULL DEFAULT CURRENT_DATE,
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  UNIQUE (sender_id, recipient_id, trip_id, sent_on)
+  -- One nudge per recipient per trip per calendar day (any sender)
+  UNIQUE (recipient_id, trip_id, sent_on)
 );
 
 -- Recipients can read their own nudges; the service role handles all writes.

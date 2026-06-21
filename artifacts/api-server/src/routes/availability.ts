@@ -16,6 +16,7 @@ import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { sendPushNotification } from "../lib/push.js";
 
 const router = Router();
 
@@ -324,11 +325,11 @@ async function sendAvailabilityNudges(
 
   for (const recipientId of recipientIds) {
     const theirDays = existingAvMap[recipientId] ?? {};
-    // Skip if they already have blocks on ANY of the free dates
-    const alreadyMarked = freeDates.some((d) => {
-      const blocks = theirDays[d];
-      return Array.isArray(blocks) && blocks.length > 0;
-    });
+    // Skip if they have ANY explicit availability entry for that day (free or busy).
+    // An empty array means "busy/unavailable" — the user has already set their status.
+    const alreadyMarked = freeDates.some((d) =>
+      Object.prototype.hasOwnProperty.call(theirDays, d),
+    );
     if (alreadyMarked) continue;
 
     rows.push({
@@ -342,16 +343,50 @@ async function sendAvailabilityNudges(
 
   if (rows.length === 0) return;
 
-  // ignoreDuplicates: rate-limit — silently skip if a nudge was already sent today
+  // ignoreDuplicates: rate-limit — one nudge per recipient per trip per day
   const { error } = await sc
     .from("availability_nudges")
-    .upsert(rows, { onConflict: "sender_id,recipient_id,trip_id,sent_on", ignoreDuplicates: true });
+    .upsert(rows, { onConflict: "recipient_id,trip_id,sent_on", ignoreDuplicates: true });
 
   if (error) {
     logger.warn({ err: error, tripId, senderId }, "availability nudge insert failed");
-  } else {
-    logger.info({ count: rows.length, tripId, nudgeDate }, "availability nudges sent");
+    return;
   }
+
+  logger.info({ count: rows.length, tripId, nudgeDate }, "availability nudges sent");
+
+  // ── Push notifications ──────────────────────────────────────────────────────
+  // Fetch push tokens and sender profile for the notification body.
+  const finalRecipientIds = rows.map((r) => r.recipient_id);
+
+  const [{ data: tokenRows }, { data: senderProfile }, { data: tripRow }] = await Promise.all([
+    sc.from("profiles").select("id, expo_push_token").in("id", finalRecipientIds),
+    sc.from("profiles").select("name, handle").eq("id", senderId).single(),
+    sc.from("trips").select("title").eq("id", tripId).single(),
+  ]);
+
+  const senderName =
+    (senderProfile as any)?.name ??
+    (senderProfile as any)?.handle ??
+    "A trip member";
+
+  const tripTitle = (tripRow as any)?.title ?? "your trip";
+
+  const dateLabel = new Date(nudgeDate + "T12:00:00Z").toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
+  const pushTokens = (tokenRows ?? []).map(
+    (r: any) => r.expo_push_token as string | null,
+  );
+
+  await sendPushNotification(pushTokens, {
+    title: "Availability update 📅",
+    body: `${senderName} is free ${dateLabel} — are you?`,
+    data: { screen: "availability", tripId, tripTitle },
+  });
 }
 
 // ── PATCH /api/circles/:circleId/availability ────────────────────────────────

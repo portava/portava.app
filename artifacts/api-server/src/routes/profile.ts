@@ -365,4 +365,32 @@ router.post(
   },
 );
 
+// ── PUT /api/me/push-token ────────────────────────────────────────────────────
+// Stores the device's Expo push token so the server can send push notifications.
+
+router.put("/me/push-token", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { token } = req.body ?? {};
+  if (typeof token !== "string" || !token.startsWith("ExponentPushToken[")) {
+    sendError(res, "invalid_payload", "token must be a valid ExponentPushToken");
+    return;
+  }
+
+  const { error } = await client
+    .from("profiles")
+    .update({ expo_push_token: token })
+    .eq("id", user.id);
+
+  if (error) {
+    req.log.error({ err: error }, "push-token: db update failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true });
+});
+
 export default router;
