@@ -251,7 +251,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
                 style={s.actionBtn}
                 onPress={() => handleQuickAction(action, tripId)}
               >
-                <Text style={s.actionText}>{action.label}</Text>
+                <Text style={s.actionText}>{chipLabelForAction(action)}</Text>
               </Pressable>
             ))}
           </View>
@@ -374,6 +374,35 @@ function SuggestionRow({ suggestion, tripId, onDismiss }: { suggestion: any; tri
       />
     </View>
   );
+}
+
+/**
+ * Returns a concise, descriptive label for a quick-action chip.
+ *
+ * For meal-nudge chips (those with params.meetupTime), the meal label is
+ * derived from the meetup's scheduled hour so it always matches context:
+ *   07–10 → breakfast, 11–13 → lunch, 17+ → dinner.
+ *
+ * Other kinds are mapped to short, human-readable labels.
+ * Falls back to the server-provided action.label for anything unrecognised.
+ */
+function chipLabelForAction(action: any): string {
+  // Meal nudge — derive from the meetup's scheduled hour
+  if (action.params?.meetupTime) {
+    const h = new Date(action.params.meetupTime).getHours();
+    if (h >= 7 && h < 11) return 'Find breakfast nearby';
+    if (h >= 11 && h < 14) return 'Find lunch spot';
+    if (h >= 17) return 'Find dinner option';
+  }
+  // Specific action kinds → fixed descriptive labels
+  switch (action.kind) {
+    case 'view_plan':     return 'View plan';
+    case 'create_meetup': return 'Plan a meetup';
+    case 'add_to_plan':   return 'Add to trip plan';
+    case 'open_poll':     return 'See the poll';
+  }
+  // Fall back to server-provided label (e.g. "Fill free time", "Plan today", "Ask Telegraph")
+  return action.label ?? 'Quick action';
 }
 
 function handleQuickAction(action: any, tripId: string) {
