@@ -294,8 +294,25 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
   );
 }
 
+/** Returns "Updated X h ago" when the brief is ≥ 1 h old, otherwise null. */
+function computeAgeLabel(generatedAt: number | undefined): string | null {
+  if (!generatedAt) return null;
+  const ageHours = (Date.now() - generatedAt) / 3_600_000;
+  if (ageHours < 1) return null;
+  return `Updated ${Math.floor(ageHours)} h ago`;
+}
+
 function CompactBriefCard({ brief, tripId }: { brief: any; tripId: string }) {
   const topSuggestion = brief.suggestions?.[0] ?? null;
+
+  // Recompute every minute so the label stays accurate without a re-fetch.
+  const [ageLabel, setAgeLabel] = useState<string | null>(() => computeAgeLabel(brief.generatedAt));
+  useEffect(() => {
+    setAgeLabel(computeAgeLabel(brief.generatedAt));
+    const timer = setInterval(() => setAgeLabel(computeAgeLabel(brief.generatedAt)), 60_000);
+    return () => clearInterval(timer);
+  }, [brief.generatedAt]);
+
   return (
     <View style={sc.wrap}>
       <View style={sc.row}>
@@ -313,6 +330,7 @@ function CompactBriefCard({ brief, tripId }: { brief: any; tripId: string }) {
           <Text style={sc.sugText} numberOfLines={1}>{topSuggestion.title}</Text>
         </View>
       )}
+      {ageLabel && <Text style={sc.ageLabel}>{ageLabel}</Text>}
       <Pressable style={sc.btn} onPress={() => router.push(`/trip/${tripId}`)}>
         <Text style={sc.btnText}>Full Brief</Text>
       </Pressable>
@@ -582,6 +600,7 @@ const sc = StyleSheet.create({
   next: { ...t.small, color: color.mute, fontSize: 11, marginTop: 2 },
   sugRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   sugText: { ...t.small, color: color.signal, fontSize: 11, flex: 1 },
+  ageLabel: { ...t.small, color: color.mute, fontSize: 10, marginTop: 3 },
   btn: { alignSelf: 'flex-end', marginTop: space.sm, paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
   btnText: { ...t.small, color: color.ink, fontSize: 11, fontWeight: '700' },
 });
