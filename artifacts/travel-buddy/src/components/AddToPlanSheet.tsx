@@ -7,7 +7,7 @@ import { X, ChevronDown } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
 import { createPlanItem } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
-import { DatePickerField } from './DatePickerField';
+import { DatePickerField } from './DateTimePickerField';
 
 // ── Category options ──────────────────────────────────────────────────────────
 
@@ -43,8 +43,8 @@ export interface AddToPlanSheetProps {
 export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: AddToPlanSheetProps) {
   const [title, setTitle] = useState(prefill?.title ?? '');
   const [category, setCategory] = useState<TripPlanCategory>(prefill?.category ?? 'activity');
-  const [dayDate, setDayDate] = useState('');
-  const [startsAt, setStartsAt] = useState('');
+  const [dayDate, setDayDate] = useState<Date | null>(null);
+  const [startsAt, setStartsAt] = useState<Date | null>(null);
   const [locationName, setLocationName] = useState(prefill?.locationName ?? '');
   const [notes, setNotes] = useState('');
   const [catPickerOpen, setCatPickerOpen] = useState(false);
@@ -56,8 +56,8 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
   const reset = () => {
     setTitle(prefill?.title ?? '');
     setCategory(prefill?.category ?? 'activity');
-    setDayDate('');
-    setStartsAt('');
+    setDayDate(null);
+    setStartsAt(null);
     setLocationName(prefill?.locationName ?? '');
     setNotes('');
     setError('');
@@ -76,8 +76,8 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
         category,
         sourceType: prefill?.sourceType ?? 'manual',
         sourceId: prefill?.sourceId,
-        dayDate: dayDate.trim() || undefined,
-        startsAt: buildTimestamp(dayDate, startsAt) || undefined,
+        dayDate: dayDate ? dateToDayStr(dayDate) : undefined,
+        startsAt: buildTimestamp(dayDate, startsAt),
         locationName: locationName.trim() || undefined,
         notes: notes.trim() || undefined,
       });
@@ -137,14 +137,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
             <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" />
 
             <Text style={sh.label}>Time <Text style={sh.opt}>(optional)</Text></Text>
-            <TextInput
-              style={sh.input}
-              value={startsAt}
-              onChangeText={setStartsAt}
-              placeholder="HH:MM  (24-hour)"
-              placeholderTextColor={color.faint}
-              keyboardType="numbers-and-punctuation"
-            />
+            <DatePickerField mode="time" value={startsAt} onChange={setStartsAt} placeholder="Pick a time" />
 
             <Text style={sh.label}>Location <Text style={sh.opt}>(optional)</Text></Text>
             <TextInput
@@ -185,11 +178,24 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildTimestamp(dateStr: string, timeStr: string): string | undefined {
-  const d = dateStr.trim();
-  const ti = timeStr.trim();
-  if (!d || !ti) return undefined;
-  return `${d}T${ti}:00`;
+/** "YYYY-MM-DD" string from a Date (local timezone) */
+function dateToDayStr(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+/** "HH:MM" 24-hour string from a Date */
+function dateToHHMM(d: Date): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function buildTimestamp(date: Date | null, time: Date | null): string | undefined {
+  if (!date || !time) return undefined;
+  return `${dateToDayStr(date)}T${dateToHHMM(time)}:00`;
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

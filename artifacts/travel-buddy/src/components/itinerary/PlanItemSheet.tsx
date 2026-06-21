@@ -9,7 +9,7 @@ import {
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
 import { color, space, radius, type as t } from '../../theme/tokens';
-import { DatePickerField } from '../DatePickerField';
+import { DatePickerField } from '../DateTimePickerField';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 
@@ -55,6 +55,23 @@ const WARN_LABEL: Record<string, string> = {
 
 const STATUS_OPTIONS: TripPlanItemStatus[] = ['tentative', 'confirmed', 'done', 'cancelled'];
 
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+/** "YYYY-MM-DD" string from a Date (local timezone) */
+function dateToDayStr(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+/** "HH:MM" 24-hour string from a Date */
+function dateToHHMM(d: Date): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDateTime(isoDate: string | null, isoTime: string | null): string | null {
@@ -92,11 +109,11 @@ function EditForm({
   const [title, setTitle] = useState(item.title);
   const [category, setCategory] = useState<TripPlanCategory>(item.category);
   const [catPickerOpen, setCatPickerOpen] = useState(false);
-  const [dayDate, setDayDate] = useState(item.dayDate ?? '');
-  const [startsAt, setStartsAt] = useState(
-    item.startsAt
-      ? new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-      : ''
+  const [dayDate, setDayDate] = useState<Date | null>(
+    item.dayDate ? new Date(item.dayDate) : null,
+  );
+  const [startsAt, setStartsAt] = useState<Date | null>(
+    item.startsAt ? new Date(item.startsAt) : null,
   );
   const [locationName, setLocationName] = useState(item.locationName ?? '');
   const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
@@ -111,11 +128,12 @@ function EditForm({
     setErr('');
     setSubmitting(true);
     try {
+      const dateStr = dayDate ? dateToDayStr(dayDate) : null;
       const updated = await updatePlanItem(tripId, item.id, {
         title: title.trim(),
         category,
-        dayDate: dayDate.trim() || null,
-        startsAt: dayDate.trim() && startsAt.trim() ? `${dayDate.trim()}T${startsAt.trim()}:00` : null,
+        dayDate: dateStr,
+        startsAt: dateStr && startsAt ? `${dateStr}T${dateToHHMM(startsAt)}:00` : null,
         locationName: locationName.trim() || null,
         status,
         notes: notes.trim() || null,
@@ -162,10 +180,10 @@ function EditForm({
       )}
 
       <Text style={ef.label}>Date</Text>
-      <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" style={ef.dateField} />
+      <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" />
 
-      <Text style={ef.label}>Time <Text style={ef.opt}>(HH:MM, 24-hour)</Text></Text>
-      <TextInput style={ef.input} value={startsAt} onChangeText={setStartsAt} placeholder="e.g. 19:30" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
+      <Text style={ef.label}>Time <Text style={ef.opt}>(optional)</Text></Text>
+      <DatePickerField mode="time" value={startsAt} onChange={setStartsAt} placeholder="Pick a time" />
 
       <Text style={ef.label}>Location <Text style={ef.opt}>(optional)</Text></Text>
       <TextInput style={ef.input} value={locationName} onChangeText={setLocationName} placeholder="e.g. Ayala Mall, Cebu" placeholderTextColor={color.faint} />
