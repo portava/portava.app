@@ -153,6 +153,18 @@ function PlanLockedView() {
   );
 }
 
+// ── Pending-invite view ────────────────────────────────────────────────────────
+
+function PendingInviteView() {
+  return (
+    <View style={lk.wrap}>
+      <View style={lk.iconWrap}><Lock size={22} color={color.signal} /></View>
+      <Text style={lk.title}>Invite pending</Text>
+      <Text style={lk.body}>Accept your trip invite to contribute to the plan.</Text>
+    </View>
+  );
+}
+
 // ── Timeline / Map toggle ─────────────────────────────────────────────────────
 
 type ViewMode = 'timeline' | 'map';
@@ -178,6 +190,7 @@ export function TripPlanSection({
   tripId,
   currentUserId,
   isOwner,
+  isPendingInvite,
   tripStartDate,
   tripEndDate,
   pageScrollRef,
@@ -185,6 +198,7 @@ export function TripPlanSection({
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  isPendingInvite?: boolean;
   tripStartDate?: string | null;
   tripEndDate?: string | null;
   pageScrollRef?: React.RefObject<ScrollView | null>;
@@ -395,7 +409,7 @@ export function TripPlanSection({
 
       {loading && <ActivityIndicator color={color.signal} style={{ marginVertical: space.lg }} />}
 
-      {!loading && accessDenied && <PlanLockedView />}
+      {!loading && accessDenied && (isPendingInvite ? <PendingInviteView /> : <PlanLockedView />)}
 
       {!loading && !accessDenied && items.length === 0 && (
         <View style={ps.empty}>

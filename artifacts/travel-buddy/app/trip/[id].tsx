@@ -14,7 +14,7 @@ import { ConciergeCommandBar } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
-import { useTrip } from '../../src/hooks/useBackend';
+import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
@@ -24,6 +24,8 @@ export default function TripDetail() {
   const { configured, isAuthed, userId } = useSession();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
+  const { invites } = usePendingTripInvites();
+  const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
   const pageScrollRef = useRef<ScrollView>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
@@ -134,6 +136,7 @@ export default function TripDetail() {
           tripId={trip.id}
           currentUserId={userId ?? ''}
           isOwner={realTrip ? userId === realTrip.ownerId : false}
+          isPendingInvite={isPendingInvite}
           tripStartDate={realTrip?.startDate ?? undefined}
           tripEndDate={realTrip?.endDate ?? undefined}
           pageScrollRef={pageScrollRef}

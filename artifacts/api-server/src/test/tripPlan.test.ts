@@ -719,3 +719,64 @@ describe("POST /plan/items/:itemId/reorder — owner-only", () => {
     await close();
   });
 });
+
+// ── 23-27. Invited (pending) member cannot mutate plan ────────────────────────
+// The server already enforces this via isAcceptedTripMember / canEditPlanItem
+// (both check role IN ('owner','member')), but these tests make it explicit.
+
+describe("Invited member blocked from plan mutations", () => {
+  const INVITED_TOK = "carol-tok";
+
+  function stateWithInvitedAndItem(): State {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member", [CAROL_ID]: "invited" });
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Existing item", category: "activity", status: "tentative",
+      source_type: "manual", source_id: null, day_date: null,
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    return s;
+  }
+
+  it("23. invited member cannot POST a new plan item (403)", async () => {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [CAROL_ID]: "invited" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items`, INVITED_TOK, { title: "Sneak Add" });
+    assert.equal(r.status, 403, "invited member must not be able to add plan items");
+    await close();
+  });
+
+  it("24. invited member cannot PATCH an existing plan item (403)", async () => {
+    const s = stateWithInvitedAndItem();
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, INVITED_TOK, { title: "Hijacked" });
+    assert.equal(r.status, 403, "invited member must not be able to edit plan items");
+    await close();
+  });
+
+  it("25. invited member cannot DELETE a plan item (403)", async () => {
+    const s = stateWithInvitedAndItem();
+    const { port, close } = await startServer(s);
+    const r = await del(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, INVITED_TOK);
+    assert.equal(r.status, 403, "invited member must not be able to delete plan items");
+    await close();
+  });
+
+  it("26. invited member cannot soft-remove a plan item (403)", async () => {
+    const s = stateWithInvitedAndItem();
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/remove`, INVITED_TOK);
+    assert.equal(r.status, 403, "invited member must not be able to remove plan items");
+    await close();
+  });
+
+  it("27. invited member cannot reorder plan items (403)", async () => {
+    const s = stateWithInvitedAndItem();
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/reorder`, INVITED_TOK, { sortOrder: 999 });
+    assert.equal(r.status, 403, "invited member must not be able to reorder plan items");
+    await close();
+  });
+});
