@@ -142,6 +142,19 @@ export async function getCircleMembers(circleOwnerId: string): Promise<FriendRes
   return apiGet(`/api/circles/${encodeURIComponent(circleOwnerId)}/members`);
 }
 
+export interface InvitableUsersResult {
+  groupMembers: FriendUser[];
+  otherFollowers: FriendUser[];
+}
+
+export async function getTripInvitableUsers(tripId: string): Promise<FriendResult<InvitableUsersResult>> {
+  return apiGet(`/api/trips/${encodeURIComponent(tripId)}/invitable-users`);
+}
+
+export async function getCircleInvitableUsers(circleOwnerId: string): Promise<FriendResult<InvitableUsersResult>> {
+  return apiGet(`/api/circles/${encodeURIComponent(circleOwnerId)}/invitable-users`);
+}
+
 // ── Profile lookup ───────────────────────────────────────────────────────────
 
 export async function getProfileByHandle(handle: string): Promise<FriendResult<any>> {

@@ -381,6 +381,67 @@ router.get("/circles/:circleOwnerId/members", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /circles/:circleOwnerId/invitable-users  — grouped invite picker data
+ * ===========================================================================
+ * Returns circle members (groupMembers) + caller's friends not in the circle
+ * (otherFollowers). Caller must be the circle owner or a circle member.
+ */
+router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { circleOwnerId } = req.params;
+  if (!isUuid(circleOwnerId)) { sendError(res, "invalid_payload", "Invalid circle owner id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const isOwner = user.id === circleOwnerId;
+  if (!isOwner) {
+    const { data: mem } = await sc
+      .from("circle_memberships").select("member_id")
+      .eq("owner_id", circleOwnerId).eq("member_id", user.id).maybeSingle();
+    if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
+  }
+
+  const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+    sc.from("circle_memberships").select("member_id").eq("owner_id", circleOwnerId),
+    sc.from("user_friendships").select("user_b").eq("user_a", user.id),
+    sc.from("user_friendships").select("user_a").eq("user_b", user.id),
+  ]);
+
+  const groupMemberIds = (memberships ?? [])
+    .map((m: any) => m.member_id as string)
+    .concat(!isOwner ? [circleOwnerId] : [])
+    .filter((id) => id !== user.id);
+
+  const groupMemberSet = new Set(groupMemberIds);
+  const otherFollowerIds = [
+    ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
+    ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id));
+
+  const allIds = [...groupMemberIds, ...otherFollowerIds];
+  const profileMap: Record<string, any> = {};
+  if (allIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", allIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+  }
+
+  const toUser = (id: string) => {
+    const p = profileMap[id];
+    if (!p) return null;
+    return { id: p.id as string, handle: p.handle as string, name: p.name as string, avatarUrl: (p.avatar_url as string | null) ?? null };
+  };
+
+  res.status(200).json({
+    groupMembers:   groupMemberIds.map(toUser).filter(Boolean),
+    otherFollowers: [...new Set(otherFollowerIds)].map(toUser).filter(Boolean),
+  });
+});
+
+/* ===========================================================================
  * GET /users/:userId/friend-status
  * ===========================================================================
  * Returns: none | outgoing_pending | incoming_pending | friends | self

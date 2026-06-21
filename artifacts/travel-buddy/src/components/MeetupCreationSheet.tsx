@@ -2,9 +2,14 @@
  * MeetupCreationSheet — bottom sheet for creating a meetup.
  *
  * Invite picker:
- *   - No context   → shows your friends list
- *   - tripId       → shows trip co-travelers merged with friends (deduped)
- *   - circleOwnerId → shows circle members merged with friends (deduped)
+ *   - No context     → shows your friends list (flat)
+ *   - tripId         → "Trip members" section (pre-selected, locked) +
+ *                      "Other friends" section below
+ *   - circleOwnerId  → "Circle members" section (pre-selected, locked) +
+ *                      "Other friends" section below
+ *
+ * Group members are pre-selected and locked — they are the primary audience
+ * for this meetup and will always be invited. Other friends are optional.
  *
  * Time proposals:
  *   - Off (default) → single approximate date + time-of-day block
@@ -31,7 +36,7 @@ import {
   type MeetupSummary, type TimeBlock, type MeetupVisibility,
 } from '../services/meetups';
 import {
-  getMyFriends, getTripMembers, getCircleMembers, type FriendUser,
+  getMyFriends, getTripInvitableUsers, getCircleInvitableUsers, type FriendUser,
 } from '../services/friends';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -69,20 +74,29 @@ function PersonAvatar({ user }: { user: FriendUser }) {
 }
 
 function SelectedChips({
-  users, onRemove,
-}: { users: FriendUser[]; onRemove: (id: string) => void }) {
+  users, lockedIds, onRemove,
+}: { users: FriendUser[]; lockedIds: Set<string>; onRemove: (id: string) => void }) {
   if (users.length === 0) return null;
   return (
     <View style={sub.chips}>
-      {users.map((u) => (
-        <View key={u.id} style={sub.chip}>
-          <PersonAvatar user={u} />
-          <Text style={sub.chipName} numberOfLines={1}>{u.name || u.handle}</Text>
-          <Pressable onPress={() => onRemove(u.id)} hitSlop={8}>
-            <X size={12} color={color.mute} />
-          </Pressable>
-        </View>
-      ))}
+      {users.map((u) => {
+        const locked = lockedIds.has(u.id);
+        return (
+          <View key={u.id} style={[sub.chip, locked && sub.chipLocked]}>
+            <PersonAvatar user={u} />
+            <Text style={[sub.chipName, locked && sub.chipNameLocked]} numberOfLines={1}>
+              {u.name || u.handle}
+            </Text>
+            {locked ? (
+              <Check size={11} color={color.signal} />
+            ) : (
+              <Pressable onPress={() => onRemove(u.id)} hitSlop={8}>
+                <X size={12} color={color.mute} />
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -158,10 +172,13 @@ export function MeetupCreationSheet({
 
   // ── Invite section ──
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [candidates, setCandidates] = useState<FriendUser[]>([]);
+  const [groupMembers, setGroupMembers] = useState<FriendUser[]>([]);
+  const [otherFollowers, setOtherFollowers] = useState<FriendUser[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesLoaded, setCandidatesLoaded] = useState(false);
   const [friendSearch, setFriendSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
 
   // ── Time proposals ──
   const [proposeMode, setProposeMode] = useState(false);
@@ -174,48 +191,71 @@ export function MeetupCreationSheet({
   const defaultVisibility: MeetupVisibility =
     tripId ? 'trip' : circleOwnerId ? 'circle' : 'invitees';
 
-  // Load candidates — source matches backend eligibility policy exactly:
-  //   trip context   → accepted trip co-travelers only
-  //   circle context → circle members only
-  //   plain          → friends only
+  // Load candidates:
+  //   trip context   → groupMembers (locked, pre-selected) + otherFollowers
+  //   circle context → groupMembers (locked, pre-selected) + otherFollowers
+  //   plain          → otherFollowers only (friends list, flat)
   const loadCandidates = useCallback(async () => {
-    if (candidates.length > 0 || candidatesLoading) return;
+    if (candidatesLoaded || candidatesLoading) return;
     setCandidatesLoading(true);
 
-    let list: FriendUser[] = [];
     if (tripId) {
-      const res = await getTripMembers(tripId);
-      list = (res.ok && res.data) ? res.data.members : [];
+      const res = await getTripInvitableUsers(tripId);
+      if (res.ok && res.data) {
+        const { groupMembers: gm, otherFollowers: of_ } = res.data;
+        setGroupMembers(gm);
+        setOtherFollowers(of_);
+        const ids = new Set(gm.map((u) => u.id));
+        setLockedIds(ids);
+        setSelectedIds(new Set(ids));
+      }
     } else if (circleOwnerId) {
-      const res = await getCircleMembers(circleOwnerId);
-      list = (res.ok && res.data) ? res.data.members : [];
+      const res = await getCircleInvitableUsers(circleOwnerId);
+      if (res.ok && res.data) {
+        const { groupMembers: gm, otherFollowers: of_ } = res.data;
+        setGroupMembers(gm);
+        setOtherFollowers(of_);
+        const ids = new Set(gm.map((u) => u.id));
+        setLockedIds(ids);
+        setSelectedIds(new Set(ids));
+      }
     } else {
       const res = await getMyFriends();
-      list = (res.ok && res.data) ? res.data.friends : [];
+      const list = (res.ok && res.data) ? res.data.friends : [];
+      setOtherFollowers(list);
     }
 
-    setCandidates(list);
     setCandidatesLoading(false);
-  }, [candidates.length, candidatesLoading, tripId, circleOwnerId]);
+    setCandidatesLoaded(true);
+  }, [candidatesLoaded, candidatesLoading, tripId, circleOwnerId]);
 
   useEffect(() => {
     if (inviteOpen) loadCandidates();
   }, [inviteOpen, loadCandidates]);
 
-  const selectedCandidates = candidates.filter((c) => selectedIds.has(c.id));
+  const allCandidates = [...groupMembers, ...otherFollowers];
+  const selectedCandidates = allCandidates.filter((c) => selectedIds.has(c.id));
 
-  const filtered = candidates.filter((c) => {
+  const filterUser = (c: FriendUser) => {
+    if (!friendSearch) return true;
     const q = friendSearch.toLowerCase();
     return (c.name?.toLowerCase().includes(q) || c.handle?.toLowerCase().includes(q)) ?? false;
-  });
+  };
+  const filteredGroup   = groupMembers.filter(filterUser);
+  const filteredOthers  = otherFollowers.filter(filterUser);
 
   function toggleCandidate(id: string) {
+    if (lockedIds.has(id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
+
+  const hasContext = !!(tripId || circleOwnerId);
+  const groupLabel = tripId ? 'Trip members' : 'Circle members';
+  const hasCandidates = candidatesLoaded && (groupMembers.length > 0 || otherFollowers.length > 0);
 
   function addSlot() {
     if (slots.length >= 5) return;
@@ -295,7 +335,7 @@ export function MeetupCreationSheet({
     onDismiss();
   }
 
-  const inviteLabel = tripId ? 'Trip co-travelers' : circleOwnerId ? 'Circle members' : 'Friends';
+  const inviteLabel = tripId ? 'Trip members' : circleOwnerId ? 'Circle members' : 'Friends';
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.kav}>
@@ -371,15 +411,17 @@ export function MeetupCreationSheet({
 
             {inviteOpen && (
               <View style={s.inviteBody}>
-                <SelectedChips users={selectedCandidates} onRemove={toggleCandidate} />
+                <SelectedChips
+                  users={selectedCandidates}
+                  lockedIds={lockedIds}
+                  onRemove={toggleCandidate}
+                />
                 {candidatesLoading ? (
                   <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.md }} />
-                ) : candidates.length === 0 ? (
+                ) : !hasCandidates ? (
                   <Text style={s.emptyNote}>
-                    {tripId
-                      ? 'No other trip members found.'
-                      : circleOwnerId
-                      ? 'No other circle members found.'
+                    {hasContext
+                      ? 'No members found. You can still create the meetup.'
                       : 'No friends yet — connect with travelers first.'}
                   </Text>
                 ) : (
@@ -395,34 +437,79 @@ export function MeetupCreationSheet({
                         autoCapitalize="none"
                       />
                     </View>
-                    <View style={s.candidateList}>
-                      {filtered.map((c) => {
-                        const selected = selectedIds.has(c.id);
-                        return (
-                          <Pressable
-                            key={c.id}
-                            style={[s.candidateRow, selected && s.candidateRowActive]}
-                            onPress={() => toggleCandidate(c.id)}
-                          >
-                            <PersonAvatar user={c} />
-                            <View style={{ flex: 1 }}>
-                              <Text style={s.candidateName} numberOfLines={1}>
-                                {c.name || c.handle}
-                              </Text>
-                              {c.name && c.handle
-                                ? <Text style={s.candidateHandle} numberOfLines={1}>@{c.handle}</Text>
-                                : null}
+
+                    {/* ── Group members section (trip / circle context) ── */}
+                    {hasContext && filteredGroup.length > 0 && (
+                      <>
+                        <View style={s.sectionHeaderRow}>
+                          <Text style={s.sectionHeaderText}>{groupLabel}</Text>
+                          <Text style={s.sectionHeaderHint}>Always invited</Text>
+                        </View>
+                        <View style={s.candidateList}>
+                          {filteredGroup.map((c) => (
+                            <View key={c.id} style={[s.candidateRow, s.candidateRowLocked]}>
+                              <PersonAvatar user={c} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.candidateName} numberOfLines={1}>{c.name || c.handle}</Text>
+                                {c.name && c.handle
+                                  ? <Text style={s.candidateHandle} numberOfLines={1}>@{c.handle}</Text>
+                                  : null}
+                              </View>
+                              <View style={s.checkboxLocked}>
+                                <Check size={11} color={color.signal} />
+                              </View>
                             </View>
-                            <View style={[s.checkbox, selected && s.checkboxActive]}>
-                              {selected && <Check size={11} color={color.onInk} />}
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                      {filtered.length === 0 && friendSearch ? (
-                        <Text style={s.emptyNote}>No match for "{friendSearch}"</Text>
-                      ) : null}
-                    </View>
+                          ))}
+                          {filteredGroup.length === 0 && friendSearch ? (
+                            <Text style={s.emptyNote}>No match in {groupLabel.toLowerCase()}</Text>
+                          ) : null}
+                        </View>
+                      </>
+                    )}
+
+                    {/* ── Other followers section ── */}
+                    {filteredOthers.length > 0 && (
+                      <>
+                        {hasContext && (
+                          <View style={s.sectionHeaderRow}>
+                            <Text style={s.sectionHeaderText}>Other friends</Text>
+                          </View>
+                        )}
+                        <View style={s.candidateList}>
+                          {filteredOthers.map((c) => {
+                            const selected = selectedIds.has(c.id);
+                            return (
+                              <Pressable
+                                key={c.id}
+                                style={[s.candidateRow, selected && s.candidateRowActive]}
+                                onPress={() => toggleCandidate(c.id)}
+                              >
+                                <PersonAvatar user={c} />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={s.candidateName} numberOfLines={1}>
+                                    {c.name || c.handle}
+                                  </Text>
+                                  {c.name && c.handle
+                                    ? <Text style={s.candidateHandle} numberOfLines={1}>@{c.handle}</Text>
+                                    : null}
+                                </View>
+                                <View style={[s.checkbox, selected && s.checkboxActive]}>
+                                  {selected && <Check size={11} color={color.onInk} />}
+                                </View>
+                              </Pressable>
+                            );
+                          })}
+                          {filteredOthers.length === 0 && friendSearch ? (
+                            <Text style={s.emptyNote}>No match for "{friendSearch}"</Text>
+                          ) : null}
+                        </View>
+                      </>
+                    )}
+
+                    {/* No results at all for this search */}
+                    {friendSearch && filteredGroup.length === 0 && filteredOthers.length === 0 && (
+                      <Text style={s.emptyNote}>No match for "{friendSearch}"</Text>
+                    )}
                   </>
                 )}
               </View>
@@ -520,6 +607,8 @@ const sub = StyleSheet.create({
   chips:            { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm },
   chip:             { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal, backgroundColor: color.paperRaised, maxWidth: 150 },
   chipName:         { ...t.small, color: color.signal, fontWeight: '700', fontSize: 11, flex: 1 },
+  chipLocked:       { borderColor: color.haze, backgroundColor: color.paper },
+  chipNameLocked:   { color: color.mute },
   blockRow:         { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   blockBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
   blockBtnSmall:    { paddingHorizontal: space.sm, paddingVertical: 5 },
@@ -562,6 +651,11 @@ const s = StyleSheet.create({
   candidateHandle:  { ...t.small, color: color.mute, fontSize: 11 },
   checkbox:         { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
   checkboxActive:   { backgroundColor: color.signal, borderColor: color.signal },
+  checkboxLocked:   { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: color.signal, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  candidateRowLocked: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: 'transparent', opacity: 0.85 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, paddingHorizontal: 2, marginTop: space.sm },
+  sectionHeaderText:{ ...t.small, fontWeight: '700', color: color.signal, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionHeaderHint:{ ...t.small, color: color.mute, fontSize: 10, fontStyle: 'italic' },
   emptyNote:        { ...t.small, color: color.faint, textAlign: 'center', paddingVertical: space.md },
   proposeHeader:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   proposeHint:      { ...t.small, color: color.mute, fontSize: 11, marginTop: -space.sm },

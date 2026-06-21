@@ -120,6 +120,67 @@ router.get("/trips/:tripId/members", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /trips/:tripId/invitable-users  — grouped invite picker data
+ * ===========================================================================
+ * Returns trip members (groupMembers) + caller's friends not in the trip
+ * (otherFollowers), so the invite picker can render two labelled sections.
+ * Caller must be an accepted trip member.
+ */
+router.get("/trips/:tripId/invitable-users", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const memberOk = await (async () => {
+    const { data } = await sc
+      .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id)
+      .in("role", ["owner", "member"]).maybeSingle();
+    return !!data;
+  })();
+  if (!memberOk) { sendError(res, "forbidden", "Not a trip member"); return; }
+
+  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+    sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
+    sc.from("user_friendships").select("user_b").eq("user_a", user.id),
+    sc.from("user_friendships").select("user_a").eq("user_b", user.id),
+  ]);
+
+  const groupMemberIds = (memberRows ?? [])
+    .map((r: any) => r.user_id as string)
+    .filter((id) => id !== user.id);
+
+  const groupMemberSet = new Set(groupMemberIds);
+  const otherFollowerIds = [
+    ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
+    ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id));
+
+  const allIds = [...groupMemberIds, ...otherFollowerIds];
+  const profileMap: Record<string, any> = {};
+  if (allIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+  }
+
+  const toUser = (id: string) => {
+    const p = profileMap[id];
+    if (!p) return null;
+    return { id: p.id as string, handle: p.handle as string, name: p.name as string, avatarUrl: (p.avatar_url as string | null) ?? null };
+  };
+
+  res.status(200).json({
+    groupMembers:   groupMemberIds.map(toUser).filter(Boolean),
+    otherFollowers: [...new Set(otherFollowerIds)].map(toUser).filter(Boolean),
+  });
+});
+
+/* ===========================================================================
  * POST /trips/:tripId/invite  — trip owner invites a user
  * ===========================================================================
  * Reuses the existing trip_members table with role='invited'.
