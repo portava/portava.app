@@ -23,7 +23,7 @@ import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestio
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
-import type { MeetupCounts, MeetupCreator, RsvpStatus } from '../../src/services/meetups';
+import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -49,6 +49,22 @@ function fmtDateTime(iso: string): string {
 const BLOCK_SHORT: Record<string, string> = {
   morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', late: 'Late night',
 };
+
+/** Format a single time-poll slot as "Fri Jun 27 · 7:00 PM" (exact) or "Fri Jun 27 · Evening" (block) */
+function fmtTimeOption(opt: MeetupTimeOption): string {
+  const datePart = fmtDate(opt.proposedDate);
+  if (opt.proposedTime) {
+    const [h, m] = opt.proposedTime.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${datePart} · ${timePart}`;
+  }
+  if (opt.timeBlock) {
+    return `${datePart} · ${BLOCK_SHORT[opt.timeBlock] ?? opt.timeBlock}`;
+  }
+  return datePart;
+}
 
 // ── Meetup card ───────────────────────────────────────────────────────────────
 
@@ -127,10 +143,10 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [isCancelled, setIsCancelled] = useState(false);
   // undefined = still loading; null = loaded but creator not found
   const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
-  // startsAt / approximateDate from the live meetup — used as fallbacks for
-  // both confirmed and unconfirmed cards when the stored payload lacks time info
+  // Live meetup fields used to enrich card display beyond what's in the stored payload
   const [fetchedStartsAt, setFetchedStartsAt] = useState<string | null>(null);
   const [fetchedApproxDate, setFetchedApproxDate] = useState<string | null>(null);
+  const [fetchedTimeOptions, setFetchedTimeOptions] = useState<MeetupTimeOption[]>([]);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
@@ -141,6 +157,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setCreator(res.data.creator ?? null);
         setFetchedStartsAt(res.data.startsAt ?? null);
         setFetchedApproxDate(res.data.approximateDate ?? null);
+        setFetchedTimeOptions(res.data.timeOptions ?? []);
       }
     });
   }, [payload.meetupId]);
@@ -178,20 +195,31 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const isConfirmed = payload.isConfirmed ?? false;
   // Fallback chain for the date/time row:
   //   confirmed  → confirmedTime (payload) → fetchedStartsAt → date-only fallback
-  //   unconfirmed → fetchedStartsAt (exact time set) → approximateDate + block label
+  //   unconfirmed → fetchedStartsAt → earliest time-poll slot (with exact time if proposedTime set)
+  //               → approximateDate + block label → null
   const approxDateStr = payload.approximateDate ?? fetchedApproxDate;
   const dateOnlyFallback = approxDateStr ? fmtDate(approxDateStr) : null;
+
+  let pendingWhen: string | null = null;
+  if (fetchedStartsAt) {
+    pendingWhen = fmtDateTime(fetchedStartsAt);
+  } else if (fetchedTimeOptions.length > 0) {
+    const sorted = [...fetchedTimeOptions].sort((a, b) =>
+      (a.proposedDate + (a.proposedTime ?? '')).localeCompare(b.proposedDate + (b.proposedTime ?? ''))
+    );
+    const firstLabel = fmtTimeOption(sorted[0]);
+    pendingWhen = sorted.length > 1 ? `${firstLabel} +${sorted.length - 1} more` : firstLabel;
+  } else if (approxDateStr) {
+    pendingWhen = `${fmtDate(approxDateStr)}${payload.timeBlock ? ` · ${BLOCK_SHORT[payload.timeBlock] ?? payload.timeBlock}` : ''}`;
+  }
+
   const when = isConfirmed
     ? (payload.confirmedTime
         ? fmtDateTime(payload.confirmedTime)
         : fetchedStartsAt
           ? fmtDateTime(fetchedStartsAt)
           : dateOnlyFallback)
-    : fetchedStartsAt
-      ? fmtDateTime(fetchedStartsAt)
-      : approxDateStr
-        ? `${fmtDate(approxDateStr)}${payload.timeBlock ? ` · ${BLOCK_SHORT[payload.timeBlock] ?? payload.timeBlock}` : ''}`
-        : null;
+    : pendingWhen;
   const rsvpLabel = counts
     ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
     : null;
