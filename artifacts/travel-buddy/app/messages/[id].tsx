@@ -127,8 +127,10 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [isCancelled, setIsCancelled] = useState(false);
   // undefined = still loading; null = loaded but creator not found
   const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
-  // startsAt from the live meetup — used for unconfirmed cards with exact time set
+  // startsAt / approximateDate from the live meetup — used as fallbacks for
+  // both confirmed and unconfirmed cards when the stored payload lacks time info
   const [fetchedStartsAt, setFetchedStartsAt] = useState<string | null>(null);
+  const [fetchedApproxDate, setFetchedApproxDate] = useState<string | null>(null);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
@@ -138,6 +140,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setIsCancelled(res.data.status === 'cancelled');
         setCreator(res.data.creator ?? null);
         setFetchedStartsAt(res.data.startsAt ?? null);
+        setFetchedApproxDate(res.data.approximateDate ?? null);
       }
     });
   }, [payload.meetupId]);
@@ -173,12 +176,21 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   }
 
   const isConfirmed = payload.isConfirmed ?? false;
+  // Fallback chain for the date/time row:
+  //   confirmed  → confirmedTime (payload) → fetchedStartsAt → date-only fallback
+  //   unconfirmed → fetchedStartsAt (exact time set) → approximateDate + block label
+  const approxDateStr = payload.approximateDate ?? fetchedApproxDate;
+  const dateOnlyFallback = approxDateStr ? fmtDate(approxDateStr) : null;
   const when = isConfirmed
-    ? (payload.confirmedTime ? fmtDateTime(payload.confirmedTime) : null)
+    ? (payload.confirmedTime
+        ? fmtDateTime(payload.confirmedTime)
+        : fetchedStartsAt
+          ? fmtDateTime(fetchedStartsAt)
+          : dateOnlyFallback)
     : fetchedStartsAt
       ? fmtDateTime(fetchedStartsAt)
-      : payload.approximateDate
-        ? `${fmtDate(payload.approximateDate)}${payload.timeBlock ? ` · ${BLOCK_SHORT[payload.timeBlock] ?? payload.timeBlock}` : ''}`
+      : approxDateStr
+        ? `${fmtDate(approxDateStr)}${payload.timeBlock ? ` · ${BLOCK_SHORT[payload.timeBlock] ?? payload.timeBlock}` : ''}`
         : null;
   const rsvpLabel = counts
     ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
