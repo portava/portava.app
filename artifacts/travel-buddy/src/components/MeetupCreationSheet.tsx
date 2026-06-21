@@ -623,13 +623,9 @@ export function MeetupCreationSheet({
                   mode="time"
                   value={exactTime}
                   onChange={(t) => { setExactTime(t); setTimeBlock(null); }}
+                  onClear={() => setExactTime(null)}
                   placeholder="Pick a time"
                 />
-                {exactTime && (
-                  <Pressable onPress={() => setExactTime(null)}>
-                    <Text style={s.clearTimeLink}>Clear exact time</Text>
-                  </Pressable>
-                )}
                 <Text style={s.label}>
                   {exactTime ? 'Time of day (overridden by exact time above)' : 'Time of day'}
                 </Text>
@@ -726,7 +722,6 @@ const s = StyleSheet.create({
   label:            { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
   timeLabelRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
   labelHint:        { ...t.small, color: color.mute, fontSize: 11 },
-  clearTimeLink:    { ...t.small, color: color.signal, fontWeight: '700', textAlign: 'right', marginTop: 2 },
   input:            { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm + 2, ...t.body, color: color.ink },
   divider:          { height: 1, backgroundColor: color.haze, marginVertical: space.xs },
   sectionToggle:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },

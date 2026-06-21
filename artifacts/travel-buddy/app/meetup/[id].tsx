@@ -387,13 +387,9 @@ export default function MeetupScreen() {
                 mode="time"
                 value={editExactTime}
                 onChange={(t) => { setEditExactTime(t); setEditTimeBlock(null); }}
+                onClear={() => setEditExactTime(null)}
                 placeholder="Pick a time"
               />
-              {editExactTime && (
-                <Pressable onPress={() => setEditExactTime(null)}>
-                  <Text style={s.clearTimeText}>Clear exact time</Text>
-                </Pressable>
-              )}
               <Text style={s.editLabel}>
                 {editExactTime ? 'Time of day (overridden by exact time above)' : 'Time of day (optional)'}
               </Text>
