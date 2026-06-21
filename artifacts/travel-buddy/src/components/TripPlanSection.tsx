@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import { Plus, Lock, Map as MapIcon, List, RotateCcw } from 'lucide-react-native';
+import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
 import { fetchTripPlan, fetchTripPlanMap } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
@@ -248,6 +248,15 @@ export function TripPlanSection({
     AsyncStorage.setItem(`tripPlanMode:${tripId}`, m).catch(() => {});
   }, [tripId]);
 
+  const warnCount = items.filter((i) => i.warnings && i.warnings.length > 0).length;
+
+  const handleNeedsAttention = useCallback(() => {
+    const first = items.find((i) => i.warnings && i.warnings.length > 0);
+    if (!first) return;
+    setActiveDay(first.dayDate ?? '__unscheduled__');
+    setActiveCat('all');
+  }, [items]);
+
   const handleAdded = useCallback((item: TripPlanItem) => {
     setItems((prev) => [...prev, item]);
     setMapItems([]);   // invalidate map cache so it refetches on next map view
@@ -313,6 +322,17 @@ export function TripPlanSection({
           </>
         )}
       </View>
+
+      {/* Warning summary banner */}
+      {!loading && !accessDenied && warnCount > 0 && (
+        <Pressable style={ps.warnBanner} onPress={handleNeedsAttention}>
+          <AlertTriangle size={12} color="#8B5E00" />
+          <Text style={ps.warnBannerText}>
+            {warnCount} item{warnCount !== 1 ? 's' : ''} need{warnCount === 1 ? 's' : ''} attention
+          </Text>
+          <Text style={ps.warnBannerLink}>Jump to first →</Text>
+        </Pressable>
+      )}
 
       {/* Filters — only shown when there's content */}
       {!loading && !accessDenied && hasContent && (
@@ -408,6 +428,9 @@ const ps = StyleSheet.create({
   refreshBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
   addBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
   addBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
+  warnBanner:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, backgroundColor: '#FFFBEB', borderRadius: radius.md, borderWidth: 1, borderColor: '#F5D77B', paddingHorizontal: space.md, paddingVertical: 8 },
+  warnBannerText: { ...t.small, color: '#8B5E00', fontWeight: '600' as const, flex: 1 },
+  warnBannerLink: { ...t.small, color: '#F59E0B', fontWeight: '700' as const },
   empty:      { padding: space.lg, alignItems: 'center', gap: 8, paddingVertical: 40 },
   emptyTitle: { ...t.title, fontSize: 18, color: color.ink },
   emptyBody:  { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 280, lineHeight: 22 },

@@ -552,7 +552,7 @@ const ic = StyleSheet.create({
   rowDragging: { opacity: 0.85 },
   handle:      { width: 28, justifyContent: 'center', alignItems: 'center', paddingRight: 2 },
   card:        { backgroundColor: '#fff', borderRadius: radius.lg, padding: 12, borderWidth: 1, borderColor: color.haze, gap: 4 },
-  cardWarn:    { borderColor: '#F5D77B', borderWidth: 1.5 },
+  cardWarn:    { borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderColor: '#F5D77B' },
   top:         { flexDirection: 'row', alignItems: 'center', gap: 4 },
   catBadge:    { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   catText:     { fontSize: 10, fontWeight: '700' },
