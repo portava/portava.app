@@ -1,7 +1,7 @@
 /**
  * Daily Brief Cleanup
  *
- * Purges daily_briefs rows older than 60 days so the table does not grow
+ * Purges daily_briefs rows older than DAILY_BRIEF_RETENTION_DAYS (default 60) days so the table does not grow
  * unbounded. Runs once immediately on startup (after a short delay to let
  * the server fully initialise) and then every 24 hours.
  *
@@ -15,7 +15,11 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
 
-const RETENTION_DAYS = 60;
+const RETENTION_DAYS = (() => {
+  const raw = process.env.DAILY_BRIEF_RETENTION_DAYS;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+})();
 const INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const STARTUP_DELAY_MS = 30 * 1_000;
 
