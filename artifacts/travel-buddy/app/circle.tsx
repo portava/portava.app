@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { router } from 'expo-router';
-import { MessageCircle, CalendarClock, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { openCircleChat } from '../src/services/messaging';
@@ -76,7 +76,19 @@ export default function Circle() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Circle" back />
+      <ScreenHeader
+        title="Circle"
+        back
+        right={
+          <Pressable
+            onPress={() => router.push('/discover' as any)}
+            hitSlop={8}
+            style={styles.discoverBtn}
+          >
+            <Compass size={22} color={color.signal} />
+          </Pressable>
+        }
+      />
 
       {userId ? (
         <Pressable
@@ -250,4 +262,5 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
   emptyNote: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 18 },
+  discoverBtn: { padding: 4 },
 });

@@ -147,6 +147,118 @@ function rowToUser(r: any) {
 }
 
 /* ===========================================================================
+ * GET /users/search  — search travelers by name or @username
+ * ===========================================================================
+ * ?q=<query>&limit=<n>
+ * Excludes the calling user. Blocked users excluded when the user_blocks
+ * table is available (graceful no-op if not). Private profiles appear in
+ * results with minimal info (name, avatar, isPrivate=true); no follow action.
+ */
+router.get("/users/search", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  // Strip a leading @ so users can type either "alice" or "@alice" and get the same results.
+  const raw = (req.query.q as string | undefined)?.trim() ?? "";
+  const q = raw.startsWith("@") ? raw.slice(1).trim() : raw;
+  if (!q) { res.status(200).json({ users: [] }); return; }
+
+  const limit = Math.min(Math.max(parseInt((req.query.limit as string) ?? "20", 10) || 20, 1), 50);
+  const pattern = `%${q.replace(/[%_]/g, "\\$&")}%`;
+
+  const { getServiceClient } = await import("../lib/supabase");
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Fetch matching profiles (ILIKE on name or handle), excluding the caller.
+  const { data: profiles, error: profErr } = await sc
+    .from("profiles")
+    .select("id, handle, name, avatar_url, is_private")
+    .or(`name.ilike.${pattern},handle.ilike.${pattern}`)
+    .neq("id", user.id)
+    .limit(limit);
+
+  if (profErr) {
+    req.log.error({ err: profErr }, "user search failed");
+    sendError(res, "db_error", profErr.message);
+    return;
+  }
+
+  const rows = profiles ?? [];
+  if (rows.length === 0) { res.status(200).json({ users: [] }); return; }
+
+  const ids = rows.map((p: any) => p.id as string);
+
+  // Resolve blocked-user IDs.
+  // user_blocks may not exist yet; check .error explicitly (Supabase returns
+  // errors in the response object, not as thrown exceptions).
+  // If the query errors for any reason, fail safe by excluding ALL result users
+  // — we'd rather show no results than leak a blocked user's profile.
+  let blockedSet = new Set<string>();
+  let blockQueryFailed = false;
+  try {
+    const { data: blockRows, error: blockErr } = await sc
+      .from("user_blocks")
+      .select("blocked_id, blocker_id")
+      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+    if (blockErr) {
+      // Table missing (PGRST204 / 42P01) is expected — treat as no blocks.
+      // Any other DB error: fail safe (return empty set, filter will remove all).
+      const isTableMissing =
+        blockErr.code === "42P01" ||
+        blockErr.code === "PGRST204" ||
+        (blockErr.message ?? "").toLowerCase().includes("does not exist");
+      if (!isTableMissing) {
+        blockQueryFailed = true;
+        req.log.warn({ err: blockErr }, "user_blocks query failed; suppressing results");
+      }
+    } else {
+      for (const b of (blockRows ?? [])) {
+        if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
+        else blockedSet.add((b as any).blocker_id);
+      }
+    }
+  } catch (e) {
+    // Network-level or unexpected error — fail safe.
+    blockQueryFailed = true;
+    req.log.warn({ err: e }, "user_blocks query threw; suppressing results");
+  }
+
+  if (blockQueryFailed) { res.status(200).json({ users: [] }); return; }
+
+  // Follower counts and isFollowing state in parallel (single query each).
+  const [followerEdgesRes, myFollowsRes] = await Promise.all([
+    sc.from("user_follows").select("following_id").in("following_id", ids),
+    sc.from("user_follows").select("following_id").eq("follower_id", user.id).in("following_id", ids),
+  ]);
+
+  const followerCounts: Record<string, number> = {};
+  for (const e of (followerEdgesRes.data ?? [])) {
+    const fid = (e as any).following_id as string;
+    followerCounts[fid] = (followerCounts[fid] ?? 0) + 1;
+  }
+
+  const followingSet = new Set<string>(
+    (myFollowsRes.data ?? []).map((e: any) => e.following_id as string),
+  );
+
+  const users = rows
+    .filter((p: any) => !blockedSet.has(p.id as string))
+    .map((p: any) => ({
+      id: p.id,
+      displayName: (p.name as string | null) ?? null,
+      username: (p.handle as string | null) ?? null,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+      followerCount: followerCounts[p.id as string] ?? 0,
+      isFollowing: followingSet.has(p.id as string),
+      isPrivate: (p.is_private as boolean) ?? false,
+    }));
+
+  res.status(200).json({ users });
+});
+
+/* ===========================================================================
  * GET /users/:userId  — public profile for Passport page
  * ===========================================================================
  * Returns safe public fields + follower/following counts + isFollowing state.
