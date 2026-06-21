@@ -12,8 +12,9 @@ import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, UserPlus, Users, Plane, MessageCircle, CalendarClock } from 'lucide-react-native';
 import { useRequests } from '../src/hooks/useRequests';
-import { useIncomingMessageRequests } from '../src/hooks/useMessaging';
+import { useIncomingMessageRequests, useUnreadCounts } from '../src/hooks/useMessaging';
 import { acceptRequest, declineRequest, cancelRequest, type InboxItem } from '../src/services/requests';
+import { markNotificationsRead } from '../src/services/messaging';
 import { getMyMeetupInvites, rsvpMeetup, type MeetupInvite } from '../src/services/meetups';
 import { color, space, type as t } from '../src/theme/tokens';
 
@@ -218,6 +219,7 @@ export default function Notifications() {
   const insets = useSafeAreaInsets();
   const requests = useRequests();
   const msgReqs = useIncomingMessageRequests();
+  const { refresh: refreshUnreadCounts } = useUnreadCounts();
   const [activeTab, setActiveTab] = useState<TabKind>('incoming');
   const [actioning, setActioning] = useState<string | null>(null);
   const everLoaded = useRef(false);
@@ -233,7 +235,8 @@ export default function Notifications() {
     requests.reload();
     msgReqs.reload();
     loadMeetupInvites();
-  }, [requests.reload, msgReqs.reload, loadMeetupInvites]));
+    markNotificationsRead().then(() => refreshUnreadCounts());
+  }, [requests.reload, msgReqs.reload, loadMeetupInvites, refreshUnreadCounts]));
 
   const loading = requests.loading || msgReqs.loading;
   const error = requests.error || msgReqs.error;

@@ -56,6 +56,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0017_job_health.sql` | Creates `job_health` table (primary key: `job text`) to persist background-job last-run timestamps; used by `GET /api/healthz/cleanup` to report `cleanupHealthy` across server restarts | pending |
 | `0018_preferred_language.sql` | Adds `preferred_language` (nullable text, BCP-47) to `profiles`; overrides `preferred_message_language` in the translation pipeline when set | pending |
 | `0019_proposed_time.sql` | Adds `proposed_time TIME` (nullable) to `meetup_time_options` — stores exact HH:MM per time-poll slot alongside the coarse time_block | pending |
+| `0020_notifications_inbox_viewed.sql` | Adds `notifications_inbox_viewed_at timestamptz` to `profiles`; used by `GET /api/me/unread-counts` to compute unread notification badge count | 2026-06-21 |
 
 ## Gotchas
 

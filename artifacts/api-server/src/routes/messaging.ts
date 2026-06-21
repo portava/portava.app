@@ -608,9 +608,11 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * GET /api/me/unread-counts
  * ---------------------------------------------------------------------------
- * Returns { messages: number } — the count of threads that have at least one
- * unread message (i.e. last_message_at > last_read_at and the last message
- * was not sent by the current user).
+ * Returns { messages: number; notifications: number }
+ *   messages      — threads with at least one unread message not sent by the caller
+ *   notifications — pending inbox items (friend requests, circle invites, trip
+ *                   invites, message requests) created after the caller last
+ *                   viewed their Inbox (profiles.notifications_inbox_viewed_at).
  */
 router.get('/me/unread-counts', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -620,86 +622,150 @@ router.get('/me/unread-counts', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: memberships, error: mErr } = await sc
-    .from('message_thread_members')
-    .select('thread_id, last_read_at')
-    .eq('user_id', user.id)
-    .is('left_at', null);
+  // ── Run messages query and notifications queries in parallel ──────────────
+  const [membershipsResult, profileResult] = await Promise.all([
+    sc
+      .from('message_thread_members')
+      .select('thread_id, last_read_at')
+      .eq('user_id', user.id)
+      .is('left_at', null),
+    sc
+      .from('profiles')
+      .select('notifications_inbox_viewed_at')
+      .eq('id', user.id)
+      .maybeSingle(),
+  ]);
 
+  const { data: memberships, error: mErr } = membershipsResult;
   if (mErr) {
     req.log.error({ err: mErr }, 'unread-counts membership query failed');
     sendError(res, 'db_error', mErr.message);
     return;
   }
 
+  const inboxViewedAt: string | null = (profileResult.data as any)?.notifications_inbox_viewed_at ?? null;
+
+  // ── Message unread count ──────────────────────────────────────────────────
   const threadIds = (memberships ?? []).map((m: any) => m.thread_id as string);
-  if (threadIds.length === 0) {
-    res.status(200).json({ messages: 0 });
-    return;
-  }
+  let messageCount = 0;
 
-  const readAtByThread: Record<string, string | null> = {};
-  for (const m of memberships ?? []) {
-    readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
-  }
+  if (threadIds.length > 0) {
+    const readAtByThread: Record<string, string | null> = {};
+    for (const m of memberships ?? []) {
+      readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
+    }
 
-  const { data: threads, error: tErr } = await sc
-    .from('message_threads')
-    .select('id, last_message_at')
-    .in('id', threadIds)
-    .not('last_message_at', 'is', null);
+    const { data: threads, error: tErr } = await sc
+      .from('message_threads')
+      .select('id, last_message_at')
+      .in('id', threadIds)
+      .not('last_message_at', 'is', null);
 
-  if (tErr) {
-    req.log.error({ err: tErr }, 'unread-counts thread query failed');
-    sendError(res, 'db_error', tErr.message);
-    return;
-  }
+    if (tErr) {
+      req.log.error({ err: tErr }, 'unread-counts thread query failed');
+      sendError(res, 'db_error', tErr.message);
+      return;
+    }
 
-  const potentiallyUnreadThreadIds = (threads ?? [])
-    .filter((t: any) => {
-      const lastReadAt = readAtByThread[t.id];
-      if (!lastReadAt) return true;
-      return new Date(t.last_message_at) > new Date(lastReadAt);
-    })
-    .map((t: any) => t.id as string);
+    const potentiallyUnreadThreadIds = (threads ?? [])
+      .filter((t: any) => {
+        const lastReadAt = readAtByThread[t.id];
+        if (!lastReadAt) return true;
+        return new Date(t.last_message_at) > new Date(lastReadAt);
+      })
+      .map((t: any) => t.id as string);
 
-  if (potentiallyUnreadThreadIds.length === 0) {
-    res.status(200).json({ messages: 0 });
-    return;
-  }
+    if (potentiallyUnreadThreadIds.length > 0) {
+      const { data: lastMsgs, error: lmErr } = await sc
+        .from('messages')
+        .select('thread_id, sender_id, created_at')
+        .in('thread_id', potentiallyUnreadThreadIds)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
 
-  const { data: lastMsgs, error: lmErr } = await sc
-    .from('messages')
-    .select('thread_id, sender_id, created_at')
-    .in('thread_id', potentiallyUnreadThreadIds)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+      if (lmErr) {
+        req.log.error({ err: lmErr }, 'unread-counts messages query failed');
+        sendError(res, 'db_error', lmErr.message);
+        return;
+      }
 
-  if (lmErr) {
-    req.log.error({ err: lmErr }, 'unread-counts messages query failed');
-    sendError(res, 'db_error', lmErr.message);
-    return;
-  }
+      const lastMsgByThread: Record<string, any> = {};
+      for (const m of lastMsgs ?? []) {
+        if (!lastMsgByThread[(m as any).thread_id]) {
+          lastMsgByThread[(m as any).thread_id] = m;
+        }
+      }
 
-  const lastMsgByThread: Record<string, any> = {};
-  for (const m of lastMsgs ?? []) {
-    if (!lastMsgByThread[(m as any).thread_id]) {
-      lastMsgByThread[(m as any).thread_id] = m;
+      for (const threadId of potentiallyUnreadThreadIds) {
+        const lm = lastMsgByThread[threadId];
+        if (!lm) continue;
+        if ((lm as any).sender_id === user.id) continue;
+        const lastReadAt = readAtByThread[threadId];
+        if (!lastReadAt || new Date((lm as any).created_at) > new Date(lastReadAt)) {
+          messageCount++;
+        }
+      }
     }
   }
 
-  let unreadCount = 0;
-  for (const threadId of potentiallyUnreadThreadIds) {
-    const lm = lastMsgByThread[threadId];
-    if (!lm) continue;
-    if ((lm as any).sender_id === user.id) continue;
-    const lastReadAt = readAtByThread[threadId];
-    if (!lastReadAt || new Date((lm as any).created_at) > new Date(lastReadAt)) {
-      unreadCount++;
-    }
+  // ── Notification unread count ─────────────────────────────────────────────
+  // Count pending inbox items created after the user last viewed the Inbox.
+  // Covers: friend requests, circle invites, trip invites, message requests.
+  function pendingSince(table: string, filterCol: string) {
+    let q = (sc as any).from(table).select('id', { count: 'exact', head: true })
+      .eq(filterCol, user.id).eq('status', 'pending');
+    if (inboxViewedAt) q = q.gt('created_at', inboxViewedAt);
+    return q as Promise<{ count: number | null; error: any }>;
   }
 
-  res.status(200).json({ messages: unreadCount });
+  let tiQ = (sc as any).from('trip_members').select('user_id', { count: 'exact', head: true })
+    .eq('user_id', user.id).eq('role', 'invited');
+  if (inboxViewedAt) tiQ = tiQ.gt('created_at', inboxViewedAt);
+
+  const [frResult, ciResult, tiResult, mrResult] = await Promise.all([
+    pendingSince('friend_requests', 'recipient_id'),
+    pendingSince('circle_invites', 'recipient_id'),
+    tiQ as Promise<{ count: number | null; error: any }>,
+    pendingSince('message_requests', 'recipient_id'),
+  ]);
+
+  const notifCount =
+    (frResult.count ?? 0) +
+    (ciResult.count ?? 0) +
+    (tiResult.count ?? 0) +
+    (mrResult.count ?? 0);
+
+  res.status(200).json({ messages: messageCount, notifications: notifCount });
+});
+
+/* ---------------------------------------------------------------------------
+ * POST /api/me/notifications/read-all
+ * ---------------------------------------------------------------------------
+ * Records that the current user has viewed their Inbox by setting
+ * profiles.notifications_inbox_viewed_at = now(). The unread-counts endpoint
+ * uses this timestamp to compute the notification badge count.
+ */
+router.post('/me/notifications/read-all', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc
+    .from('profiles')
+    .update({ notifications_inbox_viewed_at: now })
+    .eq('id', user.id);
+
+  if (error) {
+    req.log.error({ err: error }, 'mark notifications read failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true, viewedAt: now });
 });
 
 /* ---------------------------------------------------------------------------

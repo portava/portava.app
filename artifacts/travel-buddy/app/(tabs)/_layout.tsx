@@ -1,12 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, AppState } from 'react-native';
-import { Tabs, router, usePathname, Link } from 'expo-router';
+import React from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, Compass, Map, User, Plus, Plane, Bell, MessageCircle } from 'lucide-react-native';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
-import { getRequestCount } from '../../src/services/requests';
-import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 
 const NAV_ITEMS = [
@@ -17,7 +15,7 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
-function DesktopSidebar({ requestCount, unreadMessages }: { requestCount: number; unreadMessages: number }) {
+function DesktopSidebar({ unreadNotifications, unreadMessages }: { unreadNotifications: number; unreadMessages: number }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
@@ -41,11 +39,6 @@ function DesktopSidebar({ requestCount, unreadMessages }: { requestCount: number
             >
               <Icon size={20} color={active ? color.signal : color.mute} />
               <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
-              {label === 'Passport' && requestCount > 0 && (
-                <View style={styles.sidebarBadge}>
-                  <Text style={styles.sidebarBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
-                </View>
-              )}
               {label === 'Messages' && unreadMessages > 0 && (
                 <View style={styles.sidebarBadge}>
                   <Text style={styles.sidebarBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
@@ -62,9 +55,9 @@ function DesktopSidebar({ requestCount, unreadMessages }: { requestCount: number
       <Pressable style={styles.notifBtn} onPress={() => router.push('/notifications' as any)}>
         <Bell size={18} color={color.mute} />
         <Text style={styles.navLabel}>Notifications</Text>
-        {requestCount > 0 && (
+        {unreadNotifications > 0 && (
           <View style={styles.sidebarBadge}>
-            <Text style={styles.sidebarBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+            <Text style={styles.sidebarBadgeText}>{unreadNotifications > 99 ? '99+' : String(unreadNotifications)}</Text>
           </View>
         )}
       </Pressable>
@@ -98,22 +91,7 @@ function StampButton() {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
-  const [requestCount, setRequestCount] = useState(0);
-  const { messages: unreadMessages, refresh: refreshUnread } = useUnreadCounts();
-
-  const refreshCount = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
-    const res = await getRequestCount();
-    if (res.ok && res.data) setRequestCount((res.data as { count: number }).count ?? 0);
-  }, []);
-
-  useEffect(() => {
-    refreshCount();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refreshCount();
-    });
-    return () => sub.remove();
-  }, [refreshCount]);
+  const { messages: unreadMessages, notifications: unreadNotifications, refresh: refreshUnread } = useUnreadCounts();
 
   const tabs = (
     <Tabs
@@ -134,7 +112,6 @@ export default function TabLayout() {
           title: 'Pulse',
           tabBarIcon: ({ color: c }) => <Activity size={22} color={c} />,
         }}
-        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="discovery"
@@ -142,7 +119,6 @@ export default function TabLayout() {
           title: 'Explore',
           tabBarIcon: ({ color: c }) => <Compass size={22} color={c} />,
         }}
-        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="create-tab"
@@ -158,7 +134,6 @@ export default function TabLayout() {
           title: 'Trips',
           tabBarIcon: ({ color: c }) => <Map size={22} color={c} />,
         }}
-        listeners={{ focus: refreshCount, tabPress: refreshCount }}
       />
       <Tabs.Screen
         name="messages"
@@ -186,15 +161,17 @@ export default function TabLayout() {
           tabBarIcon: ({ color: c }) => (
             <View>
               <User size={22} color={c} />
-              {requestCount > 0 && (
+              {unreadNotifications > 0 && (
                 <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
+                  <Text style={styles.tabBadgeText}>
+                    {unreadNotifications > 99 ? '99+' : String(unreadNotifications)}
+                  </Text>
                 </View>
               )}
             </View>
           ),
         }}
-        listeners={{ focus: refreshCount, tabPress: refreshCount }}
+        listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
     </Tabs>
@@ -203,7 +180,7 @@ export default function TabLayout() {
   if (isDesktop) {
     return (
       <View style={styles.desktopShell}>
-        <DesktopSidebar requestCount={requestCount} unreadMessages={unreadMessages} />
+        <DesktopSidebar unreadNotifications={unreadNotifications} unreadMessages={unreadMessages} />
         <View style={styles.desktopContent}>{tabs}</View>
       </View>
     );
