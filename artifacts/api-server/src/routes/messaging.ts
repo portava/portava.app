@@ -722,18 +722,26 @@ router.get('/me/unread-counts', async (req, res) => {
     .eq('user_id', user.id).eq('role', 'invited');
   if (inboxViewedAt) tiQ = tiQ.gt('created_at', inboxViewedAt);
 
-  const [frResult, ciResult, tiResult, mrResult] = await Promise.all([
+  // availability nudge count
+  let anQ = (sc as any).from('availability_nudges')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', user.id);
+  if (inboxViewedAt) anQ = anQ.gt('created_at', inboxViewedAt);
+
+  const [frResult, ciResult, tiResult, mrResult, anResult] = await Promise.all([
     pendingSince('friend_requests', 'recipient_id'),
     pendingSince('circle_invites', 'recipient_id'),
     tiQ as Promise<{ count: number | null; error: any }>,
     pendingSince('message_requests', 'recipient_id'),
+    anQ as Promise<{ count: number | null; error: any }>,
   ]);
 
   const notifCount =
     (frResult.count ?? 0) +
     (ciResult.count ?? 0) +
     (tiResult.count ?? 0) +
-    (mrResult.count ?? 0);
+    (mrResult.count ?? 0) +
+    (anResult.count ?? 0);
 
   res.status(200).json({ messages: messageCount, notifications: notifCount });
 });

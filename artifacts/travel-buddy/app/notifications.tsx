@@ -16,6 +16,7 @@ import { useIncomingMessageRequests, useUnreadCounts } from '../src/hooks/useMes
 import { acceptRequest, declineRequest, cancelRequest, type InboxItem } from '../src/services/requests';
 import { markNotificationsRead } from '../src/services/messaging';
 import { getMyMeetupInvites, rsvpMeetup, type MeetupInvite } from '../src/services/meetups';
+import { getAvailabilityNudges, type AvailabilityNudge } from '../src/services/availability';
 import { color, space, type as t } from '../src/theme/tokens';
 
 type TabKind = 'incoming' | 'outgoing';
@@ -82,6 +83,47 @@ function TypeIcon({ type }: { type: string }) {
   if (type === 'trip_invite')    return <Plane size={18} color={color.signal} />;
   if (type === 'meetup_invite')  return <CalendarClock size={18} color={color.signal} />;
   return <MessageCircle size={18} color={color.signal} />;
+}
+
+function fmtNudgeDate(dateStr: string): string {
+  // dateStr is YYYY-MM-DD (date only, interpret as UTC noon to avoid off-by-one)
+  const d = new Date(dateStr + 'T12:00:00Z');
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function NudgeRow({ nudge }: { nudge: AvailabilityNudge }) {
+  const name = nudge.senderName ?? nudge.senderHandle ?? 'Someone';
+  const dateLabel = fmtNudgeDate(nudge.nudgeDate);
+  const subtitle = nudge.tripTitle
+    ? `${nudge.tripTitle}${nudge.destinationCity ? ` · ${nudge.destinationCity}` : ''}`
+    : (nudge.destinationCity ?? 'a shared trip');
+
+  return (
+    <Pressable
+      style={styles.row}
+      onPress={() => router.push({ pathname: '/trip/[id]', params: { id: nudge.tripId } } as any)}
+    >
+      <View style={[styles.iconBadge, { backgroundColor: '#EEF6FF' }]}>
+        <CalendarClock size={18} color="#2563EB" />
+      </View>
+      {nudge.senderAvatarUrl ? (
+        <Image source={{ uri: nudge.senderAvatarUrl }} style={styles.avatar} />
+      ) : (
+        <View style={[styles.avatar, styles.avatarFallback]}>
+          <Text style={styles.avatarInitial}>{name[0].toUpperCase()}</Text>
+        </View>
+      )}
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={styles.rowText}>
+          <Text style={{ fontWeight: '700' }}>{name}</Text>
+          {` is free ${dateLabel} — are you?`}
+        </Text>
+        <Text style={styles.meta}>{subtitle}</Text>
+        <Text style={[styles.meta, { color: '#2563EB' }]}>Tap to view availability ›</Text>
+        <Text style={styles.meta}>{relativeTime(nudge.createdAt)}</Text>
+      </View>
+    </Pressable>
+  );
 }
 
 function describeItem(item: InboxItem, direction: 'incoming' | 'outgoing'): string {
@@ -225,18 +267,25 @@ export default function Notifications() {
   const everLoaded = useRef(false);
 
   const [meetupInvites, setMeetupInvites] = useState<MeetupInvite[]>([]);
+  const [availabilityNudges, setAvailabilityNudges] = useState<AvailabilityNudge[]>([]);
 
   const loadMeetupInvites = useCallback(async () => {
     const res = await getMyMeetupInvites();
     if (res.ok && res.data) setMeetupInvites(res.data.invites);
   }, []);
 
+  const loadAvailabilityNudges = useCallback(async () => {
+    const res = await getAvailabilityNudges();
+    if (res.ok && res.data) setAvailabilityNudges(res.data.nudges);
+  }, []);
+
   useFocusEffect(useCallback(() => {
     requests.reload();
     msgReqs.reload();
     loadMeetupInvites();
+    loadAvailabilityNudges();
     markNotificationsRead().then(() => refreshUnreadCounts());
-  }, [requests.reload, msgReqs.reload, loadMeetupInvites, refreshUnreadCounts]));
+  }, [requests.reload, msgReqs.reload, loadMeetupInvites, loadAvailabilityNudges, refreshUnreadCounts]));
 
   const loading = requests.loading || msgReqs.loading;
   const error = requests.error || msgReqs.error;
@@ -275,6 +324,18 @@ export default function Notifications() {
 
     const all = [...msgItems, ...socialItems];
 
+    const nudgeSection = availabilityNudges.length > 0 ? (
+      <View key="nudge_section">
+        <View style={styles.sectionLabel}>
+          <CalendarClock size={12} color={color.mute} />
+          <Text style={styles.sectionLabelText}>Availability Nudges</Text>
+        </View>
+        {availabilityNudges.map((n) => (
+          <NudgeRow key={n.id} nudge={n} />
+        ))}
+      </View>
+    ) : null;
+
     const meetupSection = meetupInvites.length > 0 ? (
       <View key="meetup_section">
         <View style={styles.sectionLabel}>
@@ -292,7 +353,7 @@ export default function Notifications() {
       </View>
     ) : null;
 
-    if (all.length === 0 && !meetupSection) {
+    if (all.length === 0 && !meetupSection && !nudgeSection) {
       return (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyText}>All caught up! No pending requests.</Text>
@@ -302,8 +363,9 @@ export default function Notifications() {
 
     return (
       <>
+        {nudgeSection}
         {meetupSection}
-        {all.length > 0 && meetupSection && (
+        {all.length > 0 && (nudgeSection || meetupSection) && (
           <View style={styles.sectionLabel}>
             <Text style={styles.sectionLabelText}>Social Requests</Text>
           </View>

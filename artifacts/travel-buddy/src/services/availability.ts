@@ -122,3 +122,22 @@ export async function patchTripAvailability(
 export async function getCircleAvailability(circleId: string): Promise<AvailabilityResult<{ members: MemberAvailability[]; circleId: string }>> {
   return apiGet(`/api/circles/${circleId}/availability`);
 }
+
+// ── Availability nudges ───────────────────────────────────────────────────────
+
+export interface AvailabilityNudge {
+  id: string;
+  senderId: string;
+  senderName: string | null;
+  senderHandle: string | null;
+  senderAvatarUrl: string | null;
+  tripId: string;
+  tripTitle: string | null;
+  destinationCity: string | null;
+  nudgeDate: string;
+  createdAt: string;
+}
+
+export async function getAvailabilityNudges(): Promise<AvailabilityResult<{ nudges: AvailabilityNudge[] }>> {
+  return apiGet('/api/me/availability-nudges');
+}

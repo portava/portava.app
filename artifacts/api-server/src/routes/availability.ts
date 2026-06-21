@@ -14,6 +14,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -262,7 +264,95 @@ router.patch("/trips/:tripId/availability", async (req, res) => {
   if (error) { req.log.error({ err: error }, "patch trip availability"); sendError(res, "db_error", error.message); return; }
 
   res.json({ tripId, userId: user.id, openDays: (data as any).open_days ?? {} });
+
+  // Fire-and-forget: nudge other members who haven't marked these dates yet.
+  const freeDates = Object.entries(parsed.data.openDays)
+    .filter(([, blocks]) => blocks.length > 0)
+    .map(([date]) => date);
+  if (freeDates.length > 0) {
+    sendAvailabilityNudges(tripId, user.id, freeDates, req.log).catch(() => {});
+  }
 });
+
+// ─── Availability nudge helper ─────────────────────────────────────────────────
+
+async function sendAvailabilityNudges(
+  tripId: string,
+  senderId: string,
+  freeDates: string[],
+  log: any,
+): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Fetch accepted trip members (excluding the sender)
+  const { data: memberRows } = await sc
+    .from("trip_members")
+    .select("user_id")
+    .eq("trip_id", tripId)
+    .in("role", ["owner", "member"])
+    .neq("user_id", senderId);
+
+  const recipientIds = (memberRows ?? []).map((r: any) => r.user_id as string);
+  if (recipientIds.length === 0) return;
+
+  // Fetch existing trip availability for all recipients so we can skip those
+  // who already have any of the free dates in their own open_days.
+  const { data: existingAv } = await sc
+    .from("trip_availability")
+    .select("user_id, open_days")
+    .eq("trip_id", tripId)
+    .in("user_id", recipientIds);
+
+  const existingAvMap: Record<string, Record<string, string[]>> = {};
+  for (const row of existingAv ?? []) {
+    existingAvMap[(row as any).user_id] = (row as any).open_days ?? {};
+  }
+
+  // Representative nudge date: the earliest free date
+  const nudgeDate = freeDates.slice().sort()[0];
+
+  const rows: Array<{
+    sender_id: string;
+    recipient_id: string;
+    trip_id: string;
+    nudge_date: string;
+    sent_on: string;
+  }> = [];
+
+  for (const recipientId of recipientIds) {
+    const theirDays = existingAvMap[recipientId] ?? {};
+    // Skip if they already have blocks on ANY of the free dates
+    const alreadyMarked = freeDates.some((d) => {
+      const blocks = theirDays[d];
+      return Array.isArray(blocks) && blocks.length > 0;
+    });
+    if (alreadyMarked) continue;
+
+    rows.push({
+      sender_id: senderId,
+      recipient_id: recipientId,
+      trip_id: tripId,
+      nudge_date: nudgeDate,
+      sent_on: today,
+    });
+  }
+
+  if (rows.length === 0) return;
+
+  // ignoreDuplicates: rate-limit — silently skip if a nudge was already sent today
+  const { error } = await sc
+    .from("availability_nudges")
+    .upsert(rows, { onConflict: "sender_id,recipient_id,trip_id,sent_on", ignoreDuplicates: true });
+
+  if (error) {
+    logger.warn({ err: error, tripId, senderId }, "availability nudge insert failed");
+  } else {
+    logger.info({ count: rows.length, tripId, nudgeDate }, "availability nudges sent");
+  }
+}
 
 // ── PATCH /api/circles/:circleId/availability ────────────────────────────────
 // Update the calling user's own general availability (gated by circle membership).
@@ -311,6 +401,66 @@ router.patch("/circles/:circleId/availability", async (req, res) => {
     openToMeet: (data as any).open_to_meet ?? false,
     strictMode: (data as any).strict_mode ?? false,
   });
+});
+
+// ── GET /api/me/availability-nudges ──────────────────────────────────────────
+// Returns recent availability nudges for the calling user, enriched with
+// sender profile and trip title so the notifications screen can render them.
+
+router.get("/me/availability-nudges", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("availability_nudges")
+    .select("id, sender_id, trip_id, nudge_date, created_at")
+    .eq("recipient_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  if (!rows || rows.length === 0) {
+    res.json({ nudges: [] });
+    return;
+  }
+
+  const senderIds = [...new Set((rows as any[]).map((r) => r.sender_id as string))];
+  const tripIds   = [...new Set((rows as any[]).map((r) => r.trip_id   as string))];
+
+  const [{ data: profiles }, { data: trips }] = await Promise.all([
+    sc.from("profiles").select("id, name, handle, avatar_url").in("id", senderIds),
+    sc.from("trips").select("id, title, destination_city").in("id", tripIds),
+  ]);
+
+  const profileMap: Record<string, any> = {};
+  for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+
+  const tripMap: Record<string, any> = {};
+  for (const t of trips ?? []) tripMap[(t as any).id] = t;
+
+  const nudges = (rows as any[]).map((r) => {
+    const sender = profileMap[r.sender_id];
+    const trip   = tripMap[r.trip_id];
+    return {
+      id:            r.id as string,
+      senderId:      r.sender_id as string,
+      senderName:    sender?.name   ?? null,
+      senderHandle:  sender?.handle ?? null,
+      senderAvatarUrl: sender?.avatar_url ?? null,
+      tripId:        r.trip_id    as string,
+      tripTitle:     trip?.title  ?? null,
+      destinationCity: trip?.destination_city ?? null,
+      nudgeDate:     r.nudge_date as string,
+      createdAt:     r.created_at as string,
+    };
+  });
+
+  res.json({ nudges });
 });
 
 // ── GET /api/circles/:circleId/availability ──────────────────────────────────

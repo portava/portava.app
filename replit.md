@@ -58,6 +58,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0019_proposed_time.sql` | Adds `proposed_time TIME` (nullable) to `meetup_time_options` — stores exact HH:MM per time-poll slot alongside the coarse time_block | pending |
 | `0020_notifications_inbox_viewed.sql` | Adds `notifications_inbox_viewed_at timestamptz` to `profiles`; used by `GET /api/me/unread-counts` to compute unread notification badge count | 2026-06-21 |
 | `0021_plan_edit_permission.sql` | Adds `plan_edit_permission` column to `trips` (enum: `owner_only \| all_members \| specific_members`, default `all_members`) and creates `plan_editors` join table with RLS; used by plan permission system | pending |
+| `0022_availability_nudges.sql` | Creates `availability_nudges` table (sender_id, recipient_id, trip_id, nudge_date, sent_on); UNIQUE(sender_id,recipient_id,trip_id,sent_on) rate-limits to one nudge per sender→recipient per trip per day; RLS: recipients read own rows | pending |
 
 ## Gotchas
 
