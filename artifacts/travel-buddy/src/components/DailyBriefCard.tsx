@@ -60,22 +60,40 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
     }
   }, [tripId, date, onGapDays]);
 
+  // Silent background re-fetch via the GET (cached) endpoint — used when the
+  // app returns to the foreground. Keeps existing content visible; the server
+  // returns the cached brief when it is still fresh, avoiding regeneration.
+  // Distinct from handleRefresh which POSTs and forces cache invalidation.
+  const backgroundRefetch = useCallback(async () => {
+    setRefreshing(true);
+    const res = await fetchDailyBrief(tripId, date);
+    setRefreshing(false);
+    if (!res.ok) return; // silently keep old brief on failure
+    setAccess(res.data?.access ?? 'access_denied');
+    const b = res.data?.brief ?? null;
+    setBrief(b);
+    if (b?.gapDays?.length && onGapDays) {
+      onGapDays(b.gapDays, b.destination ?? '');
+    }
+  }, [tripId, date, onGapDays]);
+
   useEffect(() => { load(); }, [load]);
 
   // Re-fetch silently when the app returns to the foreground so users always
   // see a fresh brief rather than a stale card from hours ago.
-  // Uses handleRefresh (not load) so existing content stays visible during the fetch.
+  // Uses backgroundRefetch (GET) so server caching is respected and existing
+  // content stays visible during the in-flight request.
   const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       const prev = appStateRef.current;
       appStateRef.current = nextState;
       if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
-        handleRefresh();
+        backgroundRefetch();
       }
     });
     return () => sub.remove();
-  }, [handleRefresh]);
+  }, [backgroundRefetch]);
 
   if (loading) {
     return (
