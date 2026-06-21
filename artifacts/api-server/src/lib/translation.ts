@@ -35,7 +35,7 @@ export const TRANSLATION_ENABLED =
   (process.env.TRANSLATION_ENABLED ?? 'true').toLowerCase() !== 'false';
 
 export const TRANSLATION_TIMEOUT_MS =
-  Number(process.env.TRANSLATION_TIMEOUT_MS ?? 8000);
+  Number(process.env.TRANSLATION_TIMEOUT_MS ?? 5000);
 
 // ── Mock provider ─────────────────────────────────────────────────────────────
 
@@ -137,6 +137,60 @@ export function getTranslationProvider(): TranslationProvider {
 /** ISO 639-1 → display name (e.g. 'es' → 'Spanish') */
 export function languageDisplayName(iso: string): string {
   return ISO_LANGUAGE_NAMES[iso] ?? iso.toUpperCase();
+}
+
+// ── Translation validator ─────────────────────────────────────────────────────
+
+export type ValidationFailureReason = 'empty' | 'too_short' | 'identical' | 'truncated';
+
+export interface ValidationOutcome {
+  valid: boolean;
+  reason?: ValidationFailureReason;
+}
+
+/**
+ * Sentence-terminal punctuation set (covers Latin, CJK, ellipsis).
+ * A translation whose original ends with terminal punctuation but whose
+ * translation does not is considered potentially truncated.
+ */
+const SENTENCE_TERMINAL_RE = /[.!?。！？…]$/u;
+
+/**
+ * validateTranslation — returns whether a translation result is safe to show.
+ *
+ * Rules (in order):
+ *  1. Non-empty / non-whitespace
+ *  2. At least 20% the character length of the original
+ *  3. Not character-identical to the original (no-op translation)
+ *  4. If original ends with sentence-terminal punctuation, translation must too
+ *     (guards against mid-sentence truncation)
+ *
+ * Privacy: callers must never log the original or translated text themselves.
+ */
+export function validateTranslation(
+  original: string,
+  translated: string,
+): ValidationOutcome {
+  const origTrimmed = original.trim();
+  const transTrimmed = translated.trim();
+
+  if (!transTrimmed) {
+    return { valid: false, reason: 'empty' };
+  }
+
+  if (origTrimmed.length > 0 && transTrimmed.length < origTrimmed.length * 0.2) {
+    return { valid: false, reason: 'too_short' };
+  }
+
+  if (transTrimmed === origTrimmed) {
+    return { valid: false, reason: 'identical' };
+  }
+
+  if (SENTENCE_TERMINAL_RE.test(origTrimmed) && !SENTENCE_TERMINAL_RE.test(transTrimmed)) {
+    return { valid: false, reason: 'truncated' };
+  }
+
+  return { valid: true };
 }
 
 /** For unit tests — inject a custom provider. */

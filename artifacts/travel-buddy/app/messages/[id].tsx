@@ -326,10 +326,15 @@ function MessageBubble({
     bodyToShow = item.displayBody ?? item.body ?? '';
   }
 
-  const showLabel = !mine && item.translationStatus !== null && item.translationStatus !== 'skipped';
   const isTranslated = item.translated && autoTranslate && !showOriginal;
-  const isFailed = item.translationStatus === 'failed';
   const isPending = item.translationStatus === 'pending';
+  // Show the translation row only when there's something meaningful to render:
+  // a pending indicator, an actual label, or the show-original toggle.
+  const showLabel = !mine && (
+    isPending ||
+    (isTranslated && !!item.translationLabel) ||
+    !!item.canShowOriginal
+  );
 
   return (
     <View>
@@ -354,10 +359,6 @@ function MessageBubble({
             {isPending ? (
               <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
                 Translating…
-              </Text>
-            ) : isFailed ? (
-              <Text style={[styles.transLabel, { color: color.mute }]}>
-                Translation unavailable
               </Text>
             ) : isTranslated && item.translationLabel ? (
               <Text style={[styles.transLabel, mine && styles.transLabelMine]}>

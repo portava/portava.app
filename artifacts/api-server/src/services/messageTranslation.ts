@@ -19,6 +19,7 @@ import {
   TRANSLATION_ENABLED,
   TRANSLATION_TIMEOUT_MS,
   languageDisplayName,
+  validateTranslation,
 } from '../lib/translation';
 
 // ── Types shared with routes ───────────────────────────────────────────────────
@@ -190,6 +191,34 @@ export async function translateMessageForThread(
       // c. Translate.
       try {
         const result = await translateWithRetry(body, sourceLanguage, targetLanguage, 1);
+
+        // Validate the translation before storing it.
+        const validation = validateTranslation(body, result.translatedText);
+        if (!validation.valid) {
+          await upsertTranslation(sc, {
+            messageId,
+            recipientId,
+            sourceLanguage,
+            targetLanguage,
+            translatedBody: null,
+            provider: result.provider,
+            status: 'failed',
+            errorMessage: `validation_${validation.reason ?? 'unknown'}`,
+          });
+          logger?.warn(
+            {
+              messageId,
+              recipientId,
+              source: sourceLanguage,
+              target: targetLanguage,
+              provider: result.provider,
+              reason: validation.reason,
+            },
+            'translation_validation_failed',
+          );
+          continue;
+        }
+
         await upsertTranslation(sc, {
           messageId,
           recipientId,
@@ -335,21 +364,36 @@ export function buildDisplayFields(
   }
 
   if (status === 'failed') {
+    // Silent fallback: show original text with no label or error banner.
     return {
       displayBody: msg.body,
       originalBody: msg.body,
       originalLanguage: source_language,
       translated: false,
       translationStatus: 'failed',
-      translationLabel: 'Translation unavailable',
+      translationLabel: null,
       canShowOriginal: false,
     };
   }
 
   // status === 'translated'
+  // Guard against an identical translation slipping through (no-op).
+  const translatedText = translated_body ?? null;
+  if (!translatedText || translatedText.trim() === msg.body.trim()) {
+    return {
+      displayBody: msg.body,
+      originalBody: msg.body,
+      originalLanguage: source_language,
+      translated: false,
+      translationStatus: 'translated',
+      translationLabel: null,
+      canShowOriginal: false,
+    };
+  }
+
   const sourceName = languageDisplayName(source_language);
   return {
-    displayBody: translated_body ?? msg.body,
+    displayBody: translatedText,
     originalBody: msg.body,
     originalLanguage: source_language,
     translated: true,
