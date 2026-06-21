@@ -250,9 +250,10 @@ export function TripPlanSection({
     AsyncStorage.setItem(`tripPlanMode:${tripId}`, m).catch(() => {});
   }, [tripId]);
 
-  const timelineRef = useRef<View>(null);
+  const warnedItemRef = useRef<View>(null);
 
   const warnCount = items.filter((i) => i.warnings && i.warnings.length > 0).length;
+  const firstWarnedId = items.find((i) => i.warnings && i.warnings.length > 0)?.id;
 
   const handleNeedsAttention = useCallback(() => {
     const first = items.find((i) => i.warnings && i.warnings.length > 0);
@@ -260,17 +261,17 @@ export function TripPlanSection({
     setViewMode('timeline');
     setActiveDay(first.dayDate ?? '__unscheduled__');
     setActiveCat('all');
-    // Give React a frame to apply the state changes, then scroll to the timeline
+    // After React re-renders the timeline with filters applied, scroll to the exact item
     setTimeout(() => {
-      if (!timelineRef.current || !pageScrollRef?.current) return;
+      if (!warnedItemRef.current || !pageScrollRef?.current) return;
       const nodeHandle = findNodeHandle(pageScrollRef.current);
       if (nodeHandle == null) return;
-      timelineRef.current.measureLayout(
+      warnedItemRef.current.measureLayout(
         nodeHandle,
-        (_x, y) => { pageScrollRef.current?.scrollTo({ y, animated: true }); },
+        (_x, y) => { pageScrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true }); },
         () => {},
       );
-    }, 80);
+    }, 120);
   }, [items, pageScrollRef]);
 
   const handleAdded = useCallback((item: TripPlanItem) => {
@@ -311,9 +312,15 @@ export function TripPlanSection({
   // Build day buckets from ALL items (for the chip bar) and filtered items (for rendering)
   const allBuckets = buildBuckets(items, tripStartDate, tripEndDate);
 
-  const visibleBuckets = activeDay === 'all' && activeCat === 'all'
-    ? allBuckets
-    : buildBuckets(filteredItems, tripStartDate, tripEndDate);
+  const visibleBuckets = (() => {
+    if (activeDay === 'all' && activeCat === 'all') return allBuckets;
+    if (activeDay !== 'all') {
+      // Single-day view: return exactly one bucket so no empty date-range days appear
+      return [{ key: activeDay, items: filteredItems }];
+    }
+    // Category-only filter with all days — keep full date range
+    return buildBuckets(filteredItems, tripStartDate, tripEndDate);
+  })();
 
   const hasContent = items.length > 0;
 
@@ -380,18 +387,18 @@ export function TripPlanSection({
       )}
 
       {!loading && !accessDenied && hasContent && viewMode === 'timeline' && (
-        <View ref={timelineRef}>
-          <TimelineView
-            buckets={visibleBuckets}
-            tripStartDate={tripStartDate}
-            tripId={tripId}
-            currentUserId={currentUserId}
-            isOwner={isOwner}
-            onItemPress={handleItemPress}
-            onEditPress={handleEditPress}
-            onItemsChanged={handleItemsChanged}
-          />
-        </View>
+        <TimelineView
+          buckets={visibleBuckets}
+          tripStartDate={tripStartDate}
+          tripId={tripId}
+          currentUserId={currentUserId}
+          isOwner={isOwner}
+          onItemPress={handleItemPress}
+          onEditPress={handleEditPress}
+          onItemsChanged={handleItemsChanged}
+          firstWarnedId={firstWarnedId}
+          warnedItemRef={warnedItemRef}
+        />
       )}
 
       {!loading && !accessDenied && hasContent && viewMode === 'map' && (

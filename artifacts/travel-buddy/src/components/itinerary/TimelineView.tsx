@@ -241,12 +241,15 @@ interface DraggableItemListProps {
   onMarkDone: (id: string) => void;
   onMarkTentative: (id: string) => void;
   onMoveToUnscheduled: (id: string) => void;
+  firstWarnedId?: string;
+  warnedItemRef?: React.RefObject<View | null>;
 }
 
 function DraggableItemList({
   items, tripId, currentUserId, isOwner,
   onItemPress, onEditPress, onItemsChanged,
   onRemove, onMarkDone, onMarkTentative, onMoveToUnscheduled,
+  firstWarnedId, warnedItemRef,
 }: DraggableItemListProps) {
   // Local display order (IDs); actual item data comes from `items` prop.
   const [order, setOrder] = useState<string[]>(() => items.map((i) => i.id));
@@ -375,6 +378,23 @@ function DraggableItemList({
         if (!item) return null;
         const isActive = activeIdxRef.current === slotIdx;
         const pr = panResponders[slotIdx];
+        const card = (
+          <PlanItemCard
+            item={item}
+            currentUserId={currentUserId}
+            isOwner={isOwner}
+            tripId={tripId}
+            onPress={onItemPress}
+            onEditPress={onEditPress}
+            onRemove={onRemove}
+            onMarkDone={onMarkDone}
+            onMarkTentative={onMarkTentative}
+            onEdited={(updated) => onItemsChanged((prev) => prev.map((i) => i.id === updated.id ? updated : i))}
+            onMoveToUnscheduled={onMoveToUnscheduled}
+            dragHandlers={pr?.panHandlers}
+            isDragging={isActive}
+          />
+        );
         return (
           <Animated.View
             key={id}
@@ -383,21 +403,10 @@ function DraggableItemList({
               itemHeightsRef.current[id] = e.nativeEvent.layout.height;
             }}
           >
-            <PlanItemCard
-              item={item}
-              currentUserId={currentUserId}
-              isOwner={isOwner}
-              tripId={tripId}
-              onPress={onItemPress}
-              onEditPress={onEditPress}
-              onRemove={onRemove}
-              onMarkDone={onMarkDone}
-              onMarkTentative={onMarkTentative}
-              onEdited={(updated) => onItemsChanged((prev) => prev.map((i) => i.id === updated.id ? updated : i))}
-              onMoveToUnscheduled={onMoveToUnscheduled}
-              dragHandlers={pr?.panHandlers}
-              isDragging={isActive}
-            />
+            {id === firstWarnedId && warnedItemRef
+              ? <View ref={warnedItemRef}>{card}</View>
+              : card
+            }
           </Animated.View>
         );
       })}
@@ -409,7 +418,7 @@ function DraggableItemList({
 
 function DayGroup({
   bucket, tripStartDate, tripId, currentUserId, isOwner,
-  onItemPress, onEditPress, onItemsChanged,
+  onItemPress, onEditPress, onItemsChanged, firstWarnedId, warnedItemRef,
 }: {
   bucket: DayBucket;
   tripStartDate?: string | null;
@@ -419,6 +428,8 @@ function DayGroup({
   onItemPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
+  firstWarnedId?: string;
+  warnedItemRef?: React.RefObject<View | null>;
 }) {
   const label = dayLabel(bucket.key, tripStartDate);
   const isUnscheduled = bucket.key === '__unscheduled__';
@@ -490,6 +501,8 @@ function DayGroup({
           onMarkDone={handleMarkDone}
           onMarkTentative={handleMarkTentative}
           onMoveToUnscheduled={handleMoveToUnscheduled}
+          firstWarnedId={firstWarnedId}
+          warnedItemRef={warnedItemRef}
         />
       )}
     </View>
@@ -507,10 +520,13 @@ export interface TimelineViewProps {
   onItemPress: (item: TripPlanItem) => void;
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
+  firstWarnedId?: string;
+  warnedItemRef?: React.RefObject<View | null>;
 }
 
 export function TimelineView({
   buckets, tripStartDate, tripId, currentUserId, isOwner, onItemPress, onEditPress, onItemsChanged,
+  firstWarnedId, warnedItemRef,
 }: TimelineViewProps) {
   if (buckets.length === 0 || buckets.every((b) => b.items.length === 0)) {
     return (
@@ -533,6 +549,8 @@ export function TimelineView({
           onItemPress={onItemPress}
           onEditPress={onEditPress}
           onItemsChanged={onItemsChanged}
+          firstWarnedId={firstWarnedId}
+          warnedItemRef={warnedItemRef}
         />
       ))}
     </View>
