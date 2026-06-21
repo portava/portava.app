@@ -540,6 +540,13 @@ export function MeetupCreationSheet({
                       </>
                     )}
 
+                    {/* Empty state: all followers already in the group */}
+                    {hasContext && !friendSearch && candidatesLoaded && otherFollowers.length === 0 && (
+                      <Text style={s.emptyNote}>
+                        All your friends are already in this {tripId ? 'trip' : 'circle'}.
+                      </Text>
+                    )}
+
                     {/* No results at all for this search */}
                     {friendSearch && filteredGroup.length === 0 && filteredOthers.length === 0 && (
                       <Text style={s.emptyNote}>No match for "{friendSearch}"</Text>
