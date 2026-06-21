@@ -5,8 +5,17 @@
  * Uses the same authedFetch / freshToken pattern as tripPlan.ts —
  * the token is fetched internally; callers do not need to pass it.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
+// AsyncStorage v2.x uses TurboModules (codegenNativeComponent) — not available on web.
+// We lazy-require it only on native so the web bundle doesn't crash.
+type AsyncStorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
+const getStorage = (): AsyncStorageStub | null => {
+  if (Platform.OS === 'web') return null;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('@react-native-async-storage/async-storage').default as AsyncStorageStub;
+};
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -44,10 +53,10 @@ export async function fetchDailyBrief(
     if (res.ok) {
       if (data.weatherSummary) {
         // Persist the latest summary so it survives Open-Meteo downtime
-        AsyncStorage.setItem(weatherKey(tripId), data.weatherSummary).catch(() => {});
+        getStorage()?.setItem(weatherKey(tripId), data.weatherSummary).catch(() => {});
       } else {
         // Open-Meteo unavailable — restore last known summary (best-effort)
-        const cached = await AsyncStorage.getItem(weatherKey(tripId));
+        const cached = await getStorage()?.getItem(weatherKey(tripId));
         if (cached) data.weatherSummary = cached;
       }
     }

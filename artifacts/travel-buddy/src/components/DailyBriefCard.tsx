@@ -392,6 +392,14 @@ function handleQuickAction(action: any, tripId: string) {
   }
 }
 
+function formatGeneratedAt(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return isToday ? time : `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${time}`;
+}
+
 function formatDate(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso + 'T00:00:00');
@@ -434,6 +442,7 @@ const s = StyleSheet.create({
   headerTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   headerDate: { ...t.small, color: color.mute, fontSize: 11 },
   headerDateSub: { ...t.small, color: color.mute, fontSize: 11, paddingHorizontal: space.lg, paddingTop: 4 },
+  generatedAt: { ...t.small, color: color.mute, fontSize: 10, paddingHorizontal: space.lg, paddingTop: 2, paddingBottom: space.sm },
   destRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
   destText: { ...t.small, color: color.signal, fontSize: 11 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
