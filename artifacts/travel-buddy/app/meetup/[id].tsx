@@ -4,7 +4,7 @@
  * Shows: title, location, time options + poll, RSVP button,
  * attendee counts, and Add to Trip Plan for trip-scoped meetups.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
@@ -116,8 +116,10 @@ export default function MeetupScreen() {
   const [editDate, setEditDate] = useState<Date | null>(null);
   const [editExactTime, setEditExactTime] = useState<Date | null>(null);
   const [editTimeBlock, setEditTimeBlock] = useState<TimeBlock | null>(null);
+  const [editFocusField, setEditFocusField] = useState<'title' | 'location'>('title');
+  const locationInputRef = useRef<TextInput>(null);
 
-  function startEdit() {
+  function startEdit(focusField: 'title' | 'location' = 'title') {
     if (!meetup) return;
     setEditTitle(meetup.title);
     setEditLocation(meetup.locationName ?? '');
@@ -131,8 +133,16 @@ export default function MeetupScreen() {
     }
     setEditExactTime(meetup.startsAt ? new Date(meetup.startsAt) : null);
     setEditTimeBlock(meetup.startsAt ? null : (meetup.timeBlock ?? null));
+    setEditFocusField(focusField);
     setEditing(true);
   }
+
+  useEffect(() => {
+    if (editing && editFocusField === 'location') {
+      const t = setTimeout(() => locationInputRef.current?.focus(), 100);
+      return () => clearTimeout(t);
+    }
+  }, [editing, editFocusField]);
 
   async function handleSaveEdit() {
     if (!id || !meetup || actioning) return;
@@ -306,7 +316,7 @@ export default function MeetupScreen() {
           </Pressable>
         ) : meetup.isCreator && !isCancelled ? (
           <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <Pressable style={s.editChip} onPress={startEdit}>
+            <Pressable style={s.editChip} onPress={() => startEdit()}>
               <Pencil size={13} color={color.ink} />
               <Text style={s.editChipText}>Edit</Text>
             </Pressable>
@@ -331,10 +341,11 @@ export default function MeetupScreen() {
                 placeholder="Meetup title"
                 placeholderTextColor={color.faint}
                 maxLength={200}
-                autoFocus
+                autoFocus={editFocusField === 'title'}
               />
               <Text style={s.editLabel}>Location (optional)</Text>
               <TextInput
+                ref={locationInputRef}
                 style={s.editInput}
                 value={editLocation}
                 onChangeText={setEditLocation}
@@ -421,7 +432,7 @@ export default function MeetupScreen() {
               <View style={s.noDateRow}>
                 <MapPin size={14} color={color.faint} />
                 <Text style={s.noDateText}>No location set</Text>
-                <Pressable style={s.noDateChip} onPress={startEdit}>
+                <Pressable style={s.noDateChip} onPress={() => startEdit('location')}>
                   <Text style={s.noDateChipText}>Add one?</Text>
                 </Pressable>
               </View>
@@ -446,7 +457,7 @@ export default function MeetupScreen() {
               <View style={s.noDateRow}>
                 <CalendarClock size={14} color={color.faint} />
                 <Text style={s.noDateText}>No date set</Text>
-                <Pressable style={s.noDateChip} onPress={startEdit}>
+                <Pressable style={s.noDateChip} onPress={() => startEdit()}>
                   <Text style={s.noDateChipText}>Add</Text>
                 </Pressable>
               </View>
