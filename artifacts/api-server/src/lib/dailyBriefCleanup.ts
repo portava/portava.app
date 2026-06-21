@@ -20,7 +20,13 @@ const RETENTION_DAYS = (() => {
   const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
 })();
-const INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
+const CLEANUP_INTERVAL_HOURS = (() => {
+  const raw = process.env.DAILY_BRIEF_CLEANUP_INTERVAL_HOURS;
+  const parsed = raw !== undefined ? parseFloat(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 24;
+})();
+const INTERVAL_MS = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1_000;
 const STARTUP_DELAY_MS = 30 * 1_000;
 
 async function purgeOldBriefs(): Promise<void> {
