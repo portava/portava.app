@@ -8,13 +8,13 @@
  *   D. Cooldown / rate-limit logic (4 tests)
  *   E. Settings endpoint (3 tests)
  *   F. Regression (3 tests)
- *   G. Preference event on dismiss + 24h category cooldown (4 tests)
+ *   G. Preference event on dismiss + 24h category cooldown (5 tests)
  *
- * Total: 38
+ * Total: 39
  */
 
 import assert from "node:assert/strict";
-import { describe, it, before } from "node:test";
+import { describe, it, before, after } from "node:test";
 import http, { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
@@ -456,6 +456,10 @@ before(() => {
   server.listen(0);
 });
 
+after(() => {
+  server?.close();
+});
+
 describe("C. API endpoint permission + shape", () => {
   it("GET suggestions — 401 without token", async () => {
     const client = makeFakeClient({ users: {} });
@@ -816,5 +820,17 @@ describe("G. Preference event on dismiss + 24h category cooldown", () => {
     });
     const ok = await checkCategoryDeclineCooldown(client, USER_A.id, "food");
     assert.equal(ok, true);
+  });
+
+  it("G5: checkCategoryDeclineCooldown returns false when multiple decline events exist (regression: multi-row must not clear cooldown)", async () => {
+    const recentTime = new Date().toISOString();
+    const client = makeFakeClient({
+      preferenceEvents: [
+        { user_id: USER_A.id, category: "food", signal: "dismiss", created_at: recentTime },
+        { user_id: USER_A.id, category: "food", signal: "dismiss", created_at: recentTime },
+      ],
+    });
+    const ok = await checkCategoryDeclineCooldown(client, USER_A.id, "food");
+    assert.equal(ok, false, "multiple decline rows must still suppress the category");
   });
 });

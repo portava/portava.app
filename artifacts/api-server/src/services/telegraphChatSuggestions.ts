@@ -419,6 +419,9 @@ export async function checkCooldown(
  * Check 24-hour decline cooldown: has the user dismissed a suggestion in this
  * category within the last 24 hours?  Returns true when safe to show (no
  * recent decline), false when the category should be suppressed.
+ *
+ * Uses limit(1) instead of maybeSingle() so multiple matching rows don't
+ * collapse to data=null and accidentally clear the cooldown.
  */
 export async function checkCategoryDeclineCooldown(
   client: SupabaseClient,
@@ -433,6 +436,6 @@ export async function checkCategoryDeclineCooldown(
     .eq("category", category)
     .eq("signal", "dismiss")
     .gte("created_at", cutoff)
-    .maybeSingle();
-  return !data; // true = no recent decline, safe to show
+    .limit(1);
+  return !data || (data as any[]).length === 0; // true = no recent decline, safe to show
 }
