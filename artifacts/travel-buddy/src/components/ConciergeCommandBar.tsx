@@ -50,7 +50,17 @@ interface CommandResponse {
 }
 
 export function ConciergeCommandBar({ tripId, destination, compact: _compact = false }: ConciergeCommandBarProps) {
-  const { telegraphPrompt } = useLocalSearchParams<{ telegraphPrompt?: string }>();
+  const {
+    telegraphPrompt,
+    telegraphMeetupId,
+    telegraphMeetupTime,
+    telegraphMeetupLocation,
+  } = useLocalSearchParams<{
+    telegraphPrompt?: string;
+    telegraphMeetupId?: string;
+    telegraphMeetupTime?: string;
+    telegraphMeetupLocation?: string;
+  }>();
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<CommandResponse | null>(null);
@@ -63,16 +73,28 @@ export function ConciergeCommandBar({ tripId, destination, compact: _compact = f
 
   // Pre-fill + auto-submit when navigated here with ?telegraphPrompt=...
   // Tracks the last-processed value so different chips can each trigger a submit.
+  // (e.g. from DailyBriefCard quick-action "Fill free time" or "Find dinner nearby" tap)
   useEffect(() => {
     if (telegraphPrompt && telegraphPrompt !== lastHandledPrompt.current) {
       lastHandledPrompt.current = telegraphPrompt;
       const decoded = decodeURIComponent(telegraphPrompt);
-      submit(decoded);
+      // Pass structured meetup context if present (forwarded from "Find dinner nearby" quick action)
+      const meetupOpts = telegraphMeetupId
+        ? {
+            meetupId: telegraphMeetupId,
+            meetupTime: telegraphMeetupTime,
+            meetupLocation: telegraphMeetupLocation,
+          }
+        : undefined;
+      submit(decoded, meetupOpts);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [telegraphPrompt]);
 
-  async function submit(query: string) {
+  async function submit(
+    query: string,
+    meetupOpts?: { meetupId?: string; meetupTime?: string; meetupLocation?: string },
+  ) {
     if (!query.trim() || loading) return;
     setLoading(true);
     setError(null);
@@ -80,7 +102,7 @@ export function ConciergeCommandBar({ tripId, destination, compact: _compact = f
     setText('');
     inputRef.current?.blur();
 
-    const res = await sendConciergeCommand(query.trim(), { tripId, destination });
+    const res = await sendConciergeCommand(query.trim(), { tripId, destination, ...meetupOpts });
     setLoading(false);
 
     if (!res.ok || !res.data) {

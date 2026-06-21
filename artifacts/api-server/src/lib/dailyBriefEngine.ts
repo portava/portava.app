@@ -238,11 +238,22 @@ export function buildDailyBrief(opts: {
     const meetupHour = new Date(m.proposedTime).getHours();
     if (meetupHour >= 17) {
       const dest = destination ? ` in ${destination}` : "";
+      const locationHint = m.locationName ?? null;
+      // Structured params let Telegraph generate location/time-aware food suggestions.
+      // prompt is kept as a human-readable fallback for clients that ignore the structured fields.
+      const params: Record<string, string> = {
+        prompt: locationHint
+          ? `Find dinner options near ${locationHint} before my ${m.title} meetup`
+          : `Find dinner options before my ${m.title} meetup${dest}`,
+        meetupId: m.id,
+        meetupTime: m.proposedTime,
+      };
+      if (locationHint) params.meetupLocation = locationHint;
       quickActions.push({
         id: `qa_premeetup_${m.id}`,
         label: "Find dinner nearby",
         kind: "ask_telegraph",
-        params: { prompt: `Find dinner options before my ${m.title} meetup${dest}` },
+        params,
       });
     }
   }

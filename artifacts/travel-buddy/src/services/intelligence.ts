@@ -106,13 +106,29 @@ export async function dismissBriefRecommendation(
 
 export async function sendConciergeCommand(
   text: string,
-  opts?: { tripId?: string; destination?: string },
+  opts?: {
+    tripId?: string;
+    destination?: string;
+    meetupId?: string;
+    meetupTime?: string;
+    meetupLocation?: string;
+  },
 ): Promise<{ ok: boolean; data?: any; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
   try {
+    const body: Record<string, string | null | undefined> = {
+      text,
+      tripId: opts?.tripId ?? null,
+      destination: opts?.destination,
+    };
+    if (opts?.meetupId) {
+      body.meetupId = opts.meetupId;
+      body.meetupTime = opts.meetupTime;
+      body.meetupLocation = opts.meetupLocation;
+    }
     const res = await authedFetch('/api/telegraph/commands', {
       method: 'POST',
-      body: JSON.stringify({ text, tripId: opts?.tripId ?? null, destination: opts?.destination }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     return { ok: res.ok, data };

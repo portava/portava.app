@@ -353,15 +353,25 @@ function handleQuickAction(action: any, tripId: string) {
     case 'view_plan':
       router.push(`/trip/${tripId}`);
       break;
-    case 'ask_telegraph':
+    case 'ask_telegraph': {
       // Navigate to trip detail — ConciergeCommandBar lives there.
-      // Pass the prompt as a search param so the bar pre-fills the text.
-      router.push(
-        action.params?.prompt
-          ? `/trip/${tripId}?telegraphPrompt=${encodeURIComponent(action.params.prompt)}`
-          : `/trip/${tripId}`,
-      );
+      // Pass the prompt and any structured meetup context as search params so
+      // the bar pre-fills the text and Telegraph receives location/time context.
+      if (!action.params?.prompt) {
+        router.push(`/trip/${tripId}`);
+        break;
+      }
+      const params = new URLSearchParams({
+        telegraphPrompt: action.params.prompt,
+      });
+      if (action.params?.meetupId) {
+        params.set('telegraphMeetupId', action.params.meetupId);
+        if (action.params?.meetupTime) params.set('telegraphMeetupTime', action.params.meetupTime);
+        if (action.params?.meetupLocation) params.set('telegraphMeetupLocation', action.params.meetupLocation);
+      }
+      router.push(`/trip/${tripId}?${params.toString()}`);
       break;
+    }
     case 'add_to_plan':
       router.push(`/trip/${tripId}`);
       break;

@@ -91,7 +91,55 @@ function buildResponse(
   tripId: string | null,
   accessLevel: string,
   destination?: string,
+  meetupContext?: { meetupId?: string; meetupTime?: string; meetupLocation?: string },
 ): TelegraphCommandResponse {
+  // Build meetup-aware context for food suggestions
+  const hasMeetupCtx = !!meetupContext?.meetupId;
+  const meetupTimeStr = meetupContext?.meetupTime ? formatMeetupTime(meetupContext.meetupTime) : "";
+  const meetupLoc = meetupContext?.meetupLocation ?? null;
+  const nearbyRef = meetupLoc
+    ? ` near ${meetupLoc}`
+    : destination
+      ? ` in ${destination}`
+      : "";
+  const timeRef = meetupTimeStr ? ` at ${meetupTimeStr}` : "";
+
+  const findFoodSummary = hasMeetupCtx
+    ? `Dinner options${nearbyRef}${timeRef}, before your meetup. Tap to add one to your plan.`
+    : `Food recommendations${destination ? ` for ${destination}` : ""}. Tap to add to your trip plan.`;
+
+  const findFoodSuggestions: TelegraphCommandResponse["suggestions"] = hasMeetupCtx
+    ? [
+        {
+          title: `Dinner spot${nearbyRef}`,
+          reason: meetupLoc
+            ? `Close to ${meetupLoc} — easy to reach before your meetup`
+            : `Good option before your meetup${timeRef}`,
+          category: "food",
+          estimatedTime: "1–1.5 hours",
+          priceLevel: "$$",
+        },
+        {
+          title: "Quick pre-meetup bite",
+          reason: `Something light and fast so you're ready${timeRef}`,
+          category: "food",
+          estimatedTime: "30–45 min",
+          priceLevel: "$",
+        },
+        {
+          title: `Local restaurant${nearbyRef}`,
+          reason: "Traveler favourite for the area",
+          category: "food",
+          estimatedTime: "1 hour",
+          priceLevel: "$$",
+        },
+      ]
+    : [
+        { title: "Local street food market", reason: "Authentic flavours at budget prices", category: "food", estimatedTime: "1–2 hours", priceLevel: "$" },
+        { title: "Highly-rated restaurant nearby", reason: "Traveler favourite for the area", category: "food", estimatedTime: "1–1.5 hours", priceLevel: "$$" },
+        { title: "Late-night food spots", reason: "Great for after-activities eating", category: "food", estimatedTime: "45 min", priceLevel: "$" },
+      ];
+
   const templates: Record<TelegraphIntent, { summary: string; suggestions: TelegraphCommandResponse["suggestions"]; actions: ProposedAction[] }> = {
     plan_day: {
       summary: `Here's a suggested plan for today${destination ? ` in ${destination}` : ""}. Tap any action to add it to your trip or create a meetup.`,
@@ -106,14 +154,18 @@ function buildResponse(
       ],
     },
     find_food: {
-      summary: `Food recommendations${destination ? ` for ${destination}` : ""}. Tap to add to your trip plan.`,
-      suggestions: [
-        { title: "Local street food market", reason: "Authentic flavours at budget prices", category: "food", estimatedTime: "1–2 hours", priceLevel: "$" },
-        { title: "Highly-rated restaurant nearby", reason: "Traveler favourite for the area", category: "food", estimatedTime: "1–1.5 hours", priceLevel: "$$" },
-        { title: "Late-night food spots", reason: "Great for after-activities eating", category: "food", estimatedTime: "45 min", priceLevel: "$" },
-      ],
+      summary: findFoodSummary,
+      suggestions: findFoodSuggestions,
       actions: [
-        { id: `${commandId}_a1`, label: "Add to plan", kind: "add_to_plan", params: { category: "dining" }, requires_confirmation: true },
+        {
+          id: `${commandId}_a1`,
+          label: "Add to plan",
+          kind: "add_to_plan",
+          params: hasMeetupCtx && meetupContext?.meetupId
+            ? { category: "dining", meetupId: meetupContext.meetupId }
+            : { category: "dining" },
+          requires_confirmation: true,
+        },
       ],
     },
     find_nightlife: {
@@ -192,10 +244,24 @@ function buildResponse(
   };
 }
 
+/** Format an ISO datetime string to a human-readable time like "7:30 PM". */
+function formatMeetupTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  } catch {
+    return "";
+  }
+}
+
 const CommandSchema = z.object({
-  text:        z.string().min(1).max(500),
-  tripId:      z.string().optional().nullable(),
-  destination: z.string().max(100).optional(),
+  text:          z.string().min(1).max(500),
+  tripId:        z.string().optional().nullable(),
+  destination:   z.string().max(100).optional(),
+  /** Structured meetup context forwarded from the Daily Brief "Find dinner nearby" quick action. */
+  meetupId:      z.string().max(36).optional(),
+  meetupTime:    z.string().max(50).optional(),
+  meetupLocation: z.string().max(200).optional(),
 });
 
 /* ===========================================================================
@@ -209,7 +275,7 @@ router.post("/telegraph/commands", async (req, res) => {
 
   const parsed = CommandSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { text, tripId, destination } = parsed.data;
+  const { text, tripId, destination, meetupId, meetupTime, meetupLocation } = parsed.data;
 
   let accessLevel = "partial";
   if (tripId && UUID.test(tripId)) {
@@ -220,7 +286,8 @@ router.post("/telegraph/commands", async (req, res) => {
 
   const commandId = genId();
   const intent = parseIntent(text);
-  const response = buildResponse(commandId, intent, text, tripId ?? null, accessLevel, destination);
+  const meetupContext = meetupId ? { meetupId, meetupTime, meetupLocation } : undefined;
+  const response = buildResponse(commandId, intent, text, tripId ?? null, accessLevel, destination, meetupContext);
 
   // Store with owner userId — cross-user access rejected on all reads
   commandStore.set(commandId, { ...response, _userId: user.id });
