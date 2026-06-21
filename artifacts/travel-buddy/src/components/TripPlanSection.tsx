@@ -198,6 +198,7 @@ export function TripPlanSection({
   const [activeDay, setActiveDay] = useState<string>('all');
   const [activeCat, setActiveCat] = useState<TripPlanCategory | 'all'>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
+  const [showWarningsOnly, setShowWarningsOnly] = useState(false);
   const [detailItem, setDetailItem] = useState<TripPlanItem | null>(null);
   const [detailStartInEditMode, setDetailStartInEditMode] = useState(false);
 
@@ -298,7 +299,7 @@ export function TripPlanSection({
     setDetailItem(item);
   }, []);
 
-  // Apply day + category filters to items
+  // Apply day + category + warnings filters to items
   const filteredItems = items.filter((item) => {
     const dayOk = activeDay === 'all'
       ? true
@@ -306,19 +307,20 @@ export function TripPlanSection({
         ? !item.dayDate
         : item.dayDate === activeDay;
     const catOk = activeCat === 'all' || item.category === activeCat;
-    return dayOk && catOk;
+    const warnOk = !showWarningsOnly || (item.warnings && item.warnings.length > 0);
+    return dayOk && catOk && warnOk;
   });
 
   // Build day buckets from ALL items (for the chip bar) and filtered items (for rendering)
   const allBuckets = buildBuckets(items, tripStartDate, tripEndDate);
 
   const visibleBuckets = (() => {
-    if (activeDay === 'all' && activeCat === 'all') return allBuckets;
+    if (activeDay === 'all' && activeCat === 'all' && !showWarningsOnly) return allBuckets;
     if (activeDay !== 'all') {
       // Single-day view: return exactly one bucket so no empty date-range days appear
       return [{ key: activeDay, items: filteredItems }];
     }
-    // Category-only filter with all days — keep full date range
+    // Category-only or warnings-only filter — keep full date range structure
     return buildBuckets(filteredItems, tripStartDate, tripEndDate);
   })();
 
@@ -367,6 +369,22 @@ export function TripPlanSection({
             tripStartDate={tripStartDate}
           />
           <CategoryChipBar activeCat={activeCat} onPick={setActiveCat} />
+          {warnCount > 0 && (
+            <View style={wf.row}>
+              <Pressable
+                style={[wf.chip, showWarningsOnly && wf.chipActive]}
+                onPress={() => setShowWarningsOnly((v) => !v)}
+              >
+                <AlertTriangle
+                  size={11}
+                  color={showWarningsOnly ? '#8B5E00' : color.mute}
+                />
+                <Text style={[wf.chipText, showWarningsOnly && wf.chipTextActive]}>
+                  Warnings ({warnCount})
+                </Text>
+              </Pressable>
+            </View>
+          )}
         </>
       )}
 
@@ -496,4 +514,12 @@ const lk = StyleSheet.create({
   iconWrap:{ width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   title:   { ...t.title, fontSize: 16, color: color.ink },
   body:    { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 260, lineHeight: 22 },
+});
+
+const wf = StyleSheet.create({
+  row:          { paddingHorizontal: space.lg, marginBottom: 8, flexDirection: 'row' },
+  chip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 12, borderWidth: 1, borderColor: '#F5D77B', backgroundColor: '#FFFBEB', paddingHorizontal: 10, paddingVertical: 4 },
+  chipActive:   { backgroundColor: '#F59E0B', borderColor: '#D97706' },
+  chipText:     { ...t.small, color: '#8B5E00', fontWeight: '600' as const, fontSize: 11 },
+  chipTextActive: { color: '#fff' },
 });
