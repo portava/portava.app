@@ -27,6 +27,8 @@ export interface MemberAvailability {
   openToMeet: boolean;
   quickStatus: { status: QuickStatus; expiresAt: string } | null;
   isOwner?: boolean;
+  /** Trip-scoped specific dates: keys are YYYY-MM-DD, values are free time blocks. */
+  openDays?: Record<string, TimeBlock[]> | null;
 }
 
 export interface AvailabilityResult<T = null> {

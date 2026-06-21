@@ -11,6 +11,7 @@ import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar } from '../../src/components/ConciergeCommandBar';
+import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip } from '../../src/hooks/useBackend';
@@ -24,6 +25,7 @@ export default function TripDetail() {
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const [chatLoading, setChatLoading] = useState(false);
+  const [meetupDate, setMeetupDate] = useState<string | null>(null);
 
   const trip = live && realTrip ? {
     ...mockTripDetail,
@@ -119,7 +121,15 @@ export default function TripDetail() {
           tripStartDate={realTrip?.startDate ?? undefined}
           tripEndDate={realTrip?.endDate ?? undefined}
         />
-        {live && trip.id ? <TripAvailabilitySection tripId={trip.id} /> : null}
+        {live && trip.id ? (
+          <TripAvailabilitySection
+            tripId={trip.id}
+            currentUserId={userId ?? ''}
+            startDate={realTrip?.startDate ?? undefined}
+            endDate={realTrip?.endDate ?? undefined}
+            onPlanMeetup={(date) => setMeetupDate(date)}
+          />
+        ) : null}
         <SavedIdeas ideas={trip.savedIdeas} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />
@@ -129,6 +139,16 @@ export default function TripDetail() {
         <TripSafety />
         <TripPostsSection posts={tripPosts} />
       </ScrollView>
+
+      {/* Meetup creation — triggered from availability grid "Plan meetup this day" */}
+      {meetupDate && (
+        <MeetupCreationSheet
+          tripId={trip.id}
+          initialTitle={`Meetup — ${meetupDate}`}
+          onDismiss={() => setMeetupDate(null)}
+          onCreated={() => setMeetupDate(null)}
+        />
+      )}
     </View>
   );
 }
