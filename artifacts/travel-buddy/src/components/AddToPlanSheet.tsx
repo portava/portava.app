@@ -7,6 +7,7 @@ import { X, ChevronDown } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
 import { createPlanItem } from '../services/tripPlan';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { DatePickerField } from './DatePickerField';
 
 // ── Category options ──────────────────────────────────────────────────────────
 
@@ -133,14 +134,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
             )}
 
             <Text style={sh.label}>Date <Text style={sh.opt}>(optional)</Text></Text>
-            <TextInput
-              style={sh.input}
-              value={dayDate}
-              onChangeText={setDayDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={color.faint}
-              keyboardType="numbers-and-punctuation"
-            />
+            <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" />
 
             <Text style={sh.label}>Time <Text style={sh.opt}>(optional)</Text></Text>
             <TextInput

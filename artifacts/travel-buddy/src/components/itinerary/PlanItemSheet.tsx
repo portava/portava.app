@@ -9,6 +9,7 @@ import {
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { DatePickerField } from '../DatePickerField';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 
@@ -160,8 +161,8 @@ function EditForm({
         </View>
       )}
 
-      <Text style={ef.label}>Date <Text style={ef.opt}>(YYYY-MM-DD)</Text></Text>
-      <TextInput style={ef.input} value={dayDate} onChangeText={setDayDate} placeholder="e.g. 2026-07-15" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
+      <Text style={ef.label}>Date</Text>
+      <DatePickerField value={dayDate} onChange={setDayDate} placeholder="Select a date (optional)" style={ef.dateField} />
 
       <Text style={ef.label}>Time <Text style={ef.opt}>(HH:MM, 24-hour)</Text></Text>
       <TextInput style={ef.input} value={startsAt} onChangeText={setStartsAt} placeholder="e.g. 19:30" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
@@ -433,6 +434,7 @@ const ef = StyleSheet.create({
   input:                { backgroundColor: color.haze, borderRadius: radius.md, padding: 10, ...t.body, color: color.ink },
   inputMulti:           { minHeight: 72 },
   picker:               { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: color.haze, borderRadius: radius.md, padding: 10 },
+  dateField:            { borderWidth: 0, backgroundColor: color.haze, borderRadius: radius.md, padding: 10 },
   pickerText:           { ...t.body, color: color.ink },
   catList:              { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, overflow: 'hidden', marginTop: 2 },
   catOption:            { paddingHorizontal: space.md, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.haze },
