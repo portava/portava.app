@@ -376,6 +376,14 @@ export default function MeetupScreen() {
                   {meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}
                 </Text>
               </View>
+            ) : meetup.isCreator && !isCancelled ? (
+              <View style={s.noDateRow}>
+                <CalendarClock size={14} color={color.faint} />
+                <Text style={s.noDateText}>No date set</Text>
+                <Pressable style={s.noDateChip} onPress={startEdit}>
+                  <Text style={s.noDateChipText}>Add</Text>
+                </Pressable>
+              </View>
             ) : null}
           </View>
         )}
@@ -574,8 +582,12 @@ const s = StyleSheet.create({
   title: { ...t.title, color: color.ink, fontSize: 22 },
   desc: { ...t.body, color: color.mute, lineHeight: 20 },
   sectionTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', marginBottom: 4 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { ...t.body, color: color.mute },
+  metaRow:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText:       { ...t.body, color: color.mute },
+  noDateRow:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  noDateText:     { ...t.body, color: color.faint, flex: 1 },
+  noDateChip:     { paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
+  noDateChipText: { ...t.small, color: color.signal, fontWeight: '700' },
 
   countsRow: { flexDirection: 'row', gap: space.lg },
   countItem: { alignItems: 'center', gap: 2 },
