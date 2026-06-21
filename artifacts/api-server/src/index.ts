@@ -28,8 +28,13 @@ app.listen(port, (err) => {
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across
   // server restarts (not just for the current process lifecycle).
-  queryCleanupHealth().then(({ cleanupHealthy, lastRunAt }) => {
-    if (!cleanupHealthy) {
+  queryCleanupHealth().then(({ cleanupStatus, lastRunAt }) => {
+    if (cleanupStatus === "critical") {
+      logger.error(
+        { lastRunAt },
+        "startup: cleanup job is critically overdue — check job_health table",
+      );
+    } else if (cleanupStatus === "overdue") {
       logger.warn(
         { lastRunAt },
         "startup: cleanup job has not run within the expected window — check job_health table",

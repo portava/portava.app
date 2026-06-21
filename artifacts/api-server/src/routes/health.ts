@@ -14,10 +14,15 @@ router.get("/healthz/cleanup", async (_req, res) => {
   const inMem = getCleanupStatus();
 
   // DB-backed check: persists across restarts and is the source of truth for
-  // cleanupHealthy / lastRunAt. Falls back gracefully if the table is missing.
-  const { cleanupHealthy, lastRunAt } = await queryCleanupHealth();
+  // cleanupStatus / lastRunAt. Falls back gracefully if the table is missing.
+  const { cleanupStatus, lastRunAt } = await queryCleanupHealth();
 
-  if (!cleanupHealthy) {
+  if (cleanupStatus === "critical") {
+    logger.error(
+      { lastRunAt, consecutiveFailures: inMem.consecutiveFailures },
+      "cleanupHealthCheck: cleanup job is critically overdue — immediate attention required",
+    );
+  } else if (cleanupStatus === "overdue") {
     logger.warn(
       { lastRunAt, consecutiveFailures: inMem.consecutiveFailures },
       "cleanupHealthCheck: cleanup job has not run within the expected window",
@@ -25,7 +30,7 @@ router.get("/healthz/cleanup", async (_req, res) => {
   }
 
   const data = CleanupHealthCheckResponse.parse({
-    cleanupHealthy,
+    cleanupStatus,
     lastRunAt,
     lastOutcome: inMem.lastOutcome,
     lastDeletedCount: inMem.lastDeletedCount,

@@ -49,9 +49,10 @@ components:
     CleanupStatus:
       type: object
       properties:
-        cleanupHealthy:
-          type: boolean
-          description: True when the cleanup job last ran within the expected window (interval + 1 h grace). False when the job has never run or is overdue.
+        cleanupStatus:
+          type: string
+          enum: [ok, overdue, critical]
+          description: "'ok' when the job last ran within the expected window (interval + 1 h grace), 'overdue' when slightly late (up to 2× interval), 'critical' when significantly late (≥ 2× interval) or never run."
         lastRunAt:
           type: string
           nullable: true
@@ -69,7 +70,7 @@ components:
           type: integer
           description: Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert.
       required:
-        - cleanupHealthy
+        - cleanupStatus
         - lastRunAt
         - lastOutcome
         - lastDeletedCount

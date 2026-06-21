@@ -72,39 +72,59 @@ export function getCleanupStatus(): Readonly<CleanupStatus> {
   return { ..._status };
 }
 
+/** The three alert levels for the cleanup job. */
+export type CleanupStatusLevel = "ok" | "overdue" | "critical";
+
 /**
- * True when the cleanup job last ran within the expected window.
- * Window = INTERVAL_MS + 1 hour grace (default: 25 h for a daily job).
- * Returns false when lastRunAt is null (never ran) or the timestamp is stale.
+ * Classify the cleanup job's staleness into three levels.
+ *
+ * | Elapsed since last run | Status   | Log level |
+ * |------------------------|----------|-----------|
+ * | < INTERVAL + 1 h grace | ok       | —         |
+ * | INTERVAL + 1 h – 2×INT | overdue  | warn      |
+ * | ≥ 2 × INTERVAL, or null | critical | error     |
+ *
+ * For a default 24-hour job: ok < 25 h, overdue 25–48 h, critical ≥ 48 h.
  */
-export function computeCleanupHealthy(lastRunAt: string | null): boolean {
-  if (!lastRunAt) return false;
-  const windowMs = INTERVAL_MS + 3_600_000; // interval + 1 h grace
-  return Date.now() - new Date(lastRunAt).getTime() < windowMs;
+export function computeCleanupStatus(lastRunAt: string | null): CleanupStatusLevel {
+  if (!lastRunAt) return "critical";
+  const elapsed = Date.now() - new Date(lastRunAt).getTime();
+  const overdueMs  = INTERVAL_MS + 3_600_000; // interval + 1 h grace
+  const criticalMs = 2 * INTERVAL_MS;          // 2× interval (48 h for daily)
+  if (elapsed < overdueMs)  return "ok";
+  if (elapsed < criticalMs) return "overdue";
+  return "critical";
 }
 
 /**
- * Query the persistent `job_health` table for the cleanup job's last run time.
- * Falls back to { cleanupHealthy: false, lastRunAt: null } when the service
- * client is unavailable or the table does not yet exist.
+ * Query the persistent `job_health` table for the cleanup job's last run time
+ * and classify its status.
+ *
+ * Falls back to { cleanupStatus: "critical", lastRunAt: null } when the service
+ * client is unavailable or the table does not yet exist — treats an unknown
+ * state as the most severe level so operators are alerted.
  */
 export async function queryCleanupHealth(): Promise<{
-  cleanupHealthy: boolean;
+  cleanupStatus: CleanupStatusLevel;
   lastRunAt: string | null;
 }> {
   const client = isServiceClientReady ? getServiceClient() : null;
-  if (!client) return { cleanupHealthy: false, lastRunAt: null };
+  if (!client) return { cleanupStatus: "critical", lastRunAt: null };
 
-  const { data, error } = await client
-    .from("job_health")
-    .select("last_run_at")
-    .eq("job", "cleanup")
-    .maybeSingle();
+  try {
+    const { data, error } = await client
+      .from("job_health")
+      .select("last_run_at")
+      .eq("job", "cleanup")
+      .maybeSingle();
 
-  if (error || !data) return { cleanupHealthy: false, lastRunAt: null };
+    if (error || !data) return { cleanupStatus: "critical", lastRunAt: null };
 
-  const lastRunAt = (data as any).last_run_at as string;
-  return { cleanupHealthy: computeCleanupHealthy(lastRunAt), lastRunAt };
+    const lastRunAt = (data as any).last_run_at as string;
+    return { cleanupStatus: computeCleanupStatus(lastRunAt), lastRunAt };
+  } catch {
+    return { cleanupStatus: "critical", lastRunAt: null };
+  }
 }
 
 function recordSuccess(deleted: number): void {
