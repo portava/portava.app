@@ -12,7 +12,7 @@ import {
   View, Text, Pressable, ActivityIndicator, ScrollView, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun } from 'lucide-react-native';
+import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { fetchDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
@@ -82,10 +82,23 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
       {/* Header */}
       <Pressable style={s.header} onPress={() => setExpanded((e) => !e)}>
         <View style={s.headerLeft}>
-          <View style={s.icon}><Zap size={13} color={color.signal} fill={color.signal} /></View>
+          <View style={s.icon}>
+            {brief.briefType === 'general'
+              ? <Globe size={13} color={color.signal} />
+              : <Zap size={13} color={color.signal} fill={color.signal} />}
+          </View>
           <View>
-            <Text style={s.headerTitle}>Today's Brief</Text>
-            <Text style={s.headerDate}>{formatDate(brief.date)}</Text>
+            <Text style={s.headerTitle}>
+              {brief.briefType === 'general' ? 'Travel Inspiration' : "Today's Brief"}
+            </Text>
+            {brief.destination
+              ? (
+                <View style={s.destRow}>
+                  <MapPin size={9} color={color.signal} />
+                  <Text style={s.destText}>{brief.destination}</Text>
+                </View>
+              )
+              : <Text style={s.headerDate}>{formatDate(brief.date)}</Text>}
           </View>
         </View>
         <View style={s.headerRight}>
@@ -95,6 +108,11 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
           {expanded ? <ChevronUp size={16} color={color.mute} /> : <ChevronDown size={16} color={color.mute} />}
         </View>
       </Pressable>
+
+      {/* Destination date row (when destination shown in header) */}
+      {brief.destination && (
+        <Text style={s.headerDateSub}>{formatDate(brief.date)}</Text>
+      )}
 
       {/* Summary */}
       <Text style={s.summary}>{brief.summaryText}</Text>
@@ -115,7 +133,7 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
           {/* Open windows */}
           {brief.openWindows?.length > 0 && (
             <View style={s.section}>
-              <Text style={s.sectionLabel}>FREE TIME</Text>
+              <Text style={s.sectionLabel}>FREE TIME TODAY</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
                 {brief.openWindows.map((w: any, i: number) => (
                   <View key={i} style={s.chip}>
@@ -134,6 +152,21 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
               {brief.planPreview.map((item: any) => (
                 <PlanRow key={item.id} item={item} />
               ))}
+            </View>
+          )}
+
+          {/* Gap days */}
+          {brief.gapDays?.length > 0 && (
+            <View style={s.section}>
+              <Text style={s.sectionLabel}>UNPLANNED DAYS AHEAD</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
+                {brief.gapDays.map((d: string) => (
+                  <View key={d} style={s.gapChip}>
+                    <Calendar size={10} color={color.signal} />
+                    <Text style={s.gapChipText}>{formatShortDate(d)}</Text>
+                  </View>
+                ))}
+              </ScrollView>
             </View>
           )}
 
@@ -286,6 +319,12 @@ function SuggestionRow({ suggestion, tripId, onDismiss }: { suggestion: any; tri
   return (
     <View style={s.sugRow}>
       <View style={{ flex: 1 }}>
+        {suggestion.forGapDay && (
+          <View style={s.gapDayBadge}>
+            <Calendar size={9} color={color.signal} />
+            <Text style={s.gapDayBadgeText}>{formatShortDate(suggestion.forGapDay)}</Text>
+          </View>
+        )}
         <View style={s.sugTitleRow}>
           <Sparkles size={12} color={color.signal} />
           <Text style={s.sugTitle} numberOfLines={1}>{suggestion.title}</Text>
@@ -339,6 +378,12 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+function formatShortDate(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00Z');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -368,6 +413,9 @@ const s = StyleSheet.create({
   icon: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#FFF0EE', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   headerDate: { ...t.small, color: color.mute, fontSize: 11 },
+  headerDateSub: { ...t.small, color: color.mute, fontSize: 11, paddingHorizontal: space.lg, paddingTop: 4 },
+  destRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  destText: { ...t.small, color: color.signal, fontSize: 11 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   refreshBtn: { padding: 4 },
   summary: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 18, padding: space.lg, paddingBottom: space.sm },
@@ -387,7 +435,11 @@ const s = StyleSheet.create({
   planLoc: { ...t.small, color: color.mute, fontSize: 11 },
   planWarnRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   planWarnText: { ...t.small, color: color.warn, fontSize: 10 },
+  gapChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFF0EE', paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: '#FFD9D4' },
+  gapChipText: { ...t.small, color: color.signal, fontSize: 11 },
   sugRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze, gap: space.sm },
+  gapDayBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 3 },
+  gapDayBadgeText: { ...t.stamp, fontFamily: 'Courier', color: color.signal, fontSize: 9, letterSpacing: 0.5 },
   sugTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
   sugTitle: { ...t.bodyStrong, color: color.ink, fontSize: 13, flex: 1 },
   sugPrice: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 11 },

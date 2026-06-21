@@ -18,6 +18,8 @@ export type BriefWarningKind =
   | "free_window_unplanned"
   | "late_addition";
 
+export type BriefType = "trip_context" | "general";
+
 export interface BriefPlanPreview {
   id: string;
   title: string;
@@ -37,6 +39,8 @@ export interface BriefSuggestion {
   estimatedTime: string;
   priceLevel: string;
   score: number;
+  /** Gap day this suggestion is for, if any (YYYY-MM-DD) */
+  forGapDay?: string;
 }
 
 export interface BriefMeetupOpportunity {
@@ -59,16 +63,28 @@ export interface BriefOpenWindow {
   endTime: string;
 }
 
+/** An upcoming meetup (within 24 h) for which the user is going or maybe. */
+export interface UpcomingMeetup24h {
+  id: string;
+  title: string;
+  proposedTime: string;
+  locationName: string | null;
+}
+
 export interface TripDailyBrief {
   tripId: string;
   userId: string;
   date: string;
+  briefType: BriefType;
+  destination: string | null;
   summaryText: string;
   weatherSummary: string | null;
   planPreview: BriefPlanPreview[];
   openWindows: BriefOpenWindow[];
   suggestions: BriefSuggestion[];
   meetupOpportunities: BriefMeetupOpportunity[];
+  /** Gap days (days within the trip window that have no plan items). */
+  gapDays: string[];
   warnings: BriefWarningKind[];
   quickActions: BriefQuickAction[];
   generatedAt: string;
@@ -102,19 +118,40 @@ export interface RawRecommendation {
   reason: string;
   estimatedTime: string;
   priceLevel: string;
+  /** If set, this suggestion is specifically for this gap day (YYYY-MM-DD). */
+  forGapDay?: string;
 }
 
 export function buildDailyBrief(opts: {
   tripId: string;
   userId: string;
   date: string;
+  briefType: BriefType;
+  destination: string | null;
+  tripStartDate: string | null;
+  tripEndDate: string | null;
   planItems: PlanRow[];
   meetups: MeetupRow[];
+  upcomingMeetups24h?: UpcomingMeetup24h[];
   recommendations: RawRecommendation[];
   preferenceProfile: UserPreferenceProfile | null;
   weatherSummary?: string | null;
 }): TripDailyBrief {
-  const { tripId, userId, date, planItems, meetups, recommendations, preferenceProfile, weatherSummary = null } = opts;
+  const {
+    tripId,
+    userId,
+    date,
+    briefType,
+    destination,
+    tripStartDate,
+    tripEndDate,
+    planItems,
+    meetups,
+    recommendations,
+    preferenceProfile,
+    weatherSummary = null,
+  } = opts;
+  const upcomingMeetups24h: UpcomingMeetup24h[] = opts.upcomingMeetups24h ?? [];
 
   // Filter plan items for the target date
   const dayItems = planItems.filter((i) => i.day_date === date);
@@ -142,6 +179,9 @@ export function buildDailyBrief(opts: {
   const openWindows = computeOpenWindows(dayItems, date);
   if (openWindows.length > 0 && dayItems.length === 0) warnings.push("free_window_unplanned");
 
+  // Compute gap days — trip days with no plan items at all
+  const gapDays = computeGapDays(planItems, tripStartDate, tripEndDate, date);
+
   // Score and sort suggestions against preference profile
   const scoredSuggestions: BriefSuggestion[] = recommendations.map((r) => {
     const score = preferenceProfile
@@ -155,6 +195,7 @@ export function buildDailyBrief(opts: {
       estimatedTime: r.estimatedTime,
       priceLevel: r.priceLevel,
       score,
+      ...(r.forGapDay ? { forGapDay: r.forGapDay } : {}),
     };
   });
   scoredSuggestions.sort((a, b) => b.score - a.score);
@@ -175,30 +216,100 @@ export function buildDailyBrief(opts: {
     { id: "qa_telegraph", label: "Ask Telegraph", kind: "ask_telegraph" },
   ];
   if (openWindows.length > 0) {
-    quickActions.push({ id: "qa_fill", label: "Fill free time", kind: "ask_telegraph", params: { prompt: "Fill free time" } });
+    const dest = destination ? ` in ${destination}` : "";
+    quickActions.push({
+      id: "qa_fill",
+      label: "Fill free time",
+      kind: "ask_telegraph",
+      params: { prompt: `What should I do during my free time${dest}?` },
+    });
   }
   if (dayItems.length === 0) {
-    quickActions.push({ id: "qa_plan_day", label: "Plan today", kind: "ask_telegraph", params: { prompt: "Plan tonight" } });
+    const dest = destination ? ` in ${destination}` : "";
+    quickActions.push({
+      id: "qa_plan_day",
+      label: "Plan today",
+      kind: "ask_telegraph",
+      params: { prompt: `Help me plan today${dest}` },
+    });
+  }
+  // Upcoming meetup action: suggest nearby dinner if meetup is in the evening
+  for (const m of upcomingMeetups24h.slice(0, 1)) {
+    const meetupHour = new Date(m.proposedTime).getHours();
+    if (meetupHour >= 17) {
+      const dest = destination ? ` in ${destination}` : "";
+      quickActions.push({
+        id: `qa_premeetup_${m.id}`,
+        label: "Find dinner nearby",
+        kind: "ask_telegraph",
+        params: { prompt: `Find dinner options before my ${m.title} meetup${dest}` },
+      });
+    }
   }
 
   // Summary text
-  const summaryText = buildSummaryText(dayItems.length, openWindows.length, scoredSuggestions.length);
+  const summaryText = buildSummaryText({
+    planCount: dayItems.length,
+    openWindowCount: openWindows.length,
+    suggestionCount: scoredSuggestions.length,
+    destination,
+    briefType,
+    gapDays,
+    upcomingMeetups24h,
+  });
 
   return {
     tripId,
     userId,
     date,
+    briefType,
+    destination,
     summaryText,
     weatherSummary,
     planPreview,
     openWindows,
-    suggestions: scoredSuggestions.slice(0, 3),
+    suggestions: scoredSuggestions.slice(0, 4),
     meetupOpportunities: meetupOpportunities.slice(0, 2),
+    gapDays,
     warnings,
     quickActions,
     generatedAt: new Date().toISOString(),
     isStale: false,
   };
+}
+
+/**
+ * Compute gap days — calendar days within the trip date range that have no
+ * plan items assigned to them. Excludes today (the date being briefed) since
+ * the "today" section covers that. Returns at most 5 gap days.
+ */
+function computeGapDays(
+  planItems: PlanRow[],
+  tripStartDate: string | null,
+  tripEndDate: string | null,
+  today: string,
+): string[] {
+  if (!tripStartDate || !tripEndDate) return [];
+
+  const start = new Date(tripStartDate + "T00:00:00Z");
+  const end   = new Date(tripEndDate   + "T00:00:00Z");
+
+  // Build set of days that have at least one plan item
+  const daysWithItems = new Set<string>();
+  for (const item of planItems) {
+    if (item.day_date) daysWithItems.add(item.day_date);
+  }
+
+  const gaps: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end && gaps.length < 5) {
+    const isoDate = cursor.toISOString().slice(0, 10);
+    if (isoDate !== today && !daysWithItems.has(isoDate)) {
+      gaps.push(isoDate);
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return gaps;
 }
 
 function computeOpenWindows(items: PlanRow[], date: string): BriefOpenWindow[] {
@@ -260,15 +371,43 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function buildSummaryText(planCount: number, openWindowCount: number, suggestionCount: number): string {
+function buildSummaryText(opts: {
+  planCount: number;
+  openWindowCount: number;
+  suggestionCount: number;
+  destination: string | null;
+  briefType: BriefType;
+  gapDays: string[];
+  upcomingMeetups24h: UpcomingMeetup24h[];
+}): string {
+  const { planCount, openWindowCount, suggestionCount, destination, briefType, gapDays, upcomingMeetups24h } = opts;
+  const dest = destination ? ` in ${destination}` : "";
+
+  // General brief (no active trip) — travel inspiration
+  if (briefType === "general") {
+    return suggestionCount > 0
+      ? "No active trip right now — here's some travel inspiration to spark your next adventure."
+      : "No active trip right now. Start planning your next trip to get personalised suggestions.";
+  }
+
+  // Trip-context brief
+  // Upcoming meetup nudge (within 24 h)
+  const nextMeetup = upcomingMeetups24h[0] ?? null;
+  const meetupNudge = nextMeetup
+    ? ` You have ${nextMeetup.title} at ${formatTime(nextMeetup.proposedTime)}${nextMeetup.locationName ? ` at ${nextMeetup.locationName}` : ""} — plan around it.`
+    : "";
+
   if (planCount === 0 && openWindowCount > 0) {
-    return `Your day is open — ${suggestionCount > 0 ? "Telegraph has suggestions ready" : "add something to your plan"}.`;
+    const gapHint = gapDays.length > 0
+      ? ` You also have ${gapDays.length} unplanned day${gapDays.length > 1 ? "s" : ""} ahead.`
+      : "";
+    return `Your day${dest} is open — ${suggestionCount > 0 ? "Telegraph has suggestions ready" : "add something to your plan"}.${gapHint}${meetupNudge}`;
   }
   if (planCount > 0 && openWindowCount > 0) {
-    return `${planCount} plan item${planCount > 1 ? "s" : ""} today with ${openWindowCount} free window${openWindowCount > 1 ? "s" : ""}.`;
+    return `${planCount} plan item${planCount > 1 ? "s" : ""} today${dest} with ${openWindowCount} free window${openWindowCount > 1 ? "s" : ""}.${meetupNudge}`;
   }
   if (planCount > 0) {
-    return `${planCount} plan item${planCount > 1 ? "s" : ""} today — looking full.`;
+    return `${planCount} plan item${planCount > 1 ? "s" : ""} today${dest} — looking full.${meetupNudge}`;
   }
-  return "Today is unplanned — let Telegraph help.";
+  return `Today${dest} is unplanned — let Telegraph help.${meetupNudge}`;
 }
