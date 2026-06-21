@@ -24,6 +24,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /healthz/cleanup:
+    get:
+      operationId: cleanupHealthCheck
+      tags: [health]
+      summary: Cleanup health check
+      description: Returns the outcome of the most recent daily-briefs purge run so uptime monitors can alert on stale or failed runs.
+      responses:
+        "200":
+          description: Cleanup status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleanupStatus"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +46,27 @@ components:
           type: string
       required:
         - status
-
+    CleanupStatus:
+      type: object
+      properties:
+        lastRunAt:
+          type: string
+          nullable: true
+          description: ISO-8601 timestamp of the most recent purge attempt, or null if no run has occurred yet.
+        lastOutcome:
+          type: string
+          nullable: true
+          enum: [success, error, skipped, null]
+          description: Outcome of the most recent purge attempt.
+        lastDeletedCount:
+          type: integer
+          nullable: true
+          description: Number of rows deleted in the most recent successful purge, or null on error/skip.
+        consecutiveFailures:
+          type: integer
+          description: Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert.
+      required:
+        - lastRunAt
+        - lastOutcome
+        - lastDeletedCount
+        - consecutiveFailures

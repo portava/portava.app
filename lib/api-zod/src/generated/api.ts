@@ -14,3 +14,14 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Returns cleanup status
+ * @summary Cleanup health check
+ */
+export const CleanupHealthCheckResponse = zod.object({
+  lastRunAt: zod.string().nullable(),
+  lastOutcome: zod.enum(["success", "error", "skipped"]).nullable(),
+  lastDeletedCount: zod.number().int().nullable(),
+  consecutiveFailures: zod.number().int(),
+});

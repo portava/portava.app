@@ -9,7 +9,9 @@
  * is cheap regardless of table size.
  *
  * Failures are logged and swallowed — the cleanup is best-effort and must
- * never crash the server.
+ * never crash the server. Failed purges increment a consecutive-failure
+ * counter so monitoring can key on the ERROR log event or the
+ * GET /healthz/cleanup endpoint.
  */
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
@@ -43,6 +45,54 @@ const CLEANUP_INTERVAL_HOURS = parseIntervalHours(process.env.DAILY_BRIEF_CLEANU
 const INTERVAL_MS = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1_000;
 const STARTUP_DELAY_MS = 30 * 1_000;
 
+// ─── Status tracking ──────────────────────────────────────────────────────────
+
+export type CleanupOutcome = "success" | "error" | "skipped";
+
+interface CleanupStatus {
+  lastRunAt: string | null;
+  lastOutcome: CleanupOutcome | null;
+  lastDeletedCount: number | null;
+  consecutiveFailures: number;
+}
+
+const _status: CleanupStatus = {
+  lastRunAt: null,
+  lastOutcome: null,
+  lastDeletedCount: null,
+  consecutiveFailures: 0,
+};
+
+/** Return a snapshot of the most recent cleanup run status. */
+export function getCleanupStatus(): Readonly<CleanupStatus> {
+  return { ..._status };
+}
+
+function recordSuccess(deleted: number): void {
+  _status.lastRunAt = new Date().toISOString();
+  _status.lastOutcome = "success";
+  _status.lastDeletedCount = deleted;
+  _status.consecutiveFailures = 0;
+}
+
+function recordError(err: unknown): void {
+  _status.lastRunAt = new Date().toISOString();
+  _status.lastOutcome = "error";
+  _status.lastDeletedCount = null;
+  _status.consecutiveFailures += 1;
+
+  logger.error(
+    { err, consecutiveFailures: _status.consecutiveFailures },
+    "dailyBriefCleanup: purge failed — consecutive failure alert",
+  );
+}
+
+function recordSkipped(): void {
+  _status.lastRunAt = new Date().toISOString();
+  _status.lastOutcome = "skipped";
+  _status.lastDeletedCount = null;
+}
+
 // ─── Purge logic ─────────────────────────────────────────────────────────────
 
 /**
@@ -63,6 +113,7 @@ export async function purgeOldBriefs(opts?: {
 
   if (!client) {
     logger.warn("dailyBriefCleanup: service client not ready — skipping purge");
+    recordSkipped();
     return { deleted: null, error: null };
   }
 
@@ -77,14 +128,16 @@ export async function purgeOldBriefs(opts?: {
       .lt("brief_date", cutoffDate);
 
     if (error) {
-      logger.error({ err: error }, "dailyBriefCleanup: purge query failed");
+      recordError(error);
       return { deleted: null, error };
     }
 
-    logger.info({ deleted: count ?? 0, cutoffDate }, "dailyBriefCleanup: purged old briefs");
-    return { deleted: count ?? 0, error: null };
+    const deleted = count ?? 0;
+    recordSuccess(deleted);
+    logger.info({ deleted, cutoffDate }, "dailyBriefCleanup: purged old briefs");
+    return { deleted, error: null };
   } catch (err) {
-    logger.error({ err }, "dailyBriefCleanup: unexpected error during purge");
+    recordError(err);
     return { deleted: null, error: err };
   }
 }
