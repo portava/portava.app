@@ -256,6 +256,11 @@ export function TripPlanSection({
   const warnCount = items.filter((i) => i.warnings && i.warnings.length > 0).length;
   const firstWarnedId = items.find((i) => i.warnings && i.warnings.length > 0)?.id;
 
+  // Auto-clear warnings filter if all warnings disappear (e.g. after an item edit or reload)
+  useEffect(() => {
+    if (warnCount === 0 && showWarningsOnly) setShowWarningsOnly(false);
+  }, [warnCount, showWarningsOnly]);
+
   const handleNeedsAttention = useCallback(() => {
     const first = items.find((i) => i.warnings && i.warnings.length > 0);
     if (!first) return;
