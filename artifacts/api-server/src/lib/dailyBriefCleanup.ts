@@ -72,6 +72,41 @@ export function getCleanupStatus(): Readonly<CleanupStatus> {
   return { ..._status };
 }
 
+/**
+ * True when the cleanup job last ran within the expected window.
+ * Window = INTERVAL_MS + 1 hour grace (default: 25 h for a daily job).
+ * Returns false when lastRunAt is null (never ran) or the timestamp is stale.
+ */
+export function computeCleanupHealthy(lastRunAt: string | null): boolean {
+  if (!lastRunAt) return false;
+  const windowMs = INTERVAL_MS + 3_600_000; // interval + 1 h grace
+  return Date.now() - new Date(lastRunAt).getTime() < windowMs;
+}
+
+/**
+ * Query the persistent `job_health` table for the cleanup job's last run time.
+ * Falls back to { cleanupHealthy: false, lastRunAt: null } when the service
+ * client is unavailable or the table does not yet exist.
+ */
+export async function queryCleanupHealth(): Promise<{
+  cleanupHealthy: boolean;
+  lastRunAt: string | null;
+}> {
+  const client = isServiceClientReady ? getServiceClient() : null;
+  if (!client) return { cleanupHealthy: false, lastRunAt: null };
+
+  const { data, error } = await client
+    .from("job_health")
+    .select("last_run_at")
+    .eq("job", "cleanup")
+    .maybeSingle();
+
+  if (error || !data) return { cleanupHealthy: false, lastRunAt: null };
+
+  const lastRunAt = (data as any).last_run_at as string;
+  return { cleanupHealthy: computeCleanupHealthy(lastRunAt), lastRunAt };
+}
+
 function recordSuccess(deleted: number): void {
   _status.lastRunAt = new Date().toISOString();
   _status.lastOutcome = "success";
@@ -149,6 +184,21 @@ export async function purgeOldBriefs(opts?: {
     const deleted = count ?? 0;
     recordSuccess(deleted);
     logger.info({ deleted, cutoffDate }, "dailyBriefCleanup: purged old briefs");
+
+    // Persist last-run timestamp so the health check survives server restarts.
+    const sc = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
+    if (sc) {
+      const { error: upsertErr } = await sc
+        .from("job_health")
+        .upsert(
+          { job: "cleanup", last_run_at: _status.lastRunAt, updated_at: _status.lastRunAt },
+          { onConflict: "job" },
+        );
+      if (upsertErr) {
+        logger.warn({ err: upsertErr }, "dailyBriefCleanup: could not persist job health — table may not exist yet");
+      }
+    }
+
     return { deleted, error: null };
   } catch (err) {
     recordError(err);

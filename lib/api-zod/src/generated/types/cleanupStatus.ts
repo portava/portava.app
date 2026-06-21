@@ -7,7 +7,9 @@
  */
 
 export interface CleanupStatus {
-  /** ISO-8601 timestamp of the most recent purge attempt, or null if no run has occurred yet. */
+  /** True when the cleanup job last ran within the expected window (interval + 1 h grace). False when the job has never run or is overdue. */
+  cleanupHealthy: boolean;
+  /** ISO-8601 timestamp of the most recent purge attempt (from persistent storage), or null if no run has occurred yet. */
   lastRunAt: string | null;
   /** Outcome of the most recent purge attempt. */
   lastOutcome: "success" | "error" | "skipped" | null;

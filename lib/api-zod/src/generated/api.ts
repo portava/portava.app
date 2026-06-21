@@ -20,6 +20,7 @@ export const HealthCheckResponse = zod.object({
  * @summary Cleanup health check
  */
 export const CleanupHealthCheckResponse = zod.object({
+  cleanupHealthy: zod.boolean(),
   lastRunAt: zod.string().nullable(),
   lastOutcome: zod.enum(["success", "error", "skipped"]).nullable(),
   lastDeletedCount: zod.number().int().nullable(),

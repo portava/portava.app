@@ -53,6 +53,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0014_profile_about_me.sql` | Adds `spoken_languages`, `default_language`, `travel_styles`, `travel_pace`, `budget_style`, `travel_group_style`, `looking_for`, `comfort_level`, `availability_tags`, `planning_style`, `public_social_links` to `profiles` | pending |
 | `0015_blocks.sql` | Creates `blocks` table (blocker_id, blocked_id, unique constraint, RLS) and `is_blocked(a, b)` SECURITY DEFINER helper function | pending |
 | `0016_thread_reads.sql` | Adds `last_read_at timestamptz` to `message_thread_members`; index for unread-count queries | pending |
+| `0017_job_health.sql` | Creates `job_health` table (primary key: `job text`) to persist background-job last-run timestamps; used by `GET /api/healthz/cleanup` to report `cleanupHealthy` across server restarts | pending |
 
 ## Gotchas
 

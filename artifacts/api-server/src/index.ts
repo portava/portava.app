@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startDailyBriefCleanup } from "./lib/dailyBriefCleanup";
+import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +24,18 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startDailyBriefCleanup();
+
+  // Startup health check — warn if the cleanup job hasn't run recently.
+  // Queries the persistent job_health table so the check is accurate across
+  // server restarts (not just for the current process lifecycle).
+  queryCleanupHealth().then(({ cleanupHealthy, lastRunAt }) => {
+    if (!cleanupHealthy) {
+      logger.warn(
+        { lastRunAt },
+        "startup: cleanup job has not run within the expected window — check job_health table",
+      );
+    }
+  }).catch((startupErr) => {
+    logger.warn({ err: startupErr }, "startup: could not query cleanup job health");
+  });
 });
