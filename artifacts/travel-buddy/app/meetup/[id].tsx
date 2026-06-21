@@ -18,10 +18,27 @@ import {
 import {
   getMeetup, rsvpMeetup, voteTimeOption, confirmTime,
   addMeetupToTripPlan, cancelMeetup, updateMeetup,
-  type MeetupDetail, type TimeOptionVotes, type VoteValue, type RsvpStatus,
+  type MeetupDetail, type TimeOptionVotes, type VoteValue, type RsvpStatus, type TimeBlock,
 } from '../../src/services/meetups';
+import { DatePickerField } from '../../src/components/DateTimePickerField';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+
+const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const BLOCK_OPTIONS: { key: TimeBlock; label: string }[] = [
+  { key: 'morning',   label: 'Morning' },
+  { key: 'afternoon', label: 'Afternoon' },
+  { key: 'evening',   label: 'Evening' },
+  { key: 'late',      label: 'Late' },
+];
 
 function relDate(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -79,12 +96,16 @@ export default function MeetupScreen() {
   const [editTitle, setEditTitle] = useState('');
   const [editLocation, setEditLocation] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [editDate, setEditDate] = useState<Date | null>(null);
+  const [editTimeBlock, setEditTimeBlock] = useState<TimeBlock | null>(null);
 
   function startEdit() {
     if (!meetup) return;
     setEditTitle(meetup.title);
     setEditLocation(meetup.locationName ?? '');
     setEditDesc(meetup.description ?? '');
+    setEditDate(meetup.approximateDate ? new Date(meetup.approximateDate + 'T12:00:00') : null);
+    setEditTimeBlock(meetup.timeBlock ?? null);
     setEditing(true);
   }
 
@@ -92,17 +113,21 @@ export default function MeetupScreen() {
     if (!id || !meetup || actioning) return;
     setActioning('edit');
     const res = await updateMeetup(id, {
-      title: editTitle.trim() || meetup.title,
-      locationName: editLocation.trim() || null,
-      description: editDesc.trim() || null,
+      title:           editTitle.trim() || meetup.title,
+      locationName:    editLocation.trim() || null,
+      description:     editDesc.trim() || null,
+      approximateDate: editDate ? toISODate(editDate) : null,
+      timeBlock:       editTimeBlock,
     });
     setActioning(null);
     if (res.ok) {
       setMeetup((prev) => prev ? {
         ...prev,
-        title: editTitle.trim() || prev.title,
-        locationName: editLocation.trim() || null,
-        description: editDesc.trim() || null,
+        title:           editTitle.trim() || prev.title,
+        locationName:    editLocation.trim() || null,
+        description:     editDesc.trim() || null,
+        approximateDate: editDate ? toISODate(editDate) : null,
+        timeBlock:       editTimeBlock,
       } : prev);
       setEditing(false);
     } else {
@@ -287,6 +312,30 @@ export default function MeetupScreen() {
                 placeholderTextColor={color.faint}
                 maxLength={300}
               />
+              <Text style={s.editLabel}>Date (optional)</Text>
+              <DatePickerField
+                value={editDate}
+                onChange={setEditDate}
+                minimumDate={TODAY_START}
+                placeholder="Pick a date"
+              />
+              <Text style={s.editLabel}>Time of day (optional)</Text>
+              <View style={s.blockRow}>
+                {BLOCK_OPTIONS.map((opt) => {
+                  const active = editTimeBlock === opt.key;
+                  return (
+                    <Pressable
+                      key={opt.key}
+                      style={[s.blockBtn, active && s.blockBtnActive]}
+                      onPress={() => setEditTimeBlock(active ? null : opt.key)}
+                    >
+                      <Text style={[s.blockBtnText, active && s.blockBtnTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
               <Text style={s.editLabel}>Description (optional)</Text>
               <TextInput
                 style={[s.editInput, s.editInputMulti]}
@@ -503,9 +552,14 @@ const s = StyleSheet.create({
   editChipText: { ...t.small, color: color.ink, fontWeight: '700' },
   editSaveBtn: { paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.signal, minWidth: 52, alignItems: 'center', justifyContent: 'center' },
   editSaveBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
-  editLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 4, marginTop: space.sm },
-  editInput: { ...t.body, color: color.ink, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm, minHeight: 42 },
+  editLabel:      { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 4, marginTop: space.sm },
+  editInput:      { ...t.body, color: color.ink, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm, minHeight: 42 },
   editInputMulti: { minHeight: 80, textAlignVertical: 'top', paddingTop: space.sm },
+  blockRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  blockBtn:       { paddingHorizontal: space.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
+  blockBtnActive: { backgroundColor: color.signal, borderColor: color.signal },
+  blockBtnText:   { ...t.small, fontWeight: '700', color: color.ink },
+  blockBtnTextActive: { color: color.onInk },
 
   scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
