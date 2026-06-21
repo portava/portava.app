@@ -1,8 +1,14 @@
 /**
  * Messaging hooks — same {data, loading, error, reload} shape as other hooks.
  * All reads/writes go through src/services/messaging.ts → API server.
+ *
+ * Polling:
+ *   - useMyThreads    — refreshes the inbox every 7 s while the app is active.
+ *   - useThreadMessages — merges new messages every 3 s while the app is active.
+ *   Both hooks pause polling when AppState leaves 'active' and resume on return.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import {
   getMessagePermission,
   sendMessageRequest,
@@ -22,6 +28,9 @@ import {
   type Message,
   type LanguageSettings,
 } from '../services/messaging';
+
+const THREAD_POLL_MS = 3_000;
+const INBOX_POLL_MS = 7_000;
 
 // ── Message permission (for profile / passport) ───────────────────────────────
 
@@ -96,12 +105,13 @@ export function useIncomingMessageRequests() {
   return { data, loading, error, reload, accept, decline };
 }
 
-// ── Threads list ──────────────────────────────────────────────────────────────
+// ── Threads list (with inbox polling) ─────────────────────────────────────────
 
 export function useMyThreads() {
   const [data, setData] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -112,20 +122,41 @@ export function useMyThreads() {
     setLoading(false);
   }, []);
 
+  const silentPoll = useCallback(async () => {
+    if (appStateRef.current !== 'active') return;
+    const res = await getMyThreads();
+    if (res.ok && res.data) {
+      setData((res.data as any).threads ?? []);
+    }
+  }, []);
+
   useEffect(() => {
     reload();
   }, [reload]);
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      appStateRef.current = next;
+    });
+    const timer = setInterval(silentPoll, INBOX_POLL_MS);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [silentPoll]);
+
   return { data, loading, error, reload };
 }
 
-// ── Thread chat ───────────────────────────────────────────────────────────────
+// ── Thread chat (with message polling) ────────────────────────────────────────
 
 export function useThreadMessages(threadId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const sendingRef = useRef(false);
 
   const reload = useCallback(async () => {
     if (!threadId) return;
@@ -140,19 +171,50 @@ export function useThreadMessages(threadId: string | null) {
     setLoading(false);
   }, [threadId]);
 
+  const silentPoll = useCallback(async () => {
+    if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
+    const res = await getThreadMessages(threadId);
+    if (!res.ok || !res.data) return;
+    const incoming = [...(res.data.messages ?? [])].reverse();
+    if (incoming.length === 0) return;
+    setMessages((prev) => {
+      const existingIds = new Set(prev.map((m) => m.id));
+      const fresh = incoming.filter((m) => !existingIds.has(m.id));
+      if (fresh.length === 0) return prev;
+      return [...prev, ...fresh];
+    });
+  }, [threadId]);
+
   useEffect(() => {
     reload();
   }, [reload]);
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      appStateRef.current = next;
+    });
+    const timer = setInterval(silentPoll, THREAD_POLL_MS);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [silentPoll]);
+
   const send = useCallback(
     async (body: string, opts?: { msgType?: string; subtype?: string }) => {
       if (!threadId || !body.trim()) return;
+      sendingRef.current = true;
       setSending(true);
       const res = await sendMessage(threadId, body.trim(), opts);
       if (res.ok && res.data) {
-        setMessages((prev) => [...prev, res.data as Message]);
+        setMessages((prev) => {
+          const exists = prev.some((m) => m.id === (res.data as Message).id);
+          if (exists) return prev;
+          return [...prev, res.data as Message];
+        });
       }
       setSending(false);
+      sendingRef.current = false;
       return res;
     },
     [threadId],
@@ -162,7 +224,6 @@ export function useThreadMessages(threadId: string | null) {
     async (messageId: string) => {
       const res = await retryTranslation(messageId);
       if (res.ok) {
-        // Optimistically mark status as pending while we wait.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === messageId
