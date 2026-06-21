@@ -19,6 +19,7 @@ import preferencesRouter from "./preferences";
 import dailyBriefRouter from "./dailyBrief";
 import telegraphCommandsRouter from "./telegraphCommands";
 import telegraphFeedbackRouter from "./telegraphFeedback";
+import discoveryRouter from "./discovery";
 
 const router: IRouter = Router();
 
@@ -42,5 +43,6 @@ router.use(availabilityRouter);
 router.use(meetupsRouter);
 router.use(preferencesRouter);
 router.use(dailyBriefRouter);
+router.use(discoveryRouter);
 
 export default router;
