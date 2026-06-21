@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Modal, Alert,
+  View, Text, Pressable, StyleSheet, Modal, Alert, Animated, PanResponder,
 } from 'react-native';
 import {
-  MapPin, Clock, MoreHorizontal, CheckCircle2, Pencil, Trash2, AlertTriangle, Tag,
+  MapPin, Clock, MoreHorizontal, CheckCircle2, Pencil, Trash2, AlertTriangle, Tag, GripVertical,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models';
-import { removePlanItem, updatePlanItem } from '../../services/tripPlan';
+import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
 // ── Category / status maps ─────────────────────────────────────────────────────
@@ -92,18 +92,20 @@ interface PlanItemCardProps {
   isOwner: boolean;
   tripId: string;
   onPress: (item: TripPlanItem) => void;
-  /** Called when the user taps "Edit / Reschedule" — opens the detail sheet directly in edit mode. */
   onEditPress: (item: TripPlanItem) => void;
   onRemove: (id: string) => void;
   onMarkDone: (id: string) => void;
   onMarkTentative: (id: string) => void;
   onEdited: (updated: TripPlanItem) => void;
   onMoveToUnscheduled: (id: string) => void;
+  dragHandlers?: object;
+  isDragging?: boolean;
 }
 
 function PlanItemCard({
   item, currentUserId, isOwner, tripId,
   onPress, onEditPress, onRemove, onMarkDone, onMarkTentative, onEdited, onMoveToUnscheduled,
+  dragHandlers, isDragging,
 }: PlanItemCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const cat = CAT_STYLE[item.category] ?? CAT_STYLE.other;
@@ -114,51 +116,62 @@ function PlanItemCard({
 
   return (
     <>
-      <Pressable style={[ic.card, hasWarnings && ic.cardWarn]} onPress={() => onPress(item)}>
-        <View style={ic.top}>
-          <View style={[ic.catBadge, { backgroundColor: cat.bg }]}>
-            <Text style={[ic.catText, { color: cat.fg }]}>{cat.label}</Text>
-          </View>
-          {item.sourceType !== 'manual' && (
-            <View style={ic.sourceBadge}>
-              <Tag size={9} color={color.mute} />
-              <Text style={ic.sourceText}>{item.sourceType === 'meetup' ? 'Meetup' : 'Place'}</Text>
-            </View>
-          )}
-          <View style={{ flex: 1 }} />
-          <View style={[ic.statusBadge, { backgroundColor: statusStyle.bg }]}>
-            <Text style={[ic.statusText, { color: statusStyle.fg }]}>{item.status}</Text>
-          </View>
-          {canAct && (
-            <Pressable hitSlop={8} onPress={() => setMenuOpen(true)} style={ic.moreBtn}>
-              <MoreHorizontal size={16} color={color.mute} />
-            </Pressable>
-          )}
-        </View>
-
-        <Text style={[ic.title, item.status === 'done' && ic.titleDone]} numberOfLines={2}>
-          {item.title}
-        </Text>
-
-        <WarningBadges warnings={item.warnings ?? []} />
-
-        {(timeStr || item.locationName) && (
-          <View style={ic.metaRow}>
-            {timeStr && (
-              <View style={ic.metaItem}>
-                <Clock size={11} color={color.mute} />
-                <Text style={ic.metaText}>{timeStr}</Text>
-              </View>
-            )}
-            {item.locationName && (
-              <View style={ic.metaItem}>
-                <MapPin size={11} color={color.mute} />
-                <Text style={ic.metaText} numberOfLines={1}>{item.locationName}</Text>
-              </View>
-            )}
+      <View style={[ic.row, isDragging && ic.rowDragging]}>
+        {isOwner && dragHandlers && (
+          <View style={ic.handle} {...dragHandlers}>
+            <GripVertical size={18} color={isDragging ? color.deep : color.faint} />
           </View>
         )}
-      </Pressable>
+
+        <Pressable
+          style={[ic.card, hasWarnings && ic.cardWarn, { flex: 1 }]}
+          onPress={() => onPress(item)}
+        >
+          <View style={ic.top}>
+            <View style={[ic.catBadge, { backgroundColor: cat.bg }]}>
+              <Text style={[ic.catText, { color: cat.fg }]}>{cat.label}</Text>
+            </View>
+            {item.sourceType !== 'manual' && (
+              <View style={ic.sourceBadge}>
+                <Tag size={9} color={color.mute} />
+                <Text style={ic.sourceText}>{item.sourceType === 'meetup' ? 'Meetup' : 'Place'}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }} />
+            <View style={[ic.statusBadge, { backgroundColor: statusStyle.bg }]}>
+              <Text style={[ic.statusText, { color: statusStyle.fg }]}>{item.status}</Text>
+            </View>
+            {canAct && (
+              <Pressable hitSlop={8} onPress={() => setMenuOpen(true)} style={ic.moreBtn}>
+                <MoreHorizontal size={16} color={color.mute} />
+              </Pressable>
+            )}
+          </View>
+
+          <Text style={[ic.title, item.status === 'done' && ic.titleDone]} numberOfLines={2}>
+            {item.title}
+          </Text>
+
+          <WarningBadges warnings={item.warnings ?? []} />
+
+          {(timeStr || item.locationName) && (
+            <View style={ic.metaRow}>
+              {timeStr && (
+                <View style={ic.metaItem}>
+                  <Clock size={11} color={color.mute} />
+                  <Text style={ic.metaText}>{timeStr}</Text>
+                </View>
+              )}
+              {item.locationName && (
+                <View style={ic.metaItem}>
+                  <MapPin size={11} color={color.mute} />
+                  <Text style={ic.metaText} numberOfLines={1}>{item.locationName}</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </Pressable>
+      </View>
 
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={ic.menuOverlay} onPress={() => setMenuOpen(false)}>
@@ -210,6 +223,184 @@ function PlanItemCard({
           </View>
         </Pressable>
       </Modal>
+    </>
+  );
+}
+
+// ── Draggable item list ───────────────────────────────────────────────────────
+
+interface DraggableItemListProps {
+  items: TripPlanItem[];
+  tripId: string;
+  currentUserId: string;
+  isOwner: boolean;
+  onItemPress: (item: TripPlanItem) => void;
+  onEditPress: (item: TripPlanItem) => void;
+  onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
+  onRemove: (id: string) => void;
+  onMarkDone: (id: string) => void;
+  onMarkTentative: (id: string) => void;
+  onMoveToUnscheduled: (id: string) => void;
+}
+
+function DraggableItemList({
+  items, tripId, currentUserId, isOwner,
+  onItemPress, onEditPress, onItemsChanged,
+  onRemove, onMarkDone, onMarkTentative, onMoveToUnscheduled,
+}: DraggableItemListProps) {
+  // Local display order (IDs); actual item data comes from `items` prop.
+  const [order, setOrder] = useState<string[]>(() => items.map((i) => i.id));
+  const itemMap = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
+
+  // Sync order when items prop changes (add / remove)
+  const prevItemsRef = useRef(items);
+  if (prevItemsRef.current !== items) {
+    prevItemsRef.current = items;
+    const incoming = items.map((i) => i.id);
+    // keep existing order, append new, drop removed
+    const kept = order.filter((id) => incoming.includes(id));
+    const added = incoming.filter((id) => !kept.includes(id));
+    const synced = [...kept, ...added];
+    if (synced.join(',') !== order.join(',')) {
+      setOrder(synced);
+    }
+  }
+
+  // Drag state (refs for gesture tracking, state for re-render triggers)
+  const activeIdxRef = useRef(-1);
+  const activeAnim = useRef(new Animated.Value(0)).current;
+  const [, forceUpdate] = useState(0);
+  const currentDragIdx = useRef(-1); // tracks current visual swap position
+  const itemHeightsRef = useRef<Record<string, number>>({});
+
+  const getEstimatedHeight = useCallback((id: string) => {
+    return itemHeightsRef.current[id] ?? 100;
+  }, []);
+
+  const commitReorder = useCallback(async (
+    oldOrder: string[],
+    newOrder: string[],
+  ) => {
+    if (oldOrder.join(',') === newOrder.join(',')) return;
+    // Assign sort_order = index * 1000 for items whose position changed
+    const changed = newOrder
+      .map((id, idx) => ({ id, sortOrder: (idx + 1) * 1000 }))
+      .filter(({ id, sortOrder }) => {
+        const oldIdx = oldOrder.indexOf(id);
+        return oldIdx !== newOrder.indexOf(id) || sortOrder !== (oldIdx + 1) * 1000;
+      });
+    await Promise.all(
+      changed.map(({ id, sortOrder }) =>
+        reorderPlanItem(tripId, id, sortOrder).catch(() => {
+          // silent: UI already reflects order; API failure is non-blocking
+        }),
+      ),
+    );
+    // Notify parent so the canonical list stays in sync
+    onItemsChanged((prev) => {
+      const byId = Object.fromEntries(prev.map((i) => [i.id, i]));
+      return newOrder.map((id, idx) => ({ ...(byId[id] ?? itemMap[id]), sortOrder: (idx + 1) * 1000 }));
+    });
+  }, [tripId, itemMap, onItemsChanged]);
+
+  // Build one PanResponder per slot; recreate when order changes so index is correct.
+  const panResponders = useMemo(() => {
+    if (!isOwner) return [];
+    return order.map((_, slotIdx) =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4,
+        onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dy) > 4,
+        onPanResponderGrant: () => {
+          activeIdxRef.current = slotIdx;
+          currentDragIdx.current = slotIdx;
+          activeAnim.setValue(0);
+          forceUpdate((n) => n + 1);
+        },
+        onPanResponderMove: (_, g) => {
+          activeAnim.setValue(g.dy);
+          // Compute which slot the card has drifted into
+          let accumulated = 0;
+          let newSlot = slotIdx;
+          if (g.dy > 0) {
+            for (let k = slotIdx + 1; k < order.length; k++) {
+              accumulated += getEstimatedHeight(order[k]);
+              if (g.dy < accumulated - getEstimatedHeight(order[k]) / 2) break;
+              newSlot = k;
+            }
+          } else {
+            for (let k = slotIdx - 1; k >= 0; k--) {
+              accumulated -= getEstimatedHeight(order[k]);
+              if (g.dy > accumulated + getEstimatedHeight(order[k]) / 2) break;
+              newSlot = k;
+            }
+          }
+          currentDragIdx.current = newSlot;
+        },
+        onPanResponderRelease: () => {
+          const from = activeIdxRef.current;
+          const to = currentDragIdx.current;
+          activeIdxRef.current = -1;
+          currentDragIdx.current = -1;
+          Animated.timing(activeAnim, {
+            toValue: 0, duration: 120, useNativeDriver: true,
+          }).start(() => forceUpdate((n) => n + 1));
+          if (from !== to && from >= 0 && to >= 0) {
+            setOrder((prev) => {
+              const next = [...prev];
+              const [moved] = next.splice(from, 1);
+              next.splice(to, 0, moved);
+              commitReorder(prev, next);
+              return next;
+            });
+          } else {
+            forceUpdate((n) => n + 1);
+          }
+        },
+        onPanResponderTerminate: () => {
+          activeIdxRef.current = -1;
+          currentDragIdx.current = -1;
+          activeAnim.setValue(0);
+          forceUpdate((n) => n + 1);
+        },
+      }),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order, isOwner]);
+
+  return (
+    <>
+      {order.map((id, slotIdx) => {
+        const item = itemMap[id];
+        if (!item) return null;
+        const isActive = activeIdxRef.current === slotIdx;
+        const pr = panResponders[slotIdx];
+        return (
+          <Animated.View
+            key={id}
+            style={isActive ? { transform: [{ translateY: activeAnim }], zIndex: 10 } : undefined}
+            onLayout={(e) => {
+              itemHeightsRef.current[id] = e.nativeEvent.layout.height;
+            }}
+          >
+            <PlanItemCard
+              item={item}
+              currentUserId={currentUserId}
+              isOwner={isOwner}
+              tripId={tripId}
+              onPress={onItemPress}
+              onEditPress={onEditPress}
+              onRemove={onRemove}
+              onMarkDone={onMarkDone}
+              onMarkTentative={onMarkTentative}
+              onEdited={(updated) => onItemsChanged((prev) => prev.map((i) => i.id === updated.id ? updated : i))}
+              onMoveToUnscheduled={onMoveToUnscheduled}
+              dragHandlers={pr?.panHandlers}
+              isDragging={isActive}
+            />
+          </Animated.View>
+        );
+      })}
     </>
   );
 }
@@ -286,22 +477,21 @@ function DayGroup({
 
       {bucket.items.length === 0 ? (
         <Text style={dg.emptyDay}>Nothing planned yet.</Text>
-      ) : bucket.items.map((item) => (
-        <PlanItemCard
-          key={item.id}
-          item={item}
+      ) : (
+        <DraggableItemList
+          items={bucket.items}
+          tripId={tripId}
           currentUserId={currentUserId}
           isOwner={isOwner}
-          tripId={tripId}
-          onPress={onItemPress}
+          onItemPress={onItemPress}
           onEditPress={onEditPress}
+          onItemsChanged={onItemsChanged}
           onRemove={handleRemove}
           onMarkDone={handleMarkDone}
           onMarkTentative={handleMarkTentative}
-          onEdited={(updated) => onItemsChanged((prev) => prev.map((i) => i.id === updated.id ? updated : i))}
           onMoveToUnscheduled={handleMoveToUnscheduled}
         />
-      ))}
+      )}
     </View>
   );
 }
@@ -315,7 +505,6 @@ export interface TimelineViewProps {
   currentUserId: string;
   isOwner: boolean;
   onItemPress: (item: TripPlanItem) => void;
-  /** Called when "Edit / Reschedule" is selected from the context menu — opens in edit mode directly. */
   onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
 }
@@ -359,7 +548,10 @@ const wb = StyleSheet.create({
 });
 
 const ic = StyleSheet.create({
-  card:        { backgroundColor: '#fff', borderRadius: radius.lg, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: color.haze, gap: 4 },
+  row:         { flexDirection: 'row', alignItems: 'stretch', marginBottom: 8 },
+  rowDragging: { opacity: 0.85 },
+  handle:      { width: 28, justifyContent: 'center', alignItems: 'center', paddingRight: 2 },
+  card:        { backgroundColor: '#fff', borderRadius: radius.lg, padding: 12, borderWidth: 1, borderColor: color.haze, gap: 4 },
   cardWarn:    { borderColor: '#F5D77B', borderWidth: 1.5 },
   top:         { flexDirection: 'row', alignItems: 'center', gap: 4 },
   catBadge:    { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
