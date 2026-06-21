@@ -37,7 +37,7 @@ import {
   type BriefType,
 } from "../lib/dailyBriefEngine.js";
 import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
-import { getWeatherContext, type WeatherContext } from "../lib/weatherCache.js";
+import { getWeatherContext, type WeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { getLocalContext, type LocalContext } from "../lib/localContext.js";
 import { getEventsNearDestination, type EventsContext } from "../lib/eventsCache.js";
 
@@ -644,6 +644,16 @@ interface BriefContext {
   recommendations: RawRecommendation[];
   preferenceProfile: any;
   weatherSummary: string | null;
+  weatherForecasts: DailyWeather[];
+}
+
+/** Cap the weather end date to at most `maxDays` ahead of `todayDate`, clamped to tripEndDate. */
+function capForecastEnd(todayDate: string, tripEndDate: string | null, maxDays: number): string {
+  const maxEnd = new Date(todayDate + "T00:00:00Z");
+  maxEnd.setUTCDate(maxEnd.getUTCDate() + maxDays - 1);
+  const maxEndStr = maxEnd.toISOString().slice(0, 10);
+  if (!tripEndDate) return maxEndStr;
+  return tripEndDate < maxEndStr ? tripEndDate : maxEndStr;
 }
 
 async function buildBriefContext(
@@ -672,6 +682,7 @@ async function buildBriefContext(
       recommendations: generateGeneralRecommendations(preferenceProfile, pastDestinations),
       preferenceProfile,
       weatherSummary: null,
+      weatherForecasts: [],
     };
   }
 
@@ -688,7 +699,7 @@ async function buildBriefContext(
     fetchBriefData(client, activeTripId),
     getPreferenceProfile(client, userId),
     fetchUpcomingMeetups24h(client, userId, activeTripId, now),
-    destination ? getWeatherContext(destination, date, date) : Promise.resolve(null),
+    destination ? getWeatherContext(destination, date, capForecastEnd(date, activeTrip.endDate, 7)) : Promise.resolve(null),
     destination ? getLocalContext(destination) : Promise.resolve(null),
     destination ? getEventsNearDestination(destination, date, date) : Promise.resolve(null),
   ]);
@@ -715,6 +726,7 @@ async function buildBriefContext(
     recommendations,
     preferenceProfile,
     weatherSummary: weatherContext?.briefSummary ?? null,
+    weatherForecasts: weatherContext?.forecasts ?? [],
   };
 }
 
@@ -842,6 +854,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     recommendations: ctx.recommendations,
     preferenceProfile: ctx.preferenceProfile,
     weatherSummary: ctx.weatherSummary,
+    weatherForecasts: ctx.weatherForecasts,
   });
 
   // Attach activeTripId to the brief so cache invalidation knows which trip to check
@@ -896,6 +909,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
     recommendations: ctx.recommendations,
     preferenceProfile: ctx.preferenceProfile,
     weatherSummary: ctx.weatherSummary,
+    weatherForecasts: ctx.weatherForecasts,
   });
 
   const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };

@@ -11,6 +11,7 @@
 
 import type { UserPreferenceProfile } from "./preferenceLearning.js";
 import { scoreRecommendation } from "./preferenceLearning.js";
+import type { DailyWeather } from "./weatherCache.js";
 
 export type BriefWarningKind =
   | "time_overlap"
@@ -79,6 +80,8 @@ export interface TripDailyBrief {
   destination: string | null;
   summaryText: string;
   weatherSummary: string | null;
+  /** Per-day forecasts covering the remaining trip window (up to 7 days). */
+  weatherForecasts: DailyWeather[];
   planPreview: BriefPlanPreview[];
   openWindows: BriefOpenWindow[];
   suggestions: BriefSuggestion[];
@@ -136,6 +139,7 @@ export function buildDailyBrief(opts: {
   recommendations: RawRecommendation[];
   preferenceProfile: UserPreferenceProfile | null;
   weatherSummary?: string | null;
+  weatherForecasts?: DailyWeather[];
 }): TripDailyBrief {
   const {
     tripId,
@@ -150,6 +154,7 @@ export function buildDailyBrief(opts: {
     recommendations,
     preferenceProfile,
     weatherSummary = null,
+    weatherForecasts = [],
   } = opts;
   const upcomingMeetups24h: UpcomingMeetup24h[] = opts.upcomingMeetups24h ?? [];
 
@@ -281,6 +286,7 @@ export function buildDailyBrief(opts: {
     destination,
     summaryText,
     weatherSummary,
+    weatherForecasts,
     planPreview,
     openWindows,
     suggestions: scoredSuggestions.slice(0, 4),

@@ -186,6 +186,11 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
       {/* Weather banner */}
       {brief.weatherSummary ? <WeatherBanner summary={brief.weatherSummary} /> : null}
 
+      {/* Multi-day forecast strip — only when the trip spans more than 1 day */}
+      {brief.weatherForecasts?.length > 1 ? (
+        <WeatherForecastStrip forecasts={brief.weatherForecasts} />
+      ) : null}
+
       {/* Warnings */}
       {brief.warnings?.length > 0 && (
         <View style={s.warningRow}>
@@ -349,6 +354,54 @@ function WeatherBanner({ summary }: { summary: string }) {
     <View style={[s.weatherBanner, { backgroundColor: bgColor }]}>
       <Icon size={12} color={iconColor} />
       <Text style={[s.weatherText, { color: iconColor }]} numberOfLines={2}>{summary}</Text>
+    </View>
+  );
+}
+
+interface ForecastDay {
+  date: string;
+  weatherCode: number;
+  summary: string;
+  maxTempC: number;
+  minTempC: number;
+}
+
+function forecastIcon(code: number): typeof Sun {
+  if (code === 0 || code === 1) return Sun;
+  if (code >= 51) return CloudRain;
+  return Cloud;
+}
+
+function forecastIconColor(code: number): string {
+  if (code === 0 || code === 1) return '#F59E0B';
+  if (code >= 51) return '#1565C0';
+  return '#3B82F6';
+}
+
+function shortDay(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  return d.toLocaleDateString('en', { weekday: 'short' });
+}
+
+function WeatherForecastStrip({ forecasts }: { forecasts: ForecastDay[] }) {
+  if (forecasts.length === 0) return null;
+  return (
+    <View style={s.forecastWrap}>
+      <Text style={s.forecastLabel}>TRIP FORECAST</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.forecastRow}>
+        {forecasts.map((f) => {
+          const Icon = forecastIcon(f.weatherCode);
+          const iconColor = forecastIconColor(f.weatherCode);
+          return (
+            <View key={f.date} style={s.forecastDay}>
+              <Text style={s.forecastDayName}>{shortDay(f.date)}</Text>
+              <Icon size={16} color={iconColor} />
+              <Text style={s.forecastHigh}>{f.maxTempC}°</Text>
+              <Text style={s.forecastLow}>{f.minTempC}°</Text>
+            </View>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -591,6 +644,13 @@ const s = StyleSheet.create({
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, padding: space.lg, paddingTop: space.md },
   actionBtn: { paddingHorizontal: space.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal, backgroundColor: '#FFF0EE' },
   actionText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
+  forecastWrap: { paddingHorizontal: space.lg, paddingVertical: space.sm },
+  forecastLabel: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.8, marginBottom: space.sm },
+  forecastRow: { gap: space.sm, paddingBottom: 2 },
+  forecastDay: { alignItems: 'center', gap: 3, backgroundColor: '#F8F8F8', borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 8, minWidth: 54 },
+  forecastDayName: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.3 },
+  forecastHigh: { ...t.bodyStrong, color: color.ink, fontSize: 12, fontWeight: '700' },
+  forecastLow: { ...t.small, color: color.mute, fontSize: 11 },
 });
 
 const sc = StyleSheet.create({
