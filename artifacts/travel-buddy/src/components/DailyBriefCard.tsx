@@ -14,7 +14,7 @@ import {
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
-import { fetchDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
+import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
 
 interface DailyBriefCardProps {
@@ -31,12 +31,27 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(!compact);
 
+  const [refreshing, setRefreshing] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     const res = await fetchDailyBrief(tripId, date);
     setLoading(false);
     if (!res.ok) { setError("Could not load today's brief"); return; }
+    setAccess(res.data?.access ?? 'access_denied');
+    const b = res.data?.brief ?? null;
+    setBrief(b);
+    if (b?.gapDays?.length && onGapDays) {
+      onGapDays(b.gapDays, b.destination ?? '');
+    }
+  }, [tripId, date, onGapDays]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const res = await refreshDailyBrief(tripId, date);
+    setRefreshing(false);
+    if (!res.ok) return; // silently keep old brief on failure
     setAccess(res.data?.access ?? 'access_denied');
     const b = res.data?.brief ?? null;
     setBrief(b);
@@ -107,8 +122,8 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
           </View>
         </View>
         <View style={s.headerRight}>
-          <Pressable style={s.refreshBtn} onPress={load} hitSlop={8}>
-            <RefreshCw size={13} color={color.mute} />
+          <Pressable style={s.refreshBtn} onPress={handleRefresh} hitSlop={8} disabled={refreshing}>
+            <RefreshCw size={13} color={refreshing ? color.signal : color.mute} />
           </Pressable>
           {expanded ? <ChevronUp size={16} color={color.mute} /> : <ChevronDown size={16} color={color.mute} />}
         </View>
