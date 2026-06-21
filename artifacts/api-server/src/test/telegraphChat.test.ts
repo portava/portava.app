@@ -8,8 +8,9 @@
  *   D. Cooldown / rate-limit logic (4 tests)
  *   E. Settings endpoint (3 tests)
  *   F. Regression (3 tests)
+ *   G. Preference event on dismiss + 24h category cooldown (4 tests)
  *
- * Total: 34
+ * Total: 38
  */
 
 import assert from "node:assert/strict";
@@ -38,10 +39,12 @@ function makeFakeClient(overrides: {
   trips?: FakeRow[];
   messages?: FakeRow[];
   planItems?: FakeRow[];
+  preferenceEvents?: FakeRow[];
   insertedSuggestions?: FakeRow[];
   insertedMessages?: FakeRow[];
   updatedSuggestions?: FakeRow[];
   updatedProfiles?: FakeRow[];
+  insertedPreferenceEvents?: FakeRow[];
 } = {}) {
   const store = {
     threads: overrides.threads ?? [],
@@ -53,6 +56,7 @@ function makeFakeClient(overrides: {
     trips: overrides.trips ?? [],
     messages: overrides.messages ?? [],
     planItems: overrides.planItems ?? [],
+    preferenceEvents: overrides.preferenceEvents ?? [],
   };
 
   const captured = {
@@ -60,6 +64,7 @@ function makeFakeClient(overrides: {
     insertedMessages: overrides.insertedMessages ?? [],
     updatedSuggestions: overrides.updatedSuggestions ?? [],
     updatedProfiles: overrides.updatedProfiles ?? [],
+    insertedPreferenceEvents: overrides.insertedPreferenceEvents ?? [],
   };
 
   function makeQuery(tableName: string, rows: FakeRow[]) {
@@ -150,6 +155,9 @@ function makeFakeClient(overrides: {
               });
             }
           }
+          if (tableName === "user_preference_events") {
+            captured.insertedPreferenceEvents.push(...insertRows);
+          }
           return resolve({ data: null, error: null });
         }
         if (isUpdate) {
@@ -197,6 +205,7 @@ function makeFakeClient(overrides: {
         trips: store.trips,
         messages: store.messages,
         trip_plan_items: store.planItems,
+        user_preference_events: store.preferenceEvents,
       };
       return makeQuery(table, tableMap[table] ?? []);
     },
@@ -598,7 +607,7 @@ describe("C. API endpoint permission + shape", () => {
 // Section D: Cooldown / rate-limit logic
 // ---------------------------------------------------------------------------
 
-import { checkRateLimit, checkCooldown } from "../services/telegraphChatSuggestions.js";
+import { checkRateLimit, checkCooldown, checkCategoryDeclineCooldown } from "../services/telegraphChatSuggestions.js";
 
 describe("D. Cooldown / rate-limit logic", () => {
   it("checkRateLimit returns true when fewer than 3 suggestions in the last hour", async () => {
@@ -741,5 +750,71 @@ describe("F. Regression", () => {
       TOKEN_A,
     );
     assert.equal(r.status, 200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section G: Preference event on dismiss + 24-hour category cooldown
+// ---------------------------------------------------------------------------
+
+describe("G. Preference event on dismiss + 24h category cooldown", () => {
+  it("G1: checkCategoryDeclineCooldown returns true when no recent decline", async () => {
+    const client = makeFakeClient({ preferenceEvents: [] });
+    const ok = await checkCategoryDeclineCooldown(client, USER_A.id, "food");
+    assert.equal(ok, true);
+  });
+
+  it("G2: checkCategoryDeclineCooldown returns false when user declined same category within 24h", async () => {
+    const recentTime = new Date().toISOString();
+    const client = makeFakeClient({
+      preferenceEvents: [
+        {
+          user_id: USER_A.id,
+          category: "food",
+          signal: "dismiss",
+          created_at: recentTime,
+        },
+      ],
+    });
+    const ok = await checkCategoryDeclineCooldown(client, USER_A.id, "food");
+    assert.equal(ok, false);
+  });
+
+  it("G3: dismiss endpoint writes a preference event to user_preference_events", async () => {
+    const capturedEvents: FakeRow[] = [];
+    const client = makeFakeClient({
+      users: { [TOKEN_A]: USER_A },
+      threadMembers: [activeMember(USER_A.id, THREAD_ID)],
+      suggestions: [suggestion(SUGG_ID, USER_A.id, THREAD_ID)],
+      insertedPreferenceEvents: capturedEvents,
+    });
+    _setTestClient(client, true);
+    const r = await req(
+      server,
+      "POST",
+      `/api/threads/${THREAD_ID}/telegraph/suggestions/${SUGG_ID}/dismiss`,
+      TOKEN_A,
+    );
+    assert.equal(r.status, 200);
+    assert.equal(capturedEvents.length, 1, "should have inserted one preference event");
+    assert.equal(capturedEvents[0].user_id, USER_A.id);
+    assert.equal(capturedEvents[0].signal, "dismiss");
+    assert.equal(capturedEvents[0].recommendation_id, SUGG_ID);
+  });
+
+  it("G4: checkCategoryDeclineCooldown returns true when decline is for a different category", async () => {
+    const recentTime = new Date().toISOString();
+    const client = makeFakeClient({
+      preferenceEvents: [
+        {
+          user_id: USER_A.id,
+          category: "nightlife",
+          signal: "dismiss",
+          created_at: recentTime,
+        },
+      ],
+    });
+    const ok = await checkCategoryDeclineCooldown(client, USER_A.id, "food");
+    assert.equal(ok, true);
   });
 });

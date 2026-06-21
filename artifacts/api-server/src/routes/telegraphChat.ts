@@ -30,6 +30,7 @@ import {
   buildSuggestions,
   checkRateLimit,
   checkCooldown,
+  checkCategoryDeclineCooldown,
 } from "../services/telegraphChatSuggestions.js";
 
 const router = Router();
@@ -89,7 +90,13 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
           intent.intent,
         );
         if (withinLimit && notInCooldown) {
-          const cards = buildSuggestions(user.id, threadId, intent, verdict);
+          const allCards = buildSuggestions(user.id, threadId, intent, verdict);
+          // Filter out categories the user has declined within the last 24 hours
+          const cards: typeof allCards = [];
+          for (const card of allCards) {
+            const categoryOk = await checkCategoryDeclineCooldown(client, user.id, card.category);
+            if (categoryOk) cards.push(card);
+          }
           if (cards.length > 0) {
             const rows = cards.map((c) => ({
               thread_id: threadId,
@@ -149,6 +156,15 @@ router.post(
       return;
     }
 
+    // Fetch suggestion data before updating so we can write the preference event
+    const { data: suggestion } = await client
+      .from("telegraph_chat_suggestions")
+      .select("category, intent_type")
+      .eq("id", suggestionId)
+      .eq("user_id", user.id)
+      .eq("thread_id", threadId)
+      .maybeSingle();
+
     const { error } = await client
       .from("telegraph_chat_suggestions")
       .update({ status: "dismissed", dismissed_at: new Date().toISOString() })
@@ -159,6 +175,20 @@ router.post(
     if (error) {
       sendError(res, "db_error", "Failed to dismiss suggestion");
       return;
+    }
+
+    // Write preference event so the learning system can down-rank this category
+    // and the 24-hour cooldown suppresses the same category from resurfacing (best-effort).
+    if (suggestion) {
+      try {
+        await client.from("user_preference_events").insert({
+          user_id:           user.id,
+          recommendation_id: suggestionId,
+          category:          (suggestion as any).category ?? "unknown",
+          signal:            "dismiss",
+          created_at:        new Date().toISOString(),
+        });
+      } catch { /* best-effort */ }
     }
 
     res.status(200).json({ ok: true });
