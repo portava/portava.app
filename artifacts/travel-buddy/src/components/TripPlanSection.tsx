@@ -197,6 +197,7 @@ export function TripPlanSection({
   const [activeCat, setActiveCat] = useState<TripPlanCategory | 'all'>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [detailItem, setDetailItem] = useState<TripPlanItem | null>(null);
+  const [detailStartInEditMode, setDetailStartInEditMode] = useState(false);
 
   // Persist view mode per-trip
   useEffect(() => {
@@ -260,6 +261,16 @@ export function TripPlanSection({
     },
     [],
   );
+
+  const handleItemPress = useCallback((item: TripPlanItem) => {
+    setDetailStartInEditMode(false);
+    setDetailItem(item);
+  }, []);
+
+  const handleEditPress = useCallback((item: TripPlanItem) => {
+    setDetailStartInEditMode(true);
+    setDetailItem(item);
+  }, []);
 
   // Apply day + category filters to items
   const filteredItems = items.filter((item) => {
@@ -339,7 +350,8 @@ export function TripPlanSection({
           tripId={tripId}
           currentUserId={currentUserId}
           isOwner={isOwner}
-          onItemPress={setDetailItem}
+          onItemPress={handleItemPress}
+          onEditPress={handleEditPress}
           onItemsChanged={handleItemsChanged}
         />
       )}
@@ -361,16 +373,19 @@ export function TripPlanSection({
         tripId={tripId}
         currentUserId={currentUserId}
         isOwner={isOwner}
-        onClose={() => setDetailItem(null)}
+        startInEditMode={detailStartInEditMode}
+        onClose={() => { setDetailItem(null); setDetailStartInEditMode(false); }}
         onUpdated={(updated) => {
           setItems((prev) => prev.map((i) => i.id === updated.id ? updated : i));
           setMapItems([]);  // invalidate map cache
           setDetailItem(updated);
+          setDetailStartInEditMode(false);
         }}
         onRemoved={(id) => {
           setItems((prev) => prev.filter((i) => i.id !== id));
           setMapItems([]);  // invalidate map cache
           setDetailItem(null);
+          setDetailStartInEditMode(false);
         }}
       />
 

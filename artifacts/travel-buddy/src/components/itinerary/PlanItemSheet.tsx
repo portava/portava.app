@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, TextInput,
   KeyboardAvoidingView, Platform, Alert, StyleSheet,
 } from 'react-native';
 import {
-  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2,
+  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
@@ -66,6 +66,18 @@ function fmtDateTime(isoDate: string | null, isoTime: string | null): string | n
   return `${datePart}, ${t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+// ── Category options ──────────────────────────────────────────────────────────
+
+const CAT_OPTIONS: { value: TripPlanCategory; label: string }[] = [
+  { value: 'activity',      label: 'Activity' },
+  { value: 'dining',        label: 'Dining' },
+  { value: 'accommodation', label: 'Stay / Accommodation' },
+  { value: 'transport',     label: 'Transport' },
+  { value: 'meeting_point', label: 'Meetup / Meeting point' },
+  { value: 'free_time',     label: 'Free time' },
+  { value: 'other',         label: 'Other' },
+];
+
 // ── Edit form ─────────────────────────────────────────────────────────────────
 
 function EditForm({
@@ -77,16 +89,21 @@ function EditForm({
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState(item.title);
+  const [category, setCategory] = useState<TripPlanCategory>(item.category);
+  const [catPickerOpen, setCatPickerOpen] = useState(false);
   const [dayDate, setDayDate] = useState(item.dayDate ?? '');
   const [startsAt, setStartsAt] = useState(
     item.startsAt
       ? new Date(item.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
       : ''
   );
+  const [locationName, setLocationName] = useState(item.locationName ?? '');
   const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
   const [notes, setNotes] = useState(item.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
+
+  const selectedCat = CAT_OPTIONS.find((c) => c.value === category) ?? CAT_OPTIONS[0];
 
   const handleSave = async () => {
     if (!title.trim()) { setErr('Title is required'); return; }
@@ -95,8 +112,10 @@ function EditForm({
     try {
       const updated = await updatePlanItem(tripId, item.id, {
         title: title.trim(),
+        category,
         dayDate: dayDate.trim() || null,
         startsAt: dayDate.trim() && startsAt.trim() ? `${dayDate.trim()}T${startsAt.trim()}:00` : null,
+        locationName: locationName.trim() || null,
         status,
         notes: notes.trim() || null,
       });
@@ -120,11 +139,35 @@ function EditForm({
       <Text style={ef.label}>Title</Text>
       <TextInput style={ef.input} value={title} onChangeText={setTitle} placeholderTextColor={color.faint} />
 
+      <Text style={ef.label}>Category</Text>
+      <Pressable style={ef.picker} onPress={() => setCatPickerOpen(!catPickerOpen)}>
+        <Text style={ef.pickerText}>{selectedCat.label}</Text>
+        <ChevronDown size={15} color={color.mute} />
+      </Pressable>
+      {catPickerOpen && (
+        <View style={ef.catList}>
+          {CAT_OPTIONS.map((c) => (
+            <Pressable
+              key={c.value}
+              style={[ef.catOption, c.value === category && ef.catOptionActive]}
+              onPress={() => { setCategory(c.value); setCatPickerOpen(false); }}
+            >
+              <Text style={[ef.catOptionText, c.value === category && ef.catOptionTextActive]}>
+                {c.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       <Text style={ef.label}>Date <Text style={ef.opt}>(YYYY-MM-DD)</Text></Text>
       <TextInput style={ef.input} value={dayDate} onChangeText={setDayDate} placeholder="e.g. 2026-07-15" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
 
       <Text style={ef.label}>Time <Text style={ef.opt}>(HH:MM, 24-hour)</Text></Text>
       <TextInput style={ef.input} value={startsAt} onChangeText={setStartsAt} placeholder="e.g. 19:30" placeholderTextColor={color.faint} keyboardType="numbers-and-punctuation" />
+
+      <Text style={ef.label}>Location <Text style={ef.opt}>(optional)</Text></Text>
+      <TextInput style={ef.input} value={locationName} onChangeText={setLocationName} placeholder="e.g. Ayala Mall, Cebu" placeholderTextColor={color.faint} />
 
       <Text style={ef.label}>Status</Text>
       <View style={ef.statusRow}>
@@ -158,15 +201,23 @@ export interface PlanItemSheetProps {
   tripId: string;
   currentUserId: string;
   isOwner: boolean;
+  /** When true, the sheet opens directly in edit mode (e.g. from the "Edit" context menu action). */
+  startInEditMode?: boolean;
   onClose: () => void;
   onUpdated: (updated: TripPlanItem) => void;
   onRemoved: (id: string) => void;
 }
 
 export function PlanItemSheet({
-  item, tripId, currentUserId, isOwner, onClose, onUpdated, onRemoved,
+  item, tripId, currentUserId, isOwner, startInEditMode, onClose, onUpdated, onRemoved,
 }: PlanItemSheetProps) {
   const [editing, setEditing] = useState(false);
+
+  // Enter edit mode automatically when the prop flips (e.g. context menu "Edit" tapped)
+  useEffect(() => {
+    if (item && startInEditMode) setEditing(true);
+    if (!item) setEditing(false);
+  }, [item, startInEditMode]);
 
   if (!item) return null;
 
@@ -374,20 +425,27 @@ const sh = StyleSheet.create({
 });
 
 const ef = StyleSheet.create({
-  wrap:             { gap: 10 },
-  row:              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  sectionLabel:     { ...t.title, fontSize: 16, color: color.ink },
-  label:            { ...t.small, color: color.mute, fontWeight: '600', marginTop: 2 },
-  opt:              { fontWeight: '400', color: color.faint },
-  input:            { backgroundColor: color.haze, borderRadius: radius.md, padding: 10, ...t.body, color: color.ink },
-  inputMulti:       { minHeight: 72 },
-  statusRow:        { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  statusChip:       { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: color.haze },
-  statusChipActive: { backgroundColor: color.deep },
-  statusChipText:   { ...t.small, color: color.mute, fontWeight: '600' },
+  wrap:                 { gap: 10 },
+  row:                  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  sectionLabel:         { ...t.title, fontSize: 16, color: color.ink },
+  label:                { ...t.small, color: color.mute, fontWeight: '600', marginTop: 2 },
+  opt:                  { fontWeight: '400', color: color.faint },
+  input:                { backgroundColor: color.haze, borderRadius: radius.md, padding: 10, ...t.body, color: color.ink },
+  inputMulti:           { minHeight: 72 },
+  picker:               { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: color.haze, borderRadius: radius.md, padding: 10 },
+  pickerText:           { ...t.body, color: color.ink },
+  catList:              { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, overflow: 'hidden', marginTop: 2 },
+  catOption:            { paddingHorizontal: space.md, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.haze },
+  catOptionActive:      { backgroundColor: color.deep },
+  catOptionText:        { ...t.body, color: color.ink },
+  catOptionTextActive:  { color: '#fff', fontWeight: '700' },
+  statusRow:            { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  statusChip:           { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: color.haze },
+  statusChipActive:     { backgroundColor: color.deep },
+  statusChipText:       { ...t.small, color: color.mute, fontWeight: '600' },
   statusChipTextActive: { color: '#fff' },
-  error:            { ...t.small, color: color.signal },
-  saveBtn:          { backgroundColor: color.deep, borderRadius: radius.md, padding: 13, alignItems: 'center', marginTop: 4 },
-  saveBtnDim:       { opacity: 0.55 },
-  saveText:         { ...t.body, color: '#fff', fontWeight: '700' },
+  error:                { ...t.small, color: color.signal },
+  saveBtn:              { backgroundColor: color.deep, borderRadius: radius.md, padding: 13, alignItems: 'center', marginTop: 4 },
+  saveBtnDim:           { opacity: 0.55 },
+  saveText:             { ...t.body, color: '#fff', fontWeight: '700' },
 });

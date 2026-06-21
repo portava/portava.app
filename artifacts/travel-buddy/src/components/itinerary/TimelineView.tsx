@@ -92,6 +92,8 @@ interface PlanItemCardProps {
   isOwner: boolean;
   tripId: string;
   onPress: (item: TripPlanItem) => void;
+  /** Called when the user taps "Edit / Reschedule" — opens the detail sheet directly in edit mode. */
+  onEditPress: (item: TripPlanItem) => void;
   onRemove: (id: string) => void;
   onMarkDone: (id: string) => void;
   onMarkTentative: (id: string) => void;
@@ -101,7 +103,7 @@ interface PlanItemCardProps {
 
 function PlanItemCard({
   item, currentUserId, isOwner, tripId,
-  onPress, onRemove, onMarkDone, onMarkTentative, onEdited, onMoveToUnscheduled,
+  onPress, onEditPress, onRemove, onMarkDone, onMarkTentative, onEdited, onMoveToUnscheduled,
 }: PlanItemCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const cat = CAT_STYLE[item.category] ?? CAT_STYLE.other;
@@ -170,7 +172,7 @@ function PlanItemCard({
 
             {canAct && (
               <>
-                <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); onPress(item); }}>
+                <Pressable style={ic.menuItem} onPress={() => { setMenuOpen(false); onEditPress(item); }}>
                   <Pencil size={16} color={color.deep} />
                   <Text style={ic.menuItemText}>Edit / Reschedule</Text>
                 </Pressable>
@@ -216,7 +218,7 @@ function PlanItemCard({
 
 function DayGroup({
   bucket, tripStartDate, tripId, currentUserId, isOwner,
-  onItemPress, onItemsChanged,
+  onItemPress, onEditPress, onItemsChanged,
 }: {
   bucket: DayBucket;
   tripStartDate?: string | null;
@@ -224,6 +226,7 @@ function DayGroup({
   currentUserId: string;
   isOwner: boolean;
   onItemPress: (item: TripPlanItem) => void;
+  onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
 }) {
   const label = dayLabel(bucket.key, tripStartDate);
@@ -291,6 +294,7 @@ function DayGroup({
           isOwner={isOwner}
           tripId={tripId}
           onPress={onItemPress}
+          onEditPress={onEditPress}
           onRemove={handleRemove}
           onMarkDone={handleMarkDone}
           onMarkTentative={handleMarkTentative}
@@ -311,11 +315,13 @@ export interface TimelineViewProps {
   currentUserId: string;
   isOwner: boolean;
   onItemPress: (item: TripPlanItem) => void;
+  /** Called when "Edit / Reschedule" is selected from the context menu — opens in edit mode directly. */
+  onEditPress: (item: TripPlanItem) => void;
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
 }
 
 export function TimelineView({
-  buckets, tripStartDate, tripId, currentUserId, isOwner, onItemPress, onItemsChanged,
+  buckets, tripStartDate, tripId, currentUserId, isOwner, onItemPress, onEditPress, onItemsChanged,
 }: TimelineViewProps) {
   if (buckets.length === 0 || buckets.every((b) => b.items.length === 0)) {
     return (
@@ -336,6 +342,7 @@ export function TimelineView({
           currentUserId={currentUserId}
           isOwner={isOwner}
           onItemPress={onItemPress}
+          onEditPress={onEditPress}
           onItemsChanged={onItemsChanged}
         />
       ))}
