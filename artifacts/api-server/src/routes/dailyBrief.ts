@@ -16,6 +16,7 @@ import { buildDailyBrief, type RawRecommendation } from "../lib/dailyBriefEngine
 import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
 import { getWeatherContext, type WeatherContext } from "../lib/weatherCache.js";
 import { getLocalContext, type LocalContext } from "../lib/localContext.js";
+import { getEventsNearDestination, type EventsContext } from "../lib/eventsCache.js";
 
 const router = Router();
 
@@ -82,6 +83,7 @@ function generateContextualRecommendations(
   destination?: string,
   weatherContext?: WeatherContext | null,
   localContext?: LocalContext | null,
+  eventsContext?: EventsContext | null,
 ): RawRecommendation[] {
   const dest = destination ? ` in ${destination}` : "";
   const interests: string[] = preferenceProfile?.explicit?.interests ?? [];
@@ -234,6 +236,27 @@ function generateContextualRecommendations(
     }
   }
 
+  // Events enrichment: add up to 3 nearby events as activity suggestions
+  if (eventsContext?.events?.length) {
+    for (const event of eventsContext.events.slice(0, 3)) {
+      const safeId = `rec_event_${event.id.slice(0, 24).replace(/[^a-z0-9_]/gi, "_")}`;
+      const category = event.category.toLowerCase().includes("music")
+        ? "nightlife"
+        : event.category.toLowerCase().includes("sport")
+          ? "outdoor"
+          : "activity";
+      const venueText = event.venueName ? ` at ${event.venueName}` : "";
+      pool.push({
+        id: safeId,
+        title: event.name.slice(0, 120),
+        category,
+        reason: `Live ${event.category} event${venueText} on ${event.localDate}`,
+        estimatedTime: "2–4 hours",
+        priceLevel: "$$",
+      });
+    }
+  }
+
   // Filter out anything on the user's avoid list
   const filtered = avoidList.length
     ? pool.filter((r) => !avoidList.some((a) => r.category.toLowerCase().includes(a.toLowerCase())))
@@ -352,15 +375,16 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     // A contributing source was modified after the brief was built — rebuild.
   }
 
-  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext] = await Promise.all([
+  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext, eventsContext] = await Promise.all([
     fetchBriefData(client, tripId, date),
     getPreferenceProfile(client, user.id),
     destination ? getWeatherContext(destination, date, date) : Promise.resolve(null),
     destination ? getLocalContext(destination) : Promise.resolve(null),
+    destination ? getEventsNearDestination(destination, date, date) : Promise.resolve(null),
   ]);
 
   const recommendations = generateContextualRecommendations(
-    preferenceProfile, destination, weatherContext, localContext,
+    preferenceProfile, destination, weatherContext, localContext, eventsContext,
   );
 
   const brief = buildDailyBrief({
@@ -403,15 +427,16 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   // Explicit refresh — invalidate cache before rebuilding
   invalidateBriefCache(user.id, tripId, date);
 
-  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext] = await Promise.all([
+  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext, eventsContext] = await Promise.all([
     fetchBriefData(client, tripId, date),
     getPreferenceProfile(client, user.id),
     destination ? getWeatherContext(destination, date, date) : Promise.resolve(null),
     destination ? getLocalContext(destination) : Promise.resolve(null),
+    destination ? getEventsNearDestination(destination, date, date) : Promise.resolve(null),
   ]);
 
   const recommendations = generateContextualRecommendations(
-    preferenceProfile, destination, weatherContext, localContext,
+    preferenceProfile, destination, weatherContext, localContext, eventsContext,
   );
 
   const brief = buildDailyBrief({
