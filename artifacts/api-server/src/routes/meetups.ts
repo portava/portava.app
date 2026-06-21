@@ -397,14 +397,27 @@ router.delete("/meetups/:meetupId", async (req, res) => {
   const { meetupId } = req.params;
   if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
 
-  const { data: meetup } = await client.from("meetups").select("creator_id").eq("id", meetupId).maybeSingle();
+  const { data: meetup } = await client
+    .from("meetups")
+    .select("creator_id, title, trip_id, circle_owner_id")
+    .eq("id", meetupId)
+    .maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
   if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can cancel this meetup"); return; }
 
   const now = new Date().toISOString();
   await client.from("meetups").update({ status: "cancelled", updated_at: now }).eq("id", meetupId);
-  // Mark all pending invites as cancelled
   await client.from("meetup_invites").update({ status: "cancelled", updated_at: now }).eq("meetup_id", meetupId).eq("status", "pending");
+
+  // Post a system message to the linked chat thread (best-effort)
+  postCancelSystemMessage(
+    client,
+    meetupId,
+    (meetup as any).title as string,
+    (meetup as any).trip_id as string | null,
+    (meetup as any).circle_owner_id as string | null,
+    user.id,
+  ).catch(() => {});
 
   res.status(200).json({ status: "cancelled", meetupId });
 });
@@ -818,6 +831,41 @@ function toCamelMeetup(m: any) {
   };
 }
 
+async function postCancelSystemMessage(
+  client: any,
+  meetupId: string,
+  title: string,
+  tripId: string | null,
+  circleOwnerId: string | null,
+  creatorId: string,
+): Promise<void> {
+  let threadId: string | null = null;
+  if (tripId) {
+    const { data: thread } = await client
+      .from("message_threads").select("id").eq("trip_id", tripId).eq("thread_type", "trip").maybeSingle();
+    threadId = (thread as any)?.id ?? null;
+  } else if (circleOwnerId) {
+    const { data: thread } = await client
+      .from("message_threads").select("id").eq("circle_owner_id", circleOwnerId).eq("thread_type", "circle").maybeSingle();
+    threadId = (thread as any)?.id ?? null;
+  }
+  if (!threadId) return;
+
+  const { data: profile } = await client
+    .from("profiles").select("name, handle").eq("id", creatorId).maybeSingle();
+  const creatorName: string = (profile as any)?.name ?? (profile as any)?.handle ?? "Someone";
+  const text = `${creatorName} cancelled the meetup: ${title}`;
+  const body = JSON.stringify({ type: "meetup_cancelled", meetupId, title, creatorName, text });
+
+  await client.from("messages").insert({
+    thread_id: threadId,
+    sender_id: creatorId,
+    body,
+    msg_type: "system",
+    subtype: "meetup_cancelled",
+  });
+}
+
 async function createMeetupInboxItems(
   client: any,
   meetupId: string,
@@ -964,6 +1012,91 @@ async function postMeetupSystemMessage(
       .eq("id", meetupId);
   }
 }
+
+// ── GET /api/me/meetups ───────────────────────────────────────────────────────
+// All meetups where the caller is creator or invitee.
+// ?filter=upcoming  — exclude cancelled (default)
+// ?filter=past      — confirmed+past or cancelled only
+// ?filter=all       — no status filter
+
+router.get("/me/meetups", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const filter = (req.query.filter as string | undefined) ?? "upcoming";
+
+  // Step 1: find meetup_ids where user is an invitee
+  const { data: inviteRows, error: invErr } = await client
+    .from("meetup_invites")
+    .select("meetup_id, status")
+    .eq("user_id", user.id);
+
+  if (invErr) { sendError(res, "db_error", invErr.message); return; }
+
+  const inviteStatusMap = new Map<string, string>();
+  for (const row of inviteRows ?? []) {
+    inviteStatusMap.set((row as any).meetup_id as string, (row as any).status as string);
+  }
+  const invitedIds = Array.from(inviteStatusMap.keys());
+
+  // Step 2: fetch all relevant meetups
+  let query: any;
+  if (invitedIds.length > 0) {
+    query = client
+      .from("meetups")
+      .select("*")
+      .or(`creator_id.eq.${user.id},id.in.(${invitedIds.join(",")})`);
+  } else {
+    query = client.from("meetups").select("*").eq("creator_id", user.id);
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  if (filter === "upcoming") {
+    query = query.neq("status", "cancelled");
+  } else if (filter === "past") {
+    query = query.or(
+      `status.eq.cancelled,and(status.eq.confirmed,approximate_date.lt.${today})`
+    );
+  }
+
+  query = query.order("created_at", { ascending: false });
+
+  const { data: meetups, error: mErr } = await query;
+  if (mErr) { req.log.error({ err: mErr }, "get me/meetups"); sendError(res, "db_error", mErr.message); return; }
+
+  const meetupList = meetups ?? [];
+  if (meetupList.length === 0) { res.json({ meetups: [] }); return; }
+
+  // Step 3: batch-fetch all invite rows for these meetups (counts + my RSVP)
+  const meetupIds = meetupList.map((m: any) => m.id as string);
+  const { data: allInvites } = await client
+    .from("meetup_invites")
+    .select("meetup_id, user_id, status")
+    .in("meetup_id", meetupIds);
+
+  const countMap: Record<string, { going: number; maybe: number; declined: number; pending: number }> = {};
+  const myRsvpMap: Record<string, string> = {};
+  for (const inv of allInvites ?? []) {
+    const mid = (inv as any).meetup_id as string;
+    if (!countMap[mid]) countMap[mid] = { going: 0, maybe: 0, declined: 0, pending: 0 };
+    const s = (inv as any).status as string;
+    if (s === "going") countMap[mid].going++;
+    else if (s === "maybe") countMap[mid].maybe++;
+    else if (s === "declined") countMap[mid].declined++;
+    else countMap[mid].pending++;
+    if ((inv as any).user_id === user.id) myRsvpMap[mid] = s;
+  }
+
+  const result = meetupList.map((m: any) => ({
+    ...toCamelMeetup(m),
+    isCreator:  m.creator_id === user.id,
+    myRsvp:     myRsvpMap[m.id] ?? null,
+    counts:     countMap[m.id] ?? { going: 0, maybe: 0, declined: 0, pending: 0 },
+  }));
+
+  res.json({ meetups: result });
+});
 
 // ── GET /api/me/meetup-invites ────────────────────────────────────────────────
 // Pending meetup invites for the inbox badge + inbox list

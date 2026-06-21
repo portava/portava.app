@@ -7,17 +7,17 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, Alert,
+  StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Users, Check, ThumbsUp, ThumbsDown,
-  Minus, Plus, Trophy,
+  Minus, Plus, Trophy, Pencil, X,
 } from 'lucide-react-native';
 import {
   getMeetup, rsvpMeetup, voteTimeOption, confirmTime,
-  addMeetupToTripPlan, cancelMeetup,
+  addMeetupToTripPlan, cancelMeetup, updateMeetup,
   type MeetupDetail, type TimeOptionVotes, type VoteValue, type RsvpStatus,
 } from '../../src/services/meetups';
 import { useSession } from '../../src/context/SessionContext';
@@ -73,6 +73,42 @@ export default function MeetupScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
+
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+
+  function startEdit() {
+    if (!meetup) return;
+    setEditTitle(meetup.title);
+    setEditLocation(meetup.locationName ?? '');
+    setEditDesc(meetup.description ?? '');
+    setEditing(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!id || !meetup || actioning) return;
+    setActioning('edit');
+    const res = await updateMeetup(id, {
+      title: editTitle.trim() || meetup.title,
+      locationName: editLocation.trim() || null,
+      description: editDesc.trim() || null,
+    });
+    setActioning(null);
+    if (res.ok) {
+      setMeetup((prev) => prev ? {
+        ...prev,
+        title: editTitle.trim() || prev.title,
+        locationName: editLocation.trim() || null,
+        description: editDesc.trim() || null,
+      } : prev);
+      setEditing(false);
+    } else {
+      Alert.alert('Error', res.message ?? 'Could not save changes');
+    }
+  }
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -198,46 +234,102 @@ export default function MeetupScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <View style={[s.header, { paddingTop: insets.top + space.sm }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}><ArrowLeft size={20} color={color.ink} /></Pressable>
-        <Text style={s.headerTitle} numberOfLines={1}>{meetup.title}</Text>
-        {meetup.isCreator && !isCancelled && (
-          <Pressable style={s.cancelChip} onPress={handleCancel} disabled={actioning === 'cancel'}>
-            <Text style={s.cancelChipText}>Cancel meetup</Text>
+        <Pressable onPress={() => { if (editing) { setEditing(false); } else { router.back(); } }} hitSlop={8}>
+          {editing ? <X size={20} color={color.ink} /> : <ArrowLeft size={20} color={color.ink} />}
+        </Pressable>
+        <Text style={s.headerTitle} numberOfLines={1}>{editing ? 'Edit Meetup' : meetup.title}</Text>
+        {editing ? (
+          <Pressable
+            style={[s.editSaveBtn, actioning === 'edit' && { opacity: 0.6 }]}
+            onPress={handleSaveEdit}
+            disabled={actioning === 'edit'}
+          >
+            {actioning === 'edit'
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : <Text style={s.editSaveBtnText}>Save</Text>
+            }
           </Pressable>
-        )}
+        ) : meetup.isCreator && !isCancelled ? (
+          <View style={{ flexDirection: 'row', gap: space.sm }}>
+            <Pressable style={s.editChip} onPress={startEdit}>
+              <Pencil size={13} color={color.ink} />
+              <Text style={s.editChipText}>Edit</Text>
+            </Pressable>
+            <Pressable style={s.cancelChip} onPress={handleCancel} disabled={actioning === 'cancel'}>
+              <Text style={s.cancelChipText}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Status + title */}
-        <View style={s.card}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
-            <View style={[s.statusPill, { backgroundColor: sc.bg }]}>
-              <Text style={[s.statusText, { color: sc.fg }]}>{meetup.status.toUpperCase()}</Text>
+        {/* Status + title (edit mode or view mode) */}
+        {editing ? (
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={s.card}>
+              <Text style={s.editLabel}>Title</Text>
+              <TextInput
+                style={s.editInput}
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder="Meetup title"
+                placeholderTextColor={color.faint}
+                maxLength={200}
+                autoFocus
+              />
+              <Text style={s.editLabel}>Location (optional)</Text>
+              <TextInput
+                style={s.editInput}
+                value={editLocation}
+                onChangeText={setEditLocation}
+                placeholder="Where?"
+                placeholderTextColor={color.faint}
+                maxLength={300}
+              />
+              <Text style={s.editLabel}>Description (optional)</Text>
+              <TextInput
+                style={[s.editInput, s.editInputMulti]}
+                value={editDesc}
+                onChangeText={setEditDesc}
+                placeholder="Add details…"
+                placeholderTextColor={color.faint}
+                maxLength={1000}
+                multiline
+                numberOfLines={3}
+              />
             </View>
-            {meetup.tripId && <Text style={s.scopeTag}>🗺 Trip meetup</Text>}
-            {meetup.circleOwnerId && <Text style={s.scopeTag}>⭕ Circle meetup</Text>}
+          </KeyboardAvoidingView>
+        ) : (
+          <View style={s.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
+              <View style={[s.statusPill, { backgroundColor: sc.bg }]}>
+                <Text style={[s.statusText, { color: sc.fg }]}>{meetup.status.toUpperCase()}</Text>
+              </View>
+              {meetup.tripId && <Text style={s.scopeTag}>🗺 Trip meetup</Text>}
+              {meetup.circleOwnerId && <Text style={s.scopeTag}>⭕ Circle meetup</Text>}
+            </View>
+            <Text style={s.title}>{meetup.title}</Text>
+            {meetup.description ? <Text style={s.desc}>{meetup.description}</Text> : null}
+
+            {meetup.locationName ? (
+              <View style={s.metaRow}>
+                <MapPin size={14} color={color.mute} />
+                <Text style={s.metaText}>{meetup.locationName}</Text>
+              </View>
+            ) : null}
+
+            {(meetup.startsAt ?? meetup.approximateDate) ? (
+              <View style={s.metaRow}>
+                <CalendarClock size={14} color={color.mute} />
+                <Text style={s.metaText}>
+                  {meetup.startsAt ? relDate(meetup.startsAt) : relDate(meetup.approximateDate ?? '')}
+                  {meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}
+                </Text>
+              </View>
+            ) : null}
           </View>
-          <Text style={s.title}>{meetup.title}</Text>
-          {meetup.description ? <Text style={s.desc}>{meetup.description}</Text> : null}
-
-          {meetup.locationName ? (
-            <View style={s.metaRow}>
-              <MapPin size={14} color={color.mute} />
-              <Text style={s.metaText}>{meetup.locationName}</Text>
-            </View>
-          ) : null}
-
-          {(meetup.startsAt ?? meetup.approximateDate) ? (
-            <View style={s.metaRow}>
-              <CalendarClock size={14} color={color.mute} />
-              <Text style={s.metaText}>
-                {meetup.startsAt ? relDate(meetup.startsAt) : relDate(meetup.approximateDate ?? '')}
-                {meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}
-              </Text>
-            </View>
-          ) : null}
-        </View>
+        )}
 
         {/* Attendee counts */}
         <View style={s.card}>
@@ -405,8 +497,15 @@ export default function MeetupScreen() {
 const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.lg, paddingBottom: space.md, borderBottomWidth: 1, borderBottomColor: color.haze, backgroundColor: color.paperRaised },
   headerTitle: { ...t.bodyStrong, color: color.ink, flex: 1, fontWeight: '700' },
-  cancelChip: { paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: '#DC2626' },
+  cancelChip: { paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: '#DC2626' },
   cancelChipText: { ...t.small, color: '#DC2626', fontWeight: '700' },
+  editChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
+  editChipText: { ...t.small, color: color.ink, fontWeight: '700' },
+  editSaveBtn: { paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.signal, minWidth: 52, alignItems: 'center', justifyContent: 'center' },
+  editSaveBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
+  editLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 4, marginTop: space.sm },
+  editInput: { ...t.body, color: color.ink, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm, minHeight: 42 },
+  editInputMulti: { minHeight: 80, textAlignVertical: 'top', paddingTop: space.sm },
 
   scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },

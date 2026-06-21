@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Plus, Users, CalendarDays, MapPin } from 'lucide-react-native';
+import { Plus, Users, CalendarDays, MapPin, CalendarClock, ChevronRight } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { trips as mockTrips } from '../../src/data/cebu';
@@ -9,12 +9,26 @@ import { useSession } from '../../src/context/SessionContext';
 import { useMyTrips } from '../../src/hooks/useBackend';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
+function MeetupsShortcut() {
+  return (
+    <Pressable style={styles.meetupsCard} onPress={() => router.push('/meetups' as any)}>
+      <View style={styles.meetupsIcon}>
+        <CalendarClock size={18} color={color.onInk} />
+      </View>
+      <View style={styles.meetupsText}>
+        <Text style={styles.meetupsTitle}>Meetups</Text>
+        <Text style={styles.meetupsSub}>View and plan get-togethers</Text>
+      </View>
+      <ChevronRight size={18} color={color.mute} />
+    </Pressable>
+  );
+}
+
 export default function Trips() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
   const { data: realTrips, loading, error, reload } = useMyTrips();
 
-  // refresh when returning to this screen
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
 
   return (
@@ -29,6 +43,7 @@ export default function Trips() {
         }
       />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
+        <MeetupsShortcut />
         {live ? (
           <LiveTrips trips={realTrips} loading={loading} error={error} />
         ) : (
@@ -93,6 +108,38 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; 
 const styles = StyleSheet.create({
   newBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: color.ink, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill },
   newBtnText: { ...t.small, fontWeight: '700', color: color.onInk },
+  meetupsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    padding: space.md,
+    ...shadow.card,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  meetupsIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: color.deep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meetupsText: {
+    flex: 1,
+    gap: 2,
+  },
+  meetupsTitle: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontWeight: '700',
+  },
+  meetupsSub: {
+    ...t.small,
+    color: color.mute,
+  },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, overflow: 'hidden', ...shadow.card },
   cover: { width: '100%', height: 150, backgroundColor: color.haze },
   body: { padding: space.lg, gap: space.sm },

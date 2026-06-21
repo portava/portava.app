@@ -78,6 +78,12 @@ export interface MeetupInvite {
   creator: { id: string; handle: string | null; name: string | null; avatarUrl: string | null; } | null;
 }
 
+export interface MeetupListItem extends MeetupSummary {
+  isCreator: boolean;
+  myRsvp: RsvpStatus | null;
+  counts: MeetupCounts;
+}
+
 export interface MeetupResult<T = null> {
   ok: boolean;
   data: T | null;
@@ -134,6 +140,13 @@ export async function createMeetup(params: {
   inviteeIds?: string[];
 }): Promise<MeetupResult<MeetupSummary & { inviteErrors?: string[] }>> {
   return apiCall('/api/meetups', 'POST', params as Record<string, unknown>);
+}
+
+export async function getMyMeetups(
+  filter?: 'upcoming' | 'past' | 'all',
+): Promise<MeetupResult<{ meetups: MeetupListItem[] }>> {
+  const qs = filter ? `?filter=${filter}` : '';
+  return apiCall(`/api/me/meetups${qs}`, 'GET');
 }
 
 export async function getMeetup(meetupId: string): Promise<MeetupResult<MeetupDetail>> {
