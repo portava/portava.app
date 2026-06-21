@@ -342,7 +342,14 @@ export default function MeetupScreen() {
                 placeholderTextColor={color.faint}
                 maxLength={300}
               />
-              <Text style={s.editLabel}>Date (optional)</Text>
+              <View style={s.editLabelRow}>
+                <Text style={s.editLabel}>Date (optional)</Text>
+                {editDate && (
+                  <Pressable onPress={() => { setEditDate(null); setEditExactTime(null); setEditTimeBlock(null); }}>
+                    <Text style={s.clearTimeText}>Clear</Text>
+                  </Pressable>
+                )}
+              </View>
               <DatePickerField
                 value={editDate}
                 onChange={setEditDate}
@@ -615,6 +622,7 @@ const s = StyleSheet.create({
   blockBtnText:   { ...t.small, fontWeight: '700', color: color.ink },
   blockBtnTextActive: { color: color.onInk },
   clearTimeText:  { ...t.small, color: color.signal, fontWeight: '700', textAlign: 'right', marginTop: 2 },
+  editLabelRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 
   scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
