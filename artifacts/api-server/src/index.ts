@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
+import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 
 const rawPort = process.env["PORT"];
 
@@ -24,6 +25,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startDailyBriefCleanup();
+  startWeatherCacheCleanup();
 
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across

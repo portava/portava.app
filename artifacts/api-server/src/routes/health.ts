@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { HealthCheckResponse, CleanupHealthCheckResponse } from "@workspace/api-zod";
 import { getCleanupStatus, queryCleanupHealth } from "../lib/dailyBriefCleanup.js";
+import { purgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
@@ -37,6 +38,23 @@ router.get("/healthz/cleanup", async (_req, res) => {
     consecutiveFailures: inMem.consecutiveFailures,
   });
   res.json(data);
+});
+
+/**
+ * POST /admin/cleanup/weather-cache
+ *
+ * Internal endpoint — triggers an immediate weather cache purge and returns
+ * the number of rows deleted. No external auth required; intended for
+ * server-side or scheduled invocation only (not exposed to mobile clients).
+ */
+router.post("/admin/cleanup/weather-cache", async (_req, res) => {
+  const { deleted, error } = await purgeOldWeatherCache();
+  if (error) {
+    logger.error({ err: error }, "admin/cleanup/weather-cache: purge failed");
+    res.status(500).json({ error: "purge_failed" });
+    return;
+  }
+  res.json({ deleted: deleted ?? 0 });
 });
 
 export default router;
