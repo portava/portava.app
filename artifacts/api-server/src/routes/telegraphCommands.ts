@@ -22,6 +22,18 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
+/** Maps a Telegraph intent to the preference category that should be boosted on confirm. */
+const INTENT_CATEGORY: Partial<Record<string, string>> = {
+  find_food:            "food",
+  find_nightlife:       "nightlife",
+  plan_day:             "activity",
+  fill_free_time:       "activity",
+  create_meetup_draft:  "social",
+  fix_schedule_conflict:"planning",
+  what_is_missing:      "planning",
+  add_to_plan:          "activity",
+};
+
 /* ── Intent types ── */
 export type TelegraphIntent =
   | "plan_day"
@@ -344,6 +356,20 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
     const isMember = await isAcceptedTripMember(client, stored.tripId, user.id);
     if (!isMember) { sendError(res, "not_member", "You must be an accepted trip member to confirm this action"); return; }
   }
+
+  // Write a positive preference event so the learner boosts this category in future briefs.
+  // Best-effort — never block the confirm response.
+  try {
+    const category = (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown";
+    await client.from("user_preference_events").insert({
+      user_id:           user.id,
+      recommendation_id: `${commandId}:${actionId}`,
+      category,
+      signal:            "tap",
+      trip_id:           stored.tripId ?? null,
+      created_at:        new Date().toISOString(),
+    });
+  } catch { /* best-effort */ }
 
   res.json({
     ok: true,
