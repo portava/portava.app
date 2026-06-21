@@ -12,7 +12,15 @@
  */
 import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { parseRetentionDays, parseIntervalHours, purgeOldBriefs } from "../lib/dailyBriefCleanup.js";
+import {
+  parseRetentionDays,
+  parseIntervalHours,
+  purgeOldBriefs,
+  computeCleanupStatus,
+  getCleanupStatus,
+  queryCleanupHealth,
+  _setTestJobHealthClient,
+} from "../lib/dailyBriefCleanup.js";
 
 // Namespace import so we can read live bindings (_purgeCallCount is a `let`
 // that increments on every purgeOldBriefs call; the namespace always reflects
@@ -281,5 +289,152 @@ describe("G — startDailyBriefCleanup scheduler", () => {
     // Tick through multiple interval periods — interval must not fire.
     mock.timers.tick(INTERVAL_MS * 3);
     assert.equal(cleanup._purgeCallCount, afterInitial);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G31–G35: computeCleanupStatus — threshold boundary classification
+//
+// INTERVAL_MS defaults to 24 h (86_400_000 ms) in test env.
+// overdueMs  = INTERVAL_MS + 3_600_000  = 25 h (90_000_000 ms)
+// criticalMs = 2 × INTERVAL_MS          = 48 h (172_800_000 ms)
+//
+// Timestamps are expressed as "N ms ago" relative to now to avoid relying on
+// wall-clock dates in assertions.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("G — computeCleanupStatus", () => {
+  function minsAgo(mins: number): string {
+    return new Date(Date.now() - mins * 60_000).toISOString();
+  }
+
+  it("G31: null lastRunAt → critical (job has never run)", () => {
+    assert.equal(computeCleanupStatus(null), "critical");
+  });
+
+  it("G32: ran 1 h ago → ok (well within window)", () => {
+    assert.equal(computeCleanupStatus(minsAgo(60)), "ok");
+  });
+
+  it("G33: ran 24 h 58 min ago → ok (just inside overdue boundary)", () => {
+    assert.equal(computeCleanupStatus(minsAgo(24 * 60 + 58)), "ok");
+  });
+
+  it("G34: ran 26 h ago → overdue (past interval+grace, before 2×interval)", () => {
+    assert.equal(computeCleanupStatus(minsAgo(26 * 60)), "overdue");
+  });
+
+  it("G35: ran 49 h ago → critical (past 2×interval)", () => {
+    assert.equal(computeCleanupStatus(minsAgo(49 * 60)), "critical");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G36–G38: failure counter — increment on error, accumulate, reset on success
+//
+// Uses getCleanupStatus() to observe the in-memory _status object.
+// Tests check deltas (before/after) rather than absolute values so they are
+// order-independent within the suite.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("G — failure counter", () => {
+  it("G36: consecutiveFailures increments by 1 on each DB error", async () => {
+    const before = getCleanupStatus().consecutiveFailures;
+    const client = makeFakeClient({ error: { message: "timeout" } });
+    await purgeOldBriefs({ client, retentionDays: 60 });
+    assert.equal(getCleanupStatus().consecutiveFailures, before + 1);
+  });
+
+  it("G37: consecutiveFailures accumulates across multiple consecutive errors", async () => {
+    const before = getCleanupStatus().consecutiveFailures;
+    const client = makeFakeClient({ error: { message: "timeout" } });
+    await purgeOldBriefs({ client, retentionDays: 60 });
+    await purgeOldBriefs({ client, retentionDays: 60 });
+    assert.equal(getCleanupStatus().consecutiveFailures, before + 2);
+  });
+
+  it("G38: consecutiveFailures resets to 0 after a successful purge", async () => {
+    // First cause at least one error to ensure counter > 0.
+    const errClient = makeFakeClient({ error: { message: "fail" } });
+    await purgeOldBriefs({ client: errClient, retentionDays: 60 });
+    assert.ok(getCleanupStatus().consecutiveFailures > 0);
+
+    // Now run a successful purge.
+    const okClient = makeFakeClient({ count: 3 });
+    await purgeOldBriefs({ client: okClient, retentionDays: 60 });
+    assert.equal(getCleanupStatus().consecutiveFailures, 0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G39–G43: queryCleanupHealth — classifies DB-backed timestamps correctly
+//
+// Uses _setTestJobHealthClient to inject a fake job_health table so the
+// function can be tested without a live Supabase connection.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("G — queryCleanupHealth", () => {
+  function makeJobHealthClient(minsAgo: number | null) {
+    return {
+      from(_table: string) {
+        const builder: any = {
+          select() { return builder; },
+          eq() { return builder; },
+          maybeSingle() {
+            if (minsAgo === null) return Promise.resolve({ data: null, error: null });
+            return Promise.resolve({
+              data: { last_run_at: new Date(Date.now() - minsAgo * 60_000).toISOString() },
+              error: null,
+            });
+          },
+        };
+        return builder;
+      },
+    };
+  }
+
+  afterEach(() => {
+    _setTestJobHealthClient(null);
+  });
+
+  it("G39: no job_health row → cleanupStatus = 'critical', lastRunAt = null", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(null));
+    const result = await queryCleanupHealth();
+    assert.equal(result.cleanupStatus, "critical");
+    assert.equal(result.lastRunAt, null);
+  });
+
+  it("G40: last_run_at 1 h ago → cleanupStatus = 'ok'", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(60));
+    const result = await queryCleanupHealth();
+    assert.equal(result.cleanupStatus, "ok");
+    assert.ok(result.lastRunAt !== null);
+  });
+
+  it("G41: last_run_at 30 h ago → cleanupStatus = 'overdue'", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(30 * 60));
+    const result = await queryCleanupHealth();
+    assert.equal(result.cleanupStatus, "overdue");
+  });
+
+  it("G42: last_run_at 55 h ago → cleanupStatus = 'critical'", async () => {
+    _setTestJobHealthClient(makeJobHealthClient(55 * 60));
+    const result = await queryCleanupHealth();
+    assert.equal(result.cleanupStatus, "critical");
+  });
+
+  it("G43: DB error → falls back to cleanupStatus = 'critical', lastRunAt = null", async () => {
+    _setTestJobHealthClient({
+      from(_table: string) {
+        return {
+          select() { return this; },
+          eq() { return this; },
+          maybeSingle() { return Promise.resolve({ data: null, error: { message: "permission denied" } }); },
+        };
+      },
+    });
+    const result = await queryCleanupHealth();
+    assert.equal(result.cleanupStatus, "critical");
+    assert.equal(result.lastRunAt, null);
   });
 });

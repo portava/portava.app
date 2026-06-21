@@ -17,6 +17,18 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
 
+// ---------------------------------------------------------------------------
+// Test-only client injection — lets unit tests drive queryCleanupHealth with
+// a fake job_health table without needing a live Supabase connection.
+// Never set in production (env has no test vars that trigger this path).
+// ---------------------------------------------------------------------------
+let _testJobHealthClient: any = null;
+
+/** Inject a fake client for queryCleanupHealth in unit tests. Pass null to clear. */
+export function _setTestJobHealthClient(client: any | null): void {
+  _testJobHealthClient = client;
+}
+
 // ─── Exported for unit testing ───────────────────────────────────────────────
 
 /**
@@ -108,7 +120,7 @@ export async function queryCleanupHealth(): Promise<{
   cleanupStatus: CleanupStatusLevel;
   lastRunAt: string | null;
 }> {
-  const client = isServiceClientReady ? getServiceClient() : null;
+  const client = _testJobHealthClient ?? (isServiceClientReady ? getServiceClient() : null);
   if (!client) return { cleanupStatus: "critical", lastRunAt: null };
 
   try {
