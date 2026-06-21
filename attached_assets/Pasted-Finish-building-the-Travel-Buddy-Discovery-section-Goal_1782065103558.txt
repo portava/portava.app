@@ -1,0 +1,473 @@
+Finish building the Travel Buddy Discovery section.
+
+Goal:
+Discovery should be the main explore hub where users can discover:
+- Activities
+- Restaurants
+- Nightlife
+- Events
+- Local experiences
+- Nearby travelers
+- Suggested plans
+- Group meetups
+- AI-recommended activities
+- Things connected to their current trip city
+
+Discovery must connect to the user’s About Me preferences, current trip, availability, interests, comfort level, and Telegraph recommendations.
+
+Core Discovery Tabs:
+Add a top segmented tab control with:
+
+1. For You
+2. Nearby
+3. Activities
+4. Food
+5. Nightlife
+6. Events
+7. People
+8. Groups
+
+The tabs should be horizontally scrollable on mobile.
+
+1. For You tab
+
+This is the personalized default tab.
+
+Show cards based on:
+- Current trip city
+- User interests
+- Travel style
+- Budget style
+- Availability
+- Languages
+- Comfort level
+- Time of day
+- Saved trips/plans
+
+Card examples:
+- “Rooftop lounge tonight”
+- “Beach day group tomorrow”
+- “Late-night food near you”
+- “Travelers also going to Cebu”
+- “Luxury dinner spots nearby”
+- “Group walking tour this weekend”
+
+Each card should include:
+- Title
+- Category
+- Location/city
+- Distance if available
+- Time/date if event-based
+- Price indicator
+- Match reason
+- Add to Plan button
+- Send to Telegraph button
+- Save button
+
+Match reason examples:
+- “Matched because you like nightlife and luxury experiences.”
+- “Recommended for your evening availability.”
+- “Popular with travelers in your current city.”
+
+2. Nearby tab
+
+Show location-based discovery.
+
+Include:
+- Nearby activities
+- Nearby food
+- Nearby nightlife
+- Nearby events
+- Nearby travelers who are open to public meetups or groups
+
+If location permission is unavailable:
+- Fall back to current trip city
+- Show banner:
+  “Using your trip city because live location is off.”
+
+3. Activities tab
+
+Include:
+- Tours
+- Beaches
+- Shopping
+- Museums
+- Outdoor activities
+- Hidden gems
+- Wellness
+- Local culture
+- Photography spots
+- Group activities
+
+Filters:
+- Category
+- Price
+- Distance
+- Time of day
+- Group friendly
+- Solo friendly
+- Verified hosts only
+
+4. Food tab
+
+Include:
+- Restaurants
+- Cafes
+- Street food
+- Late-night food
+- Fine dining
+- Local favorites
+- Dietary tags if available
+
+Filters:
+- Cuisine
+- Price
+- Open now
+- Distance
+- Reservation needed
+- Good for groups
+- Good for solo travelers
+
+5. Nightlife tab
+
+Include:
+- Bars
+- Lounges
+- Clubs
+- Rooftops
+- Live music
+- Hookah lounges
+- Late-night areas
+
+Filters:
+- Music type
+- Dress code
+- Cover charge
+- Distance
+- Open tonight
+- Group friendly
+- Safe/walkable area
+
+6. Events tab
+
+Include:
+- Local events
+- Concerts
+- Festivals
+- Meetups
+- Sports
+- Pop-ups
+- Travel Buddy hosted events
+
+Filters:
+- Today
+- Tonight
+- Tomorrow
+- This weekend
+- Free
+- Paid
+- Group friendly
+
+7. People tab
+
+Show nearby or trip-matching users.
+
+User cards should include:
+- Name
+- Profile photo/avatar
+- Verified badge
+- Current city or trip city
+- Languages
+- Shared interests
+- Looking for tags
+- Comfort level indicator
+- Mutual trips/circles if any
+- Message button
+- Invite to Plan button
+
+Privacy rules:
+- Only show users who opted into discovery.
+- Respect profile visibility.
+- Do not show exact live location.
+- Show city-level location only.
+- Do not expose private About Me fields.
+
+8. Groups tab
+
+Show:
+- Trip groups
+- City groups
+- Event groups
+- Trusted circle suggestions
+- “People going to the same place”
+- “Travelers free tonight”
+- “Luxury nightlife group”
+- “Food crawl group”
+
+Group cards should include:
+- Group title
+- City
+- Date/time
+- Number of people
+- Category
+- Host
+- Visibility
+- Join/request button
+- Open Telegraph button if user is a member
+
+Main Discovery UI Layout:
+
+At the top:
+- Search bar:
+  “Search activities, food, nightlife, people…”
+- Current city selector:
+  - Use active trip city by default
+  - Allow manual city switch
+- AI suggestion chip:
+  “Ask AI what to do tonight”
+
+Below:
+- Horizontal tabs
+- Filter chips
+- Content cards
+
+Empty states:
+- If no active trip:
+  “Add a trip to get personalized discovery.”
+  CTA: “Create trip”
+- If no results:
+  “No matches yet. Try changing filters.”
+- If no location:
+  “Using your selected city instead of live location.”
+
+Card Actions:
+
+Every activity/event/place card should support:
+- Save
+- Add to Plan
+- Add to Trip
+- Send to Telegraph
+- Share
+- Open Details
+
+Every people card should support:
+- View Profile
+- Message
+- Invite to Plan
+- Add to Trusted Circle if applicable
+
+Every group card should support:
+- View Group
+- Join / Request to Join
+- Open Telegraph if member
+- Invite others
+
+Details Screen:
+
+When opening a discovery item, show:
+- Title
+- Photos or placeholder image
+- Category
+- Description
+- Location
+- Distance
+- Price
+- Time/date
+- Tags
+- Why recommended
+- Safety notes if applicable
+- Who’s interested / going, respecting privacy
+- Add to Plan
+- Send to Telegraph
+- Save
+
+Telegraph Integration:
+
+Discovery must connect directly to Telegraph.
+
+When user taps “Send to Telegraph”:
+- Open bottom sheet to choose:
+  - Existing chat
+  - Trip group chat
+  - Circle chat
+  - Create new Telegraph message
+- Insert a rich preview card into the message:
+  - Title
+  - Category
+  - City
+  - Time/date
+  - CTA: Add to Plan / View
+- If users have different default languages, Telegraph should send the preview/message in each recipient’s language.
+
+AI Integration:
+
+Add an AI recommendation surface inside Discovery.
+
+AI should use:
+- About Me
+- Current trip city
+- Saved plans
+- Availability
+- Budget style
+- Interests
+- Travel style
+- Comfort level
+- Time of day
+- Weather if available later
+- Prior saved/disliked items
+
+AI prompt examples:
+- “What should I do tonight?”
+- “Find nightlife near me.”
+- “Plan a chill food day.”
+- “Find people going out tonight.”
+- “Recommend something luxury.”
+- “Find group activities this weekend.”
+
+AI response should show actionable cards, not just text.
+
+Discovery Data Model:
+
+Add or confirm models/types for:
+
+DiscoveryItem:
+- id
+- title
+- description
+- category
+- subcategory
+- city
+- country
+- latitude
+- longitude
+- address
+- priceLevel
+- currency
+- startTime
+- endTime
+- images
+- tags
+- source
+- sourceUrl
+- rating
+- reviewCount
+- safetyNotes
+- visibility
+- createdByUserId
+- hostUserId
+- isGroupFriendly
+- isSoloFriendly
+- isVerifiedHost
+- metadata
+
+DiscoveryGroup:
+- id
+- title
+- description
+- city
+- country
+- category
+- startTime
+- endTime
+- hostUserId
+- memberCount
+- visibility
+- joinPolicy
+- linkedTelegraphThreadId
+- linkedPlanId
+- tags
+
+SavedDiscoveryItem:
+- userId
+- discoveryItemId
+- savedAt
+
+DiscoveryPreferenceFeedback:
+- userId
+- itemId
+- action
+  - saved
+  - dismissed
+  - added_to_plan
+  - sent_to_telegraph
+  - joined
+- createdAt
+
+APIs / Store Actions:
+
+Build or stub:
+- getDiscoveryFeed(city, filters)
+- getPersonalizedDiscovery(userId, tripId)
+- searchDiscovery(query, city)
+- getNearbyDiscovery(lat, lng, filters)
+- saveDiscoveryItem(itemId)
+- dismissDiscoveryItem(itemId)
+- addDiscoveryToPlan(itemId, planId)
+- sendDiscoveryToTelegraph(itemId, threadId)
+- getDiscoveryGroups(city, filters)
+- joinDiscoveryGroup(groupId)
+- getDiscoverablePeople(city, filters)
+
+Backend can be stubbed with local mock data first if needed, but preserve the API boundaries so real providers can be connected later.
+
+Provider Strategy:
+
+For now, create a mock provider layer:
+- mockDiscoveryProvider
+- mockPeopleDiscoveryProvider
+- mockGroupsProvider
+
+Later this can be replaced with:
+- Google Places
+- TripAdvisor/Viator
+- Eventbrite
+- Yelp
+- internal user-generated plans
+- Travel Buddy hosted events
+
+Important:
+Do not hard-code provider logic directly into UI components.
+Use provider/service functions.
+
+Mobile UX Requirements:
+
+- Cards must be thumb-friendly.
+- Tabs must scroll horizontally.
+- Filters should open in a bottom sheet.
+- Add-to-Plan should use the existing bottom-sheet selector.
+- Send-to-Telegraph should use a bottom sheet.
+- No horizontal overflow.
+- Cards should have skeleton loading states.
+- Empty states must look polished.
+
+Privacy & Safety:
+
+- People discovery must be opt-in.
+- Never show exact user location.
+- Show only city or active trip destination.
+- Respect blocked users.
+- Respect trusted circle privacy.
+- Respect comfort level:
+  - public meetups only
+  - small groups
+  - open to 1-on-1
+  - verified users only
+- Add report/block entry points on people and group details.
+
+Acceptance Criteria:
+
+- Discovery section has the full tab structure.
+- For You tab shows personalized recommendation cards.
+- Nearby tab falls back to trip city if location is off.
+- Activities/Food/Nightlife/Events tabs show filtered discovery cards.
+- People tab respects opt-in and privacy.
+- Groups tab shows joinable city/trip groups.
+- Search works across discovery items, people, and groups.
+- Save/Add to Plan/Add to Trip work with existing app flows.
+- Send to Telegraph creates a shareable rich preview.
+- AI recommendation entry point exists and returns actionable cards.
+- Discovery uses mock provider/service layer, not hard-coded UI data.
+- Mobile layout is clean and does not overflow.
+- Empty/loading states are implemented.
+- Existing trip, plan, Telegraph, and profile routes are not broken.
+- Add tests for tabs, filters, saving, add-to-plan, Telegraph share, and privacy filtering.
