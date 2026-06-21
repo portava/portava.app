@@ -21,9 +21,10 @@ interface DailyBriefCardProps {
   tripId: string;
   date?: string;
   compact?: boolean;
+  onGapDays?: (days: string[], destination: string) => void;
 }
 
-export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCardProps) {
+export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: DailyBriefCardProps) {
   const [brief, setBrief] = useState<any>(null);
   const [access, setAccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,8 +38,12 @@ export function DailyBriefCard({ tripId, date, compact = false }: DailyBriefCard
     setLoading(false);
     if (!res.ok) { setError("Could not load today's brief"); return; }
     setAccess(res.data?.access ?? 'access_denied');
-    setBrief(res.data?.brief ?? null);
-  }, [tripId, date]);
+    const b = res.data?.brief ?? null;
+    setBrief(b);
+    if (b?.gapDays?.length && onGapDays) {
+      onGapDays(b.gapDays, b.destination ?? '');
+    }
+  }, [tripId, date, onGapDays]);
 
   useEffect(() => { load(); }, [load]);
 

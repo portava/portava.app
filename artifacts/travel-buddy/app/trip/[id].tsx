@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar } from 'lucide-react-native';
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
@@ -26,6 +26,12 @@ export default function TripDetail() {
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const [chatLoading, setChatLoading] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
+  const [gapDays, setGapDays] = useState<string[]>([]);
+  const [gapDestination, setGapDestination] = useState('');
+  const handleGapDays = useCallback((days: string[], dest: string) => {
+    setGapDays(days);
+    setGapDestination(dest);
+  }, []);
 
   const trip = live && realTrip ? {
     ...mockTripDetail,
@@ -101,10 +107,19 @@ export default function TripDetail() {
 
         {/* ── Daily Brief (accepted members only; graceful fallback for others) ── */}
         {live && trip.id ? (
-          <DailyBriefCard tripId={trip.id} date={todayDate} />
+          <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
         <TodayNextUp nextUp={mockNextUp} />
+
+        {/* ── Gap-day nudge ── */}
+        {live && gapDays.length > 0 && trip.status !== 'planning' && (
+          <GapDayNudgeSection
+            gapDays={gapDays}
+            destination={gapDestination || trip.destinationCity || ''}
+            tripId={trip.id}
+          />
+        )}
 
         {/* ── Concierge Command Bar ── */}
         {live && trip.id ? (
@@ -161,6 +176,51 @@ const styles = StyleSheet.create({
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
   topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
+});
+
+function formatGapLabel(dateStr: string): string {
+  return new Date(dateStr + 'T12:00:00').toLocaleDateString('en', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
+function GapDayNudgeSection({ gapDays, destination, tripId }: { gapDays: string[]; destination: string; tripId: string }) {
+  return (
+    <View style={gn.wrap}>
+      <Text style={gn.label}>UNPLANNED DAYS</Text>
+      <Text style={gn.hint}>Tap a day to get Telegraph suggestions</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={gn.row}>
+        {gapDays.map((d) => {
+          const label = formatGapLabel(d);
+          const prompt = encodeURIComponent(`Help me plan ${label} in ${destination}`);
+          return (
+            <Pressable
+              key={d}
+              style={gn.chip}
+              onPress={() => router.setParams({ telegraphPrompt: prompt })}
+            >
+              <Calendar size={11} color={color.signal} />
+              <Text style={gn.chipText}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+const gn = StyleSheet.create({
+  wrap: { paddingHorizontal: space.lg, marginTop: space.lg, gap: 4 },
+  label: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.8 },
+  hint: { ...t.small, color: color.mute, fontSize: 11, marginBottom: 4 },
+  row: { gap: space.sm, paddingVertical: 2 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: space.md, paddingVertical: 7,
+    borderRadius: radius.pill, borderWidth: 1,
+    borderColor: color.signal, backgroundColor: '#FFF5F5',
+  },
+  chipText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
 });
 
 function TripMapPlaceholder() {

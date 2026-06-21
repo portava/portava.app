@@ -59,13 +59,13 @@ export function ConciergeCommandBar({ tripId, destination, compact: _compact = f
   const [confirmAction, setConfirmAction] = useState<{ commandId: string; action: ProposedAction } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  const promptHandled = useRef(false);
+  const lastHandledPrompt = useRef<string | undefined>(undefined);
 
   // Pre-fill + auto-submit when navigated here with ?telegraphPrompt=...
-  // (e.g. from DailyBriefCard quick-action "Fill free time" tap)
+  // Tracks the last-processed value so different chips can each trigger a submit.
   useEffect(() => {
-    if (telegraphPrompt && !promptHandled.current) {
-      promptHandled.current = true;
+    if (telegraphPrompt && telegraphPrompt !== lastHandledPrompt.current) {
+      lastHandledPrompt.current = telegraphPrompt;
       const decoded = decodeURIComponent(telegraphPrompt);
       submit(decoded);
     }
