@@ -64,6 +64,7 @@ export interface TripDailyBrief {
   userId: string;
   date: string;
   summaryText: string;
+  weatherSummary: string | null;
   planPreview: BriefPlanPreview[];
   openWindows: BriefOpenWindow[];
   suggestions: BriefSuggestion[];
@@ -111,8 +112,9 @@ export function buildDailyBrief(opts: {
   meetups: MeetupRow[];
   recommendations: RawRecommendation[];
   preferenceProfile: UserPreferenceProfile | null;
+  weatherSummary?: string | null;
 }): TripDailyBrief {
-  const { tripId, userId, date, planItems, meetups, recommendations, preferenceProfile } = opts;
+  const { tripId, userId, date, planItems, meetups, recommendations, preferenceProfile, weatherSummary = null } = opts;
 
   // Filter plan items for the target date
   const dayItems = planItems.filter((i) => i.day_date === date);
@@ -187,6 +189,7 @@ export function buildDailyBrief(opts: {
     userId,
     date,
     summaryText,
+    weatherSummary,
     planPreview,
     openWindows,
     suggestions: scoredSuggestions.slice(0, 3),

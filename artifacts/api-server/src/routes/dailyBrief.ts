@@ -14,6 +14,8 @@ import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { resolveContext } from "../lib/privacyResolver.js";
 import { buildDailyBrief, type RawRecommendation } from "../lib/dailyBriefEngine.js";
 import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
+import { getWeatherContext, type WeatherContext } from "../lib/weatherCache.js";
+import { getLocalContext, type LocalContext } from "../lib/localContext.js";
 
 const router = Router();
 
@@ -66,18 +68,38 @@ async function getPreferenceProfile(client: any, userId: string) {
 
 /**
  * Build a set of context-aware RawRecommendations from the user's preference
- * profile and the trip's destination. These are scored and sorted by
- * buildDailyBrief using the full preference profile.
+ * profile, trip destination, live weather forecast, and local OSM POIs.
+ * Scored and sorted by buildDailyBrief using the full preference profile.
+ *
+ * Weather context: injects weather-aware suggestions (indoor alternatives on
+ * rain days, outdoor boosts on sunny days). Gracefully skipped if null.
+ *
+ * Local context: enriches the pool with specific named POIs from OSM
+ * (museums, parks, restaurants) when available. Gracefully skipped if null.
  */
 function generateContextualRecommendations(
   preferenceProfile: { explicit: ReturnType<typeof defaultExplicit>; inferred: ReturnType<typeof defaultInferred> } | null,
   destination?: string,
+  weatherContext?: WeatherContext | null,
+  localContext?: LocalContext | null,
 ): RawRecommendation[] {
   const dest = destination ? ` in ${destination}` : "";
   const interests: string[] = preferenceProfile?.explicit?.interests ?? [];
   const foodPrefs: string[] = preferenceProfile?.explicit?.foodPreferences ?? [];
   const nightlifePrefs: string[] = preferenceProfile?.explicit?.nightlifePreferences ?? [];
   const avoidList: string[] = preferenceProfile?.explicit?.avoidList ?? [];
+
+  // Determine weather character for this trip
+  const forecasts = weatherContext?.forecasts ?? [];
+  const rainyDays = forecasts.filter((f) => f.precipMm > 2 || f.weatherCode >= 51);
+  const sunnyDays = forecasts.filter((f) => f.weatherCode <= 3);
+  const isRainy = rainyDays.length > 0;
+  const isSunny = sunnyDays.length === forecasts.length && forecasts.length > 0;
+
+  // Weather reason prefix for relevant suggestions
+  const weatherReason = weatherContext?.briefSummary
+    ? ` (${weatherContext.briefSummary.split("—")[0].trim()})`
+    : "";
 
   const pool: RawRecommendation[] = [
     {
@@ -100,7 +122,9 @@ function generateContextualRecommendations(
       id: "rec_outdoor",
       title: `Outdoor activity${dest}`,
       category: "outdoor",
-      reason: "Fresh air and local scenery",
+      reason: isSunny
+        ? `Perfect weather for it${weatherReason}`
+        : "Fresh air and local scenery",
       estimatedTime: "2–4 hours",
       priceLevel: "$",
     },
@@ -146,6 +170,70 @@ function generateContextualRecommendations(
     },
   ];
 
+  // Weather-aware additions: if rain is forecast, add indoor alternatives
+  if (isRainy) {
+    pool.push({
+      id: "rec_indoor_rain",
+      title: `Indoor alternatives${dest}`,
+      category: "culture",
+      reason: weatherContext?.briefSummary ?? "Rain in the forecast — stay dry with an indoor activity",
+      estimatedTime: "2–3 hours",
+      priceLevel: "$$",
+    });
+  }
+
+  // Weather-aware additions: sunny days are great for outdoor spots
+  if (isSunny && !isRainy) {
+    pool.push({
+      id: "rec_sunny_outdoor",
+      title: `Scenic outdoor spot${dest}`,
+      category: "outdoor",
+      reason: weatherContext?.briefSummary ?? "Clear skies — perfect for exploring outside",
+      estimatedTime: "1–3 hours",
+      priceLevel: "free",
+    });
+  }
+
+  // Local POI enrichment: add up to 3 specific named places from OSM
+  if (localContext?.tips?.length) {
+    const museums = localContext.tips.filter((t) => t.category === "museum" || t.category === "art");
+    const parks   = localContext.tips.filter((t) => t.category === "park");
+    const restaurants = localContext.tips.filter((t) => t.category === "restaurant");
+
+    if (museums[0]) {
+      pool.push({
+        id: `rec_poi_museum_${museums[0].name.slice(0, 20).replace(/\s/g, "_")}`,
+        title: museums[0].name,
+        category: "culture",
+        reason: `Popular local museum in ${destination ?? "the area"}`,
+        estimatedTime: "1.5–3 hours",
+        priceLevel: "$$",
+      });
+    }
+    if (parks[0]) {
+      pool.push({
+        id: `rec_poi_park_${parks[0].name.slice(0, 20).replace(/\s/g, "_")}`,
+        title: parks[0].name,
+        category: "outdoor",
+        reason: isRainy
+          ? `A local park — check back on sunny days`
+          : `One of the top green spaces in ${destination ?? "the area"}`,
+        estimatedTime: "1–2 hours",
+        priceLevel: "free",
+      });
+    }
+    if (restaurants[0]) {
+      pool.push({
+        id: `rec_poi_restaurant_${restaurants[0].name.slice(0, 20).replace(/\s/g, "_")}`,
+        title: restaurants[0].name,
+        category: "food",
+        reason: `Highly visited dining spot in ${destination ?? "the area"}`,
+        estimatedTime: "1–1.5 hours",
+        priceLevel: "$$",
+      });
+    }
+  }
+
   // Filter out anything on the user's avoid list
   const filtered = avoidList.length
     ? pool.filter((r) => !avoidList.some((a) => r.category.toLowerCase().includes(a.toLowerCase())))
@@ -156,6 +244,9 @@ function generateContextualRecommendations(
     ...interests.map((i) => i.toLowerCase()),
     ...(foodPrefs.length ? ["food"] : []),
     ...(nightlifePrefs.length ? ["nightlife"] : []),
+    // Boost outdoor when sunny; boost culture/wellness when rainy
+    ...(isSunny ? ["outdoor"] : []),
+    ...(isRainy ? ["culture", "wellness"] : []),
   ]);
 
   const boosted = filtered.filter((r) => preferredCategories.has(r.category));
@@ -261,12 +352,16 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     // A contributing source was modified after the brief was built — rebuild.
   }
 
-  const [{ planItems, meetups }, preferenceProfile] = await Promise.all([
+  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext] = await Promise.all([
     fetchBriefData(client, tripId, date),
     getPreferenceProfile(client, user.id),
+    destination ? getWeatherContext(destination, date, date) : Promise.resolve(null),
+    destination ? getLocalContext(destination) : Promise.resolve(null),
   ]);
 
-  const recommendations = generateContextualRecommendations(preferenceProfile, destination);
+  const recommendations = generateContextualRecommendations(
+    preferenceProfile, destination, weatherContext, localContext,
+  );
 
   const brief = buildDailyBrief({
     tripId,
@@ -276,6 +371,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     meetups,
     recommendations,
     preferenceProfile,
+    weatherSummary: weatherContext?.briefSummary ?? null,
   });
 
   setCachedBrief(user.id, tripId, date, brief);
@@ -307,12 +403,16 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   // Explicit refresh — invalidate cache before rebuilding
   invalidateBriefCache(user.id, tripId, date);
 
-  const [{ planItems, meetups }, preferenceProfile] = await Promise.all([
+  const [{ planItems, meetups }, preferenceProfile, weatherContext, localContext] = await Promise.all([
     fetchBriefData(client, tripId, date),
     getPreferenceProfile(client, user.id),
+    destination ? getWeatherContext(destination, date, date) : Promise.resolve(null),
+    destination ? getLocalContext(destination) : Promise.resolve(null),
   ]);
 
-  const recommendations = generateContextualRecommendations(preferenceProfile, destination);
+  const recommendations = generateContextualRecommendations(
+    preferenceProfile, destination, weatherContext, localContext,
+  );
 
   const brief = buildDailyBrief({
     tripId,
@@ -322,6 +422,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
     meetups,
     recommendations,
     preferenceProfile,
+    weatherSummary: weatherContext?.briefSummary ?? null,
   });
 
   setCachedBrief(user.id, tripId, date, brief);

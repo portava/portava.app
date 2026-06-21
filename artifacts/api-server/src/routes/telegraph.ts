@@ -13,6 +13,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { openai } from "../lib/openai";
+import { getWeatherContext } from "../lib/weatherCache.js";
 
 const router = Router();
 
@@ -75,6 +76,15 @@ Rules:
 - ALWAYS return valid JSON only — no markdown fences, no prose
 - Return exactly an array of ${count} recommendation objects`;
 
+  // Fetch weather context for the destination if available — fire-and-forget with graceful fallback
+  let weatherBrief: string | null = null;
+  if (destination) {
+    try {
+      const wx = await getWeatherContext(destination, tripDates?.start, tripDates?.end);
+      weatherBrief = wx?.briefSummary ?? null;
+    } catch { /* degrade gracefully */ }
+  }
+
   const userPrompt = `Generate ${count} activity recommendations.
 
 Traveler context:
@@ -83,10 +93,11 @@ Traveler context:
 - Travel style: ${travelStyle ?? "explorer"}
 - Preferred language: ${defaultLanguage ?? "en"}
 ${tripDates ? `- Trip: ${tripDates.start} → ${tripDates.end}` : ""}
+${weatherBrief ? `- Weather forecast: ${weatherBrief}` : ""}
 ${conversationContext ? `- Chat context: "${conversationContext}"` : ""}
 ${recipientName ? `- Chatting with: ${recipientName}` : ""}
 
-Return a JSON array of exactly ${count} objects, each with this exact shape (no extra keys):
+${weatherBrief ? "Important: factor in the weather forecast when writing 'reason' fields — mention indoor alternatives if rain is expected, or highlight outdoor activities if the weather is clear.\n\n" : ""}Return a JSON array of exactly ${count} objects, each with this exact shape (no extra keys):
 {
   "id": "rec_<short_unique_id>",
   "title": "Activity name (max 60 chars)",
