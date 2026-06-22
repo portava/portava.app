@@ -53,7 +53,7 @@ async function resolveViewAccess(
 
   if (viewerId !== ownerId && (record.visibility === "circle_only" || record.visibility === "trip_only")) {
     const [circleMember, myTripRows] = await Promise.all([
-      sc.from("circle_memberships").select("member_id").eq("owner_id", ownerId).eq("member_id", viewerId).maybeSingle(),
+      sc.from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle(),
       sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]),
     ]);
     viewerFollowsOwner = Boolean(circleMember.data);
@@ -212,7 +212,7 @@ router.get("/users/:userId/highlights", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       const [circleMember, tripRows] = await Promise.all([
-        sc.from("circle_memberships").select("member_id").eq("owner_id", targetId).eq("member_id", user.id).maybeSingle(),
+        sc.from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle(),
         sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
       ]);
       viewerFollowsOwner = Boolean(circleMember.data);
@@ -371,10 +371,10 @@ router.get("/highlights/active", async (req, res) => {
   if (circleOwnerIds.length > 0) {
     const { data: circleRows } = await sc
       .from("circle_memberships")
-      .select("owner_id")
-      .eq("member_id", user.id)
-      .in("owner_id", circleOwnerIds);
-    for (const r of circleRows ?? []) followingSet.add((r as any).owner_id as string);
+      .select("user_id")
+      .eq("other_id", user.id)
+      .in("user_id", circleOwnerIds);
+    for (const r of circleRows ?? []) followingSet.add((r as any).user_id as string);
   }
 
   // For trip_only highlights, determine which owners share a trip with the viewer

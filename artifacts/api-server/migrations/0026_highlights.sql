@@ -66,8 +66,8 @@ CREATE POLICY "highlights_select_active" ON highlights
         visibility = 'circle_only'
         AND EXISTS (
           SELECT 1 FROM circle_memberships cm
-          WHERE cm.owner_id = highlights.owner_id
-            AND cm.member_id = auth.uid()
+          WHERE cm.user_id = highlights.owner_id
+            AND cm.other_id = auth.uid()
         )
       )
       OR (
