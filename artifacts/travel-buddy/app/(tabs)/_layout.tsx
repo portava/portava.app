@@ -11,7 +11,6 @@ const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
-  { href: '/(tabs)/messages', label: 'Messages', icon: MessageCircle, match: ['/(tabs)/messages'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
@@ -39,17 +38,23 @@ function DesktopSidebar({ unreadNotifications, unreadMessages }: { unreadNotific
             >
               <Icon size={20} color={active ? color.signal : color.mute} />
               <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
-              {label === 'Messages' && unreadMessages > 0 && (
-                <View style={styles.sidebarBadge}>
-                  <Text style={styles.sidebarBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
-                </View>
-              )}
             </Pressable>
           );
         })}
       </View>
 
       <View style={{ flex: 1 }} />
+
+      {/* Telegraph (Messages) link */}
+      <Pressable style={styles.notifBtn} onPress={() => router.push('/(tabs)/messages' as any)}>
+        <MessageCircle size={18} color={color.mute} />
+        <Text style={styles.navLabel}>Telegraph</Text>
+        {unreadMessages > 0 && (
+          <View style={styles.sidebarBadge}>
+            <Text style={styles.sidebarBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
+          </View>
+        )}
+      </Pressable>
 
       {/* Notifications link */}
       <Pressable style={styles.notifBtn} onPress={() => router.push('/notifications' as any)}>
@@ -137,22 +142,8 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="messages"
-        options={{
-          title: 'Messages',
-          tabBarIcon: ({ color: c }) => (
-            <View>
-              <MessageCircle size={22} color={c} />
-              {unreadMessages > 0 && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>
-                    {unreadMessages > 99 ? '99+' : String(unreadMessages)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
-        }}
-        listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
+        options={{ href: null, title: 'Telegraph' }}
+        listeners={{ focus: refreshUnread }}
       />
       <Tabs.Screen
         name="passport"

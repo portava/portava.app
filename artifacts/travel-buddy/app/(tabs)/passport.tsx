@@ -2,10 +2,11 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Bell, Share2 } from 'lucide-react-native';
+import { Bell, Share2, MessageCircle } from 'lucide-react-native';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { useRequestCount } from '../../src/hooks/useRequests';
+import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
@@ -174,6 +175,7 @@ function PassportContent({
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { count: requestCount, reload: reloadCount } = useRequestCount();
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
+  const { messages: unreadMessages } = useUnreadCounts();
 
   useFocusEffect(useCallback(() => {
     reloadCount();
@@ -201,6 +203,22 @@ function PassportContent({
           stamps={verifiedStamps}
           trips={trips}
         />
+
+        {/* Telegraph quick action */}
+        <Pressable style={styles.telegraphRow} onPress={() => router.push('/(tabs)/messages' as any)}>
+          <View style={styles.telegraphIcon}>
+            <MessageCircle size={18} color={color.signal} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.telegraphTitle}>Telegraph</Text>
+            <Text style={styles.telegraphSub}>Messages, trip chats & travel conversations</Text>
+          </View>
+          {unreadMessages > 0 && (
+            <View style={styles.telegraphBadge}>
+              <Text style={styles.telegraphBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
+            </View>
+          )}
+        </Pressable>
 
         {/* Profile completion prompt (owner only) */}
         <ProfileCompletionCard
@@ -370,6 +388,51 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700', lineHeight: 11 },
+
+  telegraphRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: 14,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+  },
+  telegraphIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: color.signal + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  telegraphTitle: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  telegraphSub: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  telegraphBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  telegraphBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   tabBarWrap: { marginTop: space.md },
   tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },
