@@ -1,0 +1,58 @@
+ADDITION — Remove Messages/Telegraph from the main bottom/menu tab and relocate it.
+
+The mobile menu/bottom nav is too crowded. Remove the Messages tab from the main menu/bottom navigation.
+
+Important:
+Do not delete messaging.
+Do not break Telegraph/messages.
+Do not remove routes, APIs, unread counts, translation, or chat functionality.
+Only relocate the entry point so the main mobile navigation is cleaner.
+
+Messaging system name:
+Use “Telegraph” if the app has already been renamed that way.
+If code still says Messages internally, preserve internal names unless safe to rename visually only.
+
+New placement options:
+Use the best fit after inspecting current UI, but preferred placement is:
+
+1. Add Telegraph/Messages as an icon button in the top header/action area, especially on Pulse, Passport, Trips, and Plan pages.
+2. Add Telegraph/Messages inside the Profile/Passport screen as a prominent card or row:
+   - “Telegraph”
+   - “Messages, trip chats, and travel conversations”
+3. Add unread badge anywhere Telegraph entry appears.
+4. If the app has a notification/activity center, include Telegraph there too.
+
+Recommended mobile pattern:
+- Bottom nav should keep only the most important app-wide destinations.
+- Telegraph should be accessible from:
+  - a top-right inbox/chat icon
+  - Passport/Profile quick action
+  - trip/group chat entry points where relevant
+
+Bottom nav target:
+Keep bottom nav to 4–5 max items.
+
+Example bottom nav:
+Pulse
+Trips / Plans
+Explore / Map
+Passport
+More
+
+Telegraph should move into:
+- top-right chat icon with unread badge
+- Passport/Profile quick action card
+- Trip detail chat button
+- More menu item if a More menu exists
+
+Acceptance:
+- Messages/Telegraph tab is removed from the main menu/bottom nav.
+- Telegraph remains reachable in 1 tap from major social screens where possible.
+- Unread badge still works.
+- Existing message routes still work.
+- Existing message APIs still work.
+- Existing auto-translation behavior remains intact.
+- Trip/group chats still work.
+- No broken links.
+- No duplicate confusing menu items.
+- Mobile bottom nav is less cluttered.
