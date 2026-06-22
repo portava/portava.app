@@ -8,6 +8,7 @@ import { router, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../src/lib/imageRender';
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
 import type { OwnProfile } from '../../src/types/models';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -91,6 +92,11 @@ export default function EditProfileScreen() {
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle');
   const [usernameMessage, setUsernameMessage] = useState<string | null>(null);
   const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  type PhotoPhase = 'idle' | 'optimizing' | 'uploading';
+  const [photoPhase, setPhotoPhase] = useState<PhotoPhase>('idle');
+  /** Width (px) of the last cover image picked — used to avoid upscaling in renderCoverImage */
+  const coverOriginalWidthRef = useRef<number>(1920);
 
   const isDirty = originalForm !== null && (
     form.displayName !== originalForm.displayName ||
@@ -184,10 +190,15 @@ export default function EditProfileScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.85,
+      // No quality cap here — renderAvatarImage handles compression
     });
     if (!result.canceled && result.assets[0]) {
-      setForm((f) => ({ ...f, avatarUri: result.assets[0].uri }));
+      const asset = result.assets[0];
+      if (asset.fileSize != null && asset.fileSize > MAX_ORIGINAL_BYTES) {
+        Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
+        return;
+      }
+      setForm((f) => ({ ...f, avatarUri: asset.uri }));
     }
   }, []);
 
@@ -201,10 +212,17 @@ export default function EditProfileScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [16, 9],
-      quality: 0.85,
+      // No quality cap here — renderCoverImage handles compression
     });
     if (!result.canceled && result.assets[0]) {
-      setForm((f) => ({ ...f, coverUri: result.assets[0].uri }));
+      const asset = result.assets[0];
+      if (asset.fileSize != null && asset.fileSize > MAX_ORIGINAL_BYTES) {
+        Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
+        return;
+      }
+      // Store original width so renderCoverImage knows whether to downscale
+      coverOriginalWidthRef.current = asset.width ?? 1920;
+      setForm((f) => ({ ...f, coverUri: asset.uri }));
     }
   }, []);
 
@@ -234,11 +252,15 @@ export default function EditProfileScreen() {
     }
 
     if (form.avatarUri) {
-      const ext = form.avatarUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-      const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-      const upRes = await uploadAvatar(form.avatarUri, mime);
+      // Step 1 — compress to 512×512 JPEG
+      setPhotoPhase('optimizing');
+      const rendered = await renderAvatarImage(form.avatarUri);
+      // Step 2 — upload compressed variant
+      setPhotoPhase('uploading');
+      const upRes = await uploadAvatar(rendered.uri, rendered.mimeType);
+      setPhotoPhase('idle');
       if (!upRes.ok) {
-        setSaveError(upRes.message ?? 'Failed to upload profile photo');
+        setSaveError(upRes.message ?? 'Photo upload failed. Try again.');
         setSaving(false);
         return;
       }
@@ -246,11 +268,15 @@ export default function EditProfileScreen() {
     }
 
     if (form.coverUri) {
-      const ext = form.coverUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-      const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-      const upRes = await uploadCover(form.coverUri, mime);
+      // Step 1 — compress to max 1200px JPEG
+      setPhotoPhase('optimizing');
+      const rendered = await renderCoverImage(form.coverUri, coverOriginalWidthRef.current);
+      // Step 2 — upload compressed variant
+      setPhotoPhase('uploading');
+      const upRes = await uploadCover(rendered.uri, rendered.mimeType);
+      setPhotoPhase('idle');
       if (!upRes.ok) {
-        setSaveError(upRes.message ?? 'Failed to upload cover photo');
+        setSaveError(upRes.message ?? 'Photo upload failed. Try again.');
         setSaving(false);
         return;
       }
@@ -309,8 +335,12 @@ export default function EditProfileScreen() {
               onPress={handleSave}
               disabled={!canSave || saving}
             >
-              {saving ? (
+              {saving && photoPhase === 'idle' ? (
                 <ActivityIndicator size="small" color={color.onInk} />
+              ) : photoPhase === 'optimizing' ? (
+                <Text style={styles.saveBtnText}>Optimizing…</Text>
+              ) : photoPhase === 'uploading' ? (
+                <Text style={styles.saveBtnText}>Uploading…</Text>
               ) : (
                 <Text style={styles.saveBtnText}>Save</Text>
               )}

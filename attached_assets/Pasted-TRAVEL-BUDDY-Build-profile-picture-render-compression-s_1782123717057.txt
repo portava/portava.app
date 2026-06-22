@@ -1,0 +1,412 @@
+TRAVEL BUDDY — Build profile picture render/compression system so large image files can still upload.
+
+Problem:
+Users may upload large profile/passport pictures. Large files can fail, load slowly, cost too much storage/bandwidth, or break mobile performance. We need a render/compression pipeline that automatically resizes and lowers quality before upload/storage while preserving a good-looking profile image.
+
+Mission:
+Build a safe client + backend profile image render system that accepts large user images, compresses/resizes them, creates optimized variants, and uploads/stores only web/mobile-friendly profile picture assets.
+
+Do not break existing profile/passport photo upload.
+Do not remove existing stored photos.
+Do not lower quality so much that profile pictures look bad.
+Do not block users just because original images are large.
+Do not store raw huge originals unless explicitly configured.
+Do not expose storage secrets.
+
+============================================================
+GOALS
+============================================================
+
+When user uploads a profile/passport picture:
+1. Accept common image formats:
+   - jpeg
+   - jpg
+   - png
+   - webp
+   - heic/heif if currently supported by stack or browser
+2. Downscale large dimensions.
+3. Compress image quality.
+4. Normalize orientation.
+5. Strip unnecessary metadata when possible.
+6. Create multiple variants:
+   - avatar thumbnail
+   - profile display
+   - full passport/profile preview
+7. Upload optimized variants.
+8. Save URLs/paths in user profile.
+9. Show fast previews in the app.
+10. Fall back safely if client-side compression fails.
+
+============================================================
+TARGET IMAGE VARIANTS
+============================================================
+
+Create these target variants:
+
+1. avatar
+- Size: 160x160
+- Shape: square crop
+- Format: webp if supported, otherwise jpeg
+- Quality: 0.75–0.82
+- Purpose: small nav/avatar/chat/profile chips
+
+2. profile
+- Size: 512x512
+- Shape: square crop
+- Format: webp if supported, otherwise jpeg
+- Quality: 0.78–0.85
+- Purpose: main Passport/profile display
+
+3. coverPreview / fullPreview
+- Max size: 1080px longest side
+- Shape: preserve aspect ratio unless app requires square
+- Format: webp if supported, otherwise jpeg
+- Quality: 0.78–0.85
+- Purpose: full profile photo preview/lightbox
+
+Optional if easy:
+4. blurhash/tiny placeholder
+- 24–40px tiny image or blurhash
+- Purpose: smooth loading placeholder
+
+Do not force every image into one stretched square. For avatar/profile square, use center-crop or user-crop position if cropper exists. For fullPreview, preserve aspect ratio.
+
+============================================================
+UPLOAD LIMITS
+============================================================
+
+Allow users to choose large files, but process them before upload.
+
+Client accepted max original file size:
+- Allow up to 25MB if browser/device can handle it.
+- If larger than 25MB, show:
+  “This image is very large. Choose a file under 25MB or use a smaller photo.”
+
+Post-compression target file sizes:
+- avatar: under 100KB preferred
+- profile: under 350KB preferred
+- fullPreview: under 900KB preferred, hard target under 1.5MB
+
+If the first compression attempt is still too large, reduce quality gradually down to 0.65 before failing.
+
+============================================================
+CLIENT-SIDE RENDER PIPELINE
+============================================================
+
+Create a reusable client utility:
+
+src/utils/imageRender.ts
+or
+src/lib/image/renderProfileImage.ts
+
+Function:
+
+renderProfileImage(file, options)
+
+Input:
+{
+  file: File,
+  crop?: {
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  },
+  outputFormat?: "image/webp" | "image/jpeg",
+  variants?: ["avatar", "profile", "fullPreview"]
+}
+
+Output:
+{
+  avatar: File | Blob,
+  profile: File | Blob,
+  fullPreview: File | Blob,
+  metadata: {
+    originalName: string,
+    originalSize: number,
+    originalType: string,
+    originalWidth: number,
+    originalHeight: number,
+    outputFormat: string,
+    variants: {
+      avatar: { width, height, size, type },
+      profile: { width, height, size, type },
+      fullPreview: { width, height, size, type }
+    }
+  }
+}
+
+Implementation requirements:
+- Use browser APIs if possible:
+  - createImageBitmap
+  - canvas
+  - OffscreenCanvas if available
+  - fallback HTMLCanvasElement
+- Correct EXIF orientation if supported by the image decode path.
+- Use object URLs safely and revoke them.
+- Avoid memory leaks.
+- Avoid blocking UI too long.
+- Show progress state while rendering:
+  “Optimizing photo…”
+- If WebP output fails, fallback to JPEG.
+- If image decode fails, show:
+  “We couldn’t read this image. Try another photo.”
+
+Do not add a heavy dependency unless the current stack already has one. If there is already an image compression library, reuse it.
+
+============================================================
+SERVER-SIDE SAFETY PIPELINE
+============================================================
+
+Add backend validation so users cannot bypass client compression and upload unsafe huge files.
+
+Backend should:
+1. Validate MIME type.
+2. Validate file size.
+3. Validate image dimensions if possible.
+4. Reject non-image files.
+5. Optionally re-render/compress server-side if image library exists.
+6. Store only optimized variants.
+7. Never trust client-provided metadata blindly.
+
+If server already uses multer/busboy/formidable/Supabase Storage/etc., adapt to existing flow.
+
+Backend max accepted optimized variant sizes:
+- avatar <= 250KB
+- profile <= 750KB
+- fullPreview <= 2MB
+
+If original upload to backend is still allowed, hard cap original:
+- 25MB max
+
+If server-side image processing library exists:
+- Use sharp or existing image library.
+- Create variants server-side as source of truth.
+- Client compression still helps, but server validates.
+
+If no server-side image processing library exists:
+- Accept the client-rendered variants but validate MIME/size and dimensions.
+- Add TODO for server-side sharp pipeline later.
+
+============================================================
+PROFILE UPLOAD FLOW
+============================================================
+
+Update Passport/profile photo upload flow:
+
+1. User selects image.
+2. App shows immediate local preview.
+3. App renders/compresses variants.
+4. App uploads variants.
+5. Backend stores/returns URLs:
+   - avatarUrl
+   - profilePhotoUrl
+   - profilePhotoFullUrl
+6. User profile updates.
+7. UI uses correct variant:
+   - nav/chat chips: avatarUrl
+   - Passport card: profilePhotoUrl
+   - full-screen preview: profilePhotoFullUrl
+
+Do not use full-size photo in nav, chat, feed cards, or small avatars.
+
+============================================================
+DATABASE / PROFILE MODEL
+============================================================
+
+If profile/user table only has one photo field, add/update fields safely:
+
+avatar_url
+profile_photo_url
+profile_photo_full_url
+profile_photo_blur_url optional
+profile_photo_updated_at
+
+If existing fields exist, preserve compatibility:
+- Keep existing photoUrl/profileImage fields if other components depend on them.
+- Map old field to profile_photo_url or maintain both until migration is safe.
+
+Do not break existing users with old profile images.
+
+Migration should be additive and backward-compatible.
+
+UI fallback order:
+avatar display:
+avatar_url || profile_photo_url || existingPhotoUrl || initials
+
+profile display:
+profile_photo_url || existingPhotoUrl || avatar_url || initials
+
+full preview:
+profile_photo_full_url || profile_photo_url || existingPhotoUrl
+
+============================================================
+STORAGE STRUCTURE
+============================================================
+
+Use a predictable storage path:
+
+users/{userId}/profile/avatar.webp
+users/{userId}/profile/profile.webp
+users/{userId}/profile/full.webp
+
+Or jpeg if webp unsupported.
+
+Add cache busting:
+- update profile_photo_updated_at
+- or include version/timestamp in file path:
+  users/{userId}/profile/{timestamp}/avatar.webp
+
+Avoid stale cached photos after replacement.
+
+============================================================
+FRONTEND UX
+============================================================
+
+Add upload states:
+- Selecting photo
+- Optimizing photo…
+- Uploading photo…
+- Saving profile…
+- Done
+- Error with retry
+
+Show file size improvement if simple:
+“Optimized from 8.4MB to 312KB.”
+
+Error messages:
+- Unsupported type:
+  “Use a JPG, PNG, or WebP image.”
+- Too large:
+  “This image is very large. Choose a file under 25MB.”
+- Decode failed:
+  “We couldn’t read this image. Try another photo.”
+- Upload failed:
+  “Photo upload failed. Try again.”
+
+Mobile:
+- Upload button tap target at least 44px.
+- Preview should not overflow screen.
+- Compression should not freeze the UI without feedback.
+
+============================================================
+PHOTO QUALITY RULES
+============================================================
+
+Do:
+- keep faces clear
+- use square crop for avatars
+- preserve full preview aspect ratio
+- avoid pixelated output
+- avoid aggressive compression below 0.65 unless user chooses
+- keep color reasonable
+
+Do not:
+- stretch image
+- store 8–15MB photos as profile avatars
+- use full-size images in lists
+- crash on HEIC/large images
+- infinite-spin during compression
+
+============================================================
+API DESIGN
+============================================================
+
+Use existing upload endpoint if present.
+
+If adding a new endpoint:
+
+POST /api/me/profile-photo
+
+multipart/form-data:
+avatar
+profile
+fullPreview
+metadata
+
+Response:
+{
+  ok: true,
+  avatarUrl: "...",
+  profilePhotoUrl: "...",
+  profilePhotoFullUrl: "...",
+  updatedAt: "..."
+}
+
+If upload fails:
+{
+  ok: false,
+  error: "Photo upload failed. Try again."
+}
+
+Auth:
+- user must be logged in
+- user can only upload their own profile photo unless admin endpoint exists
+- admin behavior should be explicit if supported
+
+============================================================
+SECURITY
+============================================================
+
+Must validate:
+- authenticated user
+- file MIME type
+- file extension not trusted
+- file size
+- image decode/dimensions where possible
+
+Prevent:
+- SVG upload as profile image unless sanitized/explicitly allowed
+- executable files renamed as images
+- path traversal
+- overwriting other users’ images
+- exposing private storage secrets
+
+============================================================
+TESTS / VERIFICATION
+============================================================
+
+Test with:
+1. 8MB JPEG portrait
+2. 15MB PNG
+3. Very wide landscape photo
+4. Very tall portrait photo
+5. Small 100KB image
+6. Unsupported PDF renamed as image
+7. Corrupt image file
+8. WebP image
+9. iPhone photo if available
+
+Verify:
+- Large images upload after optimization.
+- Avatar variant is square and clear.
+- Profile variant is clear.
+- Full preview is not huge.
+- Profile page uses profile variant.
+- Nav/chat/feed avatars use avatar variant.
+- Existing users with old photo fields still render.
+- Error states work.
+- Upload progress states work.
+- No memory leaks from object URLs.
+- Build passes.
+- TypeScript passes.
+- No console errors.
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Files changed
+2. Image render utility created/updated
+3. Variants generated
+4. Upload endpoint changed/added
+5. Database fields/migration added
+6. Storage paths used
+7. Profile UI updated
+8. Validation/security added
+9. Compression results from test images
+10. Remaining TODOs
+
+Final result:
+Large profile/passport pictures can still be selected by users, but the app automatically renders optimized avatar/profile/full-preview variants before upload, stores lightweight images, loads faster on mobile, and avoids failed uploads from oversized files.
