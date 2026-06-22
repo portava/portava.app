@@ -52,12 +52,21 @@ export interface MeetupCreator {
   avatarUrl: string | null;
 }
 
+export interface AttendeePreview {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
 export interface MeetupDetail extends MeetupSummary {
   counts: MeetupCounts;
   myRsvp: RsvpStatus | null;
   isCreator: boolean;
   timeOptions: MeetupTimeOption[];
   creator: MeetupCreator | null;
+  goingAttendees: AttendeePreview[];
+  totalGoing: number;
 }
 
 export interface MeetupInvite {

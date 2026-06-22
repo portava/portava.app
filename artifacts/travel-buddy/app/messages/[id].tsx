@@ -23,7 +23,7 @@ import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestio
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
-import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption } from '../../src/services/meetups';
+import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -135,6 +135,60 @@ function CreatorAvatar({ creator }: { creator: MeetupCreator | null }) {
   );
 }
 
+const AVATAR_SIZE = 26;
+const AVATAR_OVERLAP = 8;
+
+function AttendeeAvatar({ attendee }: { attendee: AttendeePreview }) {
+  const onPress = () => {
+    if (attendee.handle) router.push(`/u/${attendee.handle}` as any);
+  };
+  return (
+    <Pressable onPress={onPress} style={as.avatarWrap}>
+      {attendee.avatarUrl ? (
+        <Image source={{ uri: attendee.avatarUrl }} style={as.avatar} />
+      ) : (
+        <View style={[as.avatar, as.avatarFallback]}>
+          <Text style={as.avatarInitial}>
+            {(attendee.displayName ?? '?').charAt(0).toUpperCase()}
+          </Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+function AvatarStack({ attendees, totalGoing }: { attendees: AttendeePreview[]; totalGoing: number }) {
+  if (attendees.length === 0) return null;
+  const overflow = totalGoing - attendees.length;
+  return (
+    <View style={as.row}>
+      {attendees.map((a, i) => (
+        <View key={a.id} style={[as.avatarSlot, { marginLeft: i === 0 ? 0 : -AVATAR_OVERLAP }]}>
+          <AttendeeAvatar attendee={a} />
+        </View>
+      ))}
+      {overflow > 0 && (
+        <View style={[as.overflowBadge, { marginLeft: -AVATAR_OVERLAP }]}>
+          <Text style={as.overflowText}>+{overflow}</Text>
+        </View>
+      )}
+      <Text style={as.goingLabel}>going</Text>
+    </View>
+  );
+}
+
+const as = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  avatarSlot: { zIndex: 1 },
+  avatarWrap: {},
+  avatar: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.signal + '22' },
+  avatarInitial: { fontSize: 10, fontWeight: '700', color: color.signal },
+  overflowBadge: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  overflowText: { fontSize: 9, fontWeight: '700', color: color.mute },
+  goingLabel: { fontSize: 10, color: color.mute, fontWeight: '500', marginLeft: 2 },
+});
+
 function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
   const { isAuthed } = useSession();
   const [counts, setCounts] = useState<MeetupCounts | null>(null);
@@ -147,6 +201,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [fetchedStartsAt, setFetchedStartsAt] = useState<string | null>(null);
   const [fetchedApproxDate, setFetchedApproxDate] = useState<string | null>(null);
   const [fetchedTimeOptions, setFetchedTimeOptions] = useState<MeetupTimeOption[]>([]);
+  const [goingAttendees, setGoingAttendees] = useState<AttendeePreview[]>([]);
+  const [totalGoing, setTotalGoing] = useState(0);
 
   useEffect(() => {
     getMeetup(payload.meetupId).then((res) => {
@@ -158,6 +214,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setFetchedStartsAt(res.data.startsAt ?? null);
         setFetchedApproxDate(res.data.approximateDate ?? null);
         setFetchedTimeOptions(res.data.timeOptions ?? []);
+        setGoingAttendees(res.data.goingAttendees ?? []);
+        setTotalGoing(res.data.totalGoing ?? 0);
       }
     });
   }, [payload.meetupId]);
@@ -257,6 +315,9 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       ) : null}
 
       <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
+      {goingAttendees.length > 0 && (
+        <AvatarStack attendees={goingAttendees} totalGoing={totalGoing} />
+      )}
       {payload.locationName ? (
         <View style={mc.metaRow}>
           <Text style={mc.meta} numberOfLines={1}>📍 {payload.locationName}</Text>

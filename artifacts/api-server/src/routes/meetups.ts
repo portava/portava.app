@@ -247,9 +247,10 @@ router.get("/meetups/:meetupId", async (req, res) => {
     .eq("meetup_id", meetupId);
 
   const counts = { going: 0, maybe: 0, declined: 0, pending: 0 };
+  const goingIds: string[] = [];
   for (const inv of invites ?? []) {
     const s = (inv as any).status;
-    if (s === "going") counts.going++;
+    if (s === "going") { counts.going++; if (goingIds.length < 4) goingIds.push((inv as any).user_id as string); }
     else if (s === "maybe") counts.maybe++;
     else if (s === "declined") counts.declined++;
     else counts.pending++;
@@ -295,22 +296,27 @@ router.get("/meetups/:meetupId", async (req, res) => {
 
   const isCreator = meetup.creator_id === user.id;
 
-  // Fetch creator profile (service client bypasses RLS for cross-user reads)
+  // Fetch creator profile + going attendee profiles in parallel
   let creator: { id: string; displayName: string | null; avatarUrl: string | null } | null = null;
+  let goingAttendees: Array<{ id: string; handle: string | null; displayName: string | null; avatarUrl: string | null }> = [];
   const sc = getServiceClient();
   if (sc) {
-    const { data: creatorProfile } = await sc
-      .from("profiles")
-      .select("id, name, avatar_url")
-      .eq("id", meetup.creator_id)
-      .maybeSingle();
-    if (creatorProfile) {
-      creator = {
-        id:          (creatorProfile as any).id as string,
-        displayName: (creatorProfile as any).name as string | null ?? null,
-        avatarUrl:   (creatorProfile as any).avatar_url as string | null ?? null,
-      };
+    const [creatorResult, goingResult] = await Promise.all([
+      sc.from("profiles").select("id, name, avatar_url").eq("id", meetup.creator_id).maybeSingle(),
+      goingIds.length > 0
+        ? sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    if (creatorResult.data) {
+      const cp = creatorResult.data as any;
+      creator = { id: cp.id, displayName: cp.name ?? null, avatarUrl: cp.avatar_url ?? null };
     }
+    goingAttendees = ((goingResult as any).data ?? []).map((p: any) => ({
+      id:          p.id as string,
+      handle:      (p.handle as string | null) ?? null,
+      displayName: (p.name as string | null) ?? null,
+      avatarUrl:   (p.avatar_url as string | null) ?? null,
+    }));
   }
 
   res.json({
@@ -335,6 +341,8 @@ router.get("/meetups/:meetupId", async (req, res) => {
     myRsvp:          (myInvite as any)?.status ?? null,
     isCreator,
     creator,
+    goingAttendees,
+    totalGoing:      counts.going,
     timeOptions:     (options ?? []).map((o: any) => ({
       id:            o.id,
       proposedDate:  o.proposed_date,
