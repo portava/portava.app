@@ -144,11 +144,14 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
 
   const handlePickTrip = useCallback((trip: EditableTripRow) => {
     setSelectedTrip(trip);
-    setDayDate(null);
-    setStartsAt(null);
+    // Preserve prefilled date/time when source carried a confirmedTime (e.g. confirmed meetup)
+    if (!source?.confirmedTime) {
+      setDayDate(null);
+      setStartsAt(null);
+    }
     setError(null);
     setStep('pick_time');
-  }, []);
+  }, [source]);
 
   const handleConfirm = useCallback(async () => {
     if (!source || !selectedTrip || submitting) return;
