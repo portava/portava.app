@@ -44,3 +44,8 @@ externalPort = 3003
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
