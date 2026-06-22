@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   X, Check, PenLine, HelpCircle, Gem, Camera, Mail, UtensilsCrossed,
-  MapPin, Navigation, SlidersHorizontal,
+  MapPin, Navigation, SlidersHorizontal, Video as VideoIcon,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PULSE_FILTERS } from '../types/models';
@@ -18,6 +18,7 @@ import type { PostVisibility } from '../services/posts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media';
 import { useSession } from '../context/SessionContext';
 import { getCurrentGps, reverseGeocode } from '../services/location';
+import { HighlightComposer } from './HighlightComposer';
 
 /* ── Types ── */
 
@@ -28,6 +29,7 @@ const POST_TYPES = [
   { id: 'share_postcard',  label: 'Share Postcard', sub: 'A photo from your trip.',          icon: Mail,           iconColor: color.deep },
   { id: 'share_hidden_gem',label: 'Hidden Gem',     sub: 'Recommend a place.',               icon: Gem,            iconColor: color.success },
   { id: 'share_food_spot', label: 'Food Spot',      sub: 'Local food recommendation.',       icon: UtensilsCrossed,iconColor: '#F97316' },
+  { id: 'share_highlight', label: 'Highlight',      sub: 'Photo or video up to 10s.',        icon: VideoIcon,      iconColor: '#E91E8C' },
 ] as const;
 type PostTypeId = typeof POST_TYPES[number]['id'];
 
@@ -38,6 +40,7 @@ const TYPE_CATEGORY: Record<PostTypeId, string> = {
   share_postcard: 'activity',
   share_hidden_gem: 'activity',
   share_food_spot: 'food',
+  share_highlight: 'highlight',
 };
 
 const SUBMIT_LABEL: Record<PostTypeId, string> = {
@@ -47,6 +50,12 @@ const SUBMIT_LABEL: Record<PostTypeId, string> = {
   share_postcard: 'Share Postcard',
   share_hidden_gem: 'Share Hidden Gem',
   share_food_spot: 'Share Food Spot',
+  share_highlight: 'Share Highlight',
+};
+
+/** Types that bypass the standard post form and open a dedicated composer. */
+const DEDICATED_COMPOSERS: Partial<Record<PostTypeId, true>> = {
+  share_highlight: true,
 };
 
 type LocState =
@@ -78,6 +87,9 @@ function validate(type: PostTypeId, text: string, placeName: string, media: Pick
       if (!text.trim()) return 'Add a recommendation.';
       return null;
     }
+    case 'share_highlight':
+      // Handled by dedicated HighlightComposer — always "valid" here
+      return null;
   }
 }
 
@@ -147,6 +159,7 @@ export function UnifiedPostComposer({
   const [gpsBusy, setGpsBusy] = useState(false);
   const [addToPassport, setAddToPassport] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -159,6 +172,7 @@ export function UnifiedPostComposer({
       setManualText('');
       setAddToPassport(false);
       setError(null);
+      setHighlightComposerOpen(false);
     }
   }, [visible]);
 
@@ -274,7 +288,17 @@ export function UnifiedPostComposer({
     setError(msgs[res.errorKind ?? ''] ?? res.message ?? 'Could not post.');
   }
 
+  // Highlight type: open dedicated composer immediately on type select
+  function handleTypeSelect(id: PostTypeId) {
+    setSelectedType(id);
+    setError(null);
+    if (DEDICATED_COMPOSERS[id]) {
+      setHighlightComposerOpen(true);
+    }
+  }
+
   const canSubmit = !!selectedType && !submitting &&
+    !DEDICATED_COMPOSERS[selectedType as PostTypeId] &&
     validate(selectedType, text, placeName, media) === null;
 
   return (
@@ -310,7 +334,7 @@ export function UnifiedPostComposer({
                   <Pressable
                     key={id}
                     style={[uc.typeCard, on && uc.typeCardOn]}
-                    onPress={() => { setSelectedType(id); setError(null); }}
+                    onPress={() => handleTypeSelect(id)}
                   >
                     <View style={[uc.typeIcon, on && { backgroundColor: iconColor + '20' }]}>
                       <Icon size={16} color={on ? iconColor : color.mute} />
@@ -470,8 +494,8 @@ export function UnifiedPostComposer({
             )}
           </ScrollView>
 
-          {/* sticky submit */}
-          {selectedType && (
+          {/* sticky submit — hidden for dedicated composers */}
+          {selectedType && !DEDICATED_COMPOSERS[selectedType] && (
             <View style={uc.footer}>
               <Pressable
                 style={[uc.submitBtn, !canSubmit && uc.submitBtnDisabled]}
@@ -486,6 +510,20 @@ export function UnifiedPostComposer({
           )}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Dedicated Highlight Composer — slides in over the type-picker */}
+      <HighlightComposer
+        visible={highlightComposerOpen}
+        onClose={() => {
+          setHighlightComposerOpen(false);
+          setSelectedType(null);
+        }}
+        onSuccess={() => {
+          setHighlightComposerOpen(false);
+          onSuccess?.();
+          onClose();
+        }}
+      />
     </Modal>
   );
 }

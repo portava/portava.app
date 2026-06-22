@@ -22,6 +22,7 @@ import telegraphFeedbackRouter from "./telegraphFeedback";
 import discoveryRouter from "./discovery";
 import blocksRouter from "./blocks";
 import locationRouter from "./location";
+import highlightsRouter from "./highlights";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(dailyBriefRouter);
 router.use(discoveryRouter);
 router.use(blocksRouter);
 router.use(locationRouter);
+router.use(highlightsRouter);
 
 export default router;

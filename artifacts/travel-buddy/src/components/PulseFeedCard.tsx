@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -10,12 +10,31 @@ import { color, space, radius, type as t, shadow, layout } from '../theme/tokens
 import { usePlanPicker } from './PlanPickerController';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
 import { PostEngagementBar } from './PostEngagementBar';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { useSession } from '../context/SessionContext';
 
 /* shared bits */
 function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
+  const { userId: currentUserId } = useSession();
+  const ringState = useHighlightRingState(item.author?.id ?? null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
   return (
     <View style={s.authorRow}>
-      {item.author ? <Image source={{ uri: item.author.avatarUrl }} style={s.avatar} /> : null}
+      {item.author ? (
+        <HighlightRing
+          hasActive={ringState?.hasActive ?? false}
+          allViewed={ringState?.allViewed ?? false}
+          size={36}
+          ringWidth={2}
+          gap={2}
+          onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+        >
+          <Image source={{ uri: item.author.avatarUrl }} style={s.avatar} />
+        </HighlightRing>
+      ) : null}
       <View style={{ flex: 1 }}>
         {badge ? <View style={[s.kindBadge, { backgroundColor: badge.bg }]}><Text style={[s.kindText, { color: badge.fg }]}>{badge.label}</Text></View> : null}
         {item.author ? <Text style={s.author}>{item.author.name}</Text> : null}
@@ -37,6 +56,15 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
       >
         <MoreHorizontal size={18} color={color.faint} />
       </Pressable>
+
+      {ringState?.highlights && (
+        <HighlightViewer
+          visible={viewerOpen}
+          highlights={ringState.highlights}
+          currentUserId={currentUserId ?? undefined}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </View>
   );
 }

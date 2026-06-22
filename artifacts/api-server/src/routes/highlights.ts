@@ -1,0 +1,665 @@
+import { Router } from "express";
+import { requireUser, sendError } from "../lib/http";
+import { getServiceClient } from "../lib/supabase";
+import { canViewHighlight, type HighlightVisibility } from "../lib/highlightPermissions";
+import { z } from "zod";
+
+const router = Router();
+const UUID = /^[0-9a-f-]{36}$/i;
+
+const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
+const MAX_VIDEO_DURATION_SECONDS = 10;
+
+const createHighlightSchema = z.object({
+  mediaUrl: z.string().url("media_url must be a URL"),
+  mediaType: z.string().min(1),
+  videoDurationSeconds: z.number().nullable().optional(),
+  caption: z.string().max(500).nullable().optional(),
+  locationName: z.string().max(200).nullable().optional(),
+  locationCity: z.string().max(100).nullable().optional(),
+  locationCountry: z.string().max(100).nullable().optional(),
+  visibility: z
+    .enum(["public", "travelers_nearby", "circle_only", "trip_only", "private"])
+    .default("public"),
+  expiresInHours: z.number().int().refine((h) => EXPIRY_HOURS.includes(h as any), {
+    message: `expiresInHours must be one of: ${EXPIRY_HOURS.join(", ")}`,
+  }).default(24),
+});
+
+/* ============================================================================
+ * POST /highlights — create a highlight
+ * ============================================================================ */
+router.post("/highlights", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = createHighlightSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const d = parsed.data;
+
+  // Reject video highlights longer than 10 seconds
+  if (
+    d.mediaType.startsWith("video/") &&
+    d.videoDurationSeconds != null &&
+    d.videoDurationSeconds > MAX_VIDEO_DURATION_SECONDS
+  ) {
+    sendError(res, "invalid_payload", `Video duration ${d.videoDurationSeconds.toFixed(1)}s exceeds the ${MAX_VIDEO_DURATION_SECONDS}s limit for Highlights.`);
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await client
+    .from("highlights")
+    .insert({
+      owner_id: user.id,
+      media_url: d.mediaUrl,
+      media_type: d.mediaType,
+      video_duration_seconds: d.videoDurationSeconds ?? null,
+      caption: d.caption ?? null,
+      location_name: d.locationName ?? null,
+      location_city: d.locationCity ?? null,
+      location_country: d.locationCountry ?? null,
+      visibility: d.visibility,
+      expires_at: expiresAt,
+    })
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .single();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to create highlight");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(201).json({
+    ...(data as any),
+    viewCount: 0,
+    likeCount: 0,
+    viewedByMe: false,
+    likedByMe: false,
+  });
+});
+
+/* ============================================================================
+ * GET /users/:userId/highlights — active highlights for a user
+ * Filtered by viewer permissions + blocks.
+ * ============================================================================ */
+router.get("/users/:userId/highlights", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const targetId = req.params.userId;
+  if (!UUID.test(targetId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  // Check blocks in both directions
+  const [blocker, blocked] = await Promise.all([
+    client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
+    client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
+  ]);
+  if (blocker.data || blocked.data) {
+    res.status(200).json({ highlights: [] });
+    return;
+  }
+
+  const isOwnProfile = user.id === targetId;
+
+  // Load active (non-expired, non-deleted) highlights for target user
+  const { data: rows, error } = await client
+    .from("highlights")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .eq("owner_id", targetId)
+    .is("deleted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load user highlights");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const highlights = (rows ?? []) as any[];
+
+  // For non-owners, check circle (follows) + trip membership to filter restricted visibility
+  let viewerFollowsOwner = false;
+  let sharesTrip = false;
+
+  if (!isOwnProfile && highlights.some((h) => ["circle_only", "trip_only"].includes(h.visibility))) {
+    const sc = getServiceClient();
+    if (sc) {
+      const [followRow, tripRows] = await Promise.all([
+        sc.from("user_follows").select("following_id").eq("follower_id", user.id).eq("following_id", targetId).maybeSingle(),
+        sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
+      ]);
+      viewerFollowsOwner = Boolean(followRow.data);
+      if (tripRows.data && tripRows.data.length > 0) {
+        const myTripIds = tripRows.data.map((r: any) => r.trip_id as string);
+        const { data: sharedTrip } = await sc
+          .from("trip_members")
+          .select("trip_id")
+          .eq("user_id", targetId)
+          .in("role", ["owner", "member"])
+          .in("trip_id", myTripIds)
+          .limit(1)
+          .maybeSingle();
+        sharesTrip = Boolean(sharedTrip);
+      }
+    }
+  }
+
+  if (isOwnProfile) {
+    viewerFollowsOwner = true;
+    sharesTrip = true;
+  }
+
+  // Filter by permission
+  const visible = highlights.filter((h) =>
+    canViewHighlight(user.id, h as any, { viewerFollowsOwner, sharesTrip }),
+  );
+
+  if (visible.length === 0) {
+    res.status(200).json({ highlights: [] });
+    return;
+  }
+
+  const highlightIds = visible.map((h: any) => h.id as string);
+
+  // Batch-fetch view + like counts + viewer status
+  const [viewRows, likeRows, viewedRows, likedRows] = await Promise.all([
+    client.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
+    client.from("highlight_likes").select("highlight_id").in("highlight_id", highlightIds),
+    client.from("highlight_views").select("highlight_id").eq("viewer_id", user.id).in("highlight_id", highlightIds),
+    client.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", highlightIds),
+  ]);
+
+  const viewCountMap: Record<string, number> = {};
+  const likeCountMap: Record<string, number> = {};
+  for (const r of viewRows.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
+  for (const r of likeRows.data ?? []) likeCountMap[(r as any).highlight_id] = (likeCountMap[(r as any).highlight_id] ?? 0) + 1;
+  const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.highlight_id as string));
+  const likedSet = new Set<string>((likedRows.data ?? []).map((r: any) => r.highlight_id as string));
+
+  // Fetch author profile once
+  const sc = getServiceClient();
+  let author: any = null;
+  if (sc) {
+    const { data: p } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", targetId).maybeSingle();
+    if (p) author = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+  }
+
+  const result = visible.map((h: any) => ({
+    ...h,
+    author,
+    viewCount: viewCountMap[h.id] ?? 0,
+    likeCount: likeCountMap[h.id] ?? 0,
+    viewedByMe: viewedSet.has(h.id),
+    likedByMe: likedSet.has(h.id),
+  }));
+
+  res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * GET /highlights/active — all active highlights visible to current user
+ * Supports ?userId=, ?city=, ?tripId=, ?limit=
+ * ============================================================================ */
+router.get("/highlights/active", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const limit = Math.min(Number(req.query.limit ?? 50), 100);
+  const filterUserId = typeof req.query.userId === "string" ? req.query.userId : null;
+  const filterCity = typeof req.query.city === "string" ? req.query.city : null;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Get blocks list for this user (both directions)
+  const [blockedByMe, blockingMe] = await Promise.all([
+    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
+    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+  ]);
+  const blockedIds = new Set<string>([
+    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
+    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+  ]);
+
+  // Build query
+  let q = sc
+    .from("highlights")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .is("deleted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .in("visibility", ["public", "travelers_nearby", "circle_only"])
+    .order("created_at", { ascending: false })
+    .limit(limit * 3); // over-fetch to account for permission filtering
+
+  if (filterUserId && UUID.test(filterUserId)) {
+    (q as any) = (q as any).eq("owner_id", filterUserId);
+  }
+  if (filterCity) {
+    (q as any) = (q as any).ilike("location_city", `%${filterCity}%`);
+  }
+
+  const { data: rows, error } = await q;
+  if (error) {
+    req.log.error({ err: error }, "Failed to load active highlights");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // Filter out blocked users
+  const unblocked = (rows ?? []).filter((h: any) => !blockedIds.has(h.owner_id as string));
+
+  // For circle_only highlights, check if viewer follows the owner
+  const circleOwnerIds = unblocked
+    .filter((h: any) => h.visibility === "circle_only")
+    .map((h: any) => h.owner_id as string);
+
+  const followingSet = new Set<string>();
+  if (circleOwnerIds.length > 0) {
+    const { data: followRows } = await sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", user.id)
+      .in("following_id", circleOwnerIds);
+    for (const r of followRows ?? []) followingSet.add((r as any).following_id as string);
+  }
+
+  // Permission filter
+  const visible = unblocked.filter((h: any) => {
+    if (h.owner_id === user.id) return true;
+    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
+    if (h.visibility === "circle_only") return followingSet.has(h.owner_id as string);
+    return false;
+  }).slice(0, limit);
+
+  if (visible.length === 0) {
+    res.status(200).json({ highlights: [] });
+    return;
+  }
+
+  const highlightIds = visible.map((h: any) => h.id as string);
+  const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+
+  // Batch metrics + author profiles
+  const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
+    sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
+    sc.from("highlight_likes").select("highlight_id").in("highlight_id", highlightIds),
+    sc.from("highlight_views").select("highlight_id").eq("viewer_id", user.id).in("highlight_id", highlightIds),
+    sc.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", highlightIds),
+    sc.from("profiles").select("id, handle, name, avatar_url").in("id", ownerIds),
+  ]);
+
+  const viewCountMap: Record<string, number> = {};
+  const likeCountMap: Record<string, number> = {};
+  for (const r of viewRows.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
+  for (const r of likeRows.data ?? []) likeCountMap[(r as any).highlight_id] = (likeCountMap[(r as any).highlight_id] ?? 0) + 1;
+  const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.highlight_id as string));
+  const likedSet = new Set<string>((likedRows.data ?? []).map((r: any) => r.highlight_id as string));
+
+  const profileMap: Record<string, any> = {};
+  for (const p of profileRows.data ?? []) {
+    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+  }
+
+  const result = visible.map((h: any) => ({
+    ...h,
+    author: profileMap[h.owner_id] ?? null,
+    viewCount: viewCountMap[h.id] ?? 0,
+    likeCount: likeCountMap[h.id] ?? 0,
+    viewedByMe: viewedSet.has(h.id),
+    likedByMe: likedSet.has(h.id),
+  }));
+
+  res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * DELETE /highlights/:id — owner soft-delete
+ * ============================================================================ */
+router.delete("/highlights/:id", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: existing } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
+  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete this highlight"); return; }
+
+  const { error } = await client
+    .from("highlights")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to delete highlight");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(204).send();
+});
+
+/* ============================================================================
+ * POST /highlights/:id/view — idempotent view upsert
+ * ============================================================================ */
+router.post("/highlights/:id/view", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  // Verify highlight exists and viewer can see it (public or own)
+  const { data: h } = await client
+    .from("highlights")
+    .select("id, owner_id, visibility, expires_at, deleted_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!h) { sendError(res, "not_found", "Highlight not found"); return; }
+
+  // Idempotent upsert
+  const { error } = await client
+    .from("highlight_views")
+    .upsert({ highlight_id: id, viewer_id: user.id, viewed_at: new Date().toISOString() }, { onConflict: "highlight_id,viewer_id" });
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to record highlight view");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(200).json({ viewed: true });
+});
+
+/* ============================================================================
+ * POST /highlights/:id/like — like a highlight
+ * ============================================================================ */
+router.post("/highlights/:id/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: h } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+
+  if (!h) { sendError(res, "not_found", "Highlight not found or expired"); return; }
+
+  await client
+    .from("highlight_likes")
+    .upsert({ highlight_id: id, user_id: user.id }, { onConflict: "highlight_id,user_id", ignoreDuplicates: true });
+
+  const { count } = await client
+    .from("highlight_likes")
+    .select("*", { count: "exact", head: true })
+    .eq("highlight_id", id);
+
+  res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * DELETE /highlights/:id/like — unlike a highlight
+ * ============================================================================ */
+router.delete("/highlights/:id/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  await client.from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
+
+  const { count } = await client
+    .from("highlight_likes")
+    .select("*", { count: "exact", head: true })
+    .eq("highlight_id", id);
+
+  res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * GET /highlights/:id/viewers — owner-only list of viewers
+ * ============================================================================ */
+router.get("/highlights/:id/viewers", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: h } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!h) { sendError(res, "not_found", "Highlight not found"); return; }
+  if ((h as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can see viewers"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: viewRows, error } = await sc
+    .from("highlight_views")
+    .select("viewer_id, viewed_at")
+    .eq("highlight_id", id)
+    .order("viewed_at", { ascending: false });
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load highlight viewers");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const viewerIds = (viewRows ?? []).map((r: any) => r.viewer_id as string);
+  if (viewerIds.length === 0) {
+    res.status(200).json({ viewers: [] });
+    return;
+  }
+
+  const [profileRows, likeRows] = await Promise.all([
+    sc.from("profiles").select("id, handle, name, avatar_url").in("id", viewerIds),
+    sc.from("highlight_likes").select("user_id").eq("highlight_id", id).in("user_id", viewerIds),
+  ]);
+
+  const profileMap: Record<string, any> = {};
+  for (const p of profileRows.data ?? []) profileMap[(p as any).id] = p;
+  const likedSet = new Set<string>((likeRows.data ?? []).map((r: any) => r.user_id as string));
+
+  const viewers = (viewRows ?? []).map((r: any) => {
+    const p = profileMap[r.viewer_id] ?? {};
+    return {
+      user_id: r.viewer_id,
+      handle: (p as any).handle ?? null,
+      name: (p as any).name ?? null,
+      avatar_url: (p as any).avatar_url ?? null,
+      viewed_at: r.viewed_at,
+      liked: likedSet.has(r.viewer_id as string),
+    };
+  });
+
+  res.status(200).json({ viewers });
+});
+
+/* ============================================================================
+ * POST /highlights/:id/reply — create a Telegraph DM thread for a highlight reply
+ * ============================================================================ */
+router.post("/highlights/:id/reply", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+  if (!message) { sendError(res, "invalid_payload", "message is required"); return; }
+
+  // Load highlight to get owner
+  const { data: h } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+
+  if (!h) { sendError(res, "not_found", "Highlight not found or expired"); return; }
+  const ownerId = (h as any).owner_id as string;
+  if (ownerId === user.id) {
+    sendError(res, "invalid_payload", "Cannot reply to your own highlight");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Find or create a DM thread between replier and highlight owner
+  // Check for existing thread
+  const { data: existingThreads } = await sc
+    .from("message_threads")
+    .select("id")
+    .eq("kind", "dm")
+    .limit(100);
+
+  let threadId: string | null = null;
+
+  if (existingThreads && existingThreads.length > 0) {
+    const threadIds = existingThreads.map((t: any) => t.id as string);
+    const { data: memberRows } = await sc
+      .from("message_thread_members")
+      .select("thread_id, user_id")
+      .in("thread_id", threadIds)
+      .in("user_id", [user.id, ownerId]);
+
+    if (memberRows) {
+      // Find thread where both users are members
+      const countByThread: Record<string, Set<string>> = {};
+      for (const r of memberRows) {
+        const tid = (r as any).thread_id as string;
+        if (!countByThread[tid]) countByThread[tid] = new Set();
+        countByThread[tid].add((r as any).user_id as string);
+      }
+      for (const [tid, users] of Object.entries(countByThread)) {
+        if (users.has(user.id) && users.has(ownerId)) {
+          threadId = tid;
+          break;
+        }
+      }
+    }
+  }
+
+  // Create new DM thread if none exists
+  if (!threadId) {
+    const { data: newThread, error: threadErr } = await sc
+      .from("message_threads")
+      .insert({ kind: "dm", created_by: user.id })
+      .select("id")
+      .single();
+    if (threadErr || !newThread) {
+      req.log.error({ err: threadErr }, "Failed to create DM thread for highlight reply");
+      sendError(res, "db_error", "Could not create message thread");
+      return;
+    }
+    threadId = (newThread as any).id as string;
+
+    // Add both users as members
+    await sc.from("message_thread_members").insert([
+      { thread_id: threadId, user_id: user.id },
+      { thread_id: threadId, user_id: ownerId },
+    ]);
+  }
+
+  // Send a system context message linking to the highlight
+  await sc.from("messages").insert({
+    thread_id: threadId,
+    sender_id: user.id,
+    body: `↩ Replied to your highlight`,
+    msg_type: "highlight_reply",
+    subtype: id,
+  });
+
+  // Send the actual reply message
+  await sc.from("messages").insert({
+    thread_id: threadId,
+    sender_id: user.id,
+    body: message,
+    msg_type: "text",
+  });
+
+  // Record the reply in highlight_replies (best-effort)
+  try {
+    await client
+      .from("highlight_replies")
+      .insert({ highlight_id: id, replier_id: user.id, thread_id: threadId });
+  } catch {
+    // best-effort; ignore
+  }
+
+  res.status(200).json({ threadId });
+});
+
+/* ============================================================================
+ * POST /highlights/:id/report
+ * ============================================================================ */
+router.post("/highlights/:id/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "inappropriate";
+
+  const { data: existing } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
+  if ((existing as any).owner_id === user.id) {
+    sendError(res, "invalid_payload", "Cannot report your own highlight");
+    return;
+  }
+
+  await client
+    .from("highlight_reports")
+    .upsert({ highlight_id: id, reporter_id: user.id, reason }, { onConflict: "highlight_id,reporter_id" });
+
+  res.status(204).send();
+});
+
+export default router;

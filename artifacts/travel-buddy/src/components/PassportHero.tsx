@@ -5,6 +5,7 @@ import { Plane, MapPin, MoreHorizontal, Camera } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -38,6 +39,9 @@ export function PassportHero({
   isFollowing,
   followLoading,
   onFollowPress,
+  hasHighlights,
+  allHighlightsViewed,
+  onHighlightRingPress,
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
@@ -46,6 +50,9 @@ export function PassportHero({
   isFollowing?: boolean;
   followLoading?: boolean;
   onFollowPress?: () => void;
+  hasHighlights?: boolean;
+  allHighlightsViewed?: boolean;
+  onHighlightRingPress?: () => void;
 }) {
   const displayName = ('displayName' in profile ? profile.displayName : null) ?? profile.avatarUrl ?? 'Traveler';
   const name = ('name' in profile && profile.name) ? profile.name : null;
@@ -91,29 +98,37 @@ export function PassportHero({
 
       {/* Identity row */}
       <View style={styles.identityRow}>
-        {/* Avatar */}
-        <Pressable
-          style={styles.photoBox}
-          onPress={isOwner && onAvatarPress ? onAvatarPress : undefined}
-          disabled={!isOwner || !onAvatarPress}
-        >
+        {/* Avatar wrapped with HighlightRing */}
+        <View style={styles.photoBox}>
           <PassportMonogramWatermark size={130} />
           <PhotoBackdrop />
-          <View style={styles.photoFrame}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.photo} />
-            ) : (
-              <View style={[styles.photo, styles.photoEmpty]}>
-                <Text style={{ fontSize: 36 }}>👤</Text>
-              </View>
-            )}
-          </View>
-          {isOwner && (
-            <View style={styles.cameraOverlay} pointerEvents="none">
-              <Camera size={14} color={color.onInk} />
+          <HighlightRing
+            hasActive={hasHighlights ?? false}
+            allViewed={allHighlightsViewed ?? false}
+            size={72}
+            ringWidth={3}
+            gap={3}
+            onPress={onHighlightRingPress ?? (isOwner && onAvatarPress ? onAvatarPress : undefined)}
+          >
+            <View style={styles.photoFrame}>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.photo} />
+              ) : (
+                <View style={[styles.photo, styles.photoEmpty]}>
+                  <Text style={{ fontSize: 36 }}>👤</Text>
+                </View>
+              )}
             </View>
+          </HighlightRing>
+          {isOwner && !hasHighlights && onAvatarPress && (
+            <Pressable
+              style={styles.cameraOverlay}
+              onPress={onAvatarPress}
+            >
+              <Camera size={14} color={color.onInk} />
+            </Pressable>
           )}
-        </Pressable>
+        </View>
 
         {/* Details */}
         <View style={styles.details}>
