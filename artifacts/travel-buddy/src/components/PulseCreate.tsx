@@ -189,10 +189,12 @@ export function UnifiedPostComposer({
     });
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
+    const durationSec = a.duration != null ? a.duration / 1000 : null;
     const picked: PickedMedia = {
       uri: a.uri, mimeType: a.mimeType ?? 'image/jpeg',
       fileName: a.fileName, fileSize: a.fileSize ?? null,
       width: a.width, height: a.height, type: a.type,
+      duration: durationSec,
     };
     const v = validateMedia(picked, selectedType === 'share_postcard' ? { maxVideoDurationSeconds: 10 } : undefined);
     if (!v.ok) { setError(v.message); return; }

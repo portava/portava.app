@@ -10,6 +10,7 @@ import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
+import { HighlightComposer } from '../../src/components/HighlightComposer';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
@@ -52,6 +53,13 @@ export default function PassportScreen() {
   const ownRingState = useHighlightRingState(ownUserId);
   const hasOwnHighlights = ownRingState?.hasActive ?? false;
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
+  const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
+
+  // Ring press: view existing highlights or open composer to create a new one
+  const handleOwnRingPress = useCallback(() => {
+    if (hasOwnHighlights) setHighlightViewerOpen(true);
+    else setHighlightComposerOpen(true);
+  }, [hasOwnHighlights]);
 
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
 
@@ -133,13 +141,18 @@ export default function PassportScreen() {
           reload={reload}
           insets={insets}
           hasHighlights={hasOwnHighlights}
-          onHighlightRingPress={() => setHighlightViewerOpen(true)}
+          onHighlightRingPress={handleOwnRingPress}
         />
         <HighlightViewer
           visible={highlightViewerOpen}
           highlights={ownRingState?.highlights ?? []}
           currentUserId={ownUserId ?? undefined}
           onClose={() => setHighlightViewerOpen(false)}
+        />
+        <HighlightComposer
+          visible={highlightComposerOpen}
+          onClose={() => setHighlightComposerOpen(false)}
+          onSuccess={() => setHighlightComposerOpen(false)}
         />
       </View>
     );
@@ -167,13 +180,18 @@ export default function PassportScreen() {
         reload={reload}
         insets={insets}
         hasHighlights={hasOwnHighlights}
-        onHighlightRingPress={() => setHighlightViewerOpen(true)}
+        onHighlightRingPress={handleOwnRingPress}
       />
       <HighlightViewer
         visible={highlightViewerOpen}
         highlights={ownRingState?.highlights ?? []}
         currentUserId={ownUserId ?? undefined}
         onClose={() => setHighlightViewerOpen(false)}
+      />
+      <HighlightComposer
+        visible={highlightComposerOpen}
+        onClose={() => setHighlightComposerOpen(false)}
+        onSuccess={() => setHighlightComposerOpen(false)}
       />
     </View>
   );

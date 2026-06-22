@@ -26,6 +26,8 @@ export interface PickedMedia {
   width?: number | null;
   height?: number | null;
   type?: 'image' | 'video' | string | null;
+  /** Video duration in seconds (from ImagePicker asset.duration / 1000). null for images. */
+  duration?: number | null;
 }
 
 export type MediaErrorKind =
@@ -72,7 +74,7 @@ export function validateMedia(
     }
   }
   if (isVideo && opts?.maxVideoDurationSeconds != null) {
-    const duration = (media as any).duration as number | null | undefined;
+    const duration = media.duration;
     if (duration != null && duration > opts.maxVideoDurationSeconds) {
       return {
         ok: false,

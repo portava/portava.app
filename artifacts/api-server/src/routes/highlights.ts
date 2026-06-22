@@ -51,11 +51,11 @@ async function resolveViewAccess(
   let sharesTrip = viewerId === ownerId;
 
   if (viewerId !== ownerId && (record.visibility === "circle_only" || record.visibility === "trip_only")) {
-    const [followRow, myTripRows] = await Promise.all([
-      sc.from("user_follows").select("following_id").eq("follower_id", viewerId).eq("following_id", ownerId).maybeSingle(),
+    const [circleMember, myTripRows] = await Promise.all([
+      sc.from("circle_memberships").select("member_id").eq("owner_id", ownerId).eq("member_id", viewerId).maybeSingle(),
       sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]),
     ]);
-    viewerFollowsOwner = Boolean(followRow.data);
+    viewerFollowsOwner = Boolean(circleMember.data);
 
     if (myTripRows.data && myTripRows.data.length > 0) {
       const myTripIds = myTripRows.data.map((r: any) => r.trip_id as string);
@@ -113,14 +113,16 @@ router.post("/highlights", async (req, res) => {
   }
   const d = parsed.data;
 
-  // Reject video highlights longer than 10 seconds
-  if (
-    d.mediaType.startsWith("video/") &&
-    d.videoDurationSeconds != null &&
-    d.videoDurationSeconds > MAX_VIDEO_DURATION_SECONDS
-  ) {
-    sendError(res, "invalid_payload", `Video duration ${d.videoDurationSeconds.toFixed(1)}s exceeds the ${MAX_VIDEO_DURATION_SECONDS}s limit for Highlights.`);
-    return;
+  // Reject video highlights longer than 10 seconds, or with missing duration
+  if (d.mediaType.startsWith("video/")) {
+    if (d.videoDurationSeconds == null) {
+      sendError(res, "invalid_payload", "videoDurationSeconds is required for video highlights.");
+      return;
+    }
+    if (d.videoDurationSeconds > MAX_VIDEO_DURATION_SECONDS) {
+      sendError(res, "invalid_payload", `Highlights and video Postcards can be up to ${MAX_VIDEO_DURATION_SECONDS} seconds.`);
+      return;
+    }
   }
 
   const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
@@ -208,11 +210,11 @@ router.get("/users/:userId/highlights", async (req, res) => {
   if (!isOwnProfile && highlights.some((h) => ["circle_only", "trip_only"].includes(h.visibility))) {
     const sc = getServiceClient();
     if (sc) {
-      const [followRow, tripRows] = await Promise.all([
-        sc.from("user_follows").select("following_id").eq("follower_id", user.id).eq("following_id", targetId).maybeSingle(),
+      const [circleMember, tripRows] = await Promise.all([
+        sc.from("circle_memberships").select("member_id").eq("owner_id", targetId).eq("member_id", user.id).maybeSingle(),
         sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
       ]);
-      viewerFollowsOwner = Boolean(followRow.data);
+      viewerFollowsOwner = Boolean(circleMember.data);
       if (tripRows.data && tripRows.data.length > 0) {
         const myTripIds = tripRows.data.map((r: any) => r.trip_id as string);
         const { data: sharedTrip } = await sc
@@ -360,18 +362,18 @@ router.get("/highlights/active", async (req, res) => {
   // Filter out blocked users
   const unblocked = (rows ?? []).filter((h: any) => !blockedIds.has(h.owner_id as string));
 
-  // For circle_only highlights, check if viewer follows those owners
+  // For circle_only highlights, check circle_memberships (not general follows)
   const circleOwnerIds = [...new Set(
     unblocked.filter((h: any) => h.visibility === "circle_only").map((h: any) => h.owner_id as string)
   )];
   const followingSet = new Set<string>();
   if (circleOwnerIds.length > 0) {
-    const { data: followRows } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", user.id)
-      .in("following_id", circleOwnerIds);
-    for (const r of followRows ?? []) followingSet.add((r as any).following_id as string);
+    const { data: circleRows } = await sc
+      .from("circle_memberships")
+      .select("owner_id")
+      .eq("member_id", user.id)
+      .in("owner_id", circleOwnerIds);
+    for (const r of circleRows ?? []) followingSet.add((r as any).owner_id as string);
   }
 
   // For trip_only highlights, determine which owners share a trip with the viewer
