@@ -41,8 +41,6 @@ export function PostEngagementBar({
   const [shareOpen, setShareOpen] = useState(false);
   const [liking, setLiking] = useState(false);
 
-  if (!canLike && !canComment && !canShare) return null;
-
   const handleLike = useCallback(async () => {
     if (liking) return;
     setLiking(true);
@@ -77,6 +75,8 @@ export function PostEngagementBar({
     },
     [onCommentCountChange],
   );
+
+  if (!canLike && !canComment && !canShare) return null;
 
   return (
     <>
