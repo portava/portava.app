@@ -1,0 +1,13 @@
+{
+  "name": "travel-buddy-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter !@workspace/travel-buddy run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "~5.9.2"
+  }
+}
