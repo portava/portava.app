@@ -7,7 +7,7 @@ import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
-import { PulseFilterSheet, PulseCreateMenu, PulseFAB } from '../../src/components/PulseCreate';
+import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/PulseCreate';
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
@@ -276,7 +276,7 @@ export default function Pulse() {
         onClear={() => setActive(['All'])}
         onClose={() => setSheetOpen(false)}
       />
-      <PulseCreateMenu visible={createOpen} onClose={() => setCreateOpen(false)} />
+      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => realFeed.reload()} />
     </View>
   );
 }

@@ -1,0 +1,374 @@
+TRAVEL BUDDY — MERGE ALL POST ACTIONS INTO ONE POST FLOW
+
+Problem:
+The mobile Pulse screen still has duplicated creation actions:
+- Header “Post” button
+- Bottom Post/Postcard floating button
+- Post action sheet with multiple separate options
+
+This is cluttered. Merge everything into one clean Post flow.
+
+Mission:
+There should be ONE visible Post button on mobile. When the user taps Post, they choose the occasion/post type inside the composer flow.
+
+Do not delete any post types.
+Do not break existing post APIs.
+Do not break Pulse.
+Do not break Passport/Postcards.
+Do not break hidden gem sharing.
+Do not break food spot sharing.
+Do not break question/update posts.
+Do not break desktop unless desktop has the same duplicated problem.
+
+============================================================
+DESIRED USER FLOW
+============================================================
+
+Mobile Pulse header:
+
+Cebu Pulse                         [Filter icon] [Post]
+
+Bottom nav:
+Pulse / Explore / Trips / Passport
+
+No floating Post/Postcard button at the bottom.
+
+When user taps Post:
+
+Step 1:
+Open a unified Post composer.
+
+At the top of the composer, ask:
+
+“What are you sharing?”
+
+Options:
+- Post Update
+- Ask Question
+- Share a Moment
+- Share Postcard
+- Share Hidden Gem
+- Share Food Spot
+
+The user selects the occasion/type.
+
+Step 2:
+Composer adapts based on selected type.
+
+Post Update:
+- Text required
+- Photo optional
+
+Ask Question:
+- Question/text required
+- Photo optional
+
+Share a Moment:
+- Text required
+- Photo optional or recommended, but not blocking unless existing product rules require it
+
+Share Postcard:
+- Photo recommended
+- Caption optional or required based on existing postcard rules
+- Location optional/auto-filled if available
+
+Share Hidden Gem:
+- Place/location required
+- Description required
+- Photo optional or recommended
+- Category optional if already exists
+
+Share Food Spot:
+- Place/location required
+- Description or recommendation required
+- Photo optional or recommended
+- Cuisine/type optional if already exists
+
+Important:
+Post Update and Ask Question do NOT require a photo. Photo is optional for both.
+
+============================================================
+UI REQUIREMENT
+============================================================
+
+Remove/hide the separate bottom floating Post/Postcard button on mobile when the header Post button exists.
+
+Use one header Post button as the primary entry.
+
+Current screenshot shows:
+- Header Post button
+- Bottom red Post/Postcard FAB
+- Action sheet options
+
+Fix:
+- Remove bottom red FAB on mobile Pulse.
+- Header Post button opens the unified composer.
+- Composer contains the type selector.
+
+Do not show a separate action sheet with:
+Post Update
+Ask Question
+Create Plan
+Share Hidden Gem
+Share a Moment
+
+Instead:
+- Use the unified Post composer for post/share types.
+- Create Plan should move out of the Post menu if it is not a post.
+- Create Plan belongs in Trips/Plans or a separate Plan button/action, not inside Post.
+
+============================================================
+POST TYPE OPTIONS
+============================================================
+
+Use these post types inside the unified composer:
+
+post_update
+ask_question
+share_moment
+share_postcard
+share_hidden_gem
+share_food_spot
+
+Labels:
+Post Update
+Ask Question
+Share a Moment
+Share Postcard
+Share Hidden Gem
+Share Food Spot
+
+Optional helper copy:
+Post Update — “Share what’s happening.”
+Ask Question — “Ask travelers nearby.”
+Share a Moment — “Capture a quick travel moment.”
+Share Postcard — “Share a photo postcard from your trip.”
+Share Hidden Gem — “Recommend a place others should discover.”
+Share Food Spot — “Recommend food, drinks, or a local bite.”
+
+============================================================
+PHOTO RULES
+============================================================
+
+Do not force a photo for every post.
+
+Photo requirements:
+- Post Update: photo optional
+- Ask Question: photo optional
+- Share a Moment: photo optional/recommended
+- Share Postcard: photo recommended; follow existing postcard validation if already required
+- Share Hidden Gem: photo optional/recommended
+- Share Food Spot: photo optional/recommended
+
+If current validation requires photo for all post types, fix it so only the types that truly require a photo require one.
+
+Specifically:
+Post Update and Ask Question must submit with text only.
+
+============================================================
+COMPOSER STRUCTURE
+============================================================
+
+Use one component if possible:
+
+UnifiedPostComposer
+
+State:
+selectedType
+text
+question
+caption
+photo
+location
+placeName
+category
+cuisine
+visibility
+tripId/context if applicable
+
+Validation should be type-based:
+
+post_update:
+- require text OR photo
+- but photo is optional
+
+ask_question:
+- require text/question
+- photo optional
+
+share_moment:
+- require text OR photo
+
+share_postcard:
+- use existing postcard validation if any
+- photo recommended
+- do not break Passport/Postcard feed
+
+share_hidden_gem:
+- require place/location and description
+- photo optional
+
+share_food_spot:
+- require place/location and description/recommendation
+- photo optional
+
+============================================================
+ROUTING / DATA
+============================================================
+
+Keep existing APIs if possible.
+If existing APIs are separate, create a thin adapter from UnifiedPostComposer to the correct existing endpoint.
+
+Do not break existing post data models.
+Do not break existing Passport/Postcard display.
+Do not break Hidden Gems.
+Do not break Pulse feed.
+
+If the backend expects a post type, send:
+type: selectedType
+
+If backend uses different names, map safely:
+post_update -> update
+ask_question -> question
+share_moment -> moment
+share_postcard -> postcard
+share_hidden_gem -> hidden_gem
+share_food_spot -> food_spot
+
+============================================================
+CREATE PLAN
+============================================================
+
+Create Plan should not live inside the Post menu unless the product intentionally treats plans as posts.
+
+Preferred:
+- Remove Create Plan from the Post action sheet.
+- Keep Create Plan in Trips/Plans screen.
+- If Pulse needs plan creation, use a separate small “Plan” action in Trips/Plans context, not inside Post.
+
+Do not delete create plan functionality.
+
+============================================================
+MOBILE LAYOUT
+============================================================
+
+Composer should be mobile clean:
+- bottom sheet or full-screen modal
+- max height 90vh if bottom sheet
+- sticky submit footer
+- 16px side padding
+- 44px minimum tap targets
+- type selector uses compact cards/chips
+- no overlapping with bottom nav
+- no giant buttons
+- no clipped text
+
+Type selector:
+Use compact selectable cards or chips:
+[Update] [Question]
+[Moment] [Postcard]
+[Hidden Gem] [Food Spot]
+
+After selection, show the right fields.
+
+Submit button text changes by type:
+Post Update -> Post Update
+Ask Question -> Ask Question
+Share a Moment -> Share Moment
+Share Postcard -> Share Postcard
+Share Hidden Gem -> Share Hidden Gem
+Share Food Spot -> Share Food Spot
+
+============================================================
+HEADER POST BUTTON
+============================================================
+
+Header Post button should:
+- be compact
+- remain easy to tap
+- open UnifiedPostComposer
+- not open the old action sheet
+
+Mobile target:
+- min-height/tap target 44px
+- visual height 36–40px acceptable
+- label font 13–15px
+- pill shape
+
+============================================================
+REMOVE DUPLICATES
+============================================================
+
+Search for:
+- floating plus
+- Post FAB
+- postcard FAB
+- create action sheet
+- quick create menu
+- Pulse create menu
+- bottom create button
+- red post button
+- FAB post
+
+Ensure on Pulse mobile:
+- only one visible Post action
+- no bottom Post FAB
+- no separate plus
+- no duplicate composer triggers
+
+============================================================
+ACCEPTANCE CRITERIA
+============================================================
+
+Pulse mobile:
+- Header has one Post button.
+- Bottom red Post/Postcard FAB is gone.
+- Tapping Post opens unified composer.
+- User can choose:
+  - Post Update
+  - Ask Question
+  - Share a Moment
+  - Share Postcard
+  - Share Hidden Gem
+  - Share Food Spot
+- Create Plan is not inside the Post flow.
+- Post Update can submit without a photo.
+- Ask Question can submit without a photo.
+- Photo upload remains available but optional where required.
+- Existing postcard/hidden gem/moment functionality still works.
+- Feed updates after successful post.
+- No overlapping bottom nav.
+- No duplicate action sheet.
+- No console errors.
+
+Desktop/tablet:
+- Do not break existing layout.
+- If desktop keeps a create menu, it should still map into the unified composer or not duplicate confusing actions.
+
+Verification:
+1. Mobile 360px: no floating bottom Post/FAB.
+2. Mobile 390px: header Post visible and compact.
+3. Tap Post -> unified composer opens.
+4. Select Post Update -> submit text-only works.
+5. Select Ask Question -> submit text-only works.
+6. Select Share Postcard -> existing postcard behavior still works.
+7. Select Share Hidden Gem -> hidden gem behavior still works.
+8. Select Share Food Spot -> food spot behavior works if supported; otherwise add UI stub with TODO but do not crash.
+9. Create Plan is not in Post sheet.
+10. Bottom nav is not covered.
+11. Build/typecheck passes.
+
+FINAL REPORT:
+Return:
+- Files changed
+- Duplicate post/FAB components removed or hidden
+- UnifiedPostComposer created/updated
+- Post type mapping
+- Photo validation changes
+- Create Plan relocation
+- Screens tested
+- Build/typecheck result
+- Any TODOs
+
+Final result:
+Travel Buddy mobile has one clean Post button. All sharing occasions live inside one unified composer, users choose the occasion after tapping Post, and Post Update/Ask Question do not require photos.
