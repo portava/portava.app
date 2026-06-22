@@ -1,0 +1,198 @@
+TRAVEL BUDDY — Public share engagement rule.
+
+Important product rule:
+Everything a user shares can be liked, commented on, and shared again IF that shared item is public.
+
+This applies across the whole app, not just Pulse.
+
+Public user-shared content includes:
+- Post Updates
+- Questions
+- Moments
+- Postcards
+- Hidden Gems
+- Food Spots
+- Public trip posts
+- Public plan shares
+- Public Discovery shares
+- Public Passport/Postcard shares
+- Any other user-generated shared item marked public
+
+Rule:
+If visibility = public, the item must support:
+1. Like
+2. Comment
+3. Share
+
+If visibility is not public, engagement depends on access scope:
+- trip-only: accepted trip members can like/comment/share inside the trip context
+- circle-only: accepted circle members can like/comment/share inside the circle context
+- private: only owner can view; no public engagement
+- draft: no engagement
+- deleted/hidden/reported-restricted: no engagement unless admin/moderation tools need it
+
+Do not limit engagement only to one post table if the app has multiple shared content models. Either:
+1. Normalize all shared user content into a common shared_items/posts feed model, or
+2. Build a polymorphic engagement system that supports target_type + target_id.
+
+Preferred durable model:
+Create a generic engagement target system.
+
+Tables:
+
+engagement_likes:
+- id uuid primary key
+- target_type text not null
+- target_id uuid not null
+- user_id uuid not null
+- created_at timestamptz default now()
+- unique(target_type, target_id, user_id)
+
+engagement_comments:
+- id uuid primary key
+- target_type text not null
+- target_id uuid not null
+- user_id uuid not null
+- body text not null
+- parent_comment_id uuid null
+- created_at timestamptz default now()
+- updated_at timestamptz null
+- deleted_at timestamptz null
+
+engagement_shares:
+- id uuid primary key
+- target_type text not null
+- target_id uuid not null
+- user_id uuid not null
+- share_target text not null
+- message text null
+- created_at timestamptz default now()
+
+Supported target_type values:
+- post_update
+- ask_question
+- share_moment
+- share_postcard
+- share_hidden_gem
+- share_food_spot
+- trip_post
+- plan_share
+- discovery_share
+- passport_share
+
+If the app already stores all of these as posts with a type field, use post_id instead and do not duplicate tables. But make sure every public shared type is covered.
+
+Access check:
+Before like/comment/share, call a shared permission helper:
+
+canEngageWithTarget(user, targetType, targetId, action)
+
+It should return true only when:
+- target exists
+- target is visible to user
+- target is not deleted/hidden/restricted
+- target visibility permits the action
+
+Public rule:
+If target.visibility === "public":
+- authenticated users can like
+- authenticated users can comment
+- authenticated users can share
+
+Owner rule:
+Owners can still see/manage their own content, but public engagement rules still depend on visibility.
+
+Private rule:
+If target.visibility === "private":
+- no public like/comment/share
+- owner can edit/delete, but not treated as public engagement
+
+Trip/circle rule:
+If target.visibility === "trip":
+- accepted trip members can like/comment/share inside trip context
+- outsiders cannot
+
+If target.visibility === "circle":
+- accepted circle members can like/comment/share inside circle context
+- outsiders cannot
+
+Frontend:
+Every public shared item card must show the same engagement bar:
+Like / Comment / Share
+
+This includes:
+- Pulse cards
+- Passport/Postcard cards
+- Hidden Gem cards
+- Food Spot cards
+- Discovery shared cards
+- Public trip/plan share cards
+- Any “shared by user” card
+
+If an item is not public but the viewer has scoped access, show engagement according to that scope.
+
+If viewer cannot engage:
+- hide engagement bar or show disabled state based on product style
+- do not show broken buttons
+
+API:
+Use generic endpoints if building polymorphic system:
+
+POST /api/engagement/:targetType/:targetId/like
+DELETE /api/engagement/:targetType/:targetId/like
+GET /api/engagement/:targetType/:targetId/comments
+POST /api/engagement/:targetType/:targetId/comments
+PATCH /api/engagement/:targetType/:targetId/comments/:commentId
+DELETE /api/engagement/:targetType/:targetId/comments/:commentId
+POST /api/engagement/:targetType/:targetId/share
+
+Responses should include:
+- likedByMe
+- likeCount
+- commentCount
+- shareCount
+- canLike
+- canComment
+- canShare
+
+Feed queries:
+Every shared item returned to the frontend should include:
+{
+  targetType,
+  targetId,
+  visibility,
+  likeCount,
+  commentCount,
+  shareCount,
+  likedByMe,
+  canLike,
+  canComment,
+  canShare
+}
+
+Important:
+Do not fake counts.
+Do not allow engagement on deleted/private/restricted items.
+Do not allow comment script injection.
+Do not break existing post types.
+Do not break existing Pulse feed.
+Do not break Passport.
+Do not break Discovery.
+Do not break Telegraph sharing.
+
+Acceptance:
+- Every public shared user item has Like/Comment/Share.
+- Public Post Updates can be liked/commented/shared.
+- Public Questions can be liked/commented/shared.
+- Public Moments can be liked/commented/shared.
+- Public Postcards can be liked/commented/shared.
+- Public Hidden Gems can be liked/commented/shared.
+- Public Food Spots can be liked/commented/shared.
+- Public trip/plan shares can be liked/commented/shared if marked public.
+- Private items do not expose public engagement.
+- Trip-only items only allow accepted trip members.
+- Circle-only items only allow accepted circle members.
+- Counts persist after refresh.
+- likedByMe persists after refresh.
+- Mobile layout does not clutter cards.
+- Build/typecheck passes.

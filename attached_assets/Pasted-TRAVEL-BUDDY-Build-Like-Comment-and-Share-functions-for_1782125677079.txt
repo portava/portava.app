@@ -1,0 +1,442 @@
+TRAVEL BUDDY — Build Like, Comment, and Share functions for posts.
+
+Mission:
+Add full social engagement actions to Travel Buddy posts so users can like, comment, and share content across Pulse, Passport/Postcards, Hidden Gems, Food Spots, Moments, Questions, and Updates.
+
+Do not break existing post creation.
+Do not break Pulse feed.
+Do not break Passport.
+Do not break Discovery.
+Do not break Telegraph.
+Do not break trip/group chats.
+Do not remove existing post types.
+Do not fake counts.
+Do not make the UI cluttered on mobile.
+
+Core post actions:
+1. Like / unlike
+2. Comment / view comments
+3. Share
+
+These should work for post types:
+- post_update
+- ask_question
+- share_moment
+- share_postcard
+- share_hidden_gem
+- share_food_spot
+
+============================================================
+PART 1 — DATABASE / DATA MODEL
+============================================================
+
+Add or reuse engagement tables.
+
+If tables do not exist, create:
+
+posts_likes:
+- id uuid primary key
+- post_id uuid not null
+- user_id uuid not null
+- created_at timestamptz default now()
+- unique(post_id, user_id)
+
+posts_comments:
+- id uuid primary key
+- post_id uuid not null
+- user_id uuid not null
+- body text not null
+- parent_comment_id uuid null
+- created_at timestamptz default now()
+- updated_at timestamptz null
+- deleted_at timestamptz null
+
+posts_shares:
+- id uuid primary key
+- post_id uuid not null
+- user_id uuid not null
+- share_target text not null
+- message text null
+- created_at timestamptz default now()
+
+Recommended share_target values:
+- native_share
+- copy_link
+- telegraph
+- trip_chat
+- external
+
+If post table already has counts, keep counters in sync:
+- like_count
+- comment_count
+- share_count
+
+If there are no count columns, either add them or compute counts efficiently in feed queries.
+
+Do not duplicate existing tables if likes/comments already exist.
+
+============================================================
+PART 2 — BACKEND API
+============================================================
+
+Add or update APIs:
+
+Like:
+POST /api/posts/:postId/like
+
+Behavior:
+- authenticated user required
+- if user has not liked, create like
+- if user already liked, return already liked or support idempotent state
+- return updated likedByMe and likeCount
+
+Unlike:
+DELETE /api/posts/:postId/like
+
+Behavior:
+- authenticated user required
+- remove like if exists
+- idempotent if already unliked
+- return updated likedByMe and likeCount
+
+Comments list:
+GET /api/posts/:postId/comments
+
+Response:
+{
+  ok: true,
+  comments: [
+    {
+      id,
+      body,
+      author,
+      createdAt,
+      updatedAt,
+      canEdit,
+      canDelete
+    }
+  ]
+}
+
+Add comment:
+POST /api/posts/:postId/comments
+
+Body:
+{
+  body: "text"
+}
+
+Behavior:
+- authenticated user required
+- body required
+- trim body
+- reject empty
+- reasonable max length, suggested 1000 chars
+- return created comment and updated commentCount
+
+Edit comment:
+PATCH /api/posts/:postId/comments/:commentId
+
+Behavior:
+- only author or admin can edit
+- update body
+- update updated_at
+
+Delete comment:
+DELETE /api/posts/:postId/comments/:commentId
+
+Behavior:
+- soft delete preferred
+- author or admin can delete
+- decrement visible comment count if appropriate
+
+Share:
+POST /api/posts/:postId/share
+
+Body:
+{
+  shareTarget: "copy_link" | "native_share" | "telegraph" | "trip_chat" | "external",
+  message: "optional message",
+  threadId: "optional for telegraph/trip_chat"
+}
+
+Behavior:
+- authenticated user required
+- create share record
+- increment share count
+- return shareCount and shareUrl if relevant
+
+Share URL:
+Make sure every post has a shareable route or permalink:
+- /pulse/post/:postId
+or
+- /posts/:postId
+
+If no public permalink exists yet, create an internal route-safe permalink first.
+
+============================================================
+PART 3 — FEED RESPONSE
+============================================================
+
+Update feed/post APIs so each post card receives:
+
+{
+  id,
+  type,
+  author,
+  body,
+  media,
+  location,
+  createdAt,
+  likeCount,
+  commentCount,
+  shareCount,
+  likedByMe,
+  canComment,
+  canShare
+}
+
+Pulse, Passport, Discovery, Hidden Gems, Food Spots, and Postcards should all use these fields.
+
+Avoid making each card run separate count queries if it will hurt performance. Prefer aggregate counts in feed query or batched lookups.
+
+============================================================
+PART 4 — FRONTEND COMPONENTS
+============================================================
+
+Create reusable components:
+
+PostEngagementBar
+LikeButton
+CommentButton
+ShareButton
+CommentsSheet
+ShareSheet
+
+Use them across post cards.
+
+PostEngagementBar layout:
+[Like] [Comment] [Share]
+
+Mobile:
+- Compact icons with labels/counts
+- Tap targets at least 44px
+- No giant buttons
+- No overlap
+- Works inside feed cards
+- Does not fight with bottom nav
+
+Example behavior:
+Like:
+- tapping heart toggles like instantly
+- optimistic UI allowed
+- rollback if API fails
+- show filled heart when likedByMe true
+
+Comment:
+- opens bottom sheet on mobile
+- opens panel/modal on desktop if preferred
+- shows comments
+- user can add a comment
+- comment count updates after submit
+
+Share:
+- opens share sheet
+- options:
+  - Copy Link
+  - Share to Telegraph
+  - Share to Trip Chat if trip context exists
+  - Native Share if navigator.share exists
+- increment share count only when action succeeds or when user confirms share intent, depending on existing product style
+
+============================================================
+PART 5 — COMMENT SHEET UX
+============================================================
+
+Mobile comment sheet:
+- bottom sheet
+- max height 85–90vh
+- sticky input at bottom
+- comments scroll internally
+- safe-area bottom padding
+- text input does not hide behind keyboard
+- submit button disabled when empty
+- show loading state
+- show empty state:
+  “No comments yet. Start the conversation.”
+
+Comment item:
+- author avatar
+- author name
+- time
+- body
+- edit/delete menu if user owns it
+
+Do not crash if author avatar missing.
+
+============================================================
+PART 6 — SHARE SHEET UX
+============================================================
+
+Mobile share sheet:
+Options:
+- Copy Link
+- Share to Telegraph
+- Share to Trip Chat
+- Native Share
+
+If native share unavailable, hide or disable Native Share.
+
+If no trip context exists, hide or disable Trip Chat.
+
+If Telegraph route/service exists, allow user to choose a thread/contact, or create a share intent that opens Telegraph with the post link/message.
+
+Copy link:
+- copy permalink to clipboard
+- toast: “Link copied”
+
+Share to Telegraph:
+- open Telegraph picker or compose screen with post attached
+- preserve existing auto-translation system
+- do not break messages
+
+Share to Trip Chat:
+- only show if post belongs to a trip or user has trip chats
+- send post card/link into selected trip chat
+
+============================================================
+PART 7 — NOTIFICATIONS
+============================================================
+
+If notification system exists:
+- notify post author when someone comments
+- notify post author when someone likes, optionally batched
+- notify post author when someone shares, optional
+- do not notify user for their own like/comment/share
+
+If notification system is not ready, add TODO and do not break build.
+
+============================================================
+PART 8 — PRIVACY / PERMISSIONS
+============================================================
+
+Only allow engagement on posts the user can view.
+
+Before liking/commenting/sharing:
+- verify post exists
+- verify user has access to post
+- respect blocked users if block system exists
+- respect deleted/hidden/private posts
+- respect trip/circle visibility
+
+For trip/group posts:
+- only accepted trip members should comment/share internally if post is restricted
+
+For public Pulse posts:
+- authenticated users can like/comment/share unless moderation settings say otherwise
+
+============================================================
+PART 9 — MODERATION / SAFETY
+============================================================
+
+Add basic comment safeguards:
+- trim whitespace
+- reject empty comments
+- max length 1000 chars
+- soft delete comments
+- author/admin delete permission
+- optional profanity/moderation hook if existing
+
+Do not allow HTML/script injection in comments.
+Render comment text safely.
+
+============================================================
+PART 10 — POST TYPES
+============================================================
+
+Make sure engagement bar appears on:
+- Post Update cards
+- Ask Question cards
+- Share a Moment cards
+- Share Postcard cards
+- Share Hidden Gem cards
+- Share Food Spot cards
+
+For Ask Question:
+- Comment button can be labeled “Answer” visually if product style prefers.
+- But underlying comments can still use comments table.
+
+For Hidden Gem/Food Spot:
+- Share should include location/place preview if available.
+
+For Postcard:
+- Share should include photo/card preview if available.
+
+============================================================
+PART 11 — OPTIMISTIC UI
+============================================================
+
+Like toggle should be optimistic:
+- immediately update heart/count
+- call API
+- rollback on failure
+- toast or inline error if failed
+
+Comments:
+- add pending comment state while posting
+- replace with server comment on success
+- show retry on failure
+
+Share:
+- show success toast
+- only increment count when action succeeds or confirmed
+
+============================================================
+PART 12 — TESTS / VERIFICATION
+============================================================
+
+Test:
+1. Like a post
+2. Unlike a post
+3. Like count updates
+4. likedByMe persists after refresh
+5. Add comment
+6. Comment count updates
+7. Empty comment rejected
+8. Long comment rejected
+9. Delete own comment
+10. Non-owner cannot delete someone else’s comment
+11. Share copy link works
+12. Share sheet opens on mobile
+13. Native share hidden if unsupported
+14. Telegraph share entry works or opens correct TODO-safe flow
+15. Trip chat share only appears when available
+16. Pulse feed cards show engagement bar
+17. Passport/Postcard cards show engagement bar
+18. Hidden Gem/Food Spot cards show engagement bar
+19. Discovery does not crash if counts are missing
+20. Existing posts without counts render with 0
+21. Mobile 360px layout has no overlap
+22. Bottom nav does not cover sheets/buttons
+23. Build passes
+24. TypeScript passes
+25. No console errors
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Files created
+2. Files modified
+3. Database migration added
+4. APIs added/updated
+5. Engagement components added
+6. Where Like/Comment/Share now appears
+7. Share destinations supported
+8. Permission checks added
+9. Verification results
+10. Any TODOs
+
+Final result:
+Travel Buddy posts now support like, comment, and share across Pulse, Passport/Postcards, Hidden Gems, Food Spots, Moments, Questions, and Updates, with mobile-safe engagement UI and backend-backed counts.

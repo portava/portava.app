@@ -299,14 +299,36 @@ router.get("/posts", async (req, res) => {
       for (const p of profiles ?? []) profileMap[p.id] = p;
     }
 
-    // Step 4: merge author into each post; never expose raw DB profile fields.
+    // Step 4: batch-fetch engagement counts + likedByMe (graceful pre-migration).
+    const postIds = posts.map((p) => p.id);
+    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+    if (postIds.length > 0) {
+      const [{ data: engData }, { data: likedData }] = await Promise.all([
+        sc.from("posts").select("id, like_count, comment_count").in("id", postIds),
+        sc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", postIds),
+      ]);
+      const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+      for (const r of engData ?? []) {
+        engMap[r.id] = {
+          likeCount: r.like_count ?? 0,
+          commentCount: r.comment_count ?? 0,
+          likedByMe: likedSet.has(r.id),
+        };
+      }
+    }
+
+    // Step 5: merge author + engagement into each post.
     const merged = posts.map((p) => {
       const pr = profileMap[p.author_id];
+      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
       return {
         ...p,
         author: pr
           ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
           : null,
+        likeCount: eng.likeCount,
+        commentCount: eng.commentCount,
+        likedByMe: eng.likedByMe,
       };
     });
 
@@ -315,7 +337,10 @@ router.get("/posts", async (req, res) => {
   }
 
   // ── Global feed (default) ─────────────────────────────────────────────────
-  let q = client
+  const svc = getServiceClient();
+  if (!svc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  let q = svc
     .from("posts")
     .select(POST_COLUMNS)
     .is("trip_id", null)
@@ -331,7 +356,50 @@ router.get("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  res.status(200).json({ posts: data ?? [], feed: "global" });
+  const globalPosts: any[] = data ?? [];
+  const globalPostIds = globalPosts.map((p) => p.id);
+  const globalAuthorIds = [...new Set(globalPosts.map((p) => p.author_id))];
+
+  // Batch-fetch authors
+  let globalProfileMap: Record<string, any> = {};
+  if (globalAuthorIds.length > 0) {
+    const { data: profiles } = await svc
+      .from("profiles")
+      .select("id, handle, name, avatar_url")
+      .in("id", globalAuthorIds);
+    for (const p of profiles ?? []) globalProfileMap[p.id] = p;
+  }
+
+  // Batch-fetch engagement (graceful pre-migration)
+  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+  if (globalPostIds.length > 0) {
+    const [{ data: engData }, { data: likedData }] = await Promise.all([
+      svc.from("posts").select("id, like_count, comment_count").in("id", globalPostIds),
+      svc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
+    ]);
+    const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+    for (const r of engData ?? []) {
+      globalEngMap[r.id] = {
+        likeCount: r.like_count ?? 0,
+        commentCount: r.comment_count ?? 0,
+        likedByMe: likedSet.has(r.id),
+      };
+    }
+  }
+
+  const mergedGlobal = globalPosts.map((p) => {
+    const pr = globalProfileMap[p.author_id];
+    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    return {
+      ...p,
+      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+      likeCount: eng.likeCount,
+      commentCount: eng.commentCount,
+      likedByMe: eng.likedByMe,
+    };
+  });
+
+  res.status(200).json({ posts: mergedGlobal, feed: "global" });
 });
 
 /* ===========================================================================
@@ -496,6 +564,191 @@ router.delete("/posts/:postId", async (req, res) => {
     return;
   }
   res.status(204).send();
+});
+
+/* ============================================================================
+ * POST /posts/:postId/like  — like a post (idempotent)
+ * DELETE /posts/:postId/like — unlike a post (idempotent)
+ * ============================================================================
+ */
+function isValidUuid(s: string) {
+  return /^[0-9a-f-]{36}$/i.test(s);
+}
+
+router.post("/posts/:postId/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post, error: postErr } = await sc
+    .from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (postErr) { sendError(res, "db_error", postErr.message); return; }
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  // Upsert (ignoreDuplicates = no-op if already liked)
+  const { error: upsertErr } = await sc
+    .from("posts_likes")
+    .upsert({ post_id: postId, user_id: user.id }, { onConflict: "post_id,user_id", ignoreDuplicates: true });
+  if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
+
+  // Accurate count + sync
+  const { count } = await sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
+
+  res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
+});
+
+router.delete("/posts/:postId/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { error: delErr } = await sc
+    .from("posts_likes").delete().eq("post_id", postId).eq("user_id", user.id);
+  if (delErr) { sendError(res, "db_error", delErr.message); return; }
+
+  const { count } = await sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
+
+  res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * GET /posts/:postId/comments  — list visible comments
+ * POST /posts/:postId/comments — add a comment
+ * DELETE /posts/:postId/comments/:commentId — soft-delete own comment
+ * ============================================================================
+ */
+router.get("/posts/:postId/comments", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Verify post exists
+  const { data: post } = await sc.from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  const { data: rows, error: listErr } = await sc
+    .from("posts_comments")
+    .select("id, post_id, user_id, body, created_at, updated_at")
+    .eq("post_id", postId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true });
+  if (listErr) { sendError(res, "db_error", listErr.message); return; }
+
+  const commentRows: any[] = rows ?? [];
+  const authorIds = [...new Set(commentRows.map((c) => c.user_id))];
+  let profileMap: Record<string, any> = {};
+  if (authorIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    for (const p of profiles ?? []) profileMap[p.id] = p;
+  }
+
+  const comments = commentRows.map((c) => {
+    const pr = profileMap[c.user_id];
+    return {
+      id: c.id,
+      body: c.body,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at ?? null,
+      canDelete: c.user_id === user.id,
+      author: pr
+        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
+        : { id: c.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },
+    };
+  });
+
+  res.status(200).json({ ok: true, comments });
+});
+
+router.post("/posts/:postId/comments", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const body = String(req.body?.body ?? "").trim();
+  if (!body) { sendError(res, "invalid_payload", "Comment body is required"); return; }
+  if (body.length > 1000) { sendError(res, "invalid_payload", "Comment must be 1000 characters or fewer"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  const { data: comment, error: insertErr } = await sc
+    .from("posts_comments")
+    .insert({ post_id: postId, user_id: user.id, body })
+    .select("id, post_id, user_id, body, created_at, updated_at")
+    .single();
+  if (insertErr) { sendError(res, "db_error", insertErr.message); return; }
+
+  // Accurate count + sync
+  const { count } = await sc.from("posts_comments").select("id", { count: "exact", head: true })
+    .eq("post_id", postId).is("deleted_at", null);
+  await sc.from("posts").update({ comment_count: count ?? 0 }).eq("id", postId);
+
+  // Fetch author profile for response
+  const { data: profile } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id).single();
+
+  res.status(201).json({
+    ok: true,
+    comment: {
+      id: (comment as any).id,
+      body: (comment as any).body,
+      createdAt: (comment as any).created_at,
+      updatedAt: null,
+      canDelete: true,
+      author: profile
+        ? { id: profile.id, handle: profile.handle, name: profile.name, avatarUrl: profile.avatar_url ?? null }
+        : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },
+    },
+    commentCount: count ?? 0,
+  });
+});
+
+router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId) || !isValidUuid(commentId)) {
+    sendError(res, "invalid_payload", "Invalid id"); return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc
+    .from("posts_comments").select("id, user_id")
+    .eq("id", commentId).eq("post_id", postId).is("deleted_at", null).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Comment not found"); return; }
+  if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Cannot delete someone else's comment"); return; }
+
+  await sc.from("posts_comments").update({ deleted_at: new Date().toISOString() }).eq("id", commentId);
+
+  const { count } = await sc.from("posts_comments").select("id", { count: "exact", head: true })
+    .eq("post_id", postId).is("deleted_at", null);
+  await sc.from("posts").update({ comment_count: count ?? 0 }).eq("id", postId);
+
+  res.status(200).json({ ok: true, commentCount: count ?? 0 });
 });
 
 export default router;

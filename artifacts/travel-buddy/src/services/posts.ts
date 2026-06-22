@@ -34,6 +34,10 @@ export interface PostRow {
   locationCity?: string | null;
   locationCountry?: string | null;
   author?: PostAuthor | null;
+  likeCount: number;
+  commentCount: number;
+  shareCount: number;
+  likedByMe: boolean;
 }
 
 export type PostErrorKind =
@@ -70,6 +74,10 @@ function mapPost(r: any): PostRow {
     author: r.author
       ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null }
       : null,
+    likeCount: r.likeCount ?? r.like_count ?? 0,
+    commentCount: r.commentCount ?? r.comment_count ?? 0,
+    shareCount: r.shareCount ?? r.share_count ?? 0,
+    likedByMe: r.likedByMe ?? false,
   };
 }
 

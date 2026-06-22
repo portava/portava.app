@@ -44,6 +44,9 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     source: 'user',
     neighborhood: p.locationName ?? undefined,
     visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
+    likeCount: p.likeCount,
+    commentCount: p.commentCount,
+    likedByMe: p.likedByMe,
   };
 }
 

@@ -9,6 +9,7 @@ import type { PulseFeedItem } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePlanPicker } from './PlanPickerController';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
+import { PostEngagementBar } from './PostEngagementBar';
 
 /* shared bits */
 function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
@@ -51,12 +52,12 @@ function PostCard({ item }: { item: PulseFeedItem }) {
       ) : null}
       {item.caption ? <Text style={s.caption}>{item.caption}</Text> : null}
       <TagRow tags={item.tags} />
-      <View style={s.actions}>
-        <View style={s.action}><Heart size={17} color={color.signal} /><Text style={s.actionText}>{item.likeCount ?? 0}</Text></View>
-        <View style={s.action}><MessageCircle size={17} color={color.mute} /><Text style={s.actionText}>{item.commentCount ?? 0}</Text></View>
-        <View style={{ flex: 1 }} />
-        <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
-      </View>
+      <PostEngagementBar
+        postId={item.id}
+        likeCount={item.likeCount ?? 0}
+        commentCount={item.commentCount ?? 0}
+        likedByMe={item.likedByMe ?? false}
+      />
     </View>
   );
 }
@@ -73,6 +74,14 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
         <View style={{ flex: 1 }} />
         <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
       </View>
+      {item.source === 'user' && (
+        <PostEngagementBar
+          postId={item.id}
+          likeCount={item.likeCount ?? 0}
+          commentCount={item.commentCount ?? 0}
+          likedByMe={item.likedByMe ?? false}
+        />
+      )}
     </View>
   );
 }

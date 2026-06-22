@@ -60,6 +60,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0021_plan_edit_permission.sql` | Adds `plan_edit_permission` column to `trips` (enum: `owner_only \| all_members \| specific_members`, default `all_members`) and creates `plan_editors` join table with RLS; used by plan permission system | pending |
 | `0022_availability_nudges.sql` | Creates `availability_nudges` table (sender_id, recipient_id, trip_id, nudge_date, sent_on); UNIQUE(recipient_id,trip_id,sent_on) rate-limits to one nudge per recipient per trip per day; RLS: recipients read own rows | pending |
 | `0023_push_tokens.sql` | Adds `expo_push_token TEXT` to `profiles`; stores Expo push token per device so the API server can send push notifications | pending |
+| `0024_post_engagement.sql` | Creates `posts_likes` (post_id+user_id unique, RLS) and `posts_comments` (body, soft-delete, RLS) tables; adds `like_count`, `comment_count`, `share_count` integer columns (DEFAULT 0) to `posts` | pending |
 
 ## Gotchas
 

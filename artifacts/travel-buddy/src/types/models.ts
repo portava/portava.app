@@ -656,6 +656,8 @@ export interface PulseFeedItem {
   replyCount?: number;
   likeCount?: number;
   commentCount?: number;
+  shareCount?: number;
+  likedByMe?: boolean;
   title?: string;
   time?: string;
   host?: PulseAuthor;
