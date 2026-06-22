@@ -63,6 +63,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0024_post_engagement.sql` | Creates `posts_likes` (post_id+user_id unique, RLS) and `posts_comments` (body, soft-delete, RLS) tables; adds `like_count`, `comment_count`, `share_count` integer columns (DEFAULT 0) to `posts` | 2026-06-22 |
 | `0025_location_system.sql` | Creates `user_location_state` (per-user GPS/manual-city upsert, unique on user_id, RLS) and `passport_stamps_gps` (GPS-earned stamp events, unique on user+type+country+city, RLS) tables; adds `location_source`, `stamp_city/country/label/unlocked_at` columns to `postcards` if it exists | 2026-06-22 |
 | `0026_highlights.sql` | Creates `highlights`, `highlight_views`, `highlight_likes`, `highlight_replies`, `highlight_reports` tables with RLS; visibility enum (public/travelers_nearby/circle_only/trip_only/private); 24h default expiry, soft-delete, view/like/reply/report engagement | 2026-06-22 |
+| `0028_highlights_last_viewed.sql` | Adds `highlights_last_viewed_at timestamptz` to `profiles`; updated by `POST /api/me/highlights/mark-viewed`; used by `GET /api/me/unread-counts` to compute `newHighlights` badge count | pending |
 
 ## Gotchas
 

@@ -29,6 +29,7 @@ import {
   replyToHighlight,
   reportHighlight,
 } from '../services/highlights';
+import { markHighlightsViewed } from '../services/messaging';
 import { markViewed } from '../hooks/useHighlightRingState';
 import { HighlightViewersSheet } from './HighlightViewersSheet';
 
@@ -72,7 +73,7 @@ export function HighlightViewer({
   const isOwner = current?.ownerId === currentUserId;
   const isVideo = (current?.mediaType ?? '').startsWith('video/');
 
-  // Reset when visible/startIndex changes
+  // Reset when visible/startIndex changes; mark all circle highlights read when viewer opens.
   useEffect(() => {
     if (visible) {
       setIndex(startIndex);
@@ -83,6 +84,9 @@ export function HighlightViewer({
       const map: Record<string, { liked: boolean; count: number }> = {};
       for (const h of highlights) map[h.id] = { liked: h.likedByMe, count: h.likeCount };
       setLikeMap(map);
+      // Best-effort: advance the highlights_last_viewed_at cursor so the
+      // Explore tab badge clears after the user opens any highlight viewer.
+      markHighlightsViewed().catch(() => {});
     }
   }, [visible, startIndex, highlights]);
 

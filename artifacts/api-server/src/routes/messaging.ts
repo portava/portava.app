@@ -628,11 +628,14 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * GET /api/me/unread-counts
  * ---------------------------------------------------------------------------
- * Returns { messages: number; notifications: number }
- *   messages      — threads with at least one unread message not sent by the caller
- *   notifications — pending inbox items (friend requests, circle invites, trip
- *                   invites, message requests) created after the caller last
- *                   viewed their Inbox (profiles.notifications_inbox_viewed_at).
+ * Returns { messages: number; notifications: number; meetups: number; newHighlights: number }
+ *   messages       — threads with at least one unread message not sent by the caller
+ *   notifications  — pending inbox items (friend requests, circle invites, trip
+ *                    invites, message requests) created after the caller last
+ *                    viewed their Inbox (profiles.notifications_inbox_viewed_at).
+ *   newHighlights  — active highlights from circle members posted since the
+ *                    caller last opened the highlights viewer
+ *                    (profiles.highlights_last_viewed_at).
  */
 router.get('/me/unread-counts', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -651,7 +654,7 @@ router.get('/me/unread-counts', async (req, res) => {
       .is('left_at', null),
     sc
       .from('profiles')
-      .select('notifications_inbox_viewed_at')
+      .select('notifications_inbox_viewed_at, highlights_last_viewed_at')
       .eq('id', user.id)
       .maybeSingle(),
   ]);
@@ -683,6 +686,7 @@ router.get('/me/unread-counts', async (req, res) => {
   }
 
   const inboxViewedAt: string | null = (profileResult.data as any)?.notifications_inbox_viewed_at ?? null;
+  const highlightsViewedAt: string | null = (profileResult.data as any)?.highlights_last_viewed_at ?? null;
 
   // ── Message unread count ──────────────────────────────────────────────────
   const threadIds = (memberships ?? []).map((m: any) => m.thread_id as string);
@@ -804,7 +808,52 @@ router.get('/me/unread-counts', async (req, res) => {
     (mrResult.count ?? 0) +
     (anResult.count ?? 0);
 
-  res.status(200).json({ messages: messageCount, notifications: notifCount, meetups });
+  // ── New highlights count ──────────────────────────────────────────────────
+  // Count active highlights from users in the caller's circle that were posted
+  // after the caller last opened the highlights viewer. Blocks are excluded.
+  let newHighlights = 0;
+  try {
+    const now = new Date().toISOString();
+
+    // 1. Get IDs of users blocked in either direction.
+    const [blockedByMe, blockingMe] = await Promise.all([
+      sc.from('blocks').select('blocked_id').eq('blocker_id', user.id),
+      sc.from('blocks').select('blocker_id').eq('blocked_id', user.id),
+    ]);
+    const blockedSet = new Set<string>([
+      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
+      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+    ]);
+
+    // 2. Get IDs of users in the caller's circle.
+    const { data: circleRows } = await sc
+      .from('circle_memberships')
+      .select('other_id')
+      .eq('user_id', user.id);
+    const circleIds = (circleRows ?? [])
+      .map((r: any) => r.other_id as string)
+      .filter((id: string) => !blockedSet.has(id));
+
+    if (circleIds.length > 0) {
+      // 3. Count active highlights from circle members posted after last view.
+      let q = (sc as any)
+        .from('highlights')
+        .select('id', { count: 'exact', head: true })
+        .in('owner_id', circleIds)
+        .is('deleted_at', null)
+        .gt('expires_at', now)
+        .in('visibility', ['public', 'travelers_nearby', 'circle_only']);
+      if (highlightsViewedAt) {
+        q = q.gt('created_at', highlightsViewedAt);
+      }
+      const { count: hCount } = await q;
+      newHighlights = hCount ?? 0;
+    }
+  } catch (e) {
+    req.log.warn({ err: e }, 'unread-counts newHighlights query failed — defaulting to 0');
+  }
+
+  res.status(200).json({ messages: messageCount, notifications: notifCount, meetups, newHighlights });
 });
 
 /* ---------------------------------------------------------------------------
@@ -830,6 +879,36 @@ router.post('/me/notifications/read-all', async (req, res) => {
 
   if (error) {
     req.log.error({ err: error }, 'mark notifications read failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true, viewedAt: now });
+});
+
+/* ---------------------------------------------------------------------------
+ * POST /api/me/highlights/mark-viewed
+ * ---------------------------------------------------------------------------
+ * Records that the current user has opened the highlights viewer by setting
+ * profiles.highlights_last_viewed_at = now(). The unread-counts endpoint
+ * uses this timestamp to compute the newHighlights badge count.
+ */
+router.post('/me/highlights/mark-viewed', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc
+    .from('profiles')
+    .update({ highlights_last_viewed_at: now })
+    .eq('id', user.id);
+
+  if (error) {
+    req.log.error({ err: error }, 'mark highlights viewed failed');
     sendError(res, 'db_error', error.message);
     return;
   }

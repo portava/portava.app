@@ -18,6 +18,7 @@ import {
   getMyThreads,
   getUnreadCounts,
   markThreadRead,
+  markHighlightsViewed,
   getThreadMessages,
   sendMessage,
   retryTranslation,
@@ -267,6 +268,7 @@ export function useUnreadCounts() {
   const [messages, setMessages] = useState(0);
   const [notifications, setNotifications] = useState(0);
   const [meetups, setMeetups] = useState(0);
+  const [newHighlights, setNewHighlights] = useState(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const refresh = useCallback(async () => {
@@ -275,6 +277,7 @@ export function useUnreadCounts() {
       setMessages(res.data.messages ?? 0);
       setNotifications(res.data.notifications ?? 0);
       setMeetups(res.data.meetups ?? 0);
+      setNewHighlights(res.data.newHighlights ?? 0);
     }
   }, []);
 
@@ -296,10 +299,10 @@ export function useUnreadCounts() {
     };
   }, [refresh]);
 
-  return { messages, notifications, meetups, refresh };
+  return { messages, notifications, meetups, newHighlights, refresh };
 }
 
-export { markThreadRead };
+export { markThreadRead, markHighlightsViewed };
 
 // ── Language settings ─────────────────────────────────────────────────────────
 

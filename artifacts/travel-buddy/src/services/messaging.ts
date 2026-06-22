@@ -291,12 +291,16 @@ export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary
   return apiGet('/api/me/threads');
 }
 
-export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number }>> {
+export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number; newHighlights: number }>> {
   return apiGet('/api/me/unread-counts');
 }
 
 export async function markNotificationsRead(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {
   return apiPost('/api/me/notifications/read-all');
+}
+
+export async function markHighlightsViewed(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {
+  return apiPost('/api/me/highlights/mark-viewed');
 }
 
 export async function markThreadRead(

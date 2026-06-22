@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, Compass, Map, User, Plus, Plane, Bell, MessageCircle } from 'lucide-react-native';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
-import { useUnreadCounts } from '../../src/hooks/useMessaging';
+import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -96,7 +96,7 @@ function StampButton() {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
-  const { messages: unreadMessages, notifications: unreadNotifications, refresh: refreshUnread } = useUnreadCounts();
+  const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
 
   const tabs = (
     <Tabs
@@ -122,8 +122,20 @@ export default function TabLayout() {
         name="discovery"
         options={{
           title: 'Explore',
-          tabBarIcon: ({ color: c }) => <Compass size={22} color={c} />,
+          tabBarIcon: ({ color: c }) => (
+            <View>
+              <Compass size={22} color={c} />
+              {newHighlights > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {newHighlights > 99 ? '99+' : String(newHighlights)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
+        listeners={{ focus: refreshUnread }}
       />
       <Tabs.Screen
         name="create-tab"
