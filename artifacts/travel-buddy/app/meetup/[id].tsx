@@ -14,7 +14,7 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Check, ThumbsUp, ThumbsDown,
-  Minus, Plus, Trophy, Pencil, X,
+  Minus, Plus, Trophy, Pencil, X, CheckCircle2,
 } from 'lucide-react-native';
 import {
   getMeetup, rsvpMeetup, voteTimeOption, confirmTime,
@@ -96,6 +96,79 @@ const RSVP_OPTIONS: { key: 'going' | 'maybe' | 'declined'; label: string; emoji:
   { key: 'maybe',   label: 'Maybe',    emoji: '🤔' },
   { key: 'declined', label: "Can't go", emoji: '❌' },
 ];
+
+function ConfirmedTimeBanner({ meetup }: { meetup: MeetupDetail }) {
+  if (meetup.status !== 'confirmed') return null;
+
+  const dateTime = meetup.startsAt
+    ? relDateTime(meetup.startsAt)
+    : meetup.approximateDate
+      ? `${relDate(meetup.approximateDate)}${meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}`
+      : null;
+
+  return (
+    <View style={cb.banner}>
+      <View style={cb.iconWrap}>
+        <CheckCircle2 size={22} color="#16A34A" />
+      </View>
+      <View style={cb.body}>
+        <Text style={cb.heading}>Time Confirmed</Text>
+        {dateTime ? (
+          <Text style={cb.detail}>{dateTime}</Text>
+        ) : null}
+        {meetup.locationName ? (
+          <View style={cb.locRow}>
+            <MapPin size={12} color="#15803D" />
+            <Text style={cb.locText}>{meetup.locationName}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+const cb = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#DCFCE7',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
+  },
+  iconWrap: {
+    marginTop: 1,
+  },
+  body: {
+    flex: 1,
+    gap: 3,
+  },
+  heading: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#14532D',
+    letterSpacing: 0.1,
+  },
+  detail: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  locRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+  },
+  locText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#15803D',
+    flex: 1,
+  },
+});
 
 function VoteBar({ votes }: { votes: TimeOptionVotes }) {
   const total = votes.yes + votes.maybe + votes.no;
@@ -373,6 +446,9 @@ export default function MeetupScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* Confirmed time banner — visible without scrolling on any phone */}
+        <ConfirmedTimeBanner meetup={meetup} />
 
         {/* Status + title (edit mode or view mode) */}
         {editing ? (
