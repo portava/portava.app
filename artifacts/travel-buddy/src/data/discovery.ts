@@ -17,7 +17,7 @@ export interface DiscoveryItem {
   city: string;
   blurb: string;            // "why it's special" / short note
   imageUrl?: string;
-  submittedBy?: { name: string; avatarUrl: string };
+  submittedBy?: { name: string; avatarUrl: string; id?: string };
   savedCount?: number;
   source: DiscoverySource;
   status: DiscoveryStatus;
@@ -65,14 +65,14 @@ export const DISCOVERY_CATEGORIES = [
 
 /* ── Pass 2 seed: gems, neighborhoods, traveler picks, saved ── */
 
-const TRAVELER = (name: string, avatarUrl: string) => ({ name, avatarUrl });
+const TRAVELER = (name: string, avatarUrl: string, id?: string) => ({ name, avatarUrl, id });
 
 export const hiddenGems: DiscoveryItem[] = [
-  { id: 'hg1', name: 'The Backspace Cafe', category: 'hidden_gem', neighborhood: 'Lahug, Cebu City', city: 'Cebu', blurb: 'Cozy cafe with great coffee and quiet vibes.', submittedBy: TRAVELER('Anna', 'https://i.pravatar.cc/120?img=5'), ...SEED },
-  { id: 'hg2', name: 'Sirao Garden', category: 'hidden_gem', neighborhood: 'Sirao, Cebu', city: 'Cebu', blurb: 'Flower garden with mountain views.', submittedBy: TRAVELER('Mark', 'https://i.pravatar.cc/120?img=12'), ...SEED },
-  { id: 'hg3', name: 'Sugbo Mercado', category: 'hidden_gem', neighborhood: 'IT Park, Cebu City', city: 'Cebu', blurb: 'Food market with local vendors and live music.', submittedBy: TRAVELER('Jessa', 'https://i.pravatar.cc/120?img=9'), ...SEED },
-  { id: 'hg4', name: 'Tamagas Falls', category: 'hidden_gem', neighborhood: 'Alegria, Cebu', city: 'Cebu', blurb: 'Hidden waterfall and natural lagoon.', submittedBy: TRAVELER('Carlo', 'https://i.pravatar.cc/120?img=15'), ...SEED },
-  { id: 'hg5', name: 'Speakeasy Cebu', category: 'hidden_gem', neighborhood: 'Capitol Site', city: 'Cebu', blurb: 'Hidden bar with craft cocktails.', submittedBy: TRAVELER('Vince', 'https://i.pravatar.cc/120?img=33'), ...SEED },
+  { id: 'hg1', name: 'The Backspace Cafe', category: 'hidden_gem', neighborhood: 'Lahug, Cebu City', city: 'Cebu', blurb: 'Cozy cafe with great coffee and quiet vibes.', submittedBy: TRAVELER('Anna', 'https://i.pravatar.cc/120?img=5', 'u_1'), ...SEED },
+  { id: 'hg2', name: 'Sirao Garden', category: 'hidden_gem', neighborhood: 'Sirao, Cebu', city: 'Cebu', blurb: 'Flower garden with mountain views.', submittedBy: TRAVELER('Mark', 'https://i.pravatar.cc/120?img=12', 'dsc_usr_4f2a8b1c'), ...SEED },
+  { id: 'hg3', name: 'Sugbo Mercado', category: 'hidden_gem', neighborhood: 'IT Park, Cebu City', city: 'Cebu', blurb: 'Food market with local vendors and live music.', submittedBy: TRAVELER('Jessa', 'https://i.pravatar.cc/120?img=9', 'dsc_usr_7e3c9d0f'), ...SEED },
+  { id: 'hg4', name: 'Tamagas Falls', category: 'hidden_gem', neighborhood: 'Alegria, Cebu', city: 'Cebu', blurb: 'Hidden waterfall and natural lagoon.', submittedBy: TRAVELER('Carlo', 'https://i.pravatar.cc/120?img=15', 'u_3'), ...SEED },
+  { id: 'hg5', name: 'Speakeasy Cebu', category: 'hidden_gem', neighborhood: 'Capitol Site', city: 'Cebu', blurb: 'Hidden bar with craft cocktails.', submittedBy: TRAVELER('Vince', 'https://i.pravatar.cc/120?img=33', 'u_2'), ...SEED },
 ];
 
 export interface NeighborhoodVibe {
@@ -96,7 +96,7 @@ export const neighborhoods: NeighborhoodVibe[] = [
 
 export interface TravelerPick {
   id: string;
-  user: { name: string; avatarUrl: string };
+  user: { name: string; avatarUrl: string; id?: string };
   place: string;
   note: string;
   city: string;
@@ -109,9 +109,9 @@ export interface TravelerPick {
 }
 
 export const travelerPicks: TravelerPick[] = [
-  { id: 'tp1', user: TRAVELER('Leo', 'https://i.pravatar.cc/120?img=8'), place: 'The Distillery Cebu', note: 'Great cocktails and vibes!', city: 'Cebu City', rating: 4.6, tag: 'Nightlife', timeAgo: '2h ago', source: 'traveler', status: 'provisional', verified: false },
-  { id: 'tp2', user: TRAVELER('Mia', 'https://i.pravatar.cc/120?img=20'), place: 'Casa Verde Cebu', note: 'Amazing Spanish food!', city: 'Cebu City', rating: 4.7, tag: 'Food', timeAgo: '5h ago', source: 'traveler', status: 'provisional', verified: false },
-  { id: 'tp3', user: TRAVELER('Josh', 'https://i.pravatar.cc/120?img=14'), place: 'Virgin Island', note: 'Crystal clear waters.', city: 'Bantayan', rating: 4.8, tag: 'Beach', timeAgo: '1d ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp1', user: TRAVELER('Leo', 'https://i.pravatar.cc/120?img=8', 'dsc_usr_2a7f3e91'), place: 'The Distillery Cebu', note: 'Great cocktails and vibes!', city: 'Cebu City', rating: 4.6, tag: 'Nightlife', timeAgo: '2h ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp2', user: TRAVELER('Mia', 'https://i.pravatar.cc/120?img=20', 'dsc_usr_5b0c8d4a'), place: 'Casa Verde Cebu', note: 'Amazing Spanish food!', city: 'Cebu City', rating: 4.7, tag: 'Food', timeAgo: '5h ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp3', user: TRAVELER('Josh', 'https://i.pravatar.cc/120?img=14', 'dsc_usr_9e1d6c2b'), place: 'Virgin Island', note: 'Crystal clear waters.', city: 'Bantayan', rating: 4.8, tag: 'Beach', timeAgo: '1d ago', source: 'traveler', status: 'provisional', verified: false },
 ];
 
 export interface SavedDiscoveryItem {

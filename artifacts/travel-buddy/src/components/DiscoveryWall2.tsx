@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -9,6 +9,39 @@ import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { TravelSectionHeader, TravelEmptyState } from './primitives';
 import { usePlanPicker } from './PlanPickerController';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+
+/** Shared avatar with optional HighlightRing for Discovery user avatars. */
+function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; avatarUrl: string; size: number }) {
+  const ringState = useHighlightRingState(userId ?? null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  return (
+    <>
+      <HighlightRing
+        hasActive={ringState?.hasActive ?? false}
+        allViewed={ringState?.allViewed ?? false}
+        size={size}
+        ringWidth={1.5}
+        gap={1.5}
+        onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+      >
+        <Image
+          source={{ uri: avatarUrl }}
+          style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+        />
+      </HighlightRing>
+      {ringState?.highlights && (
+        <HighlightViewer
+          visible={viewerOpen}
+          highlights={ringState.highlights}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </>
+  );
+}
 
 /* small provisional note */
 function Prov({ text = 'Starter city note — provisional' }: { text?: string }) {
@@ -35,7 +68,7 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
         <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
         {gem.submittedBy ? (
           <View style={g.byRow}>
-            <Image source={{ uri: gem.submittedBy.avatarUrl }} style={g.byAvatar} />
+            <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
             <Text style={g.by}>By {gem.submittedBy.name}</Text>
           </View>
         ) : null}
@@ -96,7 +129,7 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
   return (
     <View style={tp.card}>
       <View style={tp.head}>
-        <Image source={{ uri: pick.user.avatarUrl }} style={tp.avatar} />
+        <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} />
         <View style={{ flex: 1 }}>
           <Text style={tp.user}>{pick.user.name}</Text>
           <Text style={tp.time}>{pick.timeAgo}</Text>
