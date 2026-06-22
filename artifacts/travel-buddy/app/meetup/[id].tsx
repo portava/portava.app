@@ -365,9 +365,10 @@ export default function MeetupScreen() {
     if (!meetup || !id) return;
     openPlanPicker({
       id,
-      type:         'meetup',
-      title:        meetup.title,
-      locationName: meetup.locationName ?? undefined,
+      type:          'meetup',
+      title:         meetup.title,
+      locationName:  meetup.locationName ?? undefined,
+      confirmedTime: meetup.startsAt ?? undefined,
     });
   }
 

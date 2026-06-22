@@ -32,6 +32,8 @@ export interface PlanPickerSource {
   city?: string;
   category?: string;
   locationName?: string;
+  /** ISO datetime string — pre-fills date + time pickers on the confirm step */
+  confirmedTime?: string;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -122,8 +124,15 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   const open: OpenFn = useCallback((src) => {
     setSource(src);
     setSelectedTrip(null);
-    setDayDate(null);
-    setStartsAt(null);
+    // Pre-fill date + time from confirmedTime when provided (e.g. confirmed meetup)
+    if (src.confirmedTime) {
+      const dt = new Date(src.confirmedTime);
+      setDayDate(dt);
+      setStartsAt(dt);
+    } else {
+      setDayDate(null);
+      setStartsAt(null);
+    }
     setError(null);
     setStep('pick_trip');
     setSheetOpen(true);
