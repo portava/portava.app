@@ -336,7 +336,7 @@ function PassportContent({
           )}
           {tab === 'stamps' && <StampsTab stamps={stamps} />}
           {tab === 'trips' && <TripsTab trips={trips} isOwner />}
-          {tab === 'map' && <MapTab postcards={postcards} />}
+          {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}
           {tab === 'about' && (
             <AboutTab
               profile={profile}

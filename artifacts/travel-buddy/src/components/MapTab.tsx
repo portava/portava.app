@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, Image, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Pressable, ScrollView, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import type { PassportPostcard } from '../types/models';
-import { users } from '../data/cebu';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { color, space, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { listNearbyUsers, type NearbyUser } from '../services/map';
 
 /** Single nearby-traveler chip: avatar with HighlightRing + name label. */
-function NearbyUserChip({ user }: { user: typeof users[number] }) {
+function NearbyUserChip({ user }: { user: NearbyUser }) {
   const ringState = useHighlightRingState(user.id);
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -28,9 +28,19 @@ function NearbyUserChip({ user }: { user: typeof users[number] }) {
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
         >
-          <Image source={{ uri: user.avatarUrl }} style={mp.chipAvatar} />
+          {user.avatarUrl ? (
+            <Image source={{ uri: user.avatarUrl }} style={mp.chipAvatar} />
+          ) : (
+            <View style={[mp.chipAvatar, mp.chipAvatarFallback]}>
+              <Text style={mp.chipAvatarInitial}>
+                {user.name.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
         </HighlightRing>
-        <Text style={mp.chipName} numberOfLines={1}>{user.name.split(' ')[0]}</Text>
+        <Text style={mp.chipName} numberOfLines={1}>
+          {user.name.split(' ')[0]}
+        </Text>
       </Pressable>
       {ringState?.highlights && (
         <HighlightViewer
@@ -43,10 +53,30 @@ function NearbyUserChip({ user }: { user: typeof users[number] }) {
   );
 }
 
+interface MapTabProps {
+  postcards: PassportPostcard[];
+  currentCity?: string | null;
+  currentUserId?: string | null;
+}
+
 /** Map tab — placeholder with city-level location grid. No exact GPS exposed. */
-export function MapTab({ postcards }: { postcards: PassportPostcard[] }) {
+export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
   const withLocation = postcards.filter((c) => c.locationCity || c.locationName);
   const cities = [...new Map(withLocation.map((c) => [c.locationCity ?? c.locationName, c])).entries()];
+
+  const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([]);
+  const [loadingNearby, setLoadingNearby] = useState(false);
+
+  useEffect(() => {
+    if (!currentCity || !currentUserId) return;
+    setLoadingNearby(true);
+    listNearbyUsers(currentCity, currentUserId)
+      .then(setNearbyUsers)
+      .catch(() => setNearbyUsers([]))
+      .finally(() => setLoadingNearby(false));
+  }, [currentCity, currentUserId]);
+
+  const showNearby = loadingNearby || nearbyUsers.length > 0;
 
   return (
     <View style={mp.wrap}>
@@ -56,17 +86,29 @@ export function MapTab({ postcards }: { postcards: PassportPostcard[] }) {
         <Text style={mp.placeholderSub}>City-level only — exact GPS is never shown</Text>
       </View>
 
-      {/* Nearby Travelers strip */}
-      <Text style={mp.sectionLabel}>Nearby Travelers</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={mp.nearbyStrip}
-      >
-        {users.map((u) => (
-          <NearbyUserChip key={u.id} user={u} />
-        ))}
-      </ScrollView>
+      {/* Nearby Travelers strip — only shown when there's real data or loading */}
+      {showNearby && (
+        <>
+          <Text style={mp.sectionLabel}>
+            Nearby Travelers{currentCity ? ` in ${currentCity}` : ''}
+          </Text>
+          {loadingNearby ? (
+            <View style={mp.loadingRow}>
+              <ActivityIndicator size="small" color={color.deep} />
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={mp.nearbyStrip}
+            >
+              {nearbyUsers.map((u) => (
+                <NearbyUserChip key={u.id} user={u} />
+              ))}
+            </ScrollView>
+          )}
+        </>
+      )}
 
       {cities.length > 0 && (
         <>
@@ -97,9 +139,12 @@ const mp = StyleSheet.create({
   placeholderSub: { ...t.small, color: color.mute },
 
   sectionLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },
+  loadingRow: { height: 72, justifyContent: 'center', alignItems: 'center', marginBottom: space.lg },
   nearbyStrip: { gap: space.md, paddingBottom: space.lg, paddingRight: space.md },
   chip: { alignItems: 'center', gap: 4, width: 60 },
   chipAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
+  chipAvatarFallback: { justifyContent: 'center', alignItems: 'center', backgroundColor: color.haze },
+  chipAvatarInitial: { fontSize: 18, fontWeight: '600', color: color.deep },
   chipName: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 10, textAlign: 'center' },
 
   citiesLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },

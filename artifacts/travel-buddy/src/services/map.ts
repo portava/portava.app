@@ -89,6 +89,35 @@ export async function updateMyLocationPrivacy(patch: Partial<LocationPrivacy>): 
   return !error;
 }
 
+/* ---------- Nearby users --------------------------------------------------- */
+export interface NearbyUser {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+/**
+ * Profiles of other non-private users who have `current_city` matching the given
+ * city string (case-insensitive). Excludes the requesting user and private profiles.
+ * Returns up to 20 results; empty array on any error.
+ */
+export async function listNearbyUsers(city: string, excludeUserId: string): Promise<NearbyUser[]> {
+  if (!isSupabaseConfigured || !city.trim()) return [];
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, name, avatar_url')
+    .ilike('current_city', city.trim())
+    .eq('is_private', false)
+    .neq('id', excludeUserId)
+    .limit(20);
+  if (error || !data) return [];
+  return (data as any[]).map((r) => ({
+    id: r.id as string,
+    name: (r.name as string | null) ?? 'Traveler',
+    avatarUrl: (r.avatar_url as string | null) ?? null,
+  }));
+}
+
 /**
  * Circle members whose location the viewer is allowed to see. RLS does the gating;
  * this returns only rows the DB permits. UI does NOT render these yet (placeholder pass).
