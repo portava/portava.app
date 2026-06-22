@@ -50,16 +50,16 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0011_message_type.sql` | Adds `msg_type` (default `'text'`) and `subtype` columns to `messages`; partial index on `subtype` | 2026-06-21 |
 | `0012_daily_briefs.sql` | Creates `daily_briefs` table with per-user/per-day uniqueness constraint and RLS (users read own rows only); service role handles all writes | 2026-06-21 |
 | `0013_daily_briefs_cleanup.sql` | `daily_briefs_brief_date_idx` index on `daily_briefs(brief_date)` — keeps the nightly purge DELETE fast as the table grows | 2026-06-21 |
-| `0014_profile_about_me.sql` | Adds `spoken_languages`, `default_language`, `travel_styles`, `travel_pace`, `budget_style`, `travel_group_style`, `looking_for`, `comfort_level`, `availability_tags`, `planning_style`, `public_social_links` to `profiles` | pending |
-| `0015_blocks.sql` | Creates `blocks` table (blocker_id, blocked_id, unique constraint, RLS) and `is_blocked(a, b)` SECURITY DEFINER helper function | pending |
-| `0016_thread_reads.sql` | Adds `last_read_at timestamptz` to `message_thread_members`; index for unread-count queries | pending |
-| `0017_job_health.sql` | Creates `job_health` table (primary key: `job text`) to persist background-job last-run timestamps; used by `GET /api/healthz/cleanup` to report `cleanupHealthy` across server restarts | pending |
+| `0014_profile_about_me.sql` | Adds `spoken_languages`, `default_language`, `travel_styles`, `travel_pace`, `budget_style`, `travel_group_style`, `looking_for`, `comfort_level`, `availability_tags`, `planning_style`, `public_social_links` to `profiles` | 2026-06-22 |
+| `0015_blocks.sql` | Creates `blocks` table (blocker_id, blocked_id, unique constraint, RLS) and `is_blocked(a, b)` SECURITY DEFINER helper function | 2026-06-22 |
+| `0016_thread_reads.sql` | Adds `last_read_at timestamptz` to `message_thread_members`; index for unread-count queries | 2026-06-22 |
+| `0017_job_health.sql` | Creates `job_health` table (primary key: `job text`) to persist background-job last-run timestamps; used by `GET /api/healthz/cleanup` to report `cleanupHealthy` across server restarts | 2026-06-22 |
 | `0018_preferred_language.sql` | Adds `preferred_language` (nullable text, BCP-47) to `profiles`; overrides `preferred_message_language` in the translation pipeline when set | 2026-06-22 |
-| `0019_proposed_time.sql` | Adds `proposed_time TIME` (nullable) to `meetup_time_options` — stores exact HH:MM per time-poll slot alongside the coarse time_block | pending |
+| `0019_proposed_time.sql` | Adds `proposed_time TIME` (nullable) to `meetup_time_options` — stores exact HH:MM per time-poll slot alongside the coarse time_block | 2026-06-22 |
 | `0020_notifications_inbox_viewed.sql` | Adds `notifications_inbox_viewed_at timestamptz` to `profiles`; used by `GET /api/me/unread-counts` to compute unread notification badge count | 2026-06-21 |
-| `0021_plan_edit_permission.sql` | Adds `plan_edit_permission` column to `trips` (enum: `owner_only \| all_members \| specific_members`, default `all_members`) and creates `plan_editors` join table with RLS; used by plan permission system | pending |
-| `0022_availability_nudges.sql` | Creates `availability_nudges` table (sender_id, recipient_id, trip_id, nudge_date, sent_on); UNIQUE(recipient_id,trip_id,sent_on) rate-limits to one nudge per recipient per trip per day; RLS: recipients read own rows | pending |
-| `0023_push_tokens.sql` | Adds `expo_push_token TEXT` to `profiles`; stores Expo push token per device so the API server can send push notifications | pending |
+| `0021_plan_edit_permission.sql` | Adds `plan_edit_permission` column to `trips` (enum: `owner_only \| all_members \| specific_members`, default `all_members`) and creates `plan_editors` join table with RLS; used by plan permission system | 2026-06-22 |
+| `0022_availability_nudges.sql` | Creates `availability_nudges` table (sender_id, recipient_id, trip_id, nudge_date, sent_on); UNIQUE(recipient_id,trip_id,sent_on) rate-limits to one nudge per recipient per trip per day; RLS: recipients read own rows | 2026-06-22 |
+| `0023_push_tokens.sql` | Adds `expo_push_token TEXT` to `profiles`; stores Expo push token per device so the API server can send push notifications | 2026-06-22 |
 | `0024_post_engagement.sql` | Creates `posts_likes` (post_id+user_id unique, RLS) and `posts_comments` (body, soft-delete, RLS) tables; adds `like_count`, `comment_count`, `share_count` integer columns (DEFAULT 0) to `posts` | pending |
 | `0025_location_system.sql` | Creates `user_location_state` (per-user GPS/manual-city upsert, unique on user_id, RLS) and `passport_stamps_gps` (GPS-earned stamp events, unique on user+type+country+city, RLS) tables; adds `location_source`, `stamp_city/country/label/unlocked_at` columns to `postcards` if it exists | pending |
 
