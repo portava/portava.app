@@ -302,7 +302,7 @@ export function HighlightViewer({
               </Pressable>
             )}
 
-            {!isOwner && (
+            {!isOwner && (current.visibility === 'public' || current.visibility === 'travelers_nearby') && (
               <Pressable
                 onPress={async () => {
                   const available = await Sharing.isAvailableAsync();

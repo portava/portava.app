@@ -3,6 +3,7 @@ import type { Response } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
+import { canMessage } from "../lib/messagingPermissions";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -659,6 +660,18 @@ router.post("/highlights/:id/reply", async (req, res) => {
   const ownerId = access.h.owner_id;
   if (ownerId === user.id) {
     sendError(res, "invalid_payload", "Cannot reply to your own highlight");
+    return;
+  }
+
+  // Enforce messaging permissions — honour the recipient's privacy settings and block rules.
+  // This mirrors the canMessage gate used by POST /api/users/:userId/open-thread.
+  const msgVerdict = await canMessage(sc, user.id, ownerId);
+  if (!msgVerdict.allowed) {
+    if (msgVerdict.verdict === "requires_request") {
+      sendError(res, "forbidden", "You must send a message request before replying to this highlight");
+    } else {
+      sendError(res, "forbidden", "You cannot send messages to this user");
+    }
     return;
   }
 
