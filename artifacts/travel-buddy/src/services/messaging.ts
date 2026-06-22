@@ -290,7 +290,7 @@ export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary
   return apiGet('/api/me/threads');
 }
 
-export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number }>> {
+export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number }>> {
   return apiGet('/api/me/unread-counts');
 }
 

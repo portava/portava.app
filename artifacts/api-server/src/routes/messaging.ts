@@ -728,6 +728,25 @@ router.get('/me/unread-counts', async (req, res) => {
     .eq('recipient_id', user.id);
   if (inboxViewedAt) anQ = anQ.gt('created_at', inboxViewedAt);
 
+  // Upcoming confirmed meetups where user RSVP'd going/maybe — runs in parallel
+  const meetupCountPromise = (async (): Promise<number> => {
+    const now = new Date().toISOString();
+    const { data: upcoming } = await sc
+      .from('meetups')
+      .select('id')
+      .eq('status', 'confirmed')
+      .gt('starts_at', now);
+    const ids = (upcoming ?? []).map((m: any) => m.id as string);
+    if (ids.length === 0) return 0;
+    const { count } = await (sc as any)
+      .from('meetup_invites')
+      .select('meetup_id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .in('status', ['going', 'maybe'])
+      .in('meetup_id', ids);
+    return count ?? 0;
+  })();
+
   const [frResult, ciResult, tiResult, mrResult, anResult] = await Promise.all([
     pendingSince('friend_requests', 'recipient_id'),
     pendingSince('circle_invites', 'recipient_id'),
@@ -736,6 +755,8 @@ router.get('/me/unread-counts', async (req, res) => {
     anQ as Promise<{ count: number | null; error: any }>,
   ]);
 
+  const meetups = await meetupCountPromise.catch(() => 0);
+
   const notifCount =
     (frResult.count ?? 0) +
     (ciResult.count ?? 0) +
@@ -743,7 +764,7 @@ router.get('/me/unread-counts', async (req, res) => {
     (mrResult.count ?? 0) +
     (anResult.count ?? 0);
 
-  res.status(200).json({ messages: messageCount, notifications: notifCount });
+  res.status(200).json({ messages: messageCount, notifications: notifCount, meetups });
 });
 
 /* ---------------------------------------------------------------------------

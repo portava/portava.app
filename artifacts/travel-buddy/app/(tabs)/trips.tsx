@@ -13,14 +13,23 @@ import { Stamp } from '../../src/components/ui';
 import { trips as mockTrips } from '../../src/data/cebu';
 import { useSession } from '../../src/context/SessionContext';
 import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
+import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 
-function MeetupsShortcut() {
+function MeetupsShortcut({ count }: { count: number }) {
+  const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
   return (
     <Pressable style={styles.meetupsCard} onPress={() => router.push('/meetups' as any)}>
-      <View style={styles.meetupsIcon}>
-        <CalendarClock size={18} color={color.onInk} />
+      <View>
+        <View style={styles.meetupsIcon}>
+          <CalendarClock size={18} color={color.onInk} />
+        </View>
+        {label ? (
+          <View style={styles.meetupsBadge}>
+            <Text style={styles.meetupsBadgeText}>{label}</Text>
+          </View>
+        ) : null}
       </View>
       <View style={styles.meetupsText}>
         <Text style={styles.meetupsTitle}>Meetups</Text>
@@ -142,6 +151,7 @@ export default function Trips() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
   const { data: realTrips, loading, error, reload } = useMyTrips();
+  const { meetups: meetupCount } = useUnreadCounts();
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
 
@@ -157,7 +167,7 @@ export default function Trips() {
         }
       />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
-        <MeetupsShortcut />
+        <MeetupsShortcut count={meetupCount} />
         {live && <PendingInvitesSection onAccepted={reload} />}
         {live ? (
           <LiveTrips trips={realTrips} loading={loading} error={error} />
@@ -254,6 +264,24 @@ const styles = StyleSheet.create({
   meetupsSub: {
     ...t.small,
     color: color.mute,
+  },
+  meetupsBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  meetupsBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+    lineHeight: 11,
   },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, overflow: 'hidden', ...shadow.card },
   cover: { width: '100%', height: 150, backgroundColor: color.haze },
