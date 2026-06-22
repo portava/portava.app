@@ -28,7 +28,7 @@ const ROW_H   = 36;  // member row height
 
 // ── Cell status helpers ───────────────────────────────────────────────────────
 
-type CellStatus = 'free' | 'unknown' | 'nodata';
+export type CellStatus = 'free' | 'unknown' | 'nodata';
 
 const WEEKDAY_IDX = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const DAY_ABBR    = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -82,12 +82,13 @@ function MemberAvatar({ m, size = 22 }: { m: MemberAvailability; size?: number }
 
 // ── Cell ─────────────────────────────────────────────────────────────────────
 
-function Cell({ status }: { status: CellStatus }) {
+function Cell({ status, isOwn }: { status: CellStatus; isOwn?: boolean }) {
   return (
     <View style={[
       g.cell,
       status === 'free'    ? g.cellFree    :
       status === 'nodata'  ? g.cellNoData  : g.cellUnknown,
+      isOwn && g.cellMine,
     ]}>
       {status === 'nodata' && <Text style={g.cellQ}>?</Text>}
     </View>
@@ -179,6 +180,8 @@ export interface AvailabilityGridProps {
   mode: 'trip' | 'circle';
   onEditOwn?: () => void;    // called when user taps their own name row
   onPlanMeetup?: (date: string) => void;
+  /** Called when user taps a cell in their own row (trip mode only) */
+  onOwnCellPress?: (date: string, status: CellStatus) => void;
 }
 
 export function AvailabilityGrid({
@@ -188,6 +191,7 @@ export function AvailabilityGrid({
   mode,
   onEditOwn,
   onPlanMeetup,
+  onOwnCellPress,
 }: AvailabilityGridProps) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
@@ -251,15 +255,33 @@ export function AvailabilityGrid({
             </View>
 
             {/* Member rows */}
-            {sorted.map((m) => (
-              <View key={m.userId} style={[g.memberRow, { height: ROW_H }]}>
-                {days.map((d) => (
-                  <View key={d} style={[g.cellWrap, { width: DAY_W, height: ROW_H }]}>
-                    <Cell status={getCellStatus(m, d, mode)} />
-                  </View>
-                ))}
-              </View>
-            ))}
+            {sorted.map((m) => {
+              const isMe = m.userId === currentUserId;
+              return (
+                <View key={m.userId} style={[g.memberRow, { height: ROW_H }]}>
+                  {days.map((d) => {
+                    const status = getCellStatus(m, d, mode);
+                    if (isMe && onOwnCellPress) {
+                      return (
+                        <Pressable
+                          key={d}
+                          style={[g.cellWrap, { width: DAY_W, height: ROW_H }]}
+                          onPress={() => onOwnCellPress(d, status)}
+                          hitSlop={2}
+                        >
+                          <Cell status={status} isOwn />
+                        </Pressable>
+                      );
+                    }
+                    return (
+                      <View key={d} style={[g.cellWrap, { width: DAY_W, height: ROW_H }]}>
+                        <Cell status={status} />
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })}
           </View>
         </ScrollView>
       </View>
@@ -312,6 +334,7 @@ const g = StyleSheet.create({
   cellFree:    { backgroundColor: '#22C55E' },
   cellUnknown: { backgroundColor: color.haze },
   cellNoData:  { backgroundColor: '#F0EDE8' },
+  cellMine:    { borderWidth: 1.5, borderColor: color.signal + '80' },
   cellQ: { fontSize: 9, fontWeight: '700', color: color.faint },
 
   legend: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.sm, flexWrap: 'wrap' },

@@ -117,6 +117,13 @@ export async function patchTripAvailability(
   return apiPatch(`/api/trips/${tripId}/availability`, patch as Record<string, unknown>);
 }
 
+export async function patchTripOpenDays(
+  tripId: string,
+  openDays: Record<string, TimeBlock[]>,
+): Promise<AvailabilityResult<{ tripId: string; userId: string; openDays: Record<string, TimeBlock[]> }>> {
+  return apiPatch(`/api/trips/${tripId}/availability`, { openDays } as Record<string, unknown>);
+}
+
 // ── Circle availability ───────────────────────────────────────────────────────
 
 export async function getCircleAvailability(circleId: string): Promise<AvailabilityResult<{ members: MemberAvailability[]; circleId: string }>> {

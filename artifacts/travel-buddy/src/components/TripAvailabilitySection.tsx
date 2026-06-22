@@ -8,16 +8,27 @@
  * Tapping a column header opens a day-summary modal.
  * "Plan meetup this day" fires onPlanMeetup(date) so the parent
  * can open MeetupCreationSheet pre-filled.
+ *
+ * Own-row cells are tappable — opens an inline toggle sheet (free/busy/clear).
+ * Optimistic update is applied immediately; reverted on API error.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import {
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
+  Modal, Alert, Platform,
+} from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { CalendarClock, ChevronDown, ChevronUp, Zap } from 'lucide-react-native';
-import { getTripAvailability, type MemberAvailability } from '../services/availability';
-import { AvailabilityGrid } from './AvailabilityGrid';
+import { CalendarClock, ChevronDown, ChevronUp, Zap, X } from 'lucide-react-native';
+import {
+  getTripAvailability, patchTripOpenDays,
+  type MemberAvailability, type TimeBlock,
+} from '../services/availability';
+import { AvailabilityGrid, type CellStatus } from './AvailabilityGrid';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const ALL_BLOCKS: TimeBlock[] = ['morning', 'afternoon', 'evening', 'late'];
 
 function generateTripDays(startDate?: string, endDate?: string): string[] {
   const today = new Date();
@@ -42,7 +53,61 @@ function generateTripDays(startDate?: string, endDate?: string): string[] {
   return days;
 }
 
+function formatShortDate(date: string): string {
+  return new Date(date + 'T12:00:00').toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
 const COLLAPSE_THRESHOLD = 7;
+
+// ── Cell toggle bottom sheet ──────────────────────────────────────────────────
+
+interface CellEditSheetProps {
+  date: string | null;
+  currentStatus: CellStatus;
+  onChoose: (choice: 'free' | 'busy' | 'clear') => void;
+  onClose: () => void;
+}
+
+function CellEditSheet({ date, currentStatus, onChoose, onClose }: CellEditSheetProps) {
+  if (!date) return null;
+
+  const options: { key: 'free' | 'busy' | 'clear'; label: string; color: string; active: boolean }[] = [
+    { key: 'free',  label: '🟢  Mark as Free',  color: '#22C55E', active: currentStatus === 'free' },
+    { key: 'busy',  label: '⚫  Mark as Busy',  color: color.mute, active: currentStatus === 'unknown' },
+    { key: 'clear', label: '✕  Clear',          color: color.faint, active: currentStatus === 'nodata' },
+  ];
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={ts.overlay} onPress={onClose}>
+        <Pressable style={ts.sheet} onPress={() => {}}>
+          <View style={ts.handle} />
+          <Pressable style={ts.closeBtn} onPress={onClose} hitSlop={8}>
+            <X size={18} color={color.mute} />
+          </Pressable>
+
+          <Text style={ts.sheetTitle}>{formatShortDate(date)}</Text>
+          <Text style={ts.sheetSub}>Update your availability for this day</Text>
+
+          {options.map((opt) => (
+            <Pressable
+              key={opt.key}
+              style={[ts.optionRow, opt.active && ts.optionRowActive]}
+              onPress={() => { onChoose(opt.key); onClose(); }}
+            >
+              <Text style={[ts.optionLabel, opt.active && ts.optionLabelActive]}>
+                {opt.label}
+              </Text>
+              {opt.active && <Text style={ts.checkmark}>✓</Text>}
+            </Pressable>
+          ))}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +130,7 @@ export function TripAvailabilitySection({
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [editSheet, setEditSheet] = useState<{ date: string; status: CellStatus } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +147,46 @@ export function TripAvailabilitySection({
   }, [tripId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // ── Own-cell tap handler ────────────────────────────────────────────────────
+  const handleOwnCellPress = useCallback((date: string, status: CellStatus) => {
+    setEditSheet({ date, status });
+  }, []);
+
+  // ── Toggle choice → optimistic update → API ─────────────────────────────────
+  const handleToggle = useCallback(async (choice: 'free' | 'busy' | 'clear') => {
+    const me = members.find((m) => m.userId === currentUserId);
+    if (!me) return;
+
+    const prevOpenDays = me.openDays ?? {};
+    const date = editSheet?.date;
+    if (!date) return;
+
+    // Compute new openDays map
+    const newOpenDays: Record<string, TimeBlock[]> = { ...prevOpenDays };
+    if (choice === 'free')  newOpenDays[date] = ALL_BLOCKS;
+    else if (choice === 'busy')  newOpenDays[date] = [];
+    else delete newOpenDays[date]; // clear
+
+    // Optimistic update
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.userId === currentUserId ? { ...m, openDays: newOpenDays } : m,
+      ),
+    );
+
+    const result = await patchTripOpenDays(tripId, newOpenDays);
+
+    if (!result.ok) {
+      // Revert
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.userId === currentUserId ? { ...m, openDays: prevOpenDays } : m,
+        ),
+      );
+      Alert.alert('Could not update', result.message ?? 'Please try again.');
+    }
+  }, [members, currentUserId, editSheet, tripId]);
 
   const days      = generateTripDays(startDate, endDate);
   const freeNow   = members.filter((m) => m.quickStatus?.status === 'free_now').length;
@@ -140,6 +246,7 @@ export function TripAvailabilitySection({
               mode="trip"
               onEditOwn={() => router.push('/availability')}
               onPlanMeetup={onPlanMeetup}
+              onOwnCellPress={handleOwnCellPress}
             />
           ) : (
             <Text style={s.noDates}>
@@ -158,6 +265,14 @@ export function TripAvailabilitySection({
           <Text style={s.showAll}>Show all {members.length} members →</Text>
         </Pressable>
       )}
+
+      {/* Cell edit sheet */}
+      <CellEditSheet
+        date={editSheet?.date ?? null}
+        currentStatus={editSheet?.status ?? 'nodata'}
+        onChoose={handleToggle}
+        onClose={() => setEditSheet(null)}
+      />
     </View>
   );
 }
@@ -188,4 +303,37 @@ const s = StyleSheet.create({
   editBtn:     { alignSelf: 'flex-start' },
   editBtnText: { ...t.small, color: color.signal, fontWeight: '700' },
   showAll:     { ...t.small, color: color.signal, fontWeight: '700' },
+});
+
+const ts = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(17,17,15,0.48)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: space.lg,
+    paddingTop: space.md,
+    paddingBottom: Platform.OS === 'ios' ? 40 : space.xl,
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: color.haze,
+    alignSelf: 'center', marginBottom: space.md,
+  },
+  closeBtn: { position: 'absolute', top: space.md + 4, right: space.lg, padding: 4 },
+  sheetTitle: { ...t.heading, color: color.ink, marginBottom: 2, paddingRight: 28 },
+  sheetSub:   { ...t.small, color: color.mute, marginBottom: space.lg },
+  optionRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: space.md, paddingHorizontal: space.sm,
+    borderRadius: radius.sm, marginBottom: 2,
+  },
+  optionRowActive: { backgroundColor: color.signal + '12' },
+  optionLabel:       { ...t.body, color: color.ink, flex: 1 },
+  optionLabelActive: { color: color.signal, fontWeight: '700' },
+  checkmark: { color: color.signal, fontWeight: '700', fontSize: 16 },
 });
