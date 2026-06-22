@@ -8,7 +8,7 @@ import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { useRequestCount } from '../../src/hooks/useRequests';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
-import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
+import { useHighlightRingState, invalidateHighlightCache } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { HighlightComposer } from '../../src/components/HighlightComposer';
 import { useSession } from '../../src/context/SessionContext';
@@ -49,9 +49,12 @@ export default function PassportScreen() {
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const insets = useSafeAreaInsets();
 
-  // Own highlight ring state
-  const ownRingState = useHighlightRingState(ownUserId);
+  // Own highlight ring state — refreshKey forces an immediate cache-bust + re-fetch
+  // after a new highlight is created so the ring activates without waiting for TTL.
+  const [highlightRefreshKey, setHighlightRefreshKey] = useState(0);
+  const ownRingState = useHighlightRingState(ownUserId, highlightRefreshKey);
   const hasOwnHighlights = ownRingState?.hasActive ?? false;
+  const allOwnHighlightsViewed = ownRingState?.allViewed ?? false;
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
 
@@ -60,6 +63,18 @@ export default function PassportScreen() {
     if (hasOwnHighlights) setHighlightViewerOpen(true);
     else setHighlightComposerOpen(true);
   }, [hasOwnHighlights]);
+
+  // Camera button: always opens the composer directly (for adding a new highlight)
+  const handleNewHighlightPress = useCallback(() => {
+    setHighlightComposerOpen(true);
+  }, []);
+
+  // On successful highlight creation: bust the cache and trigger immediate ring refresh
+  const handleHighlightSuccess = useCallback(() => {
+    if (ownUserId) invalidateHighlightCache(ownUserId);
+    setHighlightRefreshKey((k) => k + 1);
+    setHighlightComposerOpen(false);
+  }, [ownUserId]);
 
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
 
@@ -143,7 +158,9 @@ export default function PassportScreen() {
           reload={reload}
           insets={insets}
           hasHighlights={hasOwnHighlights}
+          allHighlightsViewed={allOwnHighlightsViewed}
           onHighlightRingPress={handleOwnRingPress}
+          onNewHighlightPress={handleNewHighlightPress}
         />
         <HighlightViewer
           visible={highlightViewerOpen}
@@ -154,7 +171,7 @@ export default function PassportScreen() {
         <HighlightComposer
           visible={highlightComposerOpen}
           onClose={() => setHighlightComposerOpen(false)}
-          onSuccess={() => setHighlightComposerOpen(false)}
+          onSuccess={handleHighlightSuccess}
         />
       </View>
     );
@@ -182,7 +199,9 @@ export default function PassportScreen() {
         reload={reload}
         insets={insets}
         hasHighlights={hasOwnHighlights}
+        allHighlightsViewed={allOwnHighlightsViewed}
         onHighlightRingPress={handleOwnRingPress}
+        onNewHighlightPress={handleNewHighlightPress}
       />
       <HighlightViewer
         visible={highlightViewerOpen}
@@ -193,7 +212,7 @@ export default function PassportScreen() {
       <HighlightComposer
         visible={highlightComposerOpen}
         onClose={() => setHighlightComposerOpen(false)}
-        onSuccess={() => setHighlightComposerOpen(false)}
+        onSuccess={handleHighlightSuccess}
       />
     </View>
   );
@@ -203,7 +222,7 @@ function PassportContent({
   profile, postcards, stamps, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
   settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
-  hasHighlights, onHighlightRingPress,
+  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -224,7 +243,9 @@ function PassportContent({
   reload: () => void;
   insets: { top: number; bottom: number };
   hasHighlights?: boolean;
+  allHighlightsViewed?: boolean;
   onHighlightRingPress?: () => void;
+  onNewHighlightPress?: () => void;
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { count: requestCount, reload: reloadCount } = useRequestCount();
@@ -248,9 +269,11 @@ function PassportContent({
           profile={profile}
           isOwner
           hasHighlights={hasHighlights}
+          allHighlightsViewed={allHighlightsViewed}
           onMenuPress={() => setMenuOpen(true)}
           onAvatarPress={() => openSettings('profile')}
           onHighlightRingPress={onHighlightRingPress}
+          onNewHighlightPress={onNewHighlightPress}
         />
 
         {/* Compact stats row */}

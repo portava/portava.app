@@ -43,6 +43,7 @@ export function PassportHero({
   hasHighlights,
   allHighlightsViewed,
   onHighlightRingPress,
+  onNewHighlightPress,
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
@@ -54,6 +55,7 @@ export function PassportHero({
   hasHighlights?: boolean;
   allHighlightsViewed?: boolean;
   onHighlightRingPress?: () => void;
+  onNewHighlightPress?: () => void;
 }) {
   const displayName = ('displayName' in profile ? profile.displayName : null) ?? profile.avatarUrl ?? 'Traveler';
   const name = ('name' in profile && profile.name) ? profile.name : null;
@@ -124,10 +126,11 @@ export function PassportHero({
               )}
             </View>
           </HighlightRing>
-          {isOwner && !hasHighlights && onAvatarPress && (
+          {isOwner && onNewHighlightPress && (
             <Pressable
               style={styles.cameraOverlay}
-              onPress={onAvatarPress}
+              onPress={onNewHighlightPress}
+              accessibilityLabel="Add new Highlight"
             >
               <Camera size={14} color={color.onInk} />
             </Pressable>

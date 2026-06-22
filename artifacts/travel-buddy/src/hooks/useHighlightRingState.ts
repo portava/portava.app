@@ -3,6 +3,9 @@
  *
  * Uses a module-level LRU-style cache (60 s TTL) so multiple cards showing the
  * same user don't hammer the API.
+ *
+ * Pass an incrementing `refreshKey` to force a cache-bust and immediate re-fetch
+ * (e.g. after the owner creates a new highlight so the ring activates instantly).
  */
 import { useState, useEffect, useRef } from 'react';
 import { fetchUserHighlights, type Highlight } from '../services/highlights';
@@ -53,8 +56,12 @@ export function invalidateHighlightCache(userId: string): void {
 /**
  * Hook: returns { hasActive, allViewed, highlights } for the given userId.
  * Returns null while loading. Safe to call with null userId (returns null immediately).
+ *
+ * Pass an incrementing `refreshKey` to force a cache-bust and immediate re-fetch.
+ * Increment it (e.g. via setState(k => k + 1)) after a successful highlight creation
+ * so the ring activates without waiting for the 60-second TTL to expire.
  */
-export function useHighlightRingState(userId: string | null): HighlightRingState | null {
+export function useHighlightRingState(userId: string | null, refreshKey = 0): HighlightRingState | null {
   const [state, setState] = useState<HighlightRingState | null>(() =>
     userId ? getCached(userId) : null,
   );
@@ -65,6 +72,12 @@ export function useHighlightRingState(userId: string | null): HighlightRingState
     if (!userId) {
       setState(null);
       return;
+    }
+
+    // A non-zero refreshKey means the caller explicitly requested a fresh fetch.
+    // Bust the cache entry so the fetch below runs unconditionally.
+    if (refreshKey > 0) {
+      cache.delete(userId);
     }
 
     const cached = getCached(userId);
@@ -88,7 +101,7 @@ export function useHighlightRingState(userId: string | null): HighlightRingState
       .catch(() => {
         inFlight.delete(userId);
       });
-  }, [userId]);
+  }, [userId, refreshKey]);
 
   return state;
 }
