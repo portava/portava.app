@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Search, SlidersHorizontal, MapPin, Pencil, MessageCircle } from 'lucide-react-native';
+import { Activity, SlidersHorizontal, MapPin, Pencil, MessageCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { useUnreadCounts } from '../hooks/useMessaging';
 
@@ -12,8 +12,8 @@ export function PulseHeader({
   cityFull = 'Cebu City',
   availabilityText = 'Open tonight',
   filterCount = 0,
-  onSearch,
   onFilter,
+  onCreate,
 }: {
   city?: string;
   area?: string;
@@ -37,15 +37,8 @@ export function PulseHeader({
         <Activity size={16} color={color.signal} />
         <Text style={styles.title}>{city} Pulse</Text>
         <View style={{ flex: 1 }} />
-        <Pressable style={styles.iconBtn} onPress={onSearch} hitSlop={8}>
-          <Search size={17} color={color.ink} />
-        </Pressable>
-        <Pressable style={styles.iconBtn} onPress={onFilter} hitSlop={8}>
-          <SlidersHorizontal size={17} color={color.ink} />
-          {filterCount > 0 && (
-            <View style={styles.badge}><Text style={styles.badgeText}>{filterCount}</Text></View>
-          )}
-        </Pressable>
+
+        {/* Telegraph / Messages icon */}
         <Pressable style={styles.iconBtn} onPress={() => router.push('/(tabs)/messages')} hitSlop={8}>
           <MessageCircle size={17} color={color.ink} />
           {unreadMessages > 0 && (
@@ -53,6 +46,19 @@ export function PulseHeader({
               <Text style={styles.badgeText}>{unreadMessages > 9 ? '9+' : String(unreadMessages)}</Text>
             </View>
           )}
+        </Pressable>
+
+        {/* Filter icon */}
+        <Pressable style={styles.iconBtn} onPress={onFilter} hitSlop={8}>
+          <SlidersHorizontal size={17} color={color.ink} />
+          {filterCount > 0 && (
+            <View style={styles.badge}><Text style={styles.badgeText}>{filterCount}</Text></View>
+          )}
+        </Pressable>
+
+        {/* Post pill — primary creation action */}
+        <Pressable style={styles.postBtn} onPress={onCreate} hitSlop={4} accessibilityLabel="Create post" accessibilityRole="button">
+          <Text style={styles.postBtnText}>Post</Text>
         </Pressable>
       </View>
 
@@ -119,6 +125,21 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     lineHeight: 11,
+  },
+  postBtn: {
+    height: 34,
+    minWidth: 56,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 16,
   },
   statusRow: {
     flexDirection: 'row',

@@ -269,7 +269,6 @@ export default function Pulse() {
         }
       />
 
-      <PulseFAB onPress={() => setCreateOpen(true)} />
       <PulseFilterSheet
         visible={sheetOpen}
         active={active.filter((f) => f !== 'All')}

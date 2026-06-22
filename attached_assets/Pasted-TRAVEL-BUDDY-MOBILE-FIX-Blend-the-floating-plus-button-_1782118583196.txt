@@ -1,0 +1,94 @@
+TRAVEL BUDDY MOBILE FIX — Blend the floating plus button with the Post button.
+
+Problem:
+On Travel Buddy mobile, the floating plus button is cluttering the screen and overlapping the feed/navigation area. We should not have both a floating plus button and a Post/Create button visible for the same action.
+
+Mission:
+Remove the separate floating plus button on Pulse mobile and blend its action into the existing Post/Create button in the compact header.
+
+Do not delete post creation.
+Do not break the post composer.
+Do not break Pulse.
+Do not break bottom nav.
+Do not break desktop layout.
+Do not remove the route/API behind posting.
+Only remove the duplicate/cluttered mobile entry point.
+
+Expected mobile behavior:
+- Pulse mobile has one clear creation action: “Post” or “Create” in the header/action row.
+- The header Post/Create button opens the exact same composer/action that the floating plus button currently opens.
+- The floating plus button no longer appears on Pulse mobile.
+- No create button overlaps feed cards.
+- No create button overlaps the bottom nav.
+- Desktop/tablet can keep the FAB only if it is not duplicating the header action.
+
+Preferred Pulse mobile header layout:
+
+Pulse                         [Filter] [Post]
+Cebu City · Lahug · 6 PM–1 AM
+[Trip active] [Solo] [Open to meet]
+
+Implementation steps:
+1. Find the floating plus/FAB component used on Pulse.
+2. Identify the exact click handler/action it triggers.
+3. Move/reuse that same handler on the header Post/Create button.
+4. Hide/remove the floating plus on Pulse mobile.
+5. If the FAB is a global component, suppress it only on screens where a header Post/Create button exists.
+6. Keep only one visible post/create action on Pulse mobile.
+7. Preserve accessibility labels and keyboard/touch behavior.
+
+Mobile sizing:
+- Header Post/Create tap target must be at least 44px high.
+- Visual button can be compact, around 36–40px tall, but hit target must remain 44px.
+- Button label should be 13–15px.
+- Use pill radius.
+- Keep spacing between Filter and Post around 8px.
+- Avoid oversized buttons.
+
+Suggested CSS, adapted to real class names:
+
+@media (max-width: 767px) {
+  .pulse-floating-create,
+  .pulse-fab,
+  .mobile-fab-create,
+  .floating-plus-button {
+    display: none;
+  }
+
+  .pulse-header-create-button,
+  .pulse-header-post-button {
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+  }
+}
+
+Important:
+Use the real class names after inspecting the codebase.
+Do not blindly add unused CSS if the classes do not exist.
+
+Verification:
+1. Open Pulse on mobile width 360px.
+2. Confirm floating plus is gone.
+3. Confirm only one Post/Create action is visible.
+4. Confirm Post/Create opens the same composer the plus button opened.
+5. Confirm Filter still opens.
+6. Confirm feed cards are not covered.
+7. Confirm bottom nav is not covered.
+8. Confirm desktop/tablet layout is not broken.
+9. Run build/typecheck.
+10. Confirm no console errors.
+
+Final report:
+- Floating plus component found
+- File(s) changed
+- How plus action was moved into Post/Create
+- Whether FAB was hidden only on Pulse mobile or app-wide
+- Screens tested
+- Build/typecheck result
+
+Final result:
+Pulse mobile has one clean Post/Create button in the header, and the separate floating plus button no longer clutters or overlaps the mobile feed.
