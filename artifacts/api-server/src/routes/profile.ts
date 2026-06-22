@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { getServiceClient } from "../lib/supabase";
+import { retranslateForUser } from "../services/messageTranslation";
 
 const router = Router();
 
@@ -248,6 +250,15 @@ router.patch("/me/profile", async (req, res) => {
     sendError(res, "db_error", updateError.message);
     return;
   }
+
+  // Fire-and-forget re-translation sweep when preferred_language changes.
+  if (p.preferredLanguage !== undefined && p.preferredLanguage !== null) {
+    const sc = getServiceClient();
+    if (sc) {
+      retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
+    }
+  }
+
   res.status(200).json(mapProfile(updated));
 });
 

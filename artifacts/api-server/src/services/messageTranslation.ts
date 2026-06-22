@@ -259,6 +259,138 @@ export async function translateMessageForThread(
   }
 }
 
+// ── Retranslate on language-preference change ─────────────────────────────────
+
+const RETRANSLATE_BATCH_LIMIT = 200;
+
+/**
+ * retranslateForUser — fire-and-forget sweep triggered when a user changes
+ * their preferred translation language.
+ *
+ * Fetches the user's most-recent message_translations rows (as recipient),
+ * then re-translates each one to the new target language.  Only this user's
+ * rows are touched; other recipients are unaffected.  Never throws.
+ */
+export async function retranslateForUser(
+  sc: SupabaseClient,
+  userId: string,
+  newTargetLanguage: string,
+  logger?: Logger,
+): Promise<void> {
+  if (!TRANSLATION_ENABLED) return;
+
+  try {
+    // Fetch the most recent translation rows for this recipient.
+    const { data: rows, error: fetchErr } = await sc
+      .from('message_translations')
+      .select('message_id, source_language')
+      .eq('recipient_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(RETRANSLATE_BATCH_LIMIT);
+
+    if (fetchErr) {
+      logger?.warn({ err: fetchErr.message, userId }, 'retranslate_fetch_failed');
+      return;
+    }
+    if (!rows || rows.length === 0) return;
+
+    const messageIds = rows.map((r: any) => r.message_id as string);
+
+    // Fetch message bodies for these rows.
+    const { data: messages, error: msgErr } = await sc
+      .from('messages')
+      .select('id, body, original_language')
+      .in('id', messageIds);
+
+    if (msgErr) {
+      logger?.warn({ err: msgErr.message, userId }, 'retranslate_messages_fetch_failed');
+      return;
+    }
+
+    const msgMap: Record<string, { body: string; originalLanguage: string | null }> = {};
+    for (const m of messages ?? []) {
+      msgMap[(m as any).id] = {
+        body: (m as any).body as string,
+        originalLanguage: (m as any).original_language as string | null,
+      };
+    }
+
+    // Build a source-language map from the translation rows for fallback.
+    const srcMap: Record<string, string> = {};
+    for (const r of rows) {
+      srcMap[(r as any).message_id] = (r as any).source_language as string;
+    }
+
+    for (const messageId of messageIds) {
+      const msg = msgMap[messageId];
+      if (!msg || !msg.body) continue;
+
+      const sourceLanguage = msg.originalLanguage ?? srcMap[messageId] ?? 'en';
+
+      // Same language as target — mark skipped.
+      if (sourceLanguage === newTargetLanguage) {
+        await upsertTranslation(sc, {
+          messageId,
+          recipientId: userId,
+          sourceLanguage,
+          targetLanguage: newTargetLanguage,
+          translatedBody: null,
+          provider: null,
+          status: 'skipped',
+          errorMessage: null,
+        });
+        continue;
+      }
+
+      try {
+        const result = await translateWithRetry(msg.body, sourceLanguage, newTargetLanguage, 1);
+        const validation = validateTranslation(msg.body, result.translatedText);
+        if (!validation.valid) {
+          await upsertTranslation(sc, {
+            messageId,
+            recipientId: userId,
+            sourceLanguage,
+            targetLanguage: newTargetLanguage,
+            translatedBody: null,
+            provider: result.provider,
+            status: 'failed',
+            errorMessage: `validation_${validation.reason ?? 'unknown'}`,
+          });
+          continue;
+        }
+        await upsertTranslation(sc, {
+          messageId,
+          recipientId: userId,
+          sourceLanguage,
+          targetLanguage: newTargetLanguage,
+          translatedBody: result.translatedText,
+          provider: result.provider,
+          status: 'translated',
+          errorMessage: null,
+        });
+      } catch (e: unknown) {
+        const errCode = e instanceof Error ? (e.message.length < 80 ? e.message : 'translation_error') : 'unknown';
+        await upsertTranslation(sc, {
+          messageId,
+          recipientId: userId,
+          sourceLanguage,
+          targetLanguage: newTargetLanguage,
+          translatedBody: null,
+          provider: null,
+          status: 'failed',
+          errorMessage: errCode,
+        });
+        logger?.warn({ messageId, userId, target: newTargetLanguage, err: errCode }, 'retranslate_item_failed');
+      }
+    }
+
+    logger?.info({ userId, target: newTargetLanguage, count: messageIds.length }, 'retranslate_sweep_complete');
+  } catch (e: unknown) {
+    const code = e instanceof Error ? e.message : 'retranslate_error';
+    logger?.error({ userId, err: code }, 'retranslate_sweep_error');
+  }
+}
+
 // ── Invalidate (on edit) ──────────────────────────────────────────────────────
 
 /**

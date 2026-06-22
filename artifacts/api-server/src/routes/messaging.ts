@@ -32,6 +32,7 @@ import {
   translateMessageForThread,
   markTranslationsPending,
   buildDisplayFields,
+  retranslateForUser,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
 import {
@@ -185,6 +186,13 @@ router.patch('/me/language-settings', async (req, res) => {
 
   const patch: Record<string, unknown> = { ...parsed.data, translation_updated_at: new Date().toISOString() };
 
+  // Capture the current preferred_language before updating so we can detect a change.
+  const { data: before } = await client
+    .from('profiles')
+    .select('preferred_language')
+    .eq('id', user.id)
+    .single();
+
   const { data, error } = await client
     .from('profiles')
     .update(patch)
@@ -196,6 +204,16 @@ router.patch('/me/language-settings', async (req, res) => {
     req.log.error({ err: error }, 'language settings update failed');
     sendError(res, 'db_error', error.message);
     return;
+  }
+
+  // Fire-and-forget re-translation sweep when the translation target changes.
+  const newLang = (data as any).preferred_language as string | null;
+  const oldLang = (before as any)?.preferred_language as string | null;
+  if (newLang && newLang !== oldLang) {
+    const sc = getServiceClient();
+    if (sc) {
+      retranslateForUser(sc, user.id, newLang, req.log).catch(() => {});
+    }
   }
 
   res.status(200).json(data);
