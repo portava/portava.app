@@ -91,6 +91,12 @@ export default function PassportScreen() {
     }
   }, [ownUserId]);
 
+  // On highlight deleted: re-fetch ring state so the ring de-activates immediately
+  // if no highlights remain, without waiting for the 60-second cache TTL.
+  const handleHighlightDeleted = useCallback(() => {
+    setHighlightRefreshKey((k) => k + 1);
+  }, []);
+
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
 
   React.useEffect(() => {
@@ -183,6 +189,7 @@ export default function PassportScreen() {
           currentUserId={ownUserId ?? undefined}
           onClose={() => setHighlightViewerOpen(false)}
           onAddHighlight={handleAddHighlightFromViewer}
+          onDeleted={handleHighlightDeleted}
         />
         <HighlightComposer
           visible={highlightComposerOpen}
@@ -225,6 +232,7 @@ export default function PassportScreen() {
         currentUserId={ownUserId ?? undefined}
         onClose={() => setHighlightViewerOpen(false)}
         onAddHighlight={handleAddHighlightFromViewer}
+        onDeleted={handleHighlightDeleted}
       />
       <HighlightComposer
         visible={highlightComposerOpen}

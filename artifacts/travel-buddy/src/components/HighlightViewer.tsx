@@ -47,6 +47,7 @@ interface Props {
   onClose: () => void;
   onHighlightChange?: (index: number) => void;
   onAddHighlight?: () => void;
+  onDeleted?: () => void;
 }
 
 export function HighlightViewer({
@@ -57,6 +58,7 @@ export function HighlightViewer({
   onClose,
   onHighlightChange,
   onAddHighlight,
+  onDeleted,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(startIndex);
@@ -175,6 +177,7 @@ export function HighlightViewer({
               return;
             }
             invalidateHighlightCache(ownerId);
+            onDeleted?.();
             const remaining = localHighlights.filter((h) => h.id !== current.id);
             if (remaining.length === 0) {
               onClose();
