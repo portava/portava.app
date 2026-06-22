@@ -30,6 +30,7 @@ import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, Attende
 import type { Message } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
+import * as Haptics from 'expo-haptics';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -470,6 +471,7 @@ function MessageBubble({
         duration: 1400,
         useNativeDriver: true,
       }).start();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   }, [item.translationStatus, flashAnim]);
 
