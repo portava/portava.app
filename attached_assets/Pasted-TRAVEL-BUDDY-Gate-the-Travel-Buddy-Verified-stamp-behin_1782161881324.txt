@@ -1,0 +1,312 @@
+TRAVEL BUDDY — Gate the “Travel Buddy Verified” stamp behind real profile verification only.
+
+Current issue:
+The Passport/profile page is showing the “TRAVEL BUDDY VERIFIED” stamp/badge on the user’s Passport card even when the user has not completed a real verification process.
+
+Mission:
+The verified stamp must ONLY appear when the user’s profile/account has been verified through the app’s official verification system.
+
+Do not show the verified stamp by default.
+Do not show it for every user.
+Do not show it just because the user has a profile.
+Do not show it just because the Passport card exists.
+Do not fake verification.
+Do not remove the verification feature — just gate it correctly.
+
+============================================================
+CORE RULE
+============================================================
+
+The “Travel Buddy Verified” stamp appears only when:
+
+user.verification_status === "verified"
+
+or the existing equivalent verification field confirms verification.
+
+If no verification system exists yet, create a safe verification-ready data model and default every user to unverified.
+
+Default state:
+verification_status = "unverified"
+
+Allowed states:
+- unverified
+- pending
+- verified
+- rejected
+- expired
+
+Only "verified" shows the stamp.
+
+============================================================
+DATABASE / USER MODEL
+============================================================
+
+Find the existing user/profile table.
+
+If verification fields already exist, use them.
+
+Possible existing names to check:
+- verified
+- is_verified
+- isVerified
+- verification_status
+- verificationStatus
+- identity_verified
+- identityVerified
+- profile_verified
+- profileVerified
+- kyc_status
+- trust_verification_status
+
+If none exist, add fields safely:
+
+profiles or users:
+- verification_status text not null default 'unverified'
+- verified_at timestamptz null
+- verification_method text null
+- verification_expires_at timestamptz null
+
+Do not mark existing users verified automatically.
+
+Migration rule:
+Existing users should default to:
+verification_status = 'unverified'
+
+Unless there is already a trustworthy existing verified field that proves they were verified.
+
+============================================================
+FRONTEND PASSPORT CARD FIX
+============================================================
+
+Find the Passport/Profile card component where the stamp is shown.
+
+Likely areas:
+- Passport page
+- Profile card
+- PassportCard
+- TravelBuddyPassport
+- VerifiedStamp
+- VerifiedBadge
+- user profile header
+- public Passport card
+
+Replace any unconditional rendering like:
+
+<VerifiedStamp />
+
+with guarded rendering:
+
+{isProfileVerified && <VerifiedStamp />}
+
+Where:
+
+const isProfileVerified =
+  profile?.verification_status === "verified" ||
+  user?.verification_status === "verified";
+
+Do not use:
+- profile exists
+- user exists
+- displayName exists
+- hasAvatar
+- account created
+- email verified
+- phone verified
+as the reason to show the full Travel Buddy Verified stamp unless the product intentionally treats that as full profile verification.
+
+Email/phone verification can be separate badges later, but not the main Passport verified stamp.
+
+============================================================
+PENDING / UNVERIFIED UI
+============================================================
+
+If user is not verified:
+- Do not show the verified stamp.
+- Optionally show a small owner-only prompt:
+  “Verify your Passport”
+  or
+  “Profile not verified yet”
+
+Only show this prompt to the profile owner, not every viewer.
+
+If verification_status === "pending":
+- Owner sees:
+  “Verification pending”
+- Other users do not see a verified stamp.
+
+If verification_status === "rejected":
+- Owner sees:
+  “Verification needs attention”
+- Other users do not see a verified stamp.
+
+If verification_status === "expired":
+- Owner sees:
+  “Verification expired”
+- Other users do not see a verified stamp.
+
+============================================================
+VERIFICATION SYSTEM PLACEHOLDER
+============================================================
+
+If the verification process is not built yet, create a safe placeholder route/action but do not auto-verify.
+
+Route:
+- /verify
+or
+- /passport/verify
+
+Owner action:
+- “Verify your Passport”
+
+Click behavior:
+- opens verification page/sheet
+- if no verification provider exists yet, show:
+  “Passport verification is coming soon. Once verified, your Travel Buddy Verified stamp will appear here.”
+
+Do not set user to verified from this placeholder.
+
+============================================================
+ADMIN CONTROL
+============================================================
+
+If admin tools exist, add or wire admin verification management.
+
+Admin can:
+- view verification status
+- mark verified
+- mark rejected
+- reset to unverified
+- set verified_at
+- set verification_method
+
+Only admin/operator can change verification_status manually.
+
+Do not allow users to self-set verified from the frontend.
+
+============================================================
+API / BACKEND RULES
+============================================================
+
+Add/update profile response to include verification status safely:
+
+{
+  verificationStatus: "unverified" | "pending" | "verified" | "rejected" | "expired",
+  verifiedAt: string | null
+}
+
+Frontend should consume normalized field.
+
+If public profile API returns user data:
+- It can expose whether user is verified.
+- Do not expose sensitive verification documents or private verification details.
+
+Expose only:
+- verificationStatus
+- verifiedAt if product wants it
+
+Do not expose:
+- ID document data
+- selfies
+- provider payloads
+- private notes
+
+============================================================
+DISPLAY LOCATIONS TO FIX
+============================================================
+
+The verified stamp/badge must be gated everywhere it appears:
+
+- Passport card
+- public profile
+- profile header
+- mini profile cards
+- Pulse author cards
+- Telegraph user cards
+- Trip crew cards
+- comments
+- Discovery user cards
+- search results
+- followers/following lists if present
+
+Any “verified” visual must use the same helper.
+
+Create helper:
+
+isTravelBuddyVerified(userOrProfile)
+
+Return true only for real verified status.
+
+============================================================
+HELPER FUNCTION
+============================================================
+
+Create:
+
+src/lib/verification.ts
+
+Example:
+
+export function isTravelBuddyVerified(profile?: any): boolean {
+  return (
+    profile?.verification_status === "verified" ||
+    profile?.verificationStatus === "verified"
+  );
+}
+
+Also add:
+
+export function getVerificationLabel(status?: string): string {
+  switch (status) {
+    case "verified":
+      return "Travel Buddy Verified";
+    case "pending":
+      return "Verification pending";
+    case "rejected":
+      return "Verification needs attention";
+    case "expired":
+      return "Verification expired";
+    default:
+      return "Not verified";
+  }
+}
+
+Use this helper app-wide.
+
+============================================================
+ACCEPTANCE CRITERIA
+============================================================
+
+1. A brand-new user does NOT see the Travel Buddy Verified stamp.
+2. A user with verification_status = "unverified" does NOT see the stamp.
+3. A user with verification_status = "pending" does NOT see the stamp.
+4. A user with verification_status = "rejected" does NOT see the stamp.
+5. A user with verification_status = "expired" does NOT see the stamp.
+6. A user with verification_status = "verified" DOES see the stamp.
+7. Public viewers only see the stamp for verified users.
+8. Owner sees a “Verify your Passport” prompt if unverified.
+9. No frontend path lets a user self-mark verified.
+10. Admin-only tools can update status if admin tools exist.
+11. Passport page loads without crashing.
+12. Pulse/Profile/Discovery/Telegraph mini cards do not show fake verified badges.
+13. Build passes.
+14. TypeScript passes.
+15. No console errors.
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Files changed
+2. Where the verified stamp was being rendered unconditionally
+3. Verification field used or migration added
+4. Helper function added
+5. Passport card fix
+6. Other badge display locations fixed
+7. Admin/API changes if added
+8. Verification placeholder route/status if added
+9. Tests run
+10. Remaining TODOs
+
+Final result:
+The Travel Buddy Verified stamp only appears for users who have actually completed profile verification. All other users show no verified stamp, with an owner-only verification prompt if appropriate.
