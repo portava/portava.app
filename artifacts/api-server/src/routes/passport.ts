@@ -8,8 +8,14 @@ const router = Router();
 const PUBLIC_PROFILE_COLUMNS =
   "id, username, display_name, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, passport_visibility, created_at";
 
+const PUBLIC_PROFILE_COLUMNS_FALLBACK =
+  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, passport_visibility, created_at";
+
 const PUBLIC_POSTCARD_COLUMNS =
   "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at";
+
+const PUBLIC_POSTCARD_COLUMNS_FALLBACK =
+  "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, note, created_at";
 
 function mapPublicProfile(r: any) {
   return {
@@ -70,11 +76,19 @@ router.get("/users/:username/passport", async (req, res) => {
     return;
   }
 
-  const { data, error } = await sc
+  let { data, error } = await sc
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
     .eq("username", username)
     .maybeSingle();
+
+  if (error && (error as any).code === "42703") {
+    ({ data, error } = await sc
+      .from("profiles")
+      .select(PUBLIC_PROFILE_COLUMNS_FALLBACK)
+      .eq("username", username)
+      .maybeSingle());
+  }
 
   if (error) {
     req.log.error({ err: error }, "Failed to load public passport");
@@ -124,7 +138,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     return;
   }
 
-  const { data, error } = await sc
+  let { data: postcards, error: postcardErr } = await sc
     .from("passport_postcards")
     .select(PUBLIC_POSTCARD_COLUMNS)
     .eq("user_id", profile.id)
@@ -134,13 +148,26 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(50);
 
-  if (error) {
-    req.log.error({ err: error }, "Failed to list public postcards");
-    sendError(res, "db_error", error.message);
+  if (postcardErr && (postcardErr as any).code === "42703") {
+    const fb = await sc
+      .from("passport_postcards")
+      .select(PUBLIC_POSTCARD_COLUMNS_FALLBACK)
+      .eq("user_id", profile.id)
+      .eq("status", "active")
+      .eq("visibility", "public")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    postcards = fb.data as any;
+    postcardErr = fb.error;
+  }
+
+  if (postcardErr) {
+    req.log.error({ err: postcardErr }, "Failed to list public postcards");
+    sendError(res, "db_error", postcardErr.message);
     return;
   }
 
-  res.status(200).json({ postcards: (data ?? []).map((r) => mapPostcard(r, false)) });
+  res.status(200).json({ postcards: (postcards ?? []).map((r) => mapPostcard(r, false)) });
 });
 
 /* ===========================================================================
@@ -155,7 +182,10 @@ router.get("/me/passport/postcards", async (req, res) => {
   const OWNER_POSTCARD_COLUMNS =
     "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, stamp_reason, verification_method, visibility, status, pinned_at, note, created_at";
 
-  const { data, error } = await client
+  const OWNER_POSTCARD_COLUMNS_FALLBACK =
+    "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, stamp_reason, verification_method, visibility, status, note, created_at";
+
+  let { data, error } = await client
     .from("passport_postcards")
     .select(OWNER_POSTCARD_COLUMNS)
     .eq("user_id", user.id)
@@ -163,6 +193,18 @@ router.get("/me/passport/postcards", async (req, res) => {
     .order("pinned_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(100);
+
+  if (error && (error as any).code === "42703") {
+    const fb = await client
+      .from("passport_postcards")
+      .select(OWNER_POSTCARD_COLUMNS_FALLBACK)
+      .eq("user_id", user.id)
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    data = fb.data as any;
+    error = fb.error;
+  }
 
   if (error) {
     req.log.error({ err: error }, "Failed to list own postcards");

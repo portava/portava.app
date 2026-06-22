@@ -40,6 +40,10 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 const PROFILE_COLUMNS =
   "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language";
 
+/** Fallback column set: excludes columns added in pending migrations (0014). */
+const PROFILE_COLUMNS_FALLBACK =
+  "id, handle, name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, preferred_language";
+
 function mapProfile(r: any) {
   return {
     id: r.id,
@@ -85,11 +89,19 @@ router.get("/me/profile", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  const { data, error } = await client
+  let { data, error } = await client
     .from("profiles")
     .select(PROFILE_COLUMNS)
     .eq("id", user.id)
     .maybeSingle();
+
+  if (error && (error as any).code === "42703") {
+    ({ data, error } = await client
+      .from("profiles")
+      .select(PROFILE_COLUMNS_FALLBACK)
+      .eq("id", user.id)
+      .maybeSingle());
+  }
 
   if (error) {
     req.log.error({ err: error }, "Failed to load own profile");
@@ -202,19 +214,41 @@ router.patch("/me/profile", async (req, res) => {
     return;
   }
 
-  const { data, error } = await client
+  let { data: updated, error: updateError } = await client
     .from("profiles")
     .update(row)
     .eq("id", user.id)
     .select(PROFILE_COLUMNS)
     .single();
 
-  if (error) {
-    req.log.error({ err: error }, "Failed to update profile");
-    sendError(res, "db_error", error.message);
+  if (updateError && (updateError as any).code === "42703") {
+    const safeRow = { ...row };
+    delete safeRow.display_name;
+    delete safeRow.spoken_languages;
+    delete safeRow.default_language;
+    delete safeRow.travel_styles;
+    delete safeRow.travel_pace;
+    delete safeRow.budget_style;
+    delete safeRow.travel_group_style;
+    delete safeRow.looking_for;
+    delete safeRow.comfort_level;
+    delete safeRow.availability_tags;
+    delete safeRow.planning_style;
+    delete safeRow.public_social_links;
+    ({ data: updated, error: updateError } = await client
+      .from("profiles")
+      .update(safeRow)
+      .eq("id", user.id)
+      .select(PROFILE_COLUMNS_FALLBACK)
+      .single());
+  }
+
+  if (updateError) {
+    req.log.error({ err: updateError }, "Failed to update profile");
+    sendError(res, "db_error", updateError.message);
     return;
   }
-  res.status(200).json(mapProfile(data));
+  res.status(200).json(mapProfile(updated));
 });
 
 /* ===========================================================================
