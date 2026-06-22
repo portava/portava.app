@@ -1,0 +1,252 @@
+TRAVEL BUDDY — Normalize Post button size/placement and make entire bottom menu bar 30% opaque.
+
+Current issue:
+The Post button in the bottom navigation is oversized, floating higher than the other menu buttons, and visually feels separate from the menu. It should be normalized and fixed into the same placement system as the other bottom menu buttons.
+
+Mission:
+Make the Post button the same size, alignment, and placement rhythm as the other bottom menu buttons. Also apply 30% opacity/transparency styling to the entire bottom menu bar background.
+
+Do not remove the Post function.
+Do not break the unified Post composer.
+Do not bring back duplicate floating Post/FAB buttons.
+Do not break Pulse, Passport, Trips, Explore, or Telegraph routing.
+Do not make the menu unreadable.
+Do not make the Post button hard to tap.
+
+============================================================
+PART 1 — NORMALIZE POST BUTTON
+============================================================
+
+Find the bottom navigation component.
+
+Likely names:
+- BottomNav
+- MobileBottomNav
+- AppBottomNav
+- TravelBuddyBottomNav
+- MobileTabBar
+- NavigationBar
+
+Current problem:
+Post is styled like a raised/floating red center button.
+
+Fix:
+Post should become a normal bottom-nav item, aligned with the other menu buttons.
+
+Expected bottom nav layout:
+Pulse | Explore | Post | Trips | Passport
+
+Rules:
+- Post button uses the same nav-item container size as the other buttons.
+- Post icon is centered like the others.
+- Post label is under the icon like the others.
+- Post does not float above the menu.
+- Post does not overlap content.
+- Post does not cover cards.
+- Post does not have oversized red FAB styling.
+- Post still opens UnifiedPostComposer.
+
+If product still wants Post slightly emphasized:
+- allow a subtle accent color
+- but keep same height/width/alignment as other menu items
+- no raised floating button
+- no giant circle
+
+Remove/override classes like:
+- .post-fab
+- .floating-post
+- .center-post-button
+- .raised-post-button
+- .bottom-create-fab
+- .post-card-fab
+- .mobile-fab-create
+- .nav-post-oversized
+
+============================================================
+PART 2 — SIZE SPECS
+============================================================
+
+Bottom nav item:
+- flex: 1
+- min-width: 0
+- height: same as other items
+- icon size: 22–24px
+- label font-size: 10–12px
+- tap target: at least 44px
+- vertical alignment: center
+- no translateY lift
+- no scale larger than other menu buttons
+
+Post item:
+- same nav slot width as Pulse/Explore/Trips/Passport
+- same vertical centerline
+- same label spacing
+- same bottom safe-area behavior
+
+Example CSS direction:
+
+.mobile-bottom-nav {
+  height: calc(64px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.mobile-bottom-nav__item {
+  flex: 1;
+  min-width: 0;
+  height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.mobile-bottom-nav__item--post {
+  transform: none;
+  width: auto;
+  height: 64px;
+  border-radius: 0;
+}
+
+.mobile-bottom-nav__item--post .icon {
+  width: 24px;
+  height: 24px;
+}
+
+============================================================
+PART 3 — MENU BAR 30% OPAQUE
+============================================================
+
+Add 30% opacity/transparency to the entire bottom menu bar background.
+
+Important:
+Do NOT set opacity: 0.3 on the entire nav container if it makes icons/text transparent too.
+
+Correct approach:
+Use background color with alpha or backdrop overlay.
+
+Preferred:
+background: rgba(255, 255, 255, 0.30);
+
+For dark mode:
+background: rgba(10, 12, 18, 0.30);
+
+Add blur if already consistent with design:
+backdrop-filter: blur(18px);
+-webkit-backdrop-filter: blur(18px);
+
+Keep border subtle:
+border-top: 1px solid rgba(255, 255, 255, 0.18);
+
+Text/icons should remain readable:
+- icons/text opacity should stay 1
+- only menu bar background is 30% opaque
+
+If current theme uses variables, create:
+--bottom-nav-bg: rgba(..., 0.30);
+
+============================================================
+PART 4 — SAFE AREA / CONTENT PADDING
+============================================================
+
+Because the Post button is no longer raised, update content spacing.
+
+Ensure pages still have bottom padding:
+padding-bottom: calc(var(--bottom-nav-height, 64px) + env(safe-area-inset-bottom) + 12px);
+
+Make sure:
+- feed cards do not hide behind nav
+- Passport cards do not hide behind nav
+- composer buttons do not hide behind nav
+- sheets respect bottom nav/safe area
+- no horizontal overflow
+
+============================================================
+PART 5 — POST ACTION WIRING
+============================================================
+
+The normalized Post nav item must still open the same unified Post composer.
+
+On tap:
+open UnifiedPostComposer
+
+It should still allow:
+- Post Update
+- Ask Question
+- Share a Moment
+- Share Postcard
+- Share Hidden Gem
+- Share Food Spot
+- Share Highlight if already added
+
+Do not route Post to a blank page unless the app already uses a Post route intentionally.
+
+If the current Post button uses an onClick handler, preserve it:
+onClick={openUnifiedPostComposer}
+
+If current nav expects route items only, support action items:
+{
+  id: "post",
+  label: "Post",
+  icon,
+  type: "action",
+  onClick: openUnifiedPostComposer
+}
+
+============================================================
+PART 6 — REMOVE DUPLICATES
+============================================================
+
+Verify there is only one visible Post action in the bottom nav.
+
+Remove/hide:
+- floating Post button
+- red postcard FAB
+- duplicate plus button
+- separate bottom Post bubble
+- any old Pulse-only FAB
+
+The only Post entry should be the normalized bottom nav Post item or the compact header Post button where appropriate.
+
+If both header Post and bottom nav Post exist:
+- both may open same composer if product wants that
+- but do not show an extra floating FAB
+
+============================================================
+PART 7 — MOBILE TESTING
+============================================================
+
+Test screen sizes:
+- 360px
+- 390px
+- 430px
+
+Verify:
+1. Bottom nav background is 30% opaque/translucent.
+2. Icons and labels remain fully readable.
+3. Post button is same size/alignment as other nav buttons.
+4. Post button no longer floats above nav.
+5. Post opens UnifiedPostComposer.
+6. Pulse, Explore, Trips, Passport still route correctly.
+7. No menu item overlaps content.
+8. No bottom card is hidden behind nav.
+9. No duplicate FAB appears.
+10. No console errors.
+11. Build/typecheck passes.
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Bottom nav component changed
+2. CSS/classes changed
+3. Removed/disabled oversized Post FAB styles
+4. Confirmed Post opens UnifiedPostComposer
+5. Confirmed menu background opacity implementation
+6. Mobile sizes tested
+7. Build/typecheck result
+8. Any remaining TODOs
+
+Final result:
+The Post button is normalized into the bottom menu with the same size and placement as the other menu buttons, the entire bottom menu bar uses a 30% opaque/translucent background, and the Post action still opens the unified composer correctly.
