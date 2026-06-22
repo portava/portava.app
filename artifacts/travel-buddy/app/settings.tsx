@@ -7,7 +7,7 @@ import { useSession } from '../src/context/SessionContext';
 import { color, space, type as t, radius, layout } from '../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../src/services/intelligence';
-import { getMyProfile } from '../src/services/profile';
+import { getMyLanguageSettings } from '../src/services/messaging';
 import { SUPPORTED_LANGUAGES } from './language-picker';
 
 export default function Settings() {
@@ -36,9 +36,9 @@ export default function Settings() {
 
   const loadLanguage = useCallback(async () => {
     if (!live) return;
-    const result = await getMyProfile();
+    const result = await getMyLanguageSettings();
     if (result.ok && result.data && isMounted.current) {
-      setPreferredLanguage((result.data as any).preferredLanguage ?? null);
+      setPreferredLanguage(result.data.preferred_language ?? null);
     }
   }, [live]);
 
@@ -373,7 +373,7 @@ export default function Settings() {
               onPress={() =>
                 router.push({
                   pathname: '/language-picker' as any,
-                  params: { current: preferredLanguage ?? '' },
+                  params: { current: preferredLanguage ?? '', via: 'language-settings' },
                 })
               }
             >

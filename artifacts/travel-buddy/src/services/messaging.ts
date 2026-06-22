@@ -28,6 +28,7 @@ export interface MessageSettings {
 
 export interface LanguageSettings {
   preferred_message_language: string;
+  preferred_language: string | null;
   auto_translate_messages: boolean;
   show_original_messages: boolean;
   translation_updated_at: string | null;
