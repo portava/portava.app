@@ -19,9 +19,11 @@ import { PULSE_FILTERS } from '../../src/types/models';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { useLocationContext } from '../../src/context/LocationContext';
+import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
+import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
-const CURRENT_CITY = 'cebu';
 
 type FeedMode = 'forYou' | 'following';
 
@@ -70,6 +72,10 @@ export default function Pulse() {
   const [createOpen, setCreateOpen] = useState(false);
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
 
+  const { locationState, openCityPicker } = useLocationContext();
+  const activeCity = locationState.place.city ?? 'Cebu City';
+  const activeCitySlug = activeCity.toLowerCase().replace(/\s+/g, '-');
+
   // Load learned category affinities from the preference engine so Pulse
   // ranking improves as the user interacts with recommendations.
   useEffect(() => {
@@ -80,7 +86,7 @@ export default function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, status } = useCityPulse({ currentCitySlug: CURRENT_CITY, interests: me.interests, categoryAffinities });
+  const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: me.interests, categoryAffinities });
 
   const realFeed = useGlobalFeed();
   const followingFeed = useFollowingFeed();
@@ -246,11 +252,13 @@ export default function Pulse() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <PulseHeader
-        city="Cebu"
+        city={activeCity}
+        cityFull={activeCity}
         availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
         filterCount={filterCount}
         onSearch={() => router.push('/(tabs)/discovery')}
         onFilter={() => setSheetOpen(true)}
+        onCityPress={openCityPicker}
       />
       <FlatList
         data={feed}
@@ -282,6 +290,10 @@ export default function Pulse() {
         onClose={() => setSheetOpen(false)}
       />
       <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => realFeed.reload()} />
+
+      {/* Location overlays */}
+      <LocationPermissionPrompt />
+      <ManualCityPicker />
     </View>
   );
 }

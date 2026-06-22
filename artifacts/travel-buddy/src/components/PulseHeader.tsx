@@ -13,6 +13,7 @@ export function PulseHeader({
   availabilityText = 'Open tonight',
   filterCount = 0,
   onFilter,
+  onCityPress,
 }: {
   city?: string;
   area?: string;
@@ -24,6 +25,7 @@ export function PulseHeader({
   filterCount?: number;
   onSearch?: () => void;
   onFilter?: () => void;
+  onCityPress?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const { messages: unreadMessages } = useUnreadCounts();
@@ -57,9 +59,9 @@ export function PulseHeader({
 
       {/* compact status chips */}
       <View style={styles.statusRow}>
-        <Pressable style={styles.chip} onPress={() => router.push('/(tabs)/discovery')}>
+        <Pressable style={styles.chip} onPress={onCityPress ?? (() => router.push('/(tabs)/discovery'))}>
           <MapPin size={11} color={color.deep} />
-          <Text style={styles.chipText} numberOfLines={1}>{cityFull}</Text>
+          <Text style={styles.chipText} numberOfLines={1}>{cityFull || city}</Text>
         </Pressable>
 
         <Pressable style={styles.chip} onPress={() => router.push('/availability')}>

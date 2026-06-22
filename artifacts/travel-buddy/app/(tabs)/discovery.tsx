@@ -17,6 +17,8 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
+import { useLocationContext } from '../../src/context/LocationContext';
+import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -45,6 +47,7 @@ export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
+  const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
 
   // Deep-link: ?category=food navigates to that tab on mount
   const params = useLocalSearchParams<{ category?: string }>();
@@ -55,22 +58,32 @@ export default function DiscoveryHub() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  // Start with a popular city so content fetches begin on first render — no
-  // blank screen while we wait for the trips API to respond.
-  const [destination, setDestination] = useState('Paris');
+  // Seed from location context city if available; fall back to 'Paris' so
+  // content fetches start immediately without a blank screen.
+  const [destination, setDestination] = useState(
+    () => locationState.place.city ?? 'Paris'
+  );
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
 
+  // Keep destination in sync when location city changes (GPS capture / manual set).
+  useEffect(() => {
+    if (locationState.place.city) {
+      setDestination(locationState.place.city);
+    }
+  }, [locationState.place.city]);
+
   // Upgrade to the user's actual trip destination once trips load.
-  // We don't block rendering on this — 'Paris' content loads immediately
-  // and gets replaced when the real destination arrives.
+  // Only overrides if the user hasn't set a location yet.
   useEffect(() => {
     if (!isAuthed) return;
     listMyTrips().then((rows) => {
       const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
-      if (active?.destinationCity) setDestination(active.destinationCity);
+      if (active?.destinationCity && !locationState.place.city) {
+        setDestination(active.destinationCity);
+      }
     }).catch(() => {});
-  }, [isAuthed]);
+  }, [isAuthed, locationState.place.city]);
 
   // Re-apply deep-link category if params change (e.g. in-app navigation)
   useEffect(() => {
@@ -99,9 +112,11 @@ export default function DiscoveryHub() {
     setDetailVisible(true);
   };
 
-  const handlePickDestination = (city: string) => {
+  const handlePickDestination = useCallback((city: string) => {
     setDestination(city);
-  };
+    // Also persist as manual city in the location system
+    setManualCity(city).catch(() => {});
+  }, [setManualCity]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -164,6 +179,13 @@ export default function DiscoveryHub() {
         visible={detailVisible}
         onClose={() => setDetailVisible(false)}
         onAddToPlan={handleAddToPlanFromPlace}
+      />
+
+      {/* City picker — triggered from DestinationBar or location context */}
+      <ManualCityPicker
+        visible={showCityPicker}
+        onClose={closeCityPicker}
+        onSelect={handlePickDestination}
       />
     </View>
   );

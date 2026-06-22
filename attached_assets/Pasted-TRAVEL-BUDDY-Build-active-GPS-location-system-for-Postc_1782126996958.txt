@@ -1,0 +1,693 @@
+TRAVEL BUDDY — Build active GPS/location system for Postcards, Passport Stamps, Discovery, Pulse, Trips, and all location-required features.
+
+Mission:
+Build one reliable app-wide GPS/location system that powers every feature needing location, especially:
+- Postcards
+- Passport Stamps
+- Highlights/Stories
+- Hidden Gems
+- Food Spots
+- Discovery
+- Pulse city context
+- Trip windows
+- Safe Return/check-ins
+- Nearby travelers
+- Local recommendations
+- City/District detection
+
+This must be privacy-safe, permission-aware, and reusable across the whole app.
+
+Do not create separate GPS logic per page.
+Do not fake user location.
+Do not crash if GPS permission is denied.
+Do not block the whole app if GPS is unavailable.
+Do not expose exact user location publicly unless the user chooses to share it.
+Do not store precise coordinates forever unless needed and permitted.
+
+============================================================
+CORE PRODUCT RULE
+============================================================
+
+Create one shared location service:
+
+LocationService / useActiveLocation / locationResolver
+
+Every GPS-required feature must use this shared system.
+
+The app should know:
+- current coordinates when permission is granted
+- city
+- district/neighborhood
+- country
+- location freshness
+- permission status
+- whether location is precise or approximate
+- whether GPS is unavailable
+- last known safe location
+- user-selected manual city fallback
+
+Location should support:
+- live GPS
+- last known location
+- manual city override
+- trip destination override
+- post-specific tagged location
+
+============================================================
+LOCATION STATES
+============================================================
+
+Define location state clearly:
+
+permissionStatus:
+- unknown
+- prompt
+- granted
+- denied
+- unavailable
+
+locationSource:
+- gps
+- last_known
+- manual_city
+- trip_context
+- post_tag
+- none
+
+freshness:
+- live
+- recent
+- stale
+- unavailable
+
+Return shape:
+
+{
+  ok: boolean,
+  permissionStatus: "unknown" | "prompt" | "granted" | "denied" | "unavailable",
+  source: "gps" | "last_known" | "manual_city" | "trip_context" | "post_tag" | "none",
+  freshness: "live" | "recent" | "stale" | "unavailable",
+  coords: {
+    lat: number,
+    lng: number,
+    accuracyMeters: number | null
+  } | null,
+  place: {
+    city: string | null,
+    district: string | null,
+    country: string | null,
+    countryCode: string | null,
+    formatted: string | null
+  },
+  lastUpdatedAt: string | null,
+  userMessage: string | null
+}
+
+============================================================
+USER PERMISSION FLOW
+============================================================
+
+Add clean permission UX.
+
+When a feature needs GPS, show:
+
+“Turn on location to unlock nearby travelers, stamps, postcards, and local discovery.”
+
+Buttons:
+- Enable Location
+- Choose City Manually
+- Not Now
+
+If denied:
+“Location is off. You can still use Travel Buddy by choosing a city manually.”
+
+Buttons:
+- Choose City
+- Open Settings if supported
+- Retry
+
+Do not repeatedly spam permission prompts.
+
+Store:
+- whether user dismissed prompt
+- last chosen manual city
+- last known city
+
+============================================================
+DATABASE / LOCATION MODEL
+============================================================
+
+Add or update location tables/fields.
+
+User location state:
+user_location_state:
+- id uuid primary key
+- user_id uuid not null unique
+- permission_status text null
+- source text null
+- lat numeric null
+- lng numeric null
+- accuracy_meters numeric null
+- city text null
+- district text null
+- country text null
+- country_code text null
+- formatted_location text null
+- last_known_at timestamptz null
+- manual_city text null
+- manual_country text null
+- manual_selected_at timestamptz null
+- created_at timestamptz default now()
+- updated_at timestamptz default now()
+
+Postcard location/stamp fields:
+postcards:
+- location_source text null
+- lat numeric null
+- lng numeric null
+- city text null
+- district text null
+- country text null
+- place_name text null
+- stamp_city text null
+- stamp_country text null
+- stamp_label text null
+- stamp_unlocked_at timestamptz null
+
+If postcards table already exists, add fields safely.
+
+Passport stamps:
+passport_stamps:
+- id uuid primary key
+- user_id uuid not null
+- stamp_type text not null
+- city text null
+- district text null
+- country text null
+- country_code text null
+- lat numeric null
+- lng numeric null
+- source text not null
+- related_postcard_id uuid null
+- related_trip_id uuid null
+- unlocked_at timestamptz default now()
+- metadata jsonb null
+
+Stamp uniqueness:
+Prevent duplicate city stamps unless product wants repeated visits.
+
+Recommended unique index:
+unique(user_id, stamp_type, city, country)
+
+or for flexible:
+unique(user_id, stamp_type, country_code, city)
+
+============================================================
+BACKEND APIs
+============================================================
+
+Add/update endpoints:
+
+GET /api/me/location-state
+Returns current saved location state.
+
+POST /api/me/location-state
+Updates location state from client GPS or manual city.
+
+Body:
+{
+  source,
+  coords,
+  place,
+  permissionStatus,
+  accuracyMeters,
+  capturedAt
+}
+
+POST /api/location/reverse-geocode
+Input:
+{
+  lat,
+  lng
+}
+
+Returns:
+{
+  city,
+  district,
+  country,
+  countryCode,
+  formatted
+}
+
+Use existing geocoding provider if configured.
+If no provider exists, add a provider adapter with TODO-safe implementation and do not crash.
+
+POST /api/postcards
+Update postcard creation to accept location/stamp fields.
+
+POST /api/postcards/:id/stamp
+Unlocks stamp for postcard if location is valid.
+
+GET /api/me/passport-stamps
+Returns user stamps.
+
+POST /api/me/passport-stamps
+Creates stamp from location event, postcard, trip, or check-in.
+
+============================================================
+REVERSE GEOCODING
+============================================================
+
+Build a provider adapter:
+
+server/services/geocodingService.ts
+
+Function:
+reverseGeocode({ lat, lng })
+
+Provider priority:
+1. Existing app provider if already installed/configured
+2. Mapbox/Google/Here/etc. only if existing env vars exist
+3. OpenStreetMap/Nominatim only if acceptable and rate-limited
+4. Fallback: store coordinates and show “Location detected” without city
+
+Do not hardcode provider keys.
+Do not expose keys to frontend.
+
+Return normalized:
+{
+  city,
+  district,
+  country,
+  countryCode,
+  formatted
+}
+
+If reverse geocode fails:
+- still save coordinates if permitted
+- show “Location saved, city name unavailable”
+- allow user to manually select city
+
+============================================================
+CLIENT GPS HOOK
+============================================================
+
+Create:
+
+src/hooks/useActiveLocation.ts
+
+Should support:
+- requestLocation()
+- refreshLocation()
+- setManualCity()
+- clearManualCity()
+- getLocationForFeature(featureName)
+- permissionStatus
+- isLoading
+- error
+- locationState
+
+Use browser geolocation:
+navigator.geolocation.getCurrentPosition
+navigator.geolocation.watchPosition only when active tracking is needed
+
+Default:
+Use getCurrentPosition for one-time needs.
+Use watchPosition only for active GPS features like Safe Return or live nearby discovery.
+
+Options:
+- enableHighAccuracy true only when needed
+- timeout 10000
+- maximumAge 60000
+
+Do not keep watchPosition running forever.
+Clean up watcher on unmount.
+
+============================================================
+LOCATION CONTEXT PROVIDER
+============================================================
+
+Create app-wide provider:
+
+LocationProvider
+
+Exposes:
+- activeLocation
+- requestLocation
+- refreshLocation
+- manualCity
+- permissionStatus
+- locationRequired(feature)
+- locationWarnings
+
+Wrap app so Pulse, Discovery, Postcards, Highlights, Trips, and Passport can consume the same state.
+
+============================================================
+POSTCARDS + STAMPS
+============================================================
+
+Postcards need location integration.
+
+When creating a Postcard:
+Ask:
+“Add a location stamp?”
+
+Options:
+- Use current location
+- Choose location manually
+- Hide location
+
+If user uses current location:
+- get GPS
+- reverse geocode
+- attach city/district/country/place to postcard
+- create Passport Stamp
+
+If user chooses manually:
+- attach manual city/location
+- create manual stamp with source = manual
+- visually distinguish if needed
+
+If user hides location:
+- postcard posts without public location
+- optional private stamp can still be saved if user permits
+
+Postcard stamp display:
+- show stamp badge on postcard:
+  “Cebu City, Philippines”
+  or
+  “Lahug · Cebu”
+- show date
+- optional passport-stamp style visual
+
+Stamp types:
+- city_visit
+- postcard_created
+- hidden_gem_shared
+- food_spot_shared
+- trip_checkin
+- highlight_shared
+
+============================================================
+HIGHLIGHTS/STORIES GPS
+============================================================
+
+When posting Highlight:
+Location options:
+- Show city only
+- Show neighborhood
+- Show exact place
+- Hide location
+
+Default:
+Show city only.
+
+Use GPS to improve:
+- nearby visibility
+- city Pulse placement
+- Discovery relevance
+- stamp creation if user wants
+
+Do not expose exact coordinates to viewers.
+
+============================================================
+PULSE GPS
+============================================================
+
+Pulse should use:
+1. manual city override if selected
+2. trip context city if trip window active
+3. GPS city if permission granted
+4. last known city
+5. fallback city selector
+
+Pulse header context should show:
+Cebu City · Lahug · 6 PM–1 AM
+
+But if GPS unavailable:
+“Choose city”
+
+Pulse filters should work with location state.
+
+============================================================
+DISCOVERY GPS
+============================================================
+
+Discovery should use active location for:
+- nearby recommendations
+- distance labels
+- city/district filtering
+- hidden gems nearby
+- food spots nearby
+- traveler posts nearby
+
+If GPS denied:
+- use manual city
+- no crash
+- hide exact distance if no coordinates
+- show city-based recommendations
+
+============================================================
+NEARBY TRAVELERS
+============================================================
+
+If app has nearby traveler feature:
+Use approximate location or city-level matching by default.
+
+Do not show precise live user coordinates publicly.
+
+Use:
+- same city
+- nearby district
+- distance bucket, not exact location, unless user opts in
+
+Distance labels:
+- “Nearby”
+- “In Lahug”
+- “2 mi away” only if privacy settings allow
+
+============================================================
+SAFE RETURN / CHECK-IN
+============================================================
+
+For safety features, active GPS can be more precise.
+
+Use watchPosition only during:
+- active Safe Return session
+- active check-in
+- live trip safety mode
+
+Stop watcher when session ends.
+
+Store only needed safety logs.
+
+============================================================
+PRIVACY SETTINGS
+============================================================
+
+Add/update location privacy settings:
+
+Location sharing:
+- Off
+- City only
+- Neighborhood
+- Exact place when I choose
+- Exact GPS for safety features only
+
+Default:
+City only
+
+Post default:
+City only for highlights/postcards unless user changes.
+
+Settings copy:
+“You control how much location appears on your posts. Travel Buddy can use GPS privately to unlock stamps and local recommendations without showing your exact location publicly.”
+
+============================================================
+UI COMPONENTS
+============================================================
+
+Create/update:
+
+LocationPermissionPrompt
+LocationStatusPill
+ManualCityPicker
+LocationStampBadge
+PassportStampGrid
+PostcardLocationPicker
+HighlightLocationPicker
+LocationPrivacySelector
+
+Use compact mobile design:
+- 44px tap targets
+- no giant prompts
+- bottom sheet for city/location picker
+- no overlapping bottom nav
+
+============================================================
+ERROR STATES
+============================================================
+
+Handle:
+- GPS denied
+- GPS timeout
+- GPS unavailable
+- reverse geocode failed
+- no city detected
+- manual city missing
+- stale location
+
+User messages:
+- “Location is off. Choose a city to keep exploring.”
+- “We found your location, but couldn’t name the city yet.”
+- “Location is stale. Tap refresh.”
+- “GPS timed out. Try again or choose city manually.”
+
+============================================================
+SECURITY / PRIVACY
+============================================================
+
+Do not:
+- expose raw coordinates publicly by default
+- show exact place without user choosing it
+- keep active GPS watcher running silently
+- share location to other users without visibility permission
+- store location history forever without purpose
+
+Do:
+- require auth for location updates
+- only update current user location
+- validate lat/lng ranges
+- rate limit location updates if needed
+- sanitize manual city/place text
+- respect blocked users
+- respect private posts
+
+Lat/lng validation:
+lat between -90 and 90
+lng between -180 and 180
+
+============================================================
+INTEGRATION POINTS
+============================================================
+
+Wire active GPS to:
+
+Passport:
+- stamp grid
+- city/country visited
+- postcard stamps
+
+Postcards:
+- location stamp
+- GPS/manual location picker
+- stamp unlock
+
+Highlights:
+- location visibility
+- city placement
+- stamp option
+
+Pulse:
+- city context
+- district context
+- nearby posts
+
+Discovery:
+- nearby places/posts
+- distance labels
+
+Hidden Gems/Food Spots:
+- place location
+- stamp unlock when shared
+
+Trips:
+- trip window city
+- check-ins
+
+Safe Return:
+- active GPS tracking only during safety session
+
+Telegraph:
+- optional share location in trip chat only if feature exists
+- do not auto-share exact location
+
+============================================================
+TESTS / VERIFICATION
+============================================================
+
+Test:
+
+1. First-time user opens Pulse:
+- location prompt appears
+- choose manual city works
+
+2. User grants GPS:
+- location saved
+- reverse geocode works or graceful fallback
+- Pulse shows city
+- Discovery uses city/location
+
+3. User denies GPS:
+- app does not crash
+- manual city works
+
+4. Create Postcard with GPS:
+- current location attaches
+- stamp created
+- Passport stamp grid updates
+
+5. Create Postcard with manual location:
+- manual stamp created
+- postcard displays stamp
+
+6. Create Postcard with hidden location:
+- public post hides location
+- app does not crash
+
+7. Create Highlight:
+- choose city only
+- choose hide location
+- location does not leak exact coords
+
+8. Discovery:
+- distance appears only when coords exist
+- no distance when city-only/manual
+
+9. Safe Return:
+- GPS watcher starts only during session
+- watcher stops after session
+
+10. Privacy:
+- city-only does not expose exact coordinates
+- private posts do not expose location
+
+11. Mobile:
+- prompts and sheets do not overlap bottom nav
+- location picker works at 360px
+
+12. Build/typecheck passes
+13. No console errors
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Files created
+2. Files modified
+3. Database migration added
+4. Location service/hook/provider added
+5. Reverse geocode provider used
+6. Postcard stamp integration
+7. Passport stamp integration
+8. Highlight GPS integration
+9. Pulse/Discovery GPS integration
+10. Privacy controls added
+11. GPS permission handling
+12. Tests run
+13. Remaining TODOs
+
+Final result:
+Travel Buddy has one active GPS/location system powering Postcards, Passport Stamps, Highlights, Pulse, Discovery, Trips, Hidden Gems, Food Spots, Safe Return, and any GPS-required app feature, with manual fallback and privacy-safe location sharing.

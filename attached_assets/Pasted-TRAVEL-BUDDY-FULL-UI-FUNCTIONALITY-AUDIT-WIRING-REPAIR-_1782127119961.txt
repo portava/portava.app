@@ -1,0 +1,673 @@
+TRAVEL BUDDY — FULL UI FUNCTIONALITY AUDIT + WIRING REPAIR
+
+Mission:
+Run a complete end-to-end UI audit across the entire Travel Buddy app. Every visible UI feature, button, tab, card action, menu item, icon button, form, modal, sheet, filter, navigation link, and CTA must be checked and wired to its correct function/path.
+
+If a UI function exists but is not wired, wire it.
+If a UI function is partially built, finish it and wire it.
+If a button points to the wrong route, fix it.
+If a button is dead/no-op, either connect it to the correct real function or build the missing function.
+If a backend/API function is missing for a necessary UI action, build the minimal correct backend function and wire it.
+If a feature is intentionally not ready, do not leave a dead button — show a safe “Coming soon” or disabled state with explanation.
+
+Final goal:
+Every single button and UI action works, routes correctly, opens the correct modal/sheet, calls the correct API, or shows an intentional disabled/coming-soon state. No dead UI.
+
+Do not redesign the app.
+Do not remove features.
+Do not break working flows.
+Do not break auth.
+Do not break existing routes.
+Do not break Telegraph/messages.
+Do not break Passport.
+Do not break Pulse.
+Do not break Discovery.
+Do not break Trips/Plans.
+Do not break profile upload.
+Do not break like/comment/share.
+Do not leave fake success states.
+
+============================================================
+CORE RULE
+============================================================
+
+Every UI action must have one of these valid outcomes:
+
+1. Navigate to the correct route.
+2. Open the correct modal/sheet/drawer.
+3. Trigger the correct existing function.
+4. Call the correct backend API and update UI state.
+5. Submit the correct form.
+6. Toggle the correct state/filter.
+7. Show a proper permission/disabled message.
+8. Show a clear coming-soon state if the feature is intentionally not ready.
+
+No silent no-ops.
+No buttons with empty onClick.
+No links to "#".
+No placeholder console.log only.
+No broken href.
+No missing route.
+No action hidden behind crash.
+No form submit that does nothing.
+
+============================================================
+PHASE 1 — APP-WIDE UI INVENTORY
+============================================================
+
+Inspect the whole frontend and create an inventory of every interactive element.
+
+Search for:
+- button
+- a href
+- Link
+- NavLink
+- onClick
+- onSubmit
+- role="button"
+- icon buttons
+- dropdown triggers
+- modal triggers
+- sheet triggers
+- tabs
+- segmented controls
+- chips
+- filters
+- FABs
+- menu items
+- swipe/card actions
+- context menu actions
+- forms
+- input submit buttons
+
+Also search for broken patterns:
+- href="#"
+- href=""
+- onClick={() => {}}
+- onClick={undefined}
+- console.log only
+- TODO
+- coming soon
+- disabled without explanation
+- placeholder
+- NotImplemented
+- throw new Error("not implemented")
+- alert("TODO")
+- empty form handlers
+- missing route components
+- routes pointing to removed components
+- buttons hidden by CSS/overlays
+- duplicate create/post actions
+- tabs relying on broken numeric indexes
+- nav arrays with missing component refs
+
+Create a working audit map grouped by screen/page.
+
+============================================================
+PHASE 2 — SCREENS TO AUDIT
+============================================================
+
+Audit at minimum these Travel Buddy areas:
+
+1. Auth / onboarding
+- login
+- signup
+- forgot password if exists
+- onboarding steps
+- permission prompts
+- language/default language setup
+- profile setup
+
+2. Pulse / City Pulse
+- Post button
+- Filter button
+- Telegraph icon if present
+- location chip
+- trip window chip
+- traveler mode chip
+- open-to-meet chip
+- feed card actions
+- like
+- comment
+- share
+- save/bookmark if present
+- report
+- view details
+- user profile tap
+- image tap
+- post composer
+- post type selector
+- submit post
+- attach photo
+- location picker
+- cancel/close sheet
+- pull-to-refresh/load more
+
+3. Unified post composer
+- Post Update
+- Ask Question
+- Share a Moment
+- Share Postcard
+- Share Hidden Gem
+- Share Food Spot
+- photo optional rules
+- submit buttons
+- back/close
+- type selector
+- validation
+- API wiring
+- feed update after submit
+
+4. Discovery / Explore
+- category filters
+- city/location selector
+- search
+- map/list toggle if present
+- card tap
+- save
+- like/comment/share on public shared items
+- add to trip/plan
+- open details
+- directions/link buttons
+- retry on failed load
+- empty state actions
+
+5. Passport / Profile
+- edit profile
+- profile photo upload/compression
+- avatar/photo tap
+- tabs/cards
+- postcards
+- likes/comments/shares on public shares
+- Telegraph quick action
+- settings link
+- language preferences
+- traveler type/preferences
+- badges/stamps
+- follower/following actions if present
+- view public profile
+- edit/cancel/save
+
+6. Telegraph / Messages
+- open Telegraph
+- thread list
+- create/open conversation
+- trip chats
+- send message
+- auto-translation state
+- attachments if present
+- reply
+- unread badges
+- back navigation
+- share-to-Telegraph from posts
+- retranslate existing messages if implemented
+- loading/error states
+
+7. Trips / Plans
+- create trip
+- create plan
+- edit trip/plan
+- invite/join/request
+- accept/decline
+- trip detail
+- plan detail
+- add to plan
+- add to trip
+- trip chat
+- group chat
+- availability
+- filters
+- map/detail actions
+
+8. More / Settings
+- account settings
+- privacy
+- language/default language
+- notifications
+- help/support
+- logout
+- delete account if present
+- app info/legal
+- all menu links
+
+9. Navigation
+- bottom nav
+- top header icons
+- side/menu drawer if exists
+- More menu
+- removed Messages tab relocation
+- active state
+- route guards
+- back buttons
+- deep links
+
+10. Global components
+- modals
+- sheets
+- toasts
+- error boundaries
+- loading skeletons
+- empty states
+- retry buttons
+- image uploader
+- share sheet
+- comment sheet
+- report/block menus
+- user cards
+- place cards
+- plan cards
+- trip cards
+
+============================================================
+PHASE 3 — ROUTE AUDIT
+============================================================
+
+Audit all frontend routes.
+
+For each route:
+- confirm it exists
+- confirm component imports correctly
+- confirm it renders without crashing
+- confirm protected routes redirect correctly
+- confirm mobile and desktop layout work
+- confirm bottom nav active state is correct
+- confirm deep links work where intended
+
+Fix broken routes:
+- missing component import
+- wrong path
+- old renamed route
+- route removed by nav changes
+- route path typo
+- duplicate route collision
+- default export/import mismatch
+
+Routes to verify at minimum:
+/
+/pulse
+/discovery
+/discover
+/explore
+/passport
+/profile
+/trips
+/plans
+/telegraph
+/messages if still supported
+/settings
+/more
+/login
+/signup
+/post/:id or /pulse/post/:id if exists
+/trips/:id
+/plans/:id
+/users/:id or /passport/:userId if exists
+
+If both old and new names exist, preserve safe redirects:
+- /messages -> /telegraph if renamed
+- /profile -> /passport if product uses Passport
+- /discover -> /discovery or vice versa based on current app standard
+
+Do not break old links if users may already have them.
+
+============================================================
+PHASE 4 — BUTTON/ACTION REPAIR RULES
+============================================================
+
+For every broken UI action:
+
+A. If the intended function exists:
+- wire the button to it
+- pass correct props/state
+- connect loading/success/error states
+- ensure route/API path correct
+
+B. If the function exists but API is missing:
+- build the minimal backend endpoint
+- add validation
+- connect frontend
+- update UI state after success
+
+C. If the API exists but frontend is wrong:
+- fix frontend request
+- fix payload shape
+- fix response handling
+- show errors
+
+D. If the function is not ready and should not be built yet:
+- disable button
+- add clear label:
+  “Coming soon”
+  or
+  “Available after you create a trip”
+  or
+  “Connect profile to use this”
+- do not leave clickable dead UI
+
+E. If user lacks permission:
+- disable or show permission message
+- do not crash
+- do not show fake success
+
+============================================================
+PHASE 5 — LIKE / COMMENT / SHARE UNIVERSAL WIRING
+============================================================
+
+Ensure every public user-shared item supports:
+- Like
+- Comment
+- Share
+
+Public shared items include:
+- Post Update
+- Ask Question
+- Share Moment
+- Share Postcard
+- Share Hidden Gem
+- Share Food Spot
+- public trip post
+- public plan share
+- public Discovery share
+- public Passport/Postcard share
+
+Rule:
+If visibility = public:
+- authenticated users can like
+- authenticated users can comment
+- authenticated users can share
+
+If trip-only:
+- accepted trip members can engage inside trip context
+
+If circle-only:
+- accepted circle members can engage inside circle context
+
+If private/draft/deleted/restricted:
+- no public engagement
+
+Make sure engagement bar appears where it should and works:
+- Pulse cards
+- Passport/Postcards
+- Discovery shared cards
+- Hidden Gem/Food Spot cards
+- Moments/Questions/Updates
+
+No fake counts.
+Counts persist after refresh.
+likedByMe persists after refresh.
+Comment sheet opens.
+Share sheet opens.
+Copy link works.
+Telegraph share works or opens a safe TODO state if thread picker is not ready.
+
+============================================================
+PHASE 6 — POST / CREATE FLOW WIRING
+============================================================
+
+There must be one clear Post action on mobile.
+
+Confirm:
+- header Post button opens UnifiedPostComposer
+- bottom/FAB duplicate is removed/hidden on Pulse mobile
+- old action sheet does not duplicate functions
+- Create Plan is not inside Post flow unless intentionally treated as post
+- Post Update and Ask Question do not require photo
+- photo is optional where specified
+- hidden gem/food spot/location fields validate correctly
+- successful post appears in the right feed
+- composer close/cancel works
+- upload/compression works for photos
+
+============================================================
+PHASE 7 — PROFILE IMAGE UPLOAD WIRING
+============================================================
+
+Verify:
+- profile/passport image upload opens file picker
+- large image render/compression runs
+- avatar/profile/full variants are created
+- upload endpoint works
+- profile updates
+- UI uses correct variant
+- old profile images still render
+- error states work
+- no infinite loading
+
+If any part is not built, build and wire it.
+
+============================================================
+PHASE 8 — TELEGRAPH WIRING
+============================================================
+
+Since Messages/Telegraph was removed from main bottom nav, confirm all new entry points work:
+
+- top-right Telegraph icon
+- Passport quick action
+- Trip chat entry
+- More menu entry if present
+- share-to-Telegraph from posts
+- unread badge
+- conversation open
+- send message
+- auto-translation still works
+- back navigation works
+
+If /messages route existed before, keep redirect to /telegraph or safe compatibility route.
+
+Do not leave Telegraph unreachable.
+
+============================================================
+PHASE 9 — DISCOVERY + PASSPORT CRASH REGRESSION
+============================================================
+
+Passport and Discovery previously crashed/refused to load.
+
+Confirm after wiring audit:
+- Passport loads
+- Discovery loads
+- loading states work
+- empty states work
+- retry buttons work
+- all buttons inside those pages work
+- missing data does not crash
+- route/nav links point to correct pages
+
+Add null guards and safe defaults where needed.
+
+============================================================
+PHASE 10 — MOBILE LAYOUT / CLICKABILITY CHECK
+============================================================
+
+After wiring, verify mobile usability:
+- buttons not overlapping
+- buttons not covered by bottom nav
+- modals/sheets not hidden behind keyboard
+- tap targets 44px minimum
+- filter/create/post actions compact
+- no duplicate FAB/create button
+- no horizontal overflow
+- no clipped text
+- no invisible buttons blocked by z-index overlays
+
+Test at:
+- 360px
+- 390px
+- 430px
+
+============================================================
+PHASE 11 — BACKEND/API AUDIT
+============================================================
+
+For every frontend API call:
+- confirm endpoint exists
+- confirm method matches
+- confirm auth required where needed
+- confirm payload shape
+- confirm response shape
+- confirm frontend handles loading/error/success
+- confirm backend validates input
+- confirm permission check
+
+Search for failed network calls in browser/dev console.
+
+Fix:
+- 404 APIs
+- wrong HTTP method
+- bad route params
+- missing auth
+- wrong field names
+- unhandled errors
+- stale endpoint names
+
+============================================================
+PHASE 12 — ERROR/EMPTY/LOADING STATES
+============================================================
+
+Every interactive feature must handle:
+- loading
+- success
+- error
+- empty data
+- permission denied
+- offline/network failure where appropriate
+
+No infinite spinners.
+No blank screens.
+No dead retry buttons.
+
+============================================================
+PHASE 13 — TEST MATRIX
+============================================================
+
+Run manual verification or automated tests for:
+
+Navigation:
+- every bottom nav item
+- every top icon
+- every More menu item
+- every Passport/Profile link
+- every Discovery card link
+- every Trip/Plan link
+- Telegraph entry points
+
+Posts:
+- open composer
+- choose every post type
+- submit text-only update
+- submit text-only question
+- submit moment
+- submit postcard
+- submit hidden gem
+- submit food spot
+- close/cancel composer
+
+Engagement:
+- like public item
+- unlike public item
+- comment public item
+- delete own comment
+- share public item
+- copy link
+- share to Telegraph if available
+
+Profile:
+- open Passport
+- edit profile
+- upload image
+- save profile
+- view public profile
+
+Discovery:
+- load
+- filter
+- search
+- open card
+- save/add/share if present
+
+Trips/Plans:
+- create
+- open
+- edit
+- join/invite if present
+- trip chat
+
+Telegraph:
+- open
+- open thread
+- send message
+- share post into Telegraph
+- unread badge updates
+
+Settings:
+- open every setting link
+- save/cancel where applicable
+- logout works
+
+============================================================
+PHASE 14 — IMPLEMENTATION SAFETY
+============================================================
+
+Do not build huge new systems if a simple wire-up is enough.
+Do not duplicate existing systems.
+Do not create parallel routes.
+Do not create parallel post models if one exists.
+Do not hardcode sample data as real data.
+Do not convert broken actions into fake success to pass visual tests.
+Do not hide buttons that should work unless the feature is truly permission-disabled or coming soon.
+Do not break desktop while fixing mobile.
+
+============================================================
+FINAL ACCEPTANCE CRITERIA
+============================================================
+
+The app passes this standard:
+
+- Every visible button works.
+- Every visible icon action works.
+- Every tab works.
+- Every route works or redirects safely.
+- Every form submits or validates correctly.
+- Every modal/sheet opens and closes.
+- Every public shared item can be liked/commented/shared.
+- Every permission-blocked feature explains why.
+- Every not-yet-built feature is clearly disabled/coming soon.
+- No dead buttons.
+- No console errors from clicks.
+- No 404s from UI actions.
+- Passport loads.
+- Discovery loads.
+- Pulse works.
+- Telegraph is reachable.
+- Post composer works.
+- Profile photo upload works.
+- Like/comment/share works.
+- Mobile layout remains usable.
+- Build passes.
+- TypeScript passes.
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return a detailed audit report:
+
+1. Total UI actions found
+2. Dead actions found
+3. Broken routes found
+4. Broken API calls found
+5. Features built because function was missing
+6. Buttons wired/fixed
+7. Routes fixed/added/redirected
+8. APIs added/updated
+9. Forms fixed
+10. Modals/sheets fixed
+11. Like/comment/share coverage
+12. Telegraph entry points verified
+13. Passport/Discovery crash status
+14. Mobile layout/clickability verification
+15. Files changed
+16. Tests/build/typecheck results
+17. Remaining TODOs, if any
+
+Final result:
+Every UI feature in Travel Buddy is audited, wired to its correct function/path, missing required functions are built, dead buttons are removed or disabled with explanation, and the app is fully clickable and functional across mobile and desktop.

@@ -61,6 +61,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0022_availability_nudges.sql` | Creates `availability_nudges` table (sender_id, recipient_id, trip_id, nudge_date, sent_on); UNIQUE(recipient_id,trip_id,sent_on) rate-limits to one nudge per recipient per trip per day; RLS: recipients read own rows | pending |
 | `0023_push_tokens.sql` | Adds `expo_push_token TEXT` to `profiles`; stores Expo push token per device so the API server can send push notifications | pending |
 | `0024_post_engagement.sql` | Creates `posts_likes` (post_id+user_id unique, RLS) and `posts_comments` (body, soft-delete, RLS) tables; adds `like_count`, `comment_count`, `share_count` integer columns (DEFAULT 0) to `posts` | pending |
+| `0025_location_system.sql` | Creates `user_location_state` (per-user GPS/manual-city upsert, unique on user_id, RLS) and `passport_stamps_gps` (GPS-earned stamp events, unique on user+type+country+city, RLS) tables; adds `location_source`, `stamp_city/country/label/unlocked_at` columns to `postcards` if it exists | pending |
 
 ## Gotchas
 
