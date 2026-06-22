@@ -25,6 +25,13 @@ import { getServiceClient } from "../lib/supabase.js";
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
 
+// ── Frequent-invitee cache (per user, 1 h TTL) ────────────────────────────────
+const FREQ_TTL_MS = 60 * 60 * 1_000;
+interface FreqCacheEntry { data: FrequentInvitee[]; cachedAt: number; }
+interface FrequentInvitee { id: string; handle: string; name: string; avatarUrl: string | null; count: number; }
+const freqCache = new Map<string, FreqCacheEntry>();
+function freqCacheFresh(e: FreqCacheEntry) { return Date.now() - e.cachedAt < FREQ_TTL_MS; }
+
 // ── Visibility helper ─────────────────────────────────────────────────────────
 
 async function canAccessMeetup(
@@ -1182,6 +1189,92 @@ router.get("/me/meetup-invites", async (req, res) => {
     });
 
   res.json({ invites: result });
+});
+
+// ── GET /me/frequent-invitees ─────────────────────────────────────────────────
+// Returns the top 3 users the caller has most often invited to their meetups.
+// Result is cached per user for 1 hour (memory, resets on server restart).
+
+router.get("/me/frequent-invitees", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const cached = freqCache.get(user.id);
+  if (cached && freqCacheFresh(cached)) {
+    res.json({ invitees: cached.data });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Step 1: get all meetup IDs the caller created
+  const { data: meetupRows, error: meetupErr } = await sc
+    .from("meetups")
+    .select("id")
+    .eq("creator_id", user.id);
+
+  if (meetupErr) { sendError(res, "db_error", meetupErr.message); return; }
+  if (!meetupRows || meetupRows.length === 0) {
+    res.json({ invitees: [] });
+    return;
+  }
+
+  const meetupIds = meetupRows.map((r: any) => r.id as string);
+
+  // Step 2: get all invite rows for those meetups (excluding the caller)
+  const { data: inviteRows, error: invErr } = await sc
+    .from("meetup_invites")
+    .select("user_id")
+    .in("meetup_id", meetupIds)
+    .neq("user_id", user.id);
+
+  if (invErr) { sendError(res, "db_error", invErr.message); return; }
+  if (!inviteRows || inviteRows.length === 0) {
+    freqCache.set(user.id, { data: [], cachedAt: Date.now() });
+    res.json({ invitees: [] });
+    return;
+  }
+
+  // Step 3: aggregate counts in JS — top 3
+  const countMap = new Map<string, number>();
+  for (const r of inviteRows) {
+    const uid = (r as any).user_id as string;
+    countMap.set(uid, (countMap.get(uid) ?? 0) + 1);
+  }
+
+  const top3 = [...countMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([id, count]) => ({ id, count }));
+
+  // Step 4: fetch profiles for those 3
+  const { data: profiles, error: profErr } = await sc
+    .from("profiles")
+    .select("id, handle, name, avatar_url")
+    .in("id", top3.map((e) => e.id));
+
+  if (profErr) { sendError(res, "db_error", profErr.message); return; }
+
+  const profileMap = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
+
+  const invitees: FrequentInvitee[] = top3
+    .map(({ id, count }) => {
+      const p = profileMap.get(id);
+      if (!p) return null;
+      return {
+        id: p.id as string,
+        handle: p.handle as string,
+        name: p.name as string,
+        avatarUrl: (p.avatar_url as string | null) ?? null,
+        count,
+      };
+    })
+    .filter((x): x is FrequentInvitee => x !== null);
+
+  freqCache.set(user.id, { data: invitees, cachedAt: Date.now() });
+  res.json({ invitees });
 });
 
 export default router;

@@ -33,8 +33,8 @@ import {
 } from 'lucide-react-native';
 import { DatePickerField } from './DateTimePickerField';
 import {
-  createMeetup, addTimeOption,
-  type MeetupSummary, type TimeBlock, type MeetupVisibility,
+  createMeetup, addTimeOption, getFrequentInvitees,
+  type MeetupSummary, type TimeBlock, type MeetupVisibility, type FrequentInvitee,
 } from '../services/meetups';
 import {
   getMyFriends, getTripInvitableUsers, getCircleInvitableUsers, type FriendUser,
@@ -199,6 +199,8 @@ export function MeetupCreationSheet({
   const [friendSearch, setFriendSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
+  const [frequentInvitees, setFrequentInvitees] = useState<FrequentInvitee[]>([]);
+  const [frequentLoaded, setFrequentLoaded] = useState(false);
 
   // ── Time proposals ──
   const [proposeMode, setProposeMode] = useState(false);
@@ -211,6 +213,28 @@ export function MeetupCreationSheet({
 
   const defaultVisibility: MeetupVisibility =
     tripId ? 'trip' : circleOwnerId ? 'circle' : 'invitees';
+
+  // Fetch frequent invitees eagerly on mount (before invite section opens)
+  useEffect(() => {
+    let cancelled = false;
+    getFrequentInvitees().then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.data) {
+        const invitees = res.data.invitees;
+        setFrequentInvitees(invitees);
+        // Pre-select them immediately (user can deselect)
+        if (invitees.length > 0) {
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            invitees.forEach((u) => next.add(u.id));
+            return next;
+          });
+        }
+      }
+      setFrequentLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load candidates:
   //   trip context   → groupMembers (locked, pre-selected) + otherFollowers
@@ -228,7 +252,11 @@ export function MeetupCreationSheet({
         setOtherFollowers(of_);
         const ids = new Set(gm.map((u) => u.id));
         setLockedIds(ids);
-        setSelectedIds(new Set(ids));
+        setSelectedIds((prev) => {
+          const next = new Set(prev); // preserve frequent pre-selections
+          ids.forEach((id) => next.add(id));
+          return next;
+        });
       }
     } else if (circleOwnerId) {
       const res = await getCircleInvitableUsers(circleOwnerId);
@@ -238,7 +266,11 @@ export function MeetupCreationSheet({
         setOtherFollowers(of_);
         const ids = new Set(gm.map((u) => u.id));
         setLockedIds(ids);
-        setSelectedIds(new Set(ids));
+        setSelectedIds((prev) => {
+          const next = new Set(prev); // preserve frequent pre-selections
+          ids.forEach((id) => next.add(id));
+          return next;
+        });
       }
     } else {
       const res = await getMyFriends();
@@ -475,6 +507,45 @@ export function MeetupCreationSheet({
                   lockedIds={lockedIds}
                   onRemove={toggleCandidate}
                 />
+                {/* ── Usually invite section (pre-selected frequent invitees) ── */}
+                {frequentInvitees.length > 0 && (
+                  <>
+                    <View style={s.sectionHeaderRow}>
+                      <Text style={s.sectionHeaderText}>Usually invite</Text>
+                    </View>
+                    <View style={s.candidateList}>
+                      {frequentInvitees.map((c) => {
+                        const selected = selectedIds.has(c.id);
+                        const locked   = lockedIds.has(c.id);
+                        return (
+                          <Pressable
+                            key={c.id}
+                            style={[s.candidateRow, (selected || locked) && s.candidateRowActive, locked && s.candidateRowLocked]}
+                            onPress={() => !locked && toggleCandidate(c.id)}
+                          >
+                            <PersonAvatar user={c} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={s.candidateName} numberOfLines={1}>{c.name || c.handle}</Text>
+                              {c.name && c.handle
+                                ? <Text style={s.candidateHandle} numberOfLines={1}>@{c.handle}</Text>
+                                : null}
+                            </View>
+                            {locked ? (
+                              <View style={s.checkboxLocked}>
+                                <Check size={11} color={color.signal} />
+                              </View>
+                            ) : (
+                              <View style={[s.checkbox, selected && s.checkboxActive]}>
+                                {selected && <Check size={11} color={color.onInk} />}
+                              </View>
+                            )}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </>
+                )}
+
                 {candidatesLoading ? (
                   <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.md }} />
                 ) : !hasCandidates ? (

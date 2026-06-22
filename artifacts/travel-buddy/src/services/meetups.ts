@@ -230,6 +230,20 @@ export async function confirmTime(
   return apiCall(`/api/meetups/${meetupId}/confirm-time`, 'POST', { optionId });
 }
 
+// ── Frequent invitees ─────────────────────────────────────────────────────────
+
+export interface FrequentInvitee {
+  id: string;
+  handle: string;
+  name: string;
+  avatarUrl: string | null;
+  count: number;
+}
+
+export async function getFrequentInvitees(): Promise<MeetupResult<{ invitees: FrequentInvitee[] }>> {
+  return apiCall('/api/me/frequent-invitees', 'GET');
+}
+
 // ── Trip plan ─────────────────────────────────────────────────────────────────
 
 export async function addMeetupToTripPlan(
