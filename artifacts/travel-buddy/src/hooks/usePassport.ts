@@ -56,6 +56,8 @@ export function usePassport(): PassportState {
         travelStyle: mock.user.travelStyle,
         interests: mock.user.interests,
         verified: mock.user.verified,
+        verificationStatus: mock.user.verified ? 'verified' : 'unverified',
+        verifiedAt: null,
         openToMeet: mock.user.openToMeet,
         isPrivate: mock.user.isPrivate,
         passportVisibility: 'public',

@@ -63,7 +63,7 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
 
         {/* MRZ footer */}
         <View style={styles.footer}>
-          <Text style={styles.mrzText}>TRAVEL BUDDY · SOCIAL PASSPORT · VERIFIED TRAVEL ID</Text>
+          <Text style={styles.mrzText}>TRAVEL BUDDY · SOCIAL PASSPORT</Text>
         </View>
       </View>
     );

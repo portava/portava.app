@@ -111,6 +111,8 @@ export default function PassportScreen() {
       homeCity: mock.user.homeCity, homeCountry: mock.user.homeCountry,
       currentCity: mock.user.currentCity ?? null, travelStyle: mock.user.travelStyle,
       interests: mock.user.interests, verified: mock.user.verified,
+      verificationStatus: mock.user.verified ? 'verified' : 'unverified',
+      verifiedAt: null,
       openToMeet: mock.user.openToMeet, isPrivate: mock.user.isPrivate,
       passportVisibility: 'public', coverPhotoUrl: null,
       usernameUpdatedAt: null, createdAt: '2026-01-01T00:00:00Z',

@@ -83,6 +83,8 @@ export default function PassportDeepLinkScreen() {
         travelStyle: null,
         interests: [],
         verified: false,
+        verificationStatus: 'unverified',
+        verifiedAt: null,
         passportVisibility: 'public',
         createdAt: null,
       };

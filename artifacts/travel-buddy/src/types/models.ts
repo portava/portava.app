@@ -409,6 +409,8 @@ export interface PublicProfile {
   travelStyle: string | null;
   interests: string[];
   verified: boolean;
+  verificationStatus: 'unverified' | 'pending' | 'verified' | 'rejected' | 'expired';
+  verifiedAt: ISODate | null;
   passportVisibility: 'public' | 'private';
   createdAt: ISODate | null;
   followersCount?: number;
@@ -435,6 +437,8 @@ export interface OwnProfile {
   travelStyle: string | null;
   interests: string[];
   verified: boolean;
+  verificationStatus: 'unverified' | 'pending' | 'verified' | 'rejected' | 'expired';
+  verifiedAt: ISODate | null;
   openToMeet: boolean;
   isPrivate: boolean;
   passportVisibility: 'public' | 'followers_only' | 'private';

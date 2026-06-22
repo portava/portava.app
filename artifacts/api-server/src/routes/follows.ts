@@ -277,7 +277,7 @@ router.get("/users/search", async (req, res) => {
  * Never returns private posts, trips, circle memberships, or location data.
  */
 const PUBLIC_PASSPORT_FIELDS =
-  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style";
+  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style";
 
 router.get("/users/:userId", async (req, res) => {
   const target = req.params.userId;
@@ -336,6 +336,8 @@ router.get("/users/:userId", async (req, res) => {
     travelStyle: p.travel_style ?? null,
     interests: p.interests ?? [],
     verified: p.verified ?? false,
+    verificationStatus: p.verification_status ?? 'unverified',
+    verifiedAt: p.verified_at ?? null,
     openToMeet: p.open_to_meet ?? false,
     isPrivate: p.is_private ?? false,
     memberSince: p.created_at,
@@ -418,6 +420,8 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     travelStyle: p.travel_style ?? null,
     interests: p.interests ?? [],
     verified: p.verified ?? false,
+    verificationStatus: p.verification_status ?? 'unverified',
+    verifiedAt: p.verified_at ?? null,
     openToMeet: p.open_to_meet ?? false,
     isPrivate: p.is_private ?? false,
     memberSince: p.created_at,

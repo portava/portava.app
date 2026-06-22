@@ -4,6 +4,7 @@ import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import { Plane, MapPin, MoreHorizontal, Camera } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
+import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 
@@ -65,11 +66,14 @@ export function PassportHero({
   const shown = interests.slice(0, 3);
   const extra = interests.length - 3;
   const avatarUrl = profile.avatarUrl;
+  const isVerified = isTravelBuddyVerified(profile);
+  const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : undefined;
+  const ownerPrompt = isOwner ? getVerificationOwnerPrompt(verificationStatus) : null;
 
   return (
     <View style={styles.card}>
       <PassportHeroBackdrop />
-      <View style={styles.inkStamp}><PassportInkStamp rotate={-8} /></View>
+      {isVerified && <View style={styles.inkStamp}><PassportInkStamp rotate={-8} /></View>}
 
       {/* Top label */}
       <View style={styles.topRow}>
@@ -160,10 +164,21 @@ export function PassportHero({
         </View>
       </View>
 
+      {/* Owner-only verification prompt (unverified / pending / rejected / expired) */}
+      {!isVerified && ownerPrompt && (
+        <View style={styles.verifyPrompt}>
+          <Text style={styles.verifyPromptText}>{ownerPrompt}</Text>
+        </View>
+      )}
+
       {/* MRZ strip */}
       <View style={styles.mrzRow}>
         <Text style={styles.mrzChevron}>‹‹‹‹‹</Text>
-        <Text style={styles.mrz} numberOfLines={1}>TRAVEL BUDDY · VERIFIED TRAVEL ID · SOCIAL PASSPORT</Text>
+        <Text style={styles.mrz} numberOfLines={1}>
+          {isVerified
+            ? 'TRAVEL BUDDY · VERIFIED TRAVEL ID · SOCIAL PASSPORT'
+            : 'TRAVEL BUDDY · SOCIAL PASSPORT'}
+        </Text>
         <Text style={styles.mrzChevron}>›››››</Text>
       </View>
     </View>
@@ -233,4 +248,11 @@ const styles = StyleSheet.create({
   },
   mrz: { fontFamily: 'Courier', fontSize: 9, color: color.deep, letterSpacing: 1, fontWeight: '700', flex: 1, textAlign: 'center' },
   mrzChevron: { fontFamily: 'Courier', fontSize: 9, color: color.faint },
+  verifyPrompt: {
+    marginTop: space.sm, alignSelf: 'flex-start',
+    backgroundColor: color.paperRaised, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 4,
+    borderWidth: 1, borderColor: color.haze,
+  },
+  verifyPromptText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 11 },
 });

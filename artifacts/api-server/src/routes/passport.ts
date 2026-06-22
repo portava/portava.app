@@ -6,10 +6,10 @@ import { getServiceClient } from "../lib/supabase";
 const router = Router();
 
 const PUBLIC_PROFILE_COLUMNS =
-  "id, username, display_name, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, passport_visibility, created_at";
+  "id, username, display_name, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at";
 
 const PUBLIC_PROFILE_COLUMNS_FALLBACK =
-  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, passport_visibility, created_at";
+  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at";
 
 const PUBLIC_POSTCARD_COLUMNS =
   "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at";
@@ -29,6 +29,8 @@ function mapPublicProfile(r: any) {
     travelStyle: r.travel_style ?? null,
     interests: r.interests ?? [],
     verified: r.verified ?? false,
+    verificationStatus: r.verification_status ?? 'unverified',
+    verifiedAt: r.verified_at ?? null,
     passportVisibility: r.passport_visibility ?? "public",
     createdAt: r.created_at ?? null,
   };
