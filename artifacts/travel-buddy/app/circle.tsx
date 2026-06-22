@@ -7,6 +7,7 @@ import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services
 import { openCircleChat } from '../src/services/messaging';
 import { getCircleAvailability, type MemberAvailability } from '../src/services/availability';
 import { AvailabilityGrid } from '../src/components/AvailabilityGrid';
+import { BestDaysBanner } from '../src/components/BestDaysBanner';
 import { MeetupCreationSheet } from '../src/components/MeetupCreationSheet';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
@@ -31,9 +32,10 @@ export default function Circle() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
-  const [avMembers, setAvMembers]   = useState<MemberAvailability[]>([]);
-  const [avExpanded, setAvExpanded] = useState(false);
-  const [meetupDate, setMeetupDate] = useState<string | null>(null);
+  const [avMembers,   setAvMembers]   = useState<MemberAvailability[]>([]);
+  const [avExpanded,  setAvExpanded]  = useState(false);
+  const [meetupDate,  setMeetupDate]  = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const live = configured && isAuthed;
   const circleDays = useMemo(() => next14Days(), []);
@@ -73,6 +75,23 @@ export default function Circle() {
   }
 
   const freeCount = avMembers.filter((m) => m.quickStatus?.status === 'free_now').length;
+
+  // Compute best days client-side from weekly availability + upcoming 14 days
+  const WDAY_IDX = ['sun','mon','tue','wed','thu','fri','sat'];
+  const bestDays = useMemo(() => {
+    return circleDays
+      .map((date) => {
+        const wd = WDAY_IDX[new Date(date + 'T12:00:00').getDay()];
+        const count = avMembers.filter((m) => {
+          if (Object.keys(m.weeklyDays).length === 0) return false;
+          return ((m.weeklyDays as any)[wd]?.length ?? 0) > 0;
+        }).length;
+        return { date, count };
+      })
+      .filter((d) => d.count >= 2)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+  }, [avMembers, circleDays]);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -159,6 +178,13 @@ export default function Circle() {
 
               {avExpanded && (
                 <View style={styles.avCard}>
+                  {bestDays.length > 0 && (
+                    <BestDaysBanner
+                      bestDays={bestDays}
+                      totalMembers={avMembers.length}
+                      onDayPress={(date) => setSelectedDay(date)}
+                    />
+                  )}
                   <AvailabilityGrid
                     members={avMembers}
                     days={circleDays}
@@ -166,6 +192,8 @@ export default function Circle() {
                     mode="circle"
                     onEditOwn={() => router.push('/availability')}
                     onPlanMeetup={(date) => setMeetupDate(date)}
+                    selectedDay={selectedDay}
+                    onSelectedDayChange={setSelectedDay}
                   />
                   <Pressable style={styles.avEditBtn} onPress={() => router.push('/availability')}>
                     <Text style={styles.avEditBtnText}>Update my availability →</Text>

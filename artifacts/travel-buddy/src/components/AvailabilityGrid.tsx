@@ -182,6 +182,10 @@ export interface AvailabilityGridProps {
   onPlanMeetup?: (date: string) => void;
   /** Called when user taps a cell in their own row (trip mode only) */
   onOwnCellPress?: (date: string, status: CellStatus) => void;
+  /** Controlled selected day — when provided the day-summary modal opens for this date */
+  selectedDay?: string | null;
+  /** Called when the grid's selected day changes (header tap or modal close) */
+  onSelectedDayChange?: (day: string | null) => void;
 }
 
 export function AvailabilityGrid({
@@ -192,8 +196,17 @@ export function AvailabilityGrid({
   onEditOwn,
   onPlanMeetup,
   onOwnCellPress,
+  selectedDay: externalSelectedDay,
+  onSelectedDayChange,
 }: AvailabilityGridProps) {
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [internalDay, setInternalDay] = useState<string | null>(null);
+  // Support controlled (selectedDay prop) and uncontrolled (internal state) modes
+  const isControlled = externalSelectedDay !== undefined;
+  const selectedDay = isControlled ? (externalSelectedDay ?? null) : internalDay;
+  const setSelectedDay = (day: string | null) => {
+    if (!isControlled) setInternalDay(day);
+    onSelectedDayChange?.(day);
+  };
 
   // Current user first, then alphabetical
   const sorted = [...members].sort((a, b) => {

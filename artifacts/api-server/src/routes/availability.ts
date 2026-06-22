@@ -186,11 +186,12 @@ router.get("/trips/:tripId/availability", async (req, res) => {
 
   const memberIds = (members ?? []).map((m: any) => m.user_id as string);
 
-  const [{ data: tripAvRows }, { data: globalAvRows }, { data: qsRows }, { data: profiles }] = await Promise.all([
+  const [{ data: tripAvRows }, { data: globalAvRows }, { data: qsRows }, { data: profiles }, { data: tripRow }] = await Promise.all([
     client.from("trip_availability").select("user_id, open_days").eq("trip_id", tripId).in("user_id", memberIds),
     client.from("user_availability").select("user_id, weekly_days, open_to_meet").in("user_id", memberIds),
     client.from("quick_availability_status").select("user_id, status, expires_at").in("user_id", memberIds),
     client.from("profiles").select("id, handle, name, avatar_url").in("id", memberIds),
+    client.from("trips").select("start_date, end_date").eq("id", tripId).maybeSingle(),
   ]);
 
   const now = new Date().toISOString();
@@ -228,7 +229,43 @@ router.get("/trips/:tripId/availability", async (req, res) => {
     };
   });
 
-  res.json({ members: result, tripId });
+  // ── bestDays computation ───────────────────────────────────────────────────
+  // Generate the same day list the client grid shows, then count free members
+  // per day using the same getCellStatus logic (openDays priority, weeklyDays fallback).
+  const WDAY_IDX = ["sun","mon","tue","wed","thu","fri","sat"];
+  const todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+  const rawStart = (tripRow as any)?.start_date ? new Date((tripRow as any).start_date + "T00:00:00") : todayDate;
+  const startDay = rawStart >= todayDate ? rawStart : todayDate;
+  const rawEnd = (tripRow as any)?.end_date
+    ? new Date((tripRow as any).end_date + "T00:00:00")
+    : new Date(startDay.getTime() + 13 * 86_400_000);
+  const maxEnd = new Date(startDay.getTime() + 29 * 86_400_000);
+  const endDay = rawEnd < maxEnd ? rawEnd : maxEnd;
+
+  const tripDays: string[] = [];
+  const cur = new Date(startDay);
+  while (cur <= endDay) { tripDays.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); }
+
+  function isFreeOnDate(uid: string, date: string): boolean {
+    const openDays: Record<string, string[]> | null = tripAvMap[uid]?.open_days ?? null;
+    const weeklyDays: Record<string, string[]> = globalAvMap[uid]?.weekly_days ?? {};
+    if (openDays !== null) {
+      if (Object.keys(openDays).length === 0) return false;
+      return ((openDays as any)[date]?.length ?? 0) > 0;
+    }
+    if (Object.keys(weeklyDays).length === 0) return false;
+    const wd = WDAY_IDX[new Date(date + "T12:00:00").getDay()];
+    return ((weeklyDays as any)[wd]?.length ?? 0) > 0;
+  }
+
+  const bestDays = tripDays
+    .map((date) => ({ date, count: memberIds.filter((uid) => isFreeOnDate(uid, date)).length }))
+    .filter((d) => d.count >= 2)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  res.json({ members: result, tripId, bestDays });
 });
 
 // ── PATCH /api/trips/:tripId/availability ────────────────────────────────────

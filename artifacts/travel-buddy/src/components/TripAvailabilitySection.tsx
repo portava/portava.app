@@ -5,7 +5,8 @@
  * Rows    = accepted trip members.
  * Cells   = green (free) / grey (not set) / dim (no data).
  *
- * Tapping a column header opens a day-summary modal.
+ * Above the grid: BestDaysBanner showing up to 3 days where ≥2 members overlap.
+ * Tapping a column header or banner chip opens a day-summary modal.
  * "Plan meetup this day" fires onPlanMeetup(date) so the parent
  * can open MeetupCreationSheet pre-filled.
  *
@@ -24,6 +25,7 @@ import {
   type MemberAvailability, type TimeBlock,
 } from '../services/availability';
 import { AvailabilityGrid, type CellStatus } from './AvailabilityGrid';
+import { BestDaysBanner } from './BestDaysBanner';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -73,10 +75,10 @@ interface CellEditSheetProps {
 function CellEditSheet({ date, currentStatus, onChoose, onClose }: CellEditSheetProps) {
   if (!date) return null;
 
-  const options: { key: 'free' | 'busy' | 'clear'; label: string; color: string; active: boolean }[] = [
-    { key: 'free',  label: '🟢  Mark as Free',  color: '#22C55E', active: currentStatus === 'free' },
-    { key: 'busy',  label: '⚫  Mark as Busy',  color: color.mute, active: currentStatus === 'unknown' },
-    { key: 'clear', label: '✕  Clear',          color: color.faint, active: currentStatus === 'nodata' },
+  const options: { key: 'free' | 'busy' | 'clear'; label: string; active: boolean }[] = [
+    { key: 'free',  label: '🟢  Mark as Free',  active: currentStatus === 'free' },
+    { key: 'busy',  label: '⚫  Mark as Busy',  active: currentStatus === 'unknown' },
+    { key: 'clear', label: '✕  Clear',          active: currentStatus === 'nodata' },
   ];
 
   return (
@@ -126,11 +128,13 @@ export function TripAvailabilitySection({
   endDate,
   onPlanMeetup,
 }: Props) {
-  const [members,   setMembers]   = useState<MemberAvailability[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
-  const [editSheet, setEditSheet] = useState<{ date: string; status: CellStatus } | null>(null);
+  const [members,     setMembers]     = useState<MemberAvailability[]>([]);
+  const [bestDays,    setBestDays]    = useState<{ date: string; count: number }[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState<string | null>(null);
+  const [collapsed,   setCollapsed]   = useState(false);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [editSheet,   setEditSheet]   = useState<{ date: string; status: CellStatus } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -140,6 +144,7 @@ export function TripAvailabilitySection({
     if (res.ok && res.data) {
       const ms = res.data.members;
       setMembers(ms);
+      setBestDays(res.data.bestDays ?? []);
       if (ms.length > COLLAPSE_THRESHOLD) setCollapsed(true);
     } else {
       setError(res.message ?? null);
@@ -162,27 +167,20 @@ export function TripAvailabilitySection({
     const date = editSheet?.date;
     if (!date) return;
 
-    // Compute new openDays map
     const newOpenDays: Record<string, TimeBlock[]> = { ...prevOpenDays };
-    if (choice === 'free')  newOpenDays[date] = ALL_BLOCKS;
+    if (choice === 'free')       newOpenDays[date] = ALL_BLOCKS;
     else if (choice === 'busy')  newOpenDays[date] = [];
-    else delete newOpenDays[date]; // clear
+    else                         delete newOpenDays[date];
 
-    // Optimistic update
     setMembers((prev) =>
-      prev.map((m) =>
-        m.userId === currentUserId ? { ...m, openDays: newOpenDays } : m,
-      ),
+      prev.map((m) => m.userId === currentUserId ? { ...m, openDays: newOpenDays } : m),
     );
 
     const result = await patchTripOpenDays(tripId, newOpenDays);
 
     if (!result.ok) {
-      // Revert
       setMembers((prev) =>
-        prev.map((m) =>
-          m.userId === currentUserId ? { ...m, openDays: prevOpenDays } : m,
-        ),
+        prev.map((m) => m.userId === currentUserId ? { ...m, openDays: prevOpenDays } : m),
       );
       Alert.alert('Could not update', result.message ?? 'Please try again.');
     }
@@ -235,6 +233,15 @@ export function TripAvailabilitySection({
         )}
       </Pressable>
 
+      {/* Best days banner — above the grid */}
+      {!collapsed && bestDays.length > 0 && (
+        <BestDaysBanner
+          bestDays={bestDays}
+          totalMembers={members.length}
+          onDayPress={(date) => setSelectedDay(date)}
+        />
+      )}
+
       {/* Grid */}
       {!collapsed && (
         <View style={s.card}>
@@ -247,6 +254,8 @@ export function TripAvailabilitySection({
               onEditOwn={() => router.push('/availability')}
               onPlanMeetup={onPlanMeetup}
               onOwnCellPress={handleOwnCellPress}
+              selectedDay={selectedDay}
+              onSelectedDayChange={setSelectedDay}
             />
           ) : (
             <Text style={s.noDates}>

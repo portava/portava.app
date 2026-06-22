@@ -106,7 +106,9 @@ export async function patchMyQuickStatus(
 
 // ── Trip availability ─────────────────────────────────────────────────────────
 
-export async function getTripAvailability(tripId: string): Promise<AvailabilityResult<{ members: MemberAvailability[]; tripId: string }>> {
+export interface BestDay { date: string; count: number; }
+
+export async function getTripAvailability(tripId: string): Promise<AvailabilityResult<{ members: MemberAvailability[]; tripId: string; bestDays: BestDay[] }>> {
   return apiGet(`/api/trips/${tripId}/availability`);
 }
 
