@@ -15,9 +15,10 @@ import {
   View, Text, Image, Pressable, Modal, StyleSheet,
   Alert, Dimensions, ActivityIndicator, TextInput,
 } from 'react-native';
-import { X, Heart, MessageCircle, Flag, Eye, PlayCircle } from 'lucide-react-native';
+import { X, Heart, MessageCircle, Flag, Eye, PlayCircle, Share2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { color, space, radius, type as t } from '../theme/tokens';
 import type { Highlight } from '../services/highlights';
 import {
@@ -26,6 +27,7 @@ import {
   replyToHighlight,
   reportHighlight,
 } from '../services/highlights';
+import { markViewed } from '../hooks/useHighlightRingState';
 import { HighlightViewersSheet } from './HighlightViewersSheet';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -79,9 +81,10 @@ export function HighlightViewer({
     }
   }, [visible, startIndex, highlights]);
 
-  // Mark viewed when item shown
+  // Mark viewed when item shown — both local ring state and server-side
   useEffect(() => {
     if (!visible || !current) return;
+    markViewed(current.id);
     markHighlightViewed(current.id);
   }, [visible, current?.id]);
 
@@ -292,6 +295,23 @@ export function HighlightViewer({
               <Pressable onPress={() => setViewersOpen(true)} style={s.actionBtn}>
                 <Eye size={22} color="#fff" />
                 <Text style={s.actionCount}>{current.viewCount}</Text>
+              </Pressable>
+            )}
+
+            {!isOwner && (
+              <Pressable
+                onPress={async () => {
+                  const available = await Sharing.isAvailableAsync();
+                  if (available) {
+                    await Sharing.shareAsync(current.mediaUrl, { mimeType: current.mediaType });
+                  } else {
+                    Alert.alert('Sharing not available on this device');
+                  }
+                }}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+              >
+                <Share2 size={20} color="rgba(255,255,255,0.85)" />
               </Pressable>
             )}
 

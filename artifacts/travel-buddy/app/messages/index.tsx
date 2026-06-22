@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Zap, Users, Globe } from 'lucide-react-native';
@@ -7,6 +7,9 @@ import { useMyThreads } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, type as t } from '../../src/theme/tokens';
 import type { ThreadSummary } from '../../src/services/messaging';
+import { HighlightRing } from '../../src/components/HighlightRing';
+import { HighlightViewer } from '../../src/components/HighlightViewer';
+import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -32,7 +35,42 @@ function navigateToThread(item: ThreadSummary) {
   router.push(`/messages/${item.id}?${params.toString()}`);
 }
 
-function ThreadAvatar({ item }: { item: ThreadSummary }) {
+function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
+  const other = item.otherMembers[0];
+  const ringState = useHighlightRingState(other?.id ?? null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const inner = other?.avatarUrl
+    ? <Image source={{ uri: other.avatarUrl }} style={styles.avatar} />
+    : (
+      <View style={[styles.avatar, styles.avatarPlaceholder]}>
+        <Text style={styles.avatarInitial}>{(other?.name?.[0] ?? '?').toUpperCase()}</Text>
+      </View>
+    );
+
+  if (!ringState?.hasActive) return inner;
+
+  return (
+    <>
+      <HighlightRing
+        size={50}
+        hasActive
+        allViewed={ringState.allViewed}
+        onPress={() => setViewerOpen(true)}
+      >
+        {inner}
+      </HighlightRing>
+      <HighlightViewer
+        visible={viewerOpen}
+        highlights={ringState.highlights}
+        currentUserId={currentUserId ?? undefined}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
+function ThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
   if (item.threadType === 'trip') {
     return (
       <View style={[styles.avatar, styles.groupAvatar, { backgroundColor: '#E8F4F8' }]}>
@@ -47,17 +85,7 @@ function ThreadAvatar({ item }: { item: ThreadSummary }) {
       </View>
     );
   }
-  const other = item.otherMembers[0];
-  if (other?.avatarUrl) {
-    return <Image source={{ uri: other.avatarUrl }} style={styles.avatar} />;
-  }
-  return (
-    <View style={[styles.avatar, styles.avatarPlaceholder]}>
-      <Text style={styles.avatarInitial}>
-        {(other?.name?.[0] ?? '?').toUpperCase()}
-      </Text>
-    </View>
-  );
+  return <DmThreadAvatar item={item} currentUserId={currentUserId} />;
 }
 
 export default function TelegraphInbox() {
@@ -119,7 +147,7 @@ export default function TelegraphInbox() {
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                 onPress={() => navigateToThread(item)}
               >
-                <ThreadAvatar item={item} />
+                <ThreadAvatar item={item} currentUserId={userId} />
                 <View style={{ flex: 1, gap: 2 }}>
                   <View style={styles.nameRow}>
                     <Text style={styles.name} numberOfLines={1}>{displayName}</Text>

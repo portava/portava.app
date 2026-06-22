@@ -10,6 +10,9 @@ import type { PassportStamp, User } from '../types/models';
 import { PassportStampCard } from './PassportStampCard';
 import { TravelSectionHeader, TravelEmptyState } from './primitives';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 const PLAN_TABS: { key: TripPlanStatus; label: string }[] = [
   { key: 'joined', label: 'Joined' },
@@ -60,8 +63,47 @@ export function TripPlans({ plans }: { plans: TripPlan[] }) {
   );
 }
 
+/* ── Member avatar with highlight ring ── */
+function MemberAvatar({ u, currentUserId }: { u: User; currentUserId?: string | null }) {
+  const ringState = useHighlightRingState(u.id);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const img = <Image source={{ uri: u.avatarUrl }} style={c.avatar} />;
+
+  if (!ringState?.hasActive) {
+    return (
+      <Pressable key={u.id} onPress={() => router.push(`/profile/${u.handle}`)} style={c.avatarWrap}>
+        {img}
+        <View style={c.onlineDot} />
+      </Pressable>
+    );
+  }
+
+  return (
+    <>
+      <Pressable style={c.avatarWrap} onPress={() => router.push(`/profile/${u.handle}`)}>
+        <HighlightRing
+          size={48}
+          hasActive
+          allViewed={ringState.allViewed}
+          onPress={() => setViewerOpen(true)}
+        >
+          {img}
+        </HighlightRing>
+        <View style={c.onlineDot} />
+      </Pressable>
+      <HighlightViewer
+        visible={viewerOpen}
+        highlights={ringState.highlights}
+        currentUserId={currentUserId ?? undefined}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
 /* ── Trip Circle ── */
-export function TripCircle({ cityCount, inCity, suggested }: { cityCount: number; inCity: User[]; suggested: User[] }) {
+export function TripCircle({ cityCount, inCity, suggested, currentUserId }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null }) {
   return (
     <View>
       <TravelSectionHeader title="Trip Circle" onAction={() => router.push('/circle')} actionLabel="View all" />
@@ -69,10 +111,7 @@ export function TripCircle({ cityCount, inCity, suggested }: { cityCount: number
         <Text style={c.count}>{cityCount} buddies are in Cebu</Text>
         <View style={c.avatars}>
           {inCity.map((u) => (
-            <Pressable key={u.id} onPress={() => router.push(`/profile/${u.handle}`)} style={c.avatarWrap}>
-              <Image source={{ uri: u.avatarUrl }} style={c.avatar} />
-              <View style={c.onlineDot} />
-            </Pressable>
+            <MemberAvatar key={u.id} u={u} currentUserId={currentUserId} />
           ))}
           <Pressable style={c.inviteBtn} onPress={() => router.push('/circle')}>
             <UserPlus size={16} color={color.signal} />
