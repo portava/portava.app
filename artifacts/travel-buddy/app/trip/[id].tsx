@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar } from 'lucide-react-native';
@@ -10,7 +10,7 @@ import {
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
-import { ConciergeCommandBar } from '../../src/components/ConciergeCommandBar';
+import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
@@ -26,7 +26,9 @@ export default function TripDetail() {
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const { invites } = usePendingTripInvites();
   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
-  const pageScrollRef = useRef<ScrollView>(null);
+  const pageScrollRef    = useRef<ScrollView>(null);
+  const commandBarRef    = useRef<ConciergeCommandBarHandle>(null);
+  const commandBarY      = useRef<number>(0);
   const [chatLoading, setChatLoading] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [gapDays, setGapDays] = useState<string[]>([]);
@@ -34,6 +36,12 @@ export default function TripDetail() {
   const handleGapDays = useCallback((days: string[], dest: string) => {
     setGapDays(days);
     setGapDestination(dest);
+  }, []);
+
+  const handleGapDayChipPress = useCallback(() => {
+    pageScrollRef.current?.scrollTo({ y: commandBarY.current, animated: true });
+    // Small delay lets the scroll animation start before the keyboard appears
+    setTimeout(() => { commandBarRef.current?.focus(); }, 350);
   }, []);
 
   const trip = live && realTrip ? {
@@ -121,15 +129,19 @@ export default function TripDetail() {
             gapDays={gapDays}
             destination={gapDestination || trip.destinationCity || ''}
             tripId={trip.id}
+            onChipPress={handleGapDayChipPress}
           />
         )}
 
         {/* ── Concierge Command Bar ── */}
         {live && trip.id ? (
-          <ConciergeCommandBar
-            tripId={trip.id}
-            destination={trip.destinationCity}
-          />
+          <View onLayout={(e: LayoutChangeEvent) => { commandBarY.current = e.nativeEvent.layout.y; }}>
+            <ConciergeCommandBar
+              ref={commandBarRef}
+              tripId={trip.id}
+              destination={trip.destinationCity}
+            />
+          </View>
         ) : null}
 
         <TripPlanSection
@@ -189,20 +201,26 @@ function formatGapLabel(dateStr: string): string {
   });
 }
 
-function GapDayNudgeSection({ gapDays, destination, tripId }: { gapDays: string[]; destination: string; tripId: string }) {
+function GapDayNudgeSection({
+  gapDays, destination: _destination, tripId: _tripId, onChipPress,
+}: {
+  gapDays: string[];
+  destination: string;
+  tripId: string;
+  onChipPress: () => void;
+}) {
   return (
     <View style={gn.wrap}>
       <Text style={gn.label}>UNPLANNED DAYS</Text>
-      <Text style={gn.hint}>Tap a day to get Telegraph suggestions</Text>
+      <Text style={gn.hint}>Tap a day to ask Telegraph for ideas</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={gn.row}>
         {gapDays.map((d) => {
           const label = formatGapLabel(d);
-          const prompt = encodeURIComponent(`Help me plan ${label} in ${destination}`);
           return (
             <Pressable
               key={d}
               style={gn.chip}
-              onPress={() => router.setParams({ telegraphPrompt: prompt })}
+              onPress={onChipPress}
             >
               <Calendar size={11} color={color.signal} />
               <Text style={gn.chipText}>{label}</Text>

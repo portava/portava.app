@@ -6,7 +6,7 @@
  * bottom-sheet confirmation dialogs before executing.
  * Auth token is obtained internally by the intelligence service.
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, Modal,
   ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
@@ -26,6 +26,10 @@ const PROMPT_CHIPS = [
   'Add to plan',
   "What's missing?",
 ];
+
+export interface ConciergeCommandBarHandle {
+  focus: () => void;
+}
 
 interface ConciergeCommandBarProps {
   tripId: string;
@@ -49,7 +53,8 @@ interface CommandResponse {
   proposedActions: ProposedAction[];
 }
 
-export function ConciergeCommandBar({ tripId, destination, compact: _compact = false }: ConciergeCommandBarProps) {
+export const ConciergeCommandBar = forwardRef<ConciergeCommandBarHandle, ConciergeCommandBarProps>(
+function ConciergeCommandBar({ tripId, destination, compact: _compact = false }, ref) {
   const {
     telegraphPrompt,
     telegraphMeetupId,
@@ -70,6 +75,10 @@ export function ConciergeCommandBar({ tripId, destination, compact: _compact = f
   const [confirming, setConfirming] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const lastHandledPrompt = useRef<string | undefined>(undefined);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => { inputRef.current?.focus(); },
+  }));
 
   // Pre-fill + auto-submit when navigated here with ?telegraphPrompt=...
   // Tracks the last-processed value so different chips can each trigger a submit.
@@ -225,7 +234,7 @@ export function ConciergeCommandBar({ tripId, destination, compact: _compact = f
       />
     </KeyboardAvoidingView>
   );
-}
+});
 
 function ResponseCard({
   response, onActionTap, onDismiss, confirming,
