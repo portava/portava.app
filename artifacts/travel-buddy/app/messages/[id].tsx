@@ -12,6 +12,8 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  AppState,
+  type AppStateStatus,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -204,7 +206,10 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [goingAttendees, setGoingAttendees] = useState<AttendeePreview[]>([]);
   const [totalGoing, setTotalGoing] = useState(0);
 
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
   const refreshMeetup = useCallback(() => {
+    if (appStateRef.current !== 'active') return;
     getMeetup(payload.meetupId).then((res) => {
       if (res.ok && res.data) {
         setCounts(res.data.counts);
@@ -221,10 +226,30 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   }, [payload.meetupId]);
 
   useEffect(() => {
-    refreshMeetup();
+    // Initial load — always fetch regardless of AppState
+    getMeetup(payload.meetupId).then((res) => {
+      if (res.ok && res.data) {
+        setCounts(res.data.counts);
+        setMyRsvp(res.data.myRsvp ?? null);
+        setIsCancelled(res.data.status === 'cancelled');
+        setCreator(res.data.creator ?? null);
+        setFetchedStartsAt(res.data.startsAt ?? null);
+        setFetchedApproxDate(res.data.approximateDate ?? null);
+        setFetchedTimeOptions(res.data.timeOptions ?? []);
+        setGoingAttendees(res.data.goingAttendees ?? []);
+        setTotalGoing(res.data.totalGoing ?? 0);
+      }
+    });
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      appStateRef.current = next;
+    });
     const interval = setInterval(refreshMeetup, 30_000);
-    return () => clearInterval(interval);
-  }, [refreshMeetup]);
+    return () => {
+      sub.remove();
+      clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload.meetupId, refreshMeetup]);
 
   async function handleRsvp(status: RsvpAction) {
     if (rsvping) return;

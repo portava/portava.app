@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
+  AppState, type AppStateStatus,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -192,6 +193,8 @@ export default function MeetupScreen() {
     }
   }
 
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -202,7 +205,35 @@ export default function MeetupScreen() {
     else setError(res.message ?? 'Failed to load meetup');
   }, [id]);
 
+  const silentPoll = useCallback(async () => {
+    if (!id || appStateRef.current !== 'active') return;
+    const res = await getMeetup(id);
+    if (!res.ok || !res.data) return;
+    setMeetup((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        counts:         res.data!.counts,
+        myRsvp:         res.data!.myRsvp ?? prev.myRsvp,
+        timeOptions:    res.data!.timeOptions ?? prev.timeOptions,
+        goingAttendees: res.data!.goingAttendees ?? prev.goingAttendees,
+        totalGoing:     res.data!.totalGoing ?? prev.totalGoing,
+      };
+    });
+  }, [id]);
+
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      appStateRef.current = next;
+    });
+    const timer = setInterval(silentPoll, 10_000);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [silentPoll]);
 
   async function handleRsvp(status: 'going' | 'maybe' | 'declined') {
     if (!id || actioning) return;
