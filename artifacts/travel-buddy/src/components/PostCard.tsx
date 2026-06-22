@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
@@ -78,6 +79,13 @@ function HeroCard({ post }: { post: Post }) {
 /* 2. STANDARD — image first (if any), caption below. Cleaner, readable. */
 function StandardCard({ post }: { post: Post }) {
   const hasMedia = post.media.length > 0;
+  const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
+  const hasFilterId = post.filterId && post.filterId !== 'original';
+  const shouldApplyCssFilter = isVideo && hasFilterId;
+  const cssFilter = shouldApplyCssFilter
+    ? buildCssFilter(getMediaFilter(post.filterId), post.filterIntensity ?? 100)
+    : 'none';
+
   return (
     <View style={[styles.card, styles.standard]}>
       <View style={styles.stdHead}>
@@ -87,7 +95,13 @@ function StandardCard({ post }: { post: Post }) {
       </View>
       {hasMedia && (
         <View>
-          <Image source={{ uri: post.media[0].url }} style={styles.stdImage} />
+          <Image
+            source={{ uri: post.media[0].url }}
+            style={[
+              styles.stdImage,
+              shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
+            ]}
+          />
           {post.media[0]?.kind === 'video' && (
             <View style={styles.playBadge}>
               <PlayCircle size={32} color="#FFFFFF" />

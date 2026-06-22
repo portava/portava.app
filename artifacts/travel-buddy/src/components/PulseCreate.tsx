@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
   Image, ActivityIndicator, Switch, Platform, KeyboardAvoidingView,
@@ -19,6 +19,7 @@ import { uploadMedia, validateMedia, type PickedMedia } from '../services/media'
 import { useSession } from '../context/SessionContext';
 import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
+import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 
 /* ── Types ── */
 
@@ -161,6 +162,10 @@ export function UnifiedPostComposer({
   const [addToPassport, setAddToPassport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
+  const [filterEditorOpen, setFilterEditorOpen] = useState(false);
+  const [filterEditorPending, setFilterEditorPending] = useState<PickedMedia | null>(null);
+  const [filterId, setFilterId] = useState<string>('original');
+  const [filterIntensity, setFilterIntensity] = useState<number>(100);
 
   useEffect(() => {
     if (visible) {
@@ -174,6 +179,10 @@ export function UnifiedPostComposer({
       setAddToPassport(false);
       setError(null);
       setHighlightComposerOpen(false);
+      setFilterEditorOpen(false);
+      setFilterEditorPending(null);
+      setFilterId('original');
+      setFilterIntensity(100);
     }
   }, [visible]);
 
@@ -198,9 +207,23 @@ export function UnifiedPostComposer({
     };
     const v = validateMedia(picked, selectedType === 'share_postcard' ? { maxVideoDurationSeconds: 10 } : undefined);
     if (!v.ok) { setError(v.message); return; }
-    setMedia(picked);
     if (selectedType === 'share_postcard' || selectedType === 'share_moment') setAddToPassport(true);
+    setFilterEditorPending(picked);
+    setFilterEditorOpen(true);
   }
+
+  const handleFilterApply = useCallback((result: FilterApplyResult) => {
+    setFilterEditorOpen(false);
+    if (filterEditorPending) {
+      setMedia({
+        ...filterEditorPending,
+        uri: result.uri,
+      });
+      setFilterId(result.filterId);
+      setFilterIntensity(result.filterIntensity);
+      setFilterEditorPending(null);
+    }
+  }, [filterEditorPending]);
 
   async function useGps() {
     setGpsBusy(true);
@@ -275,6 +298,8 @@ export function UnifiedPostComposer({
       ...(mediaType ? { mediaType } : {}),
       addToPassport: autoPassport || addToPassport,
       ...locationFields,
+      filterId,
+      filterIntensity,
     });
 
     if (res.ok) {
@@ -532,6 +557,24 @@ export function UnifiedPostComposer({
           onClose();
         }}
       />
+
+      {/* Filter editor — opens after media pick, before storing */}
+      {filterEditorOpen && filterEditorPending && (
+        <MediaFilterEditor
+          file={{
+            uri: filterEditorPending.uri,
+            mimeType: filterEditorPending.mimeType ?? 'image/jpeg',
+            width: filterEditorPending.width ?? null,
+            height: filterEditorPending.height ?? null,
+          }}
+          mediaType={(filterEditorPending.mimeType ?? '').startsWith('video/') ? 'video' : 'image'}
+          onApply={handleFilterApply}
+          onCancel={() => {
+            setFilterEditorOpen(false);
+            setFilterEditorPending(null);
+          }}
+        />
+      )}
     </Modal>
   );
 }

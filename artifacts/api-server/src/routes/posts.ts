@@ -102,6 +102,7 @@ router.post("/posts", async (req, res) => {
   const {
     mediaType, addToPassport, locationName, locationPlaceId, locationCity,
     locationCountry, locationLat, locationLng, userGpsLat, userGpsLng, locationSource,
+    filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
   } = parsed.data;
 
   // Trip-attached: verify existence + accepted membership BEFORE writing.
@@ -156,6 +157,11 @@ router.post("/posts", async (req, res) => {
       created_by: user.id,
       updated_by: user.id,
       source: "api_server",
+      // media filters
+      filter_id: filterId ?? 'original',
+      filter_intensity: filterIntensity ?? 100,
+      media_thumbnail_url: mediaThumbnailUrl ?? null,
+      media_duration_seconds: mediaDurationSeconds ?? null,
     })
     .select(POST_COLUMNS)
     .single();

@@ -32,6 +32,10 @@ export interface Highlight {
   likeCount: number;
   viewedByMe: boolean;
   likedByMe: boolean;
+  filterId: string;
+  filterIntensity: number;
+  mediaThumbnailUrl?: string | null;
+  mediaDurationSeconds?: number | null;
 }
 
 export interface HighlightViewer {
@@ -110,6 +114,10 @@ function mapHighlight(r: any): Highlight {
     likeCount: r.likeCount ?? 0,
     viewedByMe: r.viewedByMe ?? false,
     likedByMe: r.likedByMe ?? false,
+    filterId: r.filter_id ?? 'original',
+    filterIntensity: r.filter_intensity ?? 100,
+    mediaThumbnailUrl: r.media_thumbnail_url ?? null,
+    mediaDurationSeconds: r.media_duration_seconds ?? null,
   };
 }
 
@@ -123,6 +131,10 @@ export interface CreateHighlightInput {
   locationCountry?: string | null;
   visibility?: HighlightVisibility;
   expiresInHours?: number;
+  filterId?: string;
+  filterIntensity?: number;
+  mediaThumbnailUrl?: string | null;
+  mediaDurationSeconds?: number | null;
 }
 
 export async function createHighlight(input: CreateHighlightInput): Promise<HighlightResult<Highlight>> {
@@ -143,6 +155,10 @@ export async function createHighlight(input: CreateHighlightInput): Promise<High
         locationCountry: input.locationCountry ?? null,
         visibility: input.visibility ?? 'public',
         expiresInHours: input.expiresInHours ?? 24,
+        filterId: input.filterId ?? 'original',
+        filterIntensity: input.filterIntensity ?? 100,
+        mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
+        mediaDurationSeconds: input.mediaDurationSeconds ?? null,
       }),
     });
     if (!res.ok) return mapApiError<Highlight>(res.status, await res.json().catch(() => ({})));

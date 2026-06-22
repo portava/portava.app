@@ -83,6 +83,11 @@ async function resolveViewAccess(
 const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
+const KNOWN_FILTER_IDS = [
+  'original', 'wanderlust', 'golden_hour', 'deep_ocean', 'mist', 'polaroid',
+  'noir', 'safari', 'vivid', 'sunset', 'arctic', 'velvet',
+] as const;
+
 const createHighlightSchema = z.object({
   mediaUrl: z.string().url("media_url must be a URL"),
   mediaType: z.string().min(1),
@@ -97,6 +102,10 @@ const createHighlightSchema = z.object({
   expiresInHours: z.number().int().refine((h) => EXPIRY_HOURS.includes(h as any), {
     message: `expiresInHours must be one of: ${EXPIRY_HOURS.join(", ")}`,
   }).default(24),
+  filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
+  filterIntensity: z.number().int().min(0).max(100).optional().default(100),
+  mediaThumbnailUrl: z.string().url().nullable().optional(),
+  mediaDurationSeconds: z.number().int().min(0).max(10).nullable().optional(),
 });
 
 /* ============================================================================
@@ -141,8 +150,12 @@ router.post("/highlights", async (req, res) => {
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
       expires_at: expiresAt,
+      filter_id: d.filterId ?? 'original',
+      filter_intensity: d.filterIntensity ?? 100,
+      media_thumbnail_url: d.mediaThumbnailUrl ?? null,
+      media_duration_seconds: d.mediaDurationSeconds ?? null,
     })
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, filter_id, filter_intensity, media_thumbnail_url, media_duration_seconds")
     .single();
 
   if (error) {

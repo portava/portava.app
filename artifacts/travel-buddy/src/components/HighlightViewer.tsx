@@ -13,9 +13,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Image, Pressable, Modal, StyleSheet,
-  Alert, Dimensions, ActivityIndicator, TextInput,
+  Alert, Dimensions, ActivityIndicator, TextInput, Platform,
 } from 'react-native';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 import { X, Heart, MessageCircle, Flag, Eye, Share2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -202,6 +203,13 @@ export function HighlightViewer({
   const likeState = likeMap[current.id] ?? { liked: current.likedByMe, count: current.likeCount };
   const locLabel = [current.locationName ?? current.locationCity, current.locationCountry].filter(Boolean).join(', ');
 
+  const isVideoHighlight = (current.mediaType ?? '').startsWith('video/');
+  const hasFilter = current.filterId && current.filterId !== 'original';
+  const shouldApplyFilter = isVideoHighlight && hasFilter;
+  const cssFilter = shouldApplyFilter
+    ? buildCssFilter(getMediaFilter(current.filterId), current.filterIntensity ?? 100)
+    : 'none';
+
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={s.container}>
@@ -211,7 +219,10 @@ export function HighlightViewer({
             key={current.id}
             ref={videoRef}
             source={{ uri: current.mediaUrl }}
-            style={StyleSheet.absoluteFill}
+            style={[
+              StyleSheet.absoluteFill,
+              shouldApplyFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
+            ]}
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}
             isLooping={false}

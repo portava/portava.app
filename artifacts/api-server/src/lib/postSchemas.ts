@@ -27,6 +27,12 @@ export const locationSource = z.enum(['gps', 'manual', 'none']);
 const lat = z.number().min(-90).max(90);
 const lng = z.number().min(-180).max(180);
 
+/** Known filter IDs — duplicated from the mobile filter library for server-side validation. */
+const KNOWN_FILTER_IDS = [
+  'original', 'wanderlust', 'golden_hour', 'deep_ocean', 'mist', 'polaroid',
+  'noir', 'safari', 'vivid', 'sunset', 'arctic', 'velvet',
+] as const;
+
 /**
  * Create payload. author_id is intentionally NOT accepted — the server always
  * sets it from the verified token. trip_id is optional (standalone post).
@@ -57,6 +63,11 @@ export const createPostSchema = z
     userGpsLat: lat.nullish(),
     userGpsLng: lng.nullish(),
     locationSource: locationSource.optional().default('none'),
+    // media filter fields
+    filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
+    filterIntensity: z.number().int().min(0).max(100).optional().default(100),
+    mediaThumbnailUrl: z.string().url().nullish(),
+    mediaDurationSeconds: z.number().int().min(0).max(10).nullish(),
   })
   .superRefine((val, ctx) => {
     if (val.visibility === "trip_only" && !val.tripId) {

@@ -41,6 +41,10 @@ export interface PostRow {
   canLike: boolean;
   canComment: boolean;
   canShare: boolean;
+  filterId: string;
+  filterIntensity: number;
+  mediaThumbnailUrl?: string | null;
+  mediaDurationSeconds?: number | null;
 }
 
 export type PostErrorKind =
@@ -84,6 +88,10 @@ function mapPost(r: any): PostRow {
     canLike: r.canLike ?? (r.visibility === 'public'),
     canComment: r.canComment ?? (r.visibility === 'public'),
     canShare: r.canShare ?? (r.visibility === 'public'),
+    filterId: r.filter_id ?? 'original',
+    filterIntensity: r.filter_intensity ?? 100,
+    mediaThumbnailUrl: r.media_thumbnail_url ?? null,
+    mediaDurationSeconds: r.media_duration_seconds ?? null,
   };
 }
 
@@ -138,6 +146,11 @@ interface CreatePostInput {
   userGpsLat?: number | null;
   userGpsLng?: number | null;
   locationSource?: 'gps' | 'manual' | 'none';
+  // media filters
+  filterId?: string;
+  filterIntensity?: number;
+  mediaThumbnailUrl?: string | null;
+  mediaDurationSeconds?: number | null;
 }
 
 export async function createPost(input: CreatePostInput): Promise<PostResult<PostRow>> {
@@ -170,6 +183,11 @@ export async function createPost(input: CreatePostInput): Promise<PostResult<Pos
         userGpsLat: input.userGpsLat ?? null,
         userGpsLng: input.userGpsLng ?? null,
         locationSource: input.locationSource ?? 'none',
+        // media filters
+        filterId: input.filterId ?? 'original',
+        filterIntensity: input.filterIntensity ?? 100,
+        mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
+        mediaDurationSeconds: input.mediaDurationSeconds ?? null,
       }),
     });
     if (!res.ok) {

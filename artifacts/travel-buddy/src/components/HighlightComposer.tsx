@@ -5,7 +5,7 @@
  *
  * Video picks are previewed with a native expo-av player (muted, looping).
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet,
   TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform,
@@ -20,6 +20,7 @@ import { createHighlight, type HighlightVisibility } from '../services/highlight
 import { getCurrentGps, reverseGeocode } from '../services/location';
 import { useSession } from '../context/SessionContext';
 import { router } from 'expo-router';
+import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
@@ -67,6 +68,10 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [gpsBusy, setGpsBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filterEditorOpen, setFilterEditorOpen] = useState(false);
+  const [filterEditorAsset, setFilterEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [filterId, setFilterId] = useState<string>('original');
+  const [filterIntensity, setFilterIntensity] = useState<number>(100);
 
   useEffect(() => {
     if (visible) {
@@ -81,6 +86,10 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
       setLoc({ source: 'none' });
       setManualText('');
       setError(null);
+      setFilterEditorOpen(false);
+      setFilterEditorAsset(null);
+      setFilterId('original');
+      setFilterIntensity(100);
     }
   }, [visible]);
 
@@ -140,12 +149,21 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     const v = validateMedia(picked, { maxVideoDurationSeconds: 10 });
     if (!v.ok) { setError(v.message); return; }
 
-    setMediaUri(a.uri);
     setMimeType(mime);
     setIsVideo(asVideo);
     setVideoDuration(durationSec);
     setFileSize(a.fileSize ?? null);
+    setFilterEditorAsset(a);
+    setFilterEditorOpen(true);
   }
+
+  const handleFilterApply = useCallback((result: FilterApplyResult) => {
+    setFilterEditorOpen(false);
+    setMediaUri(result.uri);
+    setFilterId(result.filterId);
+    setFilterIntensity(result.filterIntensity);
+    setFilterEditorAsset(null);
+  }, []);
 
   async function useGps() {
     setGpsBusy(true);
@@ -205,6 +223,8 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
         locationCountry,
         visibility: vis,
         expiresInHours,
+        filterId,
+        filterIntensity,
       });
 
       if (!result.ok) {
@@ -390,6 +410,24 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Filter editor — opens after media pick, before storing */}
+      {filterEditorOpen && filterEditorAsset && (
+        <MediaFilterEditor
+          file={{
+            uri: filterEditorAsset.uri,
+            mimeType: filterEditorAsset.mimeType ?? (filterEditorAsset.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+            width: filterEditorAsset.width ?? null,
+            height: filterEditorAsset.height ?? null,
+          }}
+          mediaType={filterEditorAsset.type === 'video' || (filterEditorAsset.mimeType ?? '').startsWith('video/') ? 'video' : 'image'}
+          onApply={handleFilterApply}
+          onCancel={() => {
+            setFilterEditorOpen(false);
+            setFilterEditorAsset(null);
+          }}
+        />
+      )}
     </Modal>
   );
 }

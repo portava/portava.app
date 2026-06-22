@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 
 /**
  * PostcardTile — postcard-styled tile (image-heavy, paper border, corner
@@ -15,6 +16,14 @@ type Variant = 'tall' | 'wide' | 'square';
 export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: Post; variant?: Variant; rotate?: number }) {
   const h = variant === 'tall' ? 230 : variant === 'wide' ? 150 : 190;
   const date = new Date(post.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+  const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
+  const hasFilterId = post.filterId && post.filterId !== 'original';
+  const shouldApplyCssFilter = isVideo && hasFilterId;
+  const cssFilter = shouldApplyCssFilter
+    ? buildCssFilter(getMediaFilter(post.filterId), post.filterIntensity ?? 100)
+    : 'none';
+
   return (
     <Pressable
       onPress={() => router.push(`/post/${post.id}`)}
@@ -23,7 +32,13 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
       {/* image side */}
       <View style={pt.media}>
         {post.media[0] ? (
-          <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} />
+          <Image
+            source={{ uri: post.media[0].url }}
+            style={[
+              StyleSheet.absoluteFill,
+              shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
+            ]}
+          />
         ) : (
           <View style={[StyleSheet.absoluteFill, pt.noImage]}><Text style={pt.noImageText} numberOfLines={3}>{post.title ?? post.caption}</Text></View>
         )}

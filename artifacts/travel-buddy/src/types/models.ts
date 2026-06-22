@@ -114,6 +114,10 @@ export interface Post {
   saved?: boolean;
   // itinerary-only
   dayCount?: number;
+  // media filter metadata (optional; present on posts created after filter system shipped)
+  filterId?: string;
+  filterIntensity?: number;
+  mediaType?: string;
 }
 
 export interface Comment {
