@@ -1,0 +1,634 @@
+TRAVEL BUDDY — Build app-wide selective input system: Calendar, Timer/Time Picker, and Global GPS Place Library.
+
+Mission:
+Add built-in app-wide selection tools so users do not have to type dates, times, cities, towns, countries, or GPS locations manually.
+
+Build three global systems:
+
+1. Global Calendar Picker
+For every date selection in the app.
+
+2. Global Time / Timer Picker
+For every time selection, trip window, countdown, duration, availability, highlight expiration, meetup time, and schedule selection.
+
+3. Global GPS Place Library
+For every city, town, country, district, neighborhood, place, and location selection.
+
+These should be reusable components/services used across the whole Travel Buddy app.
+
+Do not create separate date/time/location pickers per page.
+Do not leave manual text-only date/time/location fields where a picker should exist.
+Do not break existing forms.
+Do not break GPS privacy.
+Do not expose exact coordinates publicly unless the user chooses that.
+Do not remove existing typed entry if it is useful; allow manual override/search where needed.
+
+============================================================
+CORE PRODUCT RULE
+============================================================
+
+Every app-wide date/time/location field should use the same selective tools.
+
+Date fields use:
+GlobalCalendarPicker
+
+Time fields use:
+GlobalTimePicker / GlobalTimerPicker
+
+Location fields use:
+GlobalPlacePicker / GPSPlaceLibrary
+
+No more random date inputs, time inputs, or location text boxes scattered through the app.
+
+============================================================
+GLOBAL CALENDAR PICKER
+============================================================
+
+Create reusable component:
+
+GlobalCalendarPicker
+
+Use it for:
+- trip start date
+- trip end date
+- plan date
+- meetup date
+- activity date
+- event date
+- availability date
+- postcard date if editable
+- highlight expiration custom date
+- Safe Return check-in date
+- reminders
+- bookings/reservations if present
+- any future date selection
+
+Component features:
+- single date selection
+- date range selection
+- disabled past dates when needed
+- allow past dates when used for memories/history
+- month navigation
+- year jump if needed
+- today shortcut
+- clear date
+- confirm/cancel
+- mobile bottom sheet
+- desktop popover
+- accessible labels
+
+Modes:
+- single
+- range
+- multiple optional if needed later
+
+Props:
+{
+  mode: "single" | "range",
+  value,
+  minDate,
+  maxDate,
+  allowPast,
+  disabledDates,
+  onChange,
+  onConfirm,
+  onCancel
+}
+
+Expected UX:
+- User taps date field.
+- Calendar opens.
+- User selects date/date range.
+- Field fills with clean formatted date.
+- No manual typing required, but manual edit can remain if already safe.
+
+Date formatting:
+- Display human readable dates:
+  “Jun 22, 2026”
+  “Jun 22–26, 2026”
+- Store ISO date internally:
+  YYYY-MM-DD
+
+============================================================
+GLOBAL TIME / TIMER PICKER
+============================================================
+
+Create reusable components:
+
+GlobalTimePicker
+GlobalTimerPicker
+DurationPicker
+
+Use GlobalTimePicker for:
+- event time
+- meetup time
+- trip window start/end
+- availability hours
+- Safe Return time
+- plan time
+- reminder time
+- check-in time
+- opening/closing windows
+- “from/to” time selections
+
+Use GlobalTimerPicker / DurationPicker for:
+- highlight duration
+- story expiration
+- countdown timers
+- activity length
+- layover length
+- Safe Return countdown
+- reminder offsets
+- session windows
+
+GlobalTimePicker features:
+- 12h/24h support
+- AM/PM selector
+- start/end time range
+- quick presets
+- timezone awareness
+- confirm/cancel
+- mobile wheel or bottom sheet
+- desktop popover
+- clear time
+
+Quick presets:
+- Now
+- Morning
+- Afternoon
+- Evening
+- Tonight
+- Custom
+
+For trip/social use, add:
+- 6:00 PM – 1:00 AM
+- 8:00 PM – 2:00 AM
+- All day
+- Late night
+
+GlobalTimerPicker / DurationPicker features:
+- 15 min
+- 30 min
+- 1 hour
+- 2 hours
+- 3 hours
+- 6 hours
+- 12 hours
+- 24 hours
+- 48 hours
+- custom
+
+Highlight/story expiration options:
+- 3 hours
+- 6 hours
+- 12 hours
+- 24 hours default
+- 48 hours
+- until trip window ends
+- until I leave this city if GPS/session supports it
+- custom
+
+Props:
+{
+  mode: "single" | "range" | "duration",
+  value,
+  timezone,
+  minTime,
+  maxTime,
+  presets,
+  onChange,
+  onConfirm,
+  onCancel
+}
+
+Store times internally as:
+- HH:mm for local time fields
+- ISO datetime for scheduled events
+- seconds/minutes for durations
+
+============================================================
+GLOBAL GPS PLACE LIBRARY
+============================================================
+
+Create a shared location/place selection library:
+
+GPSPlaceLibrary
+GlobalPlacePicker
+usePlaceSearch
+useActiveLocation
+
+This powers:
+- Pulse city selector
+- Discovery city/town/country selector
+- Postcard location stamp picker
+- Passport stamp picker
+- Highlight location picker
+- Hidden Gem location picker
+- Food Spot location picker
+- Trip destination picker
+- Plan location picker
+- Safe Return location/check-in
+- Nearby travelers
+- Manual city fallback
+- Country/city/town search
+- District/neighborhood selection
+
+============================================================
+PLACE TYPES
+============================================================
+
+Support preselective location data for:
+
+- country
+- region/state/province
+- city
+- town
+- district
+- neighborhood
+- place/venue
+- landmark
+- airport optional
+- beach/club/restaurant/hotel optional if app supports it
+
+Place object shape:
+
+{
+  id,
+  type: "country" | "region" | "city" | "town" | "district" | "neighborhood" | "place" | "landmark" | "airport",
+  name,
+  displayName,
+  country,
+  countryCode,
+  region,
+  city,
+  district,
+  lat,
+  lng,
+  bbox,
+  timezone,
+  source,
+  confidence
+}
+
+============================================================
+PLACE PICKER UX
+============================================================
+
+GlobalPlacePicker behavior:
+- User taps location field.
+- Bottom sheet opens on mobile.
+- Search bar appears.
+- User sees suggestions:
+  - Current location
+  - Recent locations
+  - Saved locations
+  - Trip destination
+  - Popular nearby cities
+  - Countries/cities/towns matching search
+- User selects a place.
+- Field fills with clean display name.
+- App stores normalized place data.
+
+Options:
+- Use current GPS
+- Choose city manually
+- Choose country
+- Search town/city/place
+- Hide location where privacy applies
+
+Example display:
+- Cebu City, Philippines
+- Lahug, Cebu City
+- Mactan, Lapu-Lapu City
+- Tokyo, Japan
+- Da Nang, Vietnam
+
+============================================================
+LOCATION DATA SOURCES
+============================================================
+
+Build a provider adapter so the app can use available services without hardcoding.
+
+Create:
+
+server/services/placeSearchService.ts
+server/services/geocodingService.ts
+
+Provider priority:
+1. Existing configured provider in app if present
+2. Supabase/Postgres local place table if available
+3. Mapbox/Google/Here/etc. if env vars already exist
+4. OpenStreetMap/Nominatim only if acceptable and rate-limited
+5. Static seed list fallback for major countries/cities
+
+Do not expose provider keys to frontend.
+Do not hardcode API secrets.
+Do not crash if provider unavailable.
+
+Frontend should call backend:
+GET /api/places/search?q=&type=&countryCode=&lat=&lng=
+GET /api/places/reverse?lat=&lng=
+GET /api/places/recent
+POST /api/places/recent
+
+============================================================
+LOCAL PLACE CACHE / LIBRARY
+============================================================
+
+Create local place cache so the app is not fully dependent on live external search.
+
+Tables if missing:
+
+places:
+- id uuid primary key
+- type text not null
+- name text not null
+- display_name text not null
+- country text null
+- country_code text null
+- region text null
+- city text null
+- district text null
+- lat numeric null
+- lng numeric null
+- bbox jsonb null
+- timezone text null
+- source text null
+- source_id text null
+- popularity integer default 0
+- created_at timestamptz default now()
+- updated_at timestamptz default now()
+
+user_recent_places:
+- id uuid primary key
+- user_id uuid not null
+- place_id uuid null
+- place_snapshot jsonb not null
+- used_for text null
+- used_at timestamptz default now()
+
+Seed fallback list:
+- user’s current/trip cities if known
+- popular travel countries/cities
+- recent selected places
+- manually entered city converted into place snapshot
+
+============================================================
+GPS INTEGRATION
+============================================================
+
+Use the active GPS system already planned/built.
+
+GlobalPlacePicker should support:
+- Use current location
+- reverse geocode current GPS to city/district/country
+- save recent place
+- respect privacy setting
+
+If GPS denied:
+- do not crash
+- show:
+  “Location is off. Choose a city manually.”
+
+If GPS stale:
+- show:
+  “Location may be outdated. Refresh?”
+
+============================================================
+PRIVACY RULES
+============================================================
+
+For posts/highlights/postcards:
+Location picker must offer:
+
+- Hide location
+- City only
+- Neighborhood
+- Exact place
+
+Default:
+City only
+
+Never publicly expose raw lat/lng unless the user selected exact place or feature requires it with permission.
+
+Internal GPS can power stamps/recommendations without exposing exact coordinates publicly.
+
+============================================================
+APP-WIDE REPLACEMENT TARGETS
+============================================================
+
+Replace or wire all existing date/time/location fields across:
+
+Pulse:
+- city context
+- district context
+- trip window
+- filters
+
+Discovery:
+- city/country/town selector
+- nearby filters
+- map/list location
+
+Passport:
+- stamp dates
+- city/country visited
+- profile location if present
+
+Postcards:
+- postcard date if editable
+- postcard location stamp
+- city/country/place picker
+
+Highlights/Stories:
+- duration/expiration timer
+- location picker
+- city/neighborhood/exact visibility
+
+Trips:
+- trip destination
+- trip start/end date
+- trip time window
+- plan dates/times
+- check-in times
+
+Plans:
+- plan date
+- start/end time
+- location/place
+
+Availability:
+- weekday/time blocks
+- date overrides
+- recurring time windows
+
+Safe Return:
+- countdown timer
+- check-in time
+- destination/location
+
+Telegraph:
+- optional share location flow
+- trip chat location share if present
+
+Settings:
+- home city/current city/manual city
+- location privacy
+- timezone if present
+
+============================================================
+FORM INTEGRATION RULES
+============================================================
+
+All forms should store normalized values.
+
+Date:
+- display label for UI
+- ISO value for backend
+
+Time:
+- display label for UI
+- local HH:mm or ISO datetime for backend
+- timezone included where necessary
+
+Location:
+- display label for UI
+- normalized place object or place snapshot for backend
+
+Do not store random plain city strings without structure if using the new picker.
+
+Allow backwards compatibility:
+If old records have city: "Cebu", normalize at display time into:
+{
+  name: "Cebu",
+  displayName: "Cebu",
+  source: "legacy"
+}
+
+============================================================
+COMPONENTS TO CREATE
+============================================================
+
+Create:
+
+src/components/selectors/GlobalCalendarPicker.tsx
+src/components/selectors/GlobalTimePicker.tsx
+src/components/selectors/GlobalTimerPicker.tsx
+src/components/selectors/GlobalPlacePicker.tsx
+src/components/selectors/LocationPrivacySelector.tsx
+src/hooks/usePlaceSearch.ts
+src/hooks/useRecentPlaces.ts
+src/lib/dateTime/formatters.ts
+src/lib/location/placeTypes.ts
+src/lib/location/normalizePlace.ts
+
+Use existing component structure if different, but keep these reusable concepts.
+
+============================================================
+BACKEND/API TO CREATE
+============================================================
+
+Create or update:
+
+GET /api/places/search
+GET /api/places/reverse
+GET /api/me/recent-places
+POST /api/me/recent-places
+
+If backend routing style differs, follow existing conventions.
+
+Add validation:
+- q max length
+- type allowlist
+- lat/lng valid ranges
+- auth required for recent places
+- rate limit external provider calls if possible
+
+============================================================
+UI DESIGN REQUIREMENTS
+============================================================
+
+Mobile:
+- bottom sheet picker
+- sticky search bar
+- large enough tap targets
+- safe area padding
+- no bottom nav overlap
+- recent/suggested options first
+- no giant forms
+
+Desktop:
+- popover/dropdown picker
+- searchable
+- keyboard-friendly
+
+Accessibility:
+- labels
+- keyboard navigation where simple
+- clear selected state
+- error states
+
+============================================================
+ERROR STATES
+============================================================
+
+Calendar:
+- “Choose a valid date.”
+- “End date must be after start date.”
+
+Time:
+- “Choose a valid time.”
+- “End time must be after start time, unless this ends after midnight.”
+- Support overnight windows like 6 PM – 1 AM.
+
+Place:
+- “No places found.”
+- “Location search is unavailable. Try typing your city.”
+- “GPS is off. Choose a city manually.”
+- “We found your location, but could not name it yet.”
+
+============================================================
+ACCEPTANCE CRITERIA
+============================================================
+
+1. Every date field uses GlobalCalendarPicker.
+2. Every time field uses GlobalTimePicker or GlobalTimerPicker.
+3. Every location field uses GlobalPlacePicker or GPSPlaceLibrary.
+4. Trip dates use calendar picker.
+5. Plan dates/times use calendar/time picker.
+6. Highlight duration uses timer picker.
+7. Postcard location stamp uses place picker/GPS.
+8. Pulse city context uses place picker/GPS/manual fallback.
+9. Discovery location uses place picker/GPS/manual fallback.
+10. Safe Return time/location uses global picker system.
+11. Availability time selection uses global time picker.
+12. Manual city selection uses structured place data.
+13. Recent places appear after selection.
+14. GPS denied does not crash.
+15. Provider unavailable does not crash.
+16. Old records still display.
+17. Mobile sheets do not overlap bottom nav.
+18. Build passes.
+19. TypeScript passes.
+20. No console errors.
+
+============================================================
+FINAL REPORT REQUIRED
+============================================================
+
+Return:
+1. Files created
+2. Files modified
+3. Global calendar component added
+4. Global time/timer component added
+5. Global place/GPS library added
+6. APIs added
+7. Database migration added
+8. Pages/forms converted to global selectors
+9. GPS/manual fallback behavior
+10. Privacy protections
+11. Tests run
+12. Remaining TODOs
+
+Final result:
+Travel Buddy has one app-wide selective input system: built-in calendar for date selection, built-in timer/time picker for time and duration selection, and a global GPS place library for city/town/country/place selection across every feature.

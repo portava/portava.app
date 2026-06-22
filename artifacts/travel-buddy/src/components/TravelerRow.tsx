@@ -4,6 +4,9 @@ import { router } from 'expo-router';
 import { UserCheck, UserPlus, Lock } from 'lucide-react-native';
 import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 interface Props {
   user: TravelerSearchResult;
@@ -14,6 +17,8 @@ export function TravelerRow({ user, isOwnProfile = false }: Props) {
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [followerCount, setFollowerCount] = useState(user.followerCount);
   const [toggling, setToggling] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const ringState = useHighlightRingState(user.id);
 
   async function handleToggle() {
     if (toggling || user.isPrivate) return;
@@ -43,14 +48,24 @@ export function TravelerRow({ user, isOwnProfile = false }: Props) {
   const handle = user.username ? `@${user.username}` : null;
 
   return (
+    <>
     <Pressable style={styles.row} onPress={handleRowPress}>
-      {user.avatarUrl ? (
-        <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-      ) : (
-        <View style={[styles.avatar, styles.avatarEmpty]}>
-          <Text style={{ fontSize: 22 }}>👤</Text>
-        </View>
-      )}
+      <HighlightRing
+        hasActive={ringState?.hasActive ?? false}
+        allViewed={ringState?.allViewed ?? false}
+        size={48}
+        ringWidth={2}
+        gap={2}
+        onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+      >
+        {user.avatarUrl ? (
+          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
+        ) : (
+          <View style={[styles.avatar, styles.avatarEmpty]}>
+            <Text style={{ fontSize: 22 }}>👤</Text>
+          </View>
+        )}
+      </HighlightRing>
 
       <View style={styles.info}>
         <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
@@ -89,6 +104,12 @@ export function TravelerRow({ user, isOwnProfile = false }: Props) {
         </Pressable>
       )}
     </Pressable>
+    <HighlightViewer
+      visible={viewerOpen}
+      highlights={ringState?.highlights ?? []}
+      onClose={() => setViewerOpen(false)}
+    />
+    </>
   );
 }
 

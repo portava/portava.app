@@ -16,7 +16,9 @@ import { ArrowLeft, Users } from 'lucide-react-native';
 import { getPublicProfile, getPublicPostcards } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { useFollow } from '../../src/hooks/useFollow';
+import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { PassportHero } from '../../src/components/PassportHero';
+import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
 import { AboutTab } from '../../src/components/AboutTab';
@@ -104,6 +106,8 @@ export default function PassportDeepLinkScreen() {
   const { profile, postcards, loading, error, isPrivate, notFound } = state;
   const { isAuthed } = useSession();
   const follow = useFollow(profile?.id ?? null);
+  const ringState = useHighlightRingState(profile?.id ?? null);
+  const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('postcards');
   const insets = useSafeAreaInsets();
 
@@ -165,6 +169,9 @@ export default function PassportDeepLinkScreen() {
           isFollowing={isAuthed ? follow.isFollowing : undefined}
           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
           onFollowPress={isAuthed ? follow.toggle : undefined}
+          hasHighlights={ringState?.hasActive}
+          allHighlightsViewed={ringState?.allViewed}
+          onHighlightRingPress={ringState?.hasActive ? () => setHighlightViewerOpen(true) : undefined}
         />
 
         <View style={styles.statsRow}>
@@ -243,6 +250,11 @@ export default function PassportDeepLinkScreen() {
         <View style={{ width: 38 }} />
       </View>
       {renderContent()}
+      <HighlightViewer
+        visible={highlightViewerOpen}
+        highlights={ringState?.highlights ?? []}
+        onClose={() => setHighlightViewerOpen(false)}
+      />
     </View>
   );
 }

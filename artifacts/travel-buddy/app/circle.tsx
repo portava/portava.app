@@ -11,6 +11,48 @@ import { BestDaysBanner } from '../src/components/BestDaysBanner';
 import { MeetupCreationSheet } from '../src/components/MeetupCreationSheet';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
+import { HighlightRing } from '../src/components/HighlightRing';
+import { HighlightViewer } from '../src/components/HighlightViewer';
+import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
+
+function CircleUserRow({ u }: { u: FollowUser }) {
+  const ringState = useHighlightRingState(u.id);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  return (
+    <>
+      <Pressable
+        style={styles.row}
+        onPress={() => u.handle ? router.push(`/u/${u.handle}`) : undefined}
+      >
+        <HighlightRing
+          hasActive={ringState?.hasActive ?? false}
+          allViewed={ringState?.allViewed ?? false}
+          size={52}
+          ringWidth={2}
+          gap={2}
+          onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+        >
+          {u.avatarUrl ? (
+            <Image source={{ uri: u.avatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarEmpty]}>
+              <Text style={{ fontSize: 22 }}>👤</Text>
+            </View>
+          )}
+        </HighlightRing>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name}>{u.name ?? u.handle ?? 'Traveler'}</Text>
+          {u.handle ? <Text style={styles.handle}>@{u.handle}</Text> : null}
+        </View>
+      </Pressable>
+      <HighlightViewer
+        visible={viewerOpen}
+        highlights={ringState?.highlights ?? []}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
 
 function next14Days(): string[] {
   const days: string[] = [];
@@ -205,23 +247,7 @@ export default function Circle() {
 
           {/* ── Following / Followers list ── */}
           {list.map((u) => (
-            <Pressable
-              key={u.id}
-              style={styles.row}
-              onPress={() => u.handle ? router.push(`/u/${u.handle}`) : undefined}
-            >
-              {u.avatarUrl ? (
-                <Image source={{ uri: u.avatarUrl }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarEmpty]}>
-                  <Text style={{ fontSize: 22 }}>👤</Text>
-                </View>
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{u.name ?? u.handle ?? 'Traveler'}</Text>
-                {u.handle ? <Text style={styles.handle}>@{u.handle}</Text> : null}
-              </View>
-            </Pressable>
+            <CircleUserRow key={u.id} u={u} />
           ))}
           {list.length === 0 && (
             <View style={styles.emptyBox}>
