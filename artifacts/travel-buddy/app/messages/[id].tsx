@@ -204,7 +204,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [goingAttendees, setGoingAttendees] = useState<AttendeePreview[]>([]);
   const [totalGoing, setTotalGoing] = useState(0);
 
-  useEffect(() => {
+  const refreshMeetup = useCallback(() => {
     getMeetup(payload.meetupId).then((res) => {
       if (res.ok && res.data) {
         setCounts(res.data.counts);
@@ -219,6 +219,12 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       }
     });
   }, [payload.meetupId]);
+
+  useEffect(() => {
+    refreshMeetup();
+    const interval = setInterval(refreshMeetup, 30_000);
+    return () => clearInterval(interval);
+  }, [refreshMeetup]);
 
   async function handleRsvp(status: RsvpAction) {
     if (rsvping) return;
@@ -243,6 +249,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
     if (res.ok && res.data) {
       setMyRsvp(res.data.status);
       setCounts(res.data.counts);
+      // Re-fetch full meetup to update going attendees after RSVP change
+      refreshMeetup();
     } else {
       setMyRsvp(prev);
       setCounts(prevCounts);
@@ -316,7 +324,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
 
       <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
       {goingAttendees.length > 0 && (
-        <AvatarStack attendees={goingAttendees} totalGoing={totalGoing} />
+        <AvatarStack attendees={goingAttendees} totalGoing={counts?.going ?? totalGoing} />
       )}
       {payload.locationName ? (
         <View style={mc.metaRow}>
