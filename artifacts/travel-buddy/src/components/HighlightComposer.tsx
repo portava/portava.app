@@ -3,7 +3,7 @@
  * Media picker (photo + video ≤10s), caption, location tag,
  * visibility selector, duration selector, then POST /api/highlights.
  *
- * Videos are previewed as a static thumbnail (no native player needed).
+ * Video picks are previewed with a native expo-av player (muted, looping).
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -11,7 +11,8 @@ import {
   TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, Video as VideoIcon, MapPin, Navigation, Check, PlayCircle } from 'lucide-react-native';
+import { Video, ResizeMode } from 'expo-av';
+import { X, Camera, Video as VideoIcon, MapPin, Navigation, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { uploadMedia, validateMedia } from '../services/media';
@@ -255,11 +256,18 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
               <Text style={s.fieldLabel}>Media <Text style={{ color: color.signal }}>*</Text></Text>
               {mediaUri ? (
                 <View style={s.mediaPreviewWrap}>
-                  <Image source={{ uri: mediaUri }} style={s.mediaPreview} resizeMode="cover" />
-                  {isVideo && (
-                    <View style={s.videoPlayOverlay} pointerEvents="none">
-                      <PlayCircle size={40} color="rgba(255,255,255,0.85)" />
-                    </View>
+                  {isVideo ? (
+                    <Video
+                      source={{ uri: mediaUri }}
+                      style={s.mediaPreview}
+                      resizeMode={ResizeMode.COVER}
+                      shouldPlay
+                      isLooping
+                      isMuted
+                      useNativeControls={false}
+                    />
+                  ) : (
+                    <Image source={{ uri: mediaUri }} style={s.mediaPreview} resizeMode="cover" />
                   )}
                   <Pressable style={s.mediaRemove} onPress={() => setMediaUri(null)} hitSlop={8}>
                     <X size={14} color="#fff" />

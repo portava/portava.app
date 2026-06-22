@@ -3,19 +3,20 @@
  *
  * Shows an ordered list of active highlights (for one user or multiple).
  * Features:
- *   - Segmented progress bar per item (5s auto-advance)
+ *   - Segmented progress bar per item (5s for images; video duration for clips)
  *   - Tap right → next, tap left → prev
  *   - Like button, reply button, report, close
  *   - POST /highlights/:id/view on each item shown
  *   - Owner sees "👁 N" chip → opens HighlightViewersSheet
- *   - Videos shown as static thumbnails with a play badge (no native player needed)
+ *   - Videos play natively via expo-av; progress driven by onPlaybackStatusUpdate
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Image, Pressable, Modal, StyleSheet,
   Alert, Dimensions, ActivityIndicator, TextInput,
 } from 'react-native';
-import { X, Heart, MessageCircle, Flag, Eye, PlayCircle, Share2 } from 'lucide-react-native';
+import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
+import { X, Heart, MessageCircle, Flag, Eye, Share2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -62,6 +63,9 @@ export function HighlightViewer({
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoRef = useRef<Video>(null);
+  // goNextRef lets the stable handleVideoStatus callback call the latest goNext
+  const goNextRef = useRef<() => void>(() => {});
 
   const current = highlights[index];
   const isOwner = current?.ownerId === currentUserId;
@@ -88,30 +92,49 @@ export function HighlightViewer({
     markHighlightViewed(current.id);
   }, [visible, current?.id]);
 
-  // Progress timer — for videos, respect actual video_duration_seconds (capped at 10s);
-  // for images, use the default 5s dwell time.
+  // Keep goNextRef current on every render so handleVideoStatus always calls
+  // the latest version without a stale closure.
+  goNextRef.current = goNext;
+
+  // Progress timer — images only. Videos drive progress via onPlaybackStatusUpdate.
   useEffect(() => {
-    if (!visible || paused) return;
+    if (!visible || paused || isVideo) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      return;
+    }
     if (intervalRef.current) clearInterval(intervalRef.current);
     setProgress(0);
-    const videoDurMs = isVideo && current?.videoDurationSeconds
-      ? Math.min(current.videoDurationSeconds, 10) * 1000
-      : null;
-    const totalMs = videoDurMs ?? ITEM_DURATION_MS;
     const tickMs = 50;
     intervalRef.current = setInterval(() => {
       setProgress((p) => {
-        const next = p + tickMs / totalMs;
+        const next = p + tickMs / ITEM_DURATION_MS;
         if (next >= 1) {
           clearInterval(intervalRef.current!);
-          goNext();
+          goNextRef.current();
           return 1;
         }
         return next;
       });
     }, tickMs);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [visible, index, paused]);
+  }, [visible, index, paused, isVideo]);
+
+  // Reset video progress when navigating to a new item
+  useEffect(() => {
+    if (isVideo) setProgress(0);
+  }, [index, isVideo]);
+
+  // Video playback status — drives progress bar and auto-advance for video items
+  const handleVideoStatus = useCallback((status: AVPlaybackStatus) => {
+    if (!status.isLoaded) return;
+    const dur = status.durationMillis;
+    if (dur && dur > 0) {
+      setProgress(status.positionMillis / dur);
+    }
+    if (status.didJustFinish) {
+      goNextRef.current();
+    }
+  }, []);
 
   function goNext() {
     if (index < highlights.length - 1) {
@@ -182,23 +205,26 @@ export function HighlightViewer({
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={s.container}>
-        {/* Media */}
-        <Image
-          source={{ uri: current.mediaUrl }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-        />
-
-        {/* Video indicator overlay */}
-        {isVideo && (
-          <View style={s.videoOverlay} pointerEvents="none">
-            <PlayCircle size={56} color="rgba(255,255,255,0.85)" />
-            {current.videoDurationSeconds != null && (
-              <View style={s.durationBadge}>
-                <Text style={s.durationText}>{current.videoDurationSeconds.toFixed(1)}s</Text>
-              </View>
-            )}
-          </View>
+        {/* Media — native video player for clips, Image for photos */}
+        {isVideo ? (
+          <Video
+            key={current.id}
+            ref={videoRef}
+            source={{ uri: current.mediaUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode={ResizeMode.COVER}
+            shouldPlay={!paused}
+            isLooping={false}
+            isMuted={false}
+            useNativeControls={false}
+            onPlaybackStatusUpdate={handleVideoStatus}
+          />
+        ) : (
+          <Image
+            source={{ uri: current.mediaUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
         )}
 
         {/* Progress bars */}
@@ -347,21 +373,6 @@ function fmtExpiry(expiresAt: string): string {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  durationBadge: {
-    position: 'absolute',
-    bottom: 120,
-    right: 16,
-    backgroundColor: 'rgba(17,17,15,0.6)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-  },
-  durationText: { fontFamily: 'Courier', fontSize: 12, color: '#fff', fontWeight: '700' },
   progressRow: {
     position: 'absolute',
     top: 0,
