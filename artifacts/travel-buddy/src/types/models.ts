@@ -452,6 +452,7 @@ export interface OwnProfile {
   availabilityTags: string[];
   planningStyle: string | null;
   publicSocialLinks: Record<string, string>;
+  preferredLanguage: string | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

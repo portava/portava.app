@@ -67,6 +67,7 @@ export function usePassport(): PassportState {
         availabilityTags: [],
         planningStyle: null,
         publicSocialLinks: {},
+        preferredLanguage: null,
       };
       setTimeout(() => {
         if (alive) {

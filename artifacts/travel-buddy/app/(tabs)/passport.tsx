@@ -99,7 +99,7 @@ export default function PassportScreen() {
       spokenLanguages: [], defaultLanguage: null, travelStyles: [],
       travelPace: null, budgetStyle: null, travelGroupStyle: [],
       lookingFor: [], comfortLevel: null, availabilityTags: [],
-      planningStyle: null, publicSocialLinks: {},
+      planningStyle: null, publicSocialLinks: {}, preferredLanguage: null,
     };
     return <PassportContent
       profile={fallbackProfile}

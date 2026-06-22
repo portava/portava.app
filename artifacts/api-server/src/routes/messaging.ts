@@ -66,6 +66,7 @@ const MessageSettingsPatchSchema = z.object({
 
 const LanguageSettingsPatchSchema = z.object({
   preferred_message_language: z.enum(LANGUAGE_CODES).optional(),
+  preferred_language: z.enum(LANGUAGE_CODES).nullable().optional(),
   auto_translate_messages: z.boolean().optional(),
   show_original_messages: z.boolean().optional(),
 });
@@ -146,7 +147,7 @@ router.get('/me/language-settings', async (req, res) => {
 
   const { data, error } = await client
     .from('profiles')
-    .select('preferred_message_language, auto_translate_messages, show_original_messages, translation_updated_at')
+    .select('preferred_message_language, preferred_language, auto_translate_messages, show_original_messages, translation_updated_at')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -159,6 +160,7 @@ router.get('/me/language-settings', async (req, res) => {
   res.status(200).json(
     data ?? {
       preferred_message_language: 'en',
+      preferred_language: null,
       auto_translate_messages: true,
       show_original_messages: false,
       translation_updated_at: null,
@@ -187,7 +189,7 @@ router.patch('/me/language-settings', async (req, res) => {
     .from('profiles')
     .update(patch)
     .eq('id', user.id)
-    .select('preferred_message_language, auto_translate_messages, show_original_messages, translation_updated_at')
+    .select('preferred_message_language, preferred_language, auto_translate_messages, show_original_messages, translation_updated_at')
     .single();
 
   if (error) {
@@ -515,10 +517,10 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   if (previewBody) {
     const { data: senderProfile } = await sc
       .from('profiles')
-      .select('preferred_message_language')
+      .select('preferred_language, preferred_message_language')
       .eq('id', req_.sender_id)
       .maybeSingle();
-    const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+    const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
     const { data: previewMsg } = await sc
       .from('messages')
@@ -1135,10 +1137,10 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // Fetch sender's language preference (for detection fallback).
   const { data: senderProfile } = await sc
     .from('profiles')
-    .select('preferred_message_language')
+    .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
   const now = new Date().toISOString();
 
@@ -1251,10 +1253,10 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
 
   const { data: senderProfile } = await sc
     .from('profiles')
-    .select('preferred_message_language')
+    .select('preferred_language, preferred_message_language')
     .eq('id', m.sender_id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
   translateMessageForThread(sc, {
     messageId,
@@ -1335,10 +1337,10 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
 
   const { data: senderProfile } = await sc
     .from('profiles')
-    .select('preferred_message_language')
+    .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
   translateMessageForThread(sc, {
     messageId,

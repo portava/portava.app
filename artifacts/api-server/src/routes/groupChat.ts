@@ -312,10 +312,10 @@ router.patch('/messages/:messageId', async (req, res) => {
 
   const { data: senderProfile } = await sc
     .from('profiles')
-    .select('preferred_message_language')
+    .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_message_language ?? 'en';
+  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
   translateMessageForThread(sc, {
     messageId,

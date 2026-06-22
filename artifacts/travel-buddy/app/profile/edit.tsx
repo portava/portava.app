@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, Image,
   ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
-  Platform, SafeAreaView,
+  Platform, SafeAreaView, Modal, FlatList,
 } from 'react-native';
 import { router, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle } from 'lucide-react-native';
+import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
 import type { OwnProfile } from '../../src/types/models';
@@ -22,6 +22,34 @@ const VISIBILITY_OPTIONS: { key: Visibility; label: string; desc: string }[] = [
   { key: 'private', label: 'Private', desc: 'Only you can see your passport' },
 ];
 
+const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'nl', label: 'Dutch' },
+  { code: 'sv', label: 'Swedish' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'tr', label: 'Turkish' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'zh', label: 'Chinese (Simplified)' },
+  { code: 'th', label: 'Thai' },
+  { code: 'vi', label: 'Vietnamese' },
+  { code: 'id', label: 'Indonesian' },
+  { code: 'tl', label: 'Filipino' },
+];
+
+function languageLabel(code: string | null): string {
+  if (!code) return 'Same as message settings';
+  return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
+}
+
 interface FormState {
   displayName: string;
   username: string;
@@ -31,6 +59,7 @@ interface FormState {
   coverUri: string | null;
   avatarUrl: string | null;
   coverUrl: string | null;
+  preferredLanguage: string | null;
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -51,11 +80,13 @@ export default function EditProfileScreen() {
     coverUri: null,
     avatarUrl: null,
     coverUrl: null,
+    preferredLanguage: null,
   });
 
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [langPickerVisible, setLangPickerVisible] = useState(false);
 
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle');
   const [usernameMessage, setUsernameMessage] = useState<string | null>(null);
@@ -67,7 +98,8 @@ export default function EditProfileScreen() {
     form.bio !== originalForm.bio ||
     form.visibility !== originalForm.visibility ||
     form.avatarUri !== originalForm.avatarUri ||
-    form.coverUri !== originalForm.coverUri
+    form.coverUri !== originalForm.coverUri ||
+    form.preferredLanguage !== originalForm.preferredLanguage
   );
 
   useEffect(() => {
@@ -86,6 +118,7 @@ export default function EditProfileScreen() {
           coverUri: null,
           avatarUrl: p.avatarUrl,
           coverUrl: p.coverPhotoUrl,
+          preferredLanguage: p.preferredLanguage ?? null,
         };
         setForm(initial);
         setOriginalForm(initial);
@@ -195,6 +228,9 @@ export default function EditProfileScreen() {
     }
     if (form.visibility !== (originalForm?.visibility ?? 'public')) {
       patch.passportVisibility = form.visibility;
+    }
+    if (form.preferredLanguage !== (originalForm?.preferredLanguage ?? null)) {
+      patch.preferredLanguage = form.preferredLanguage;
     }
 
     if (form.avatarUri) {
@@ -425,10 +461,66 @@ export default function EditProfileScreen() {
                   ))}
                 </View>
               </View>
+
+              {/* Preferred translation language */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Preferred Translation Language</Text>
+                <Pressable
+                  style={styles.langPickerRow}
+                  onPress={() => setLangPickerVisible(true)}
+                >
+                  <Text style={[styles.langPickerValue, !form.preferredLanguage && styles.langPickerPlaceholder]}>
+                    {languageLabel(form.preferredLanguage)}
+                  </Text>
+                  <ChevronDown size={18} color={color.mute} />
+                </Pressable>
+                <Text style={styles.fieldHint}>
+                  Messages from others will be translated into this language. Leave unset to use your message language preference.
+                </Text>
+              </View>
             </View>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Language picker modal */}
+      <Modal
+        visible={langPickerVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setLangPickerVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setLangPickerVisible(false)}>
+          <Pressable style={[styles.modalSheet, { paddingBottom: insets.bottom + space.md }]} onPress={() => {}}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Translation Language</Text>
+
+            <FlatList
+              data={[{ code: null, label: 'Same as message settings' }, ...LANGUAGE_OPTIONS] as { code: string | null; label: string }[]}
+              keyExtractor={(item) => item.code ?? '__none'}
+              style={styles.langList}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const selected = form.preferredLanguage === item.code;
+                return (
+                  <Pressable
+                    style={[styles.langItem, selected && styles.langItemSelected]}
+                    onPress={() => {
+                      setForm((f) => ({ ...f, preferredLanguage: item.code }));
+                      setLangPickerVisible(false);
+                    }}
+                  >
+                    <Text style={[styles.langItemText, selected && styles.langItemTextSelected]}>
+                      {item.label}
+                    </Text>
+                    {selected && <Check size={16} color={color.ink} />}
+                  </Pressable>
+                );
+              }}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -625,4 +717,53 @@ const styles = StyleSheet.create({
   visibilityLabel: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
   visibilityLabelActive: { color: color.ink },
   visibilityDesc: { ...t.stamp, color: color.faint, marginTop: 2 },
+
+  langPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
+  },
+  langPickerValue: { ...t.body, color: color.ink, flex: 1 },
+  langPickerPlaceholder: { color: color.faint },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: color.paper,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingTop: space.sm,
+    paddingHorizontal: space.lg,
+    maxHeight: '70%',
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.haze,
+    alignSelf: 'center',
+    marginBottom: space.md,
+  },
+  modalTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', marginBottom: space.md },
+  langList: { flexGrow: 0 },
+  langItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  langItemSelected: {},
+  langItemText: { ...t.body, color: color.ink },
+  langItemTextSelected: { fontWeight: '700' },
 });
