@@ -1,0 +1,60 @@
+/**
+ * Shared Place type definitions for GlobalPlacePicker, GPSPlaceLibrary,
+ * and all location fields across the app.
+ */
+
+export type PlaceType =
+  | 'country'
+  | 'region'
+  | 'city'
+  | 'town'
+  | 'district'
+  | 'neighborhood'
+  | 'place'
+  | 'landmark'
+  | 'airport';
+
+export type LocationPrivacy = 'hidden' | 'city' | 'neighborhood' | 'exact';
+
+export interface Place {
+  id: string;
+  type: PlaceType;
+  name: string;
+  displayName: string;
+  country: string | null;
+  countryCode: string | null;
+  region: string | null;
+  city: string | null;
+  district: string | null;
+  lat: number | null;
+  lng: number | null;
+  timezone: string | null;
+  source: 'nominatim' | 'gps' | 'manual' | 'legacy' | 'recent';
+  confidence?: number;
+}
+
+export interface RecentPlace {
+  id: string;
+  place: Place;
+  usedFor?: string;
+  usedAt: string;
+}
+
+/** Convert a raw city/country string pair into a minimal Place snapshot (legacy compat). */
+export function legacyToPlace(city: string, country?: string): Place {
+  return {
+    id: `legacy-${city.toLowerCase().replace(/\s+/g, '-')}`,
+    type: 'city',
+    name: city,
+    displayName: country ? `${city}, ${country}` : city,
+    country: country ?? null,
+    countryCode: null,
+    region: null,
+    city,
+    district: null,
+    lat: null,
+    lng: null,
+    timezone: null,
+    source: 'legacy',
+  };
+}

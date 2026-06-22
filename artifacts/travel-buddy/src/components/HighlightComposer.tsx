@@ -7,20 +7,20 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, Pressable, Modal, ScrollView, StyleSheet,
-  TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform,
+  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
+  Image, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
-import { X, Camera, Video as VideoIcon, MapPin, Navigation, Check } from 'lucide-react-native';
+import { X, Camera, Video as VideoIcon, MapPin } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { uploadMedia, validateMedia } from '../services/media';
 import { createHighlight, type HighlightVisibility } from '../services/highlights';
-import { getCurrentGps, reverseGeocode } from '../services/location';
 import { useSession } from '../context/SessionContext';
 import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
 
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
@@ -64,8 +64,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [vis, setVis] = useState<HighlightVisibility>('public');
   const [expiresInHours, setExpiresInHours] = useState(24);
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
-  const [manualText, setManualText] = useState('');
-  const [gpsBusy, setGpsBusy] = useState(false);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterEditorOpen, setFilterEditorOpen] = useState(false);
@@ -84,7 +83,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
       setVis('public');
       setExpiresInHours(24);
       setLoc({ source: 'none' });
-      setManualText('');
+      setPlacePickerOpen(false);
       setError(null);
       setFilterEditorOpen(false);
       setFilterEditorAsset(null);
@@ -165,25 +164,13 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     setFilterEditorAsset(null);
   }, []);
 
-  async function useGps() {
-    setGpsBusy(true);
-    setError(null);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted || gps.lat == null || gps.lng == null) {
-        setError('Location unavailable — type one manually below.');
-        return;
-      }
-      const geo = await reverseGeocode(gps.lat, gps.lng);
-      setLoc({ source: 'gps', lat: gps.lat, lng: gps.lng, name: geo.name, city: geo.city, country: geo.country });
-    } finally {
-      setGpsBusy(false);
+  function applyPlace(p: import('../lib/location/placeTypes').Place) {
+    if (p.source === 'gps' && p.lat != null && p.lng != null) {
+      setLoc({ source: 'gps', lat: p.lat, lng: p.lng, name: p.name, city: p.city, country: p.country });
+    } else {
+      setLoc({ source: 'manual', name: p.name, city: p.city, country: p.country });
     }
-  }
-
-  function applyManual() {
-    const name = manualText.trim();
-    setLoc(name ? { source: 'manual', name, city: null, country: null } : { source: 'none' });
+    setPlacePickerOpen(false);
   }
 
   async function handleSubmit() {
@@ -331,31 +318,21 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
             {/* Location */}
             <View style={s.field}>
               <Text style={s.fieldLabel}>Location</Text>
-              <View style={s.locRow}>
-                <Pressable style={s.locBtn} onPress={useGps} disabled={gpsBusy || submitting}>
-                  {gpsBusy
-                    ? <ActivityIndicator size="small" color={color.deep} />
-                    : <Navigation size={14} color={color.deep} />}
-                  <Text style={s.locBtnText}>Use GPS</Text>
-                </Pressable>
-              </View>
-              <View style={s.manualRow}>
-                <MapPin size={14} color={color.mute} />
-                <TextInput
-                  style={s.manualInput}
-                  placeholder="Or type a place"
-                  placeholderTextColor={color.faint}
-                  value={manualText}
-                  onChangeText={setManualText}
-                  onBlur={applyManual}
-                  onSubmitEditing={applyManual}
-                  editable={!submitting}
-                />
-                {manualText.trim() ? (
-                  <Pressable onPress={applyManual} hitSlop={8}><Check size={16} color={color.success} /></Pressable>
-                ) : null}
-              </View>
-              {locLabel && <Text style={s.locLabel}>{locLabel}</Text>}
+              <Pressable
+                style={[s.locPickerBtn, loc.source !== 'none' && s.locPickerBtnActive]}
+                onPress={() => setPlacePickerOpen(true)}
+                disabled={submitting}
+              >
+                <MapPin size={14} color={loc.source !== 'none' ? color.signal : color.mute} />
+                <Text style={[s.locPickerText, loc.source === 'none' && s.locPickerPlaceholder]} numberOfLines={1}>
+                  {locLabel ?? 'Add a location…'}
+                </Text>
+                {loc.source !== 'none' && (
+                  <Pressable hitSlop={8} onPress={() => setLoc({ source: 'none' })}>
+                    <X size={13} color={color.mute} />
+                  </Pressable>
+                )}
+              </Pressable>
             </View>
 
             {/* Visibility */}
@@ -411,6 +388,15 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
         </View>
       </KeyboardAvoidingView>
 
+      {/* Place picker */}
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        title="Tag a Location"
+        usedFor="highlight_location"
+        onSelect={applyPlace}
+        onClose={() => setPlacePickerOpen(false)}
+      />
+
       {/* Filter editor — opens after media pick, before storing */}
       {filterEditorOpen && filterEditorAsset && (
         <MediaFilterEditor
@@ -460,12 +446,15 @@ const s = StyleSheet.create({
   durationText: { fontFamily: 'Courier', fontSize: 11, color: '#fff', fontWeight: '700' },
   input: { ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 10 },
   multiline: { height: 80, paddingTop: 10 },
-  locRow: { flexDirection: 'row', gap: space.sm, marginBottom: 4 },
-  locBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
-  locBtnText: { ...t.small, fontWeight: '700', color: color.deep },
-  manualRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, backgroundColor: color.paperRaised, paddingHorizontal: space.md, paddingVertical: 6 },
-  manualInput: { ...t.body, color: color.ink, flex: 1 },
   locLabel: { ...t.small, color: color.success, fontWeight: '600' },
+  locPickerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
+    backgroundColor: color.paperRaised, paddingHorizontal: space.md, paddingVertical: 12,
+  },
+  locPickerBtnActive: { borderColor: color.signal },
+  locPickerText: { flex: 1, ...t.body, color: color.ink },
+  locPickerPlaceholder: { color: color.faint },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   chipOn: { backgroundColor: color.signal, borderColor: color.signal },

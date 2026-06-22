@@ -23,6 +23,7 @@ import discoveryRouter from "./discovery";
 import blocksRouter from "./blocks";
 import locationRouter from "./location";
 import highlightsRouter from "./highlights";
+import placesRouter from "./places";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(discoveryRouter);
 router.use(blocksRouter);
 router.use(locationRouter);
 router.use(highlightsRouter);
+router.use(placesRouter);
 
 export default router;

@@ -1,34 +1,43 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
+import { CalendarDays, MapPin, X } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { createTrip } from '../../src/services/trips';
+import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
+import type { Place } from '../../src/lib/location/placeTypes';
 
 export default function NewTrip() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
+
   const [title, setTitle] = useState('');
-  const [city, setCity] = useState('');
-  const [country, setCountry] = useState('');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
+  const [place, setPlace] = useState<Place | null>(null);
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [calOpen, setCalOpen] = useState(false);
+  const [placeOpen, setPlaceOpen] = useState(false);
+
   async function create() {
     setError(null);
-    if (!title.trim() || !city.trim()) { setError('Add a trip name and destination city.'); return; }
-    if (!live) { router.replace('/trip/t_1'); return; } // mock fallback
+    if (!title.trim()) { setError('Add a trip name.'); return; }
+    if (!place) { setError('Add a destination.'); return; }
+    if (!live) { router.replace('/trip/t_1'); return; }
     setBusy(true);
     try {
       const trip = await createTrip({
         title: title.trim(),
-        destinationCity: city.trim(),
-        destinationCountry: country.trim() || undefined,
-        startDate: start.trim() || undefined,
-        endDate: end.trim() || undefined,
+        destinationCity: place.city ?? place.name,
+        destinationCountry: place.country ?? undefined,
+        startDate: startDate ?? undefined,
+        endDate: endDate ?? undefined,
         status: 'planning',
         visibility: 'private',
       });
@@ -41,16 +50,54 @@ export default function NewTrip() {
     }
   }
 
+  const startD = startDate ? fromISODate(startDate) : null;
+  const endD = endDate ? fromISODate(endDate) : null;
+
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="New trip" back />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="handled">
+
+      <ScrollView
+        contentContainerStyle={{ padding: space.lg, gap: space.lg }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Trip name */}
         <Field label="Trip name" placeholder="Visayas, June" value={title} onChange={setTitle} />
-        <Field label="Destination city" placeholder="Cebu" value={city} onChange={setCity} />
-        <Field label="Country (optional)" placeholder="Philippines" value={country} onChange={setCountry} />
-        <View style={{ flexDirection: 'row', gap: space.md }}>
-          <View style={{ flex: 1 }}><Field label="Start (YYYY-MM-DD)" placeholder="2026-06-20" value={start} onChange={setStart} /></View>
-          <View style={{ flex: 1 }}><Field label="End (YYYY-MM-DD)" placeholder="2026-06-27" value={end} onChange={setEnd} /></View>
+
+        {/* Destination */}
+        <View>
+          <Text style={styles.label}>Destination</Text>
+          <Pressable style={styles.pickerField} onPress={() => setPlaceOpen(true)}>
+            <MapPin size={15} color={place ? color.signal : color.faint} />
+            <Text style={[styles.pickerText, !place && styles.pickerPlaceholder]} numberOfLines={1}>
+              {place ? place.displayName : 'Choose a city…'}
+            </Text>
+            {place && (
+              <Pressable hitSlop={8} onPress={() => setPlace(null)}>
+                <X size={14} color={color.mute} />
+              </Pressable>
+            )}
+          </Pressable>
+        </View>
+
+        {/* Dates */}
+        <View>
+          <Text style={styles.label}>Trip Dates (optional)</Text>
+          <Pressable style={styles.pickerField} onPress={() => setCalOpen(true)}>
+            <CalendarDays size={15} color={(startDate || endDate) ? color.signal : color.faint} />
+            <Text style={[styles.pickerText, !(startDate || endDate) && styles.pickerPlaceholder]}>
+              {startD && endD
+                ? `${formatDisplayDate(startD)} – ${formatDisplayDate(endD)}`
+                : startD
+                ? `From ${formatDisplayDate(startD)}`
+                : 'Add start & end dates'}
+            </Text>
+            {(startDate || endDate) && (
+              <Pressable hitSlop={8} onPress={() => { setStartDate(null); setEndDate(null); }}>
+                <X size={14} color={color.mute} />
+              </Pressable>
+            )}
+          </Pressable>
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -60,24 +107,73 @@ export default function NewTrip() {
           {busy ? <ActivityIndicator color={color.onInk} /> : <Text style={styles.createText}>Create trip</Text>}
         </Pressable>
       </ScrollView>
+
+      {/* Calendar picker — range mode */}
+      <GlobalCalendarPicker
+        mode="range"
+        visible={calOpen}
+        value={{ start: startDate, end: endDate }}
+        allowPast
+        onConfirm={({ start, end }) => {
+          setStartDate(start);
+          setEndDate(end);
+          setCalOpen(false);
+        }}
+        onCancel={() => setCalOpen(false)}
+        title="Trip Dates"
+      />
+
+      {/* Place picker */}
+      <GlobalPlacePicker
+        visible={placeOpen}
+        title="Destination"
+        allowGPS={false}
+        usedFor="trip_destination"
+        onSelect={(p) => setPlace(p)}
+        onClose={() => setPlaceOpen(false)}
+      />
     </View>
   );
 }
 
-function Field({ label, placeholder, value, onChange }: { label: string; placeholder: string; value: string; onChange: (v: string) => void }) {
+function Field({
+  label, placeholder, value, onChange,
+}: { label: string; placeholder: string; value: string; onChange: (v: string) => void }) {
   return (
     <View>
       <Text style={styles.label}>{label}</Text>
-      <TextInput style={styles.input} placeholder={placeholder} placeholderTextColor={color.faint} value={value} onChangeText={onChange} autoCapitalize="words" />
+      <TextInput
+        style={styles.input}
+        placeholder={placeholder}
+        placeholderTextColor={color.faint}
+        value={value}
+        onChangeText={onChange}
+        autoCapitalize="words"
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   label: { ...t.stamp, fontFamily: 'Courier', color: color.mute, marginBottom: space.sm },
-  input: { ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: space.md },
+  input: {
+    ...t.body, color: color.ink,
+    backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
+    borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: space.md,
+  },
+  pickerField: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
+    borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: space.md,
+    minHeight: 50,
+  },
+  pickerText: { flex: 1, ...t.body, color: color.ink },
+  pickerPlaceholder: { color: color.faint },
   error: { ...t.small, color: color.signal, fontWeight: '600' },
   hint: { ...t.small, color: color.mute },
-  create: { backgroundColor: color.ink, paddingVertical: space.md, borderRadius: radius.pill, alignItems: 'center', marginTop: space.sm },
+  create: {
+    backgroundColor: color.ink, paddingVertical: space.md,
+    borderRadius: radius.pill, alignItems: 'center', marginTop: space.sm,
+  },
   createText: { ...t.body, fontWeight: '700', color: color.onInk },
 });

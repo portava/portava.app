@@ -5,3 +5,4 @@
 - [Telegraph chat suggestions](telegraph-chat-suggestions.md) — inline intent-on-GET pattern, privacy verdict rules, rate-limit design, fake-client test pattern
 - [Meetup + availability API patterns](meetup-availability-patterns.md) — invalid_payload → HTTP 400; tests go in src/test/ (not src/routes/); import specific router not full app; circle response key is circleId not circleOwnerId
 - [Intelligence pack patterns](intelligence-pack-patterns.md) — .catch() invalid on supabase builders; parseIntent word-boundary pitfall; token via freshToken() not prop-drilled
+- [Selective input system](selective-input-system.md) — GlobalCalendarPicker/TimePicker/PlacePicker patterns; getServiceClient() returns null (guard it); sendError takes (res, code, message) not (res, status, code, message)
