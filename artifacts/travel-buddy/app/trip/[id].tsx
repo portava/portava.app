@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, type LayoutChangeEvent } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar } from 'lucide-react-native';
@@ -104,13 +104,37 @@ export default function TripDetail() {
             <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
           </Pressable>
         )}
-        <Pressable style={styles.topBtn} onPress={() => { }} hitSlop={6}>
+        <Pressable
+          style={styles.topBtn}
+          hitSlop={6}
+          onPress={() => {
+            Share.share({
+              message: `Check out my trip${trip.title ? ` — ${trip.title}` : ''}!\nhttps://travelbuddy.app/trips/${trip.id}`,
+            }).catch(() => {
+              Alert.alert('Could not share', 'Sharing is not available on this device right now.');
+            });
+          }}
+        >
           <Share2 size={15} color={color.ink} /><Text style={styles.topBtnText}>Share Trip</Text>
         </Pressable>
-        <Pressable style={styles.topBtn} onPress={() => router.push('/settings')} hitSlop={6}>
+        <Pressable
+          style={styles.topBtn}
+          hitSlop={6}
+          onPress={() =>
+            Alert.alert('Edit Trip', 'Trip editing is coming soon. You\'ll be able to update destination, dates, and visibility here.', [{ text: 'OK' }])
+          }
+        >
           <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
         </Pressable>
-        <Pressable style={styles.topIcon} hitSlop={6}><MoreHorizontal size={18} color={color.ink} /></Pressable>
+        <Pressable
+          style={styles.topIcon}
+          hitSlop={6}
+          onPress={() =>
+            Alert.alert('Trip Options', 'More trip options coming soon.', [{ text: 'OK' }])
+          }
+        >
+          <MoreHorizontal size={18} color={color.ink} />
+        </Pressable>
       </View>
 
       <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>

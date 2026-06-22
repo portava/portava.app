@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
   MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
@@ -21,7 +21,22 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
         {item.author ? <Text style={s.author}>{item.author.name}</Text> : null}
         <Text style={s.meta}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
       </View>
-      <Pressable hitSlop={layout.hitSlop}><MoreHorizontal size={18} color={color.faint} /></Pressable>
+      <Pressable
+        hitSlop={layout.hitSlop}
+        onPress={() =>
+          Alert.alert(
+            'Post Options',
+            undefined,
+            [
+              { text: 'Report', onPress: () => Alert.alert('Coming Soon', 'Post reporting is coming in a future update.') },
+              { text: 'Hide', onPress: () => Alert.alert('Coming Soon', 'Post hiding is coming in a future update.') },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          )
+        }
+      >
+        <MoreHorizontal size={18} color={color.faint} />
+      </Pressable>
     </View>
   );
 }
@@ -131,7 +146,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
+        <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving recommendations is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
         <TelegraphFeedbackMenu recommendationId={item.id} category={item.type} />
       </View>
     </View>
@@ -156,7 +171,7 @@ function ItineraryCard({ item }: { item: PulseFeedItem }) {
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.mute} /></Pressable>
+        <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving itineraries is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
       </View>
     </View>
   );

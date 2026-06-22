@@ -121,6 +121,20 @@ export default function Settings() {
       router.replace('/(auth)/sign-in');
     } else if (label === 'Blocked accounts') {
       router.push('/blocked-users');
+    } else if (label === 'Edit profile') {
+      router.push('/profile/edit');
+    } else if (label === 'Notifications') {
+      router.push('/notifications');
+    } else if (
+      label === 'Hide current location' ||
+      label === 'Hide upcoming trips' ||
+      label === 'Private account' ||
+      label === 'Nearby visibility' ||
+      label === 'Message permissions'
+    ) {
+      Alert.alert('Privacy Settings', `${label} preferences are coming soon.`, [{ text: 'OK' }]);
+    } else if (label === 'Report history' || label === 'Muted words') {
+      Alert.alert('Coming Soon', `${label} will be available in a future update.`, [{ text: 'OK' }]);
     }
   }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
   MapPin, Clock, MessageCircle, UserPlus, Sparkles, ShieldCheck, Map, ImagePlus,
@@ -184,8 +184,8 @@ export function TripSafety() {
           </View>
         </View>
         <View style={sf.btns}>
-          <Pressable style={sf.btn} onPress={() => router.push('/settings')}><Text style={sf.btnText}>Start Safe Return</Text></Pressable>
-          <Pressable style={sf.btn} onPress={() => router.push('/settings')}><Text style={sf.btnText}>Emergency Contacts</Text></Pressable>
+          <Pressable style={sf.btn} onPress={() => Alert.alert('Coming Soon', 'Safe Return check-ins are coming in a future update.', [{ text: 'OK' }])}><Text style={sf.btnText}>Start Safe Return</Text></Pressable>
+          <Pressable style={sf.btn} onPress={() => Alert.alert('Coming Soon', 'Emergency Contacts management is coming in a future update.', [{ text: 'OK' }])}><Text style={sf.btnText}>Emergency Contacts</Text></Pressable>
         </View>
         <View style={sf.noteRow}><Info size={11} color={color.mute} /><Text style={sf.note}>Privacy-first — you control what your Circle sees.</Text></View>
       </View>

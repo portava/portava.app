@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
   Gem, MapPin, Bookmark, Plus, Star, Info, Sparkles, ChevronRight,
@@ -27,7 +27,7 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
     <View style={g.card}>
       <View style={g.media}>
         <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
-        <Pressable style={g.saveIcon} hitSlop={layout.hitSlop}><Bookmark size={15} color={color.onInk} /></Pressable>
+        <Pressable style={g.saveIcon} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving gems is coming in a future update.')}><Bookmark size={15} color={color.onInk} /></Pressable>
       </View>
       <View style={g.body}>
         <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
@@ -111,7 +111,7 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
       </View>
       <Text style={tp.note} numberOfLines={1}>{pick.note}</Text>
       <View style={tp.btnRow}>
-        <Pressable style={({ pressed }) => [tp.saveBtn, pressed && { opacity: layout.pressedOpacity }]} hitSlop={layout.hitSlop}>
+        <Pressable style={({ pressed }) => [tp.saveBtn, pressed && { opacity: layout.pressedOpacity }]} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving traveler picks is coming in a future update.')}>
           <Bookmark size={14} color={color.mute} /><Text style={tp.saveText}>Save</Text>
         </Pressable>
         <Pressable style={({ pressed }) => [tp.addBtn, pressed && { opacity: layout.pressedOpacity }]}
@@ -159,7 +159,7 @@ export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
                 onPress={() => planPicker.open({ id: it.id, type: 'place', title: it.name, city: it.neighborhood, category: it.type })}>
                 <Plus size={13} color={color.signal} /><Text style={sv.addText}>Add to Plan</Text>
               </Pressable>
-              <Pressable hitSlop={layout.hitSlop}><Bookmark size={17} color={color.signal} fill={color.signal} /></Pressable>
+              <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving places is coming in a future update.')}><Bookmark size={17} color={color.signal} fill={color.signal} /></Pressable>
             </View>
           ))}
         </View>
