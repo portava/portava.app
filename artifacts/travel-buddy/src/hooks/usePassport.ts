@@ -3,7 +3,7 @@
  * Calls GET /api/me/profile + GET /api/me/passport/postcards + GET /api/me/stamps in parallel.
  * Falls back to mock data if backend is not configured.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models';
 import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile';
 import { isSupabaseConfigured } from '../lib/supabase';
@@ -25,12 +25,18 @@ export function usePassport(): PassportState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // Ref tracks whether we already have data — always current, no stale closure.
+  const hasDataRef = useRef(false);
+  if (profile !== null) hasDataRef.current = true;
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    // Only show the full-screen spinner on initial load — subsequent reloads
+    // refresh silently so PassportContent stays mounted and avoids an infinite
+    // focus-effect → reload → unmount → mount → focus-effect loop.
+    if (!hasDataRef.current) setLoading(true);
     setError(null);
 
     if (!isSupabaseConfigured) {
