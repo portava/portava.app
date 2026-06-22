@@ -55,30 +55,22 @@ export default function DiscoveryHub() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  const [destination, setDestination] = useState('');
+  // Start with a popular city so content fetches begin on first render — no
+  // blank screen while we wait for the trips API to respond.
+  const [destination, setDestination] = useState('Paris');
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
 
-  // Load trips + set default destination from most recent active trip.
-  // When no trip/destination exists, fall back to a popular worldwide city so
-  // the feed shows content immediately without requiring manual input.
+  // Upgrade to the user's actual trip destination once trips load.
+  // We don't block rendering on this — 'Paris' content loads immediately
+  // and gets replaced when the real destination arrives.
   useEffect(() => {
-    const FALLBACK_DESTINATION = 'Paris';
-
-    if (!isAuthed) {
-      if (!destination) setDestination(FALLBACK_DESTINATION);
-      return;
-    }
-
+    if (!isAuthed) return;
     listMyTrips().then((rows) => {
-      if (!destination) {
-        const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
-        setDestination(active?.destinationCity || FALLBACK_DESTINATION);
-      }
-    }).catch(() => {
-      if (!destination) setDestination(FALLBACK_DESTINATION);
-    });
-  }, [isAuthed]); // eslint-disable-line react-hooks/exhaustive-deps
+      const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
+      if (active?.destinationCity) setDestination(active.destinationCity);
+    }).catch(() => {});
+  }, [isAuthed]);
 
   // Re-apply deep-link category if params change (e.g. in-app navigation)
   useEffect(() => {
@@ -149,22 +141,11 @@ export default function DiscoveryHub() {
       {/* ── Active tab content ── */}
       <View style={{ flex: 1 }}>
         {activeTab === 'for_you' ? (
-          destination ? (
-            <ForYouTab
-              key={destination}
-              destination={destination}
-              onAddToPlan={handleAddToPlan}
-            />
-          ) : (
-            <DiscoveryCategoryTab
-              key="for_you-empty"
-              category="for_you"
-              destination=""
-              onSelectPlace={handleSelectPlace}
-              onAddToPlan={handleAddToPlanFromPlace}
-              onPickDestination={handlePickDestination}
-            />
-          )
+          <ForYouTab
+            key={destination}
+            destination={destination}
+            onAddToPlan={handleAddToPlan}
+          />
         ) : (
           <DiscoveryCategoryTab
             key={`${activeTab}-${destination}`}
