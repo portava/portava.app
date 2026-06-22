@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { Zap, Brain, Globe } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, type as t, radius, layout } from '../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../src/services/intelligence';
-import { getMyLanguageSettings } from '../src/services/messaging';
 import { SUPPORTED_LANGUAGES } from './language-picker';
+import { useLanguagePreference } from '../src/context/LanguagePreferenceContext';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
@@ -17,9 +17,7 @@ export default function Settings() {
   const [telegraphTrip, setTelegraphTrip] = useState(true);
   const [telegraphCircle, setTelegraphCircle] = useState(true);
 
-  const [preferredLanguage, setPreferredLanguage] = useState<string | null>(null);
-  const isMounted = useRef(true);
-  useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; }; }, []);
+  const { preferredLanguage } = useLanguagePreference();
 
   const [prefLoading, setPrefLoading] = useState(false);
   const [prefSaving, setPrefSaving] = useState(false);
@@ -33,14 +31,6 @@ export default function Settings() {
   const [prefTimes, setPrefTimes] = useState<string[]>([]);
 
   const live = configured && isAuthed;
-
-  const loadLanguage = useCallback(async () => {
-    if (!live) return;
-    const result = await getMyLanguageSettings();
-    if (result.ok && result.data && isMounted.current) {
-      setPreferredLanguage(result.data.preferred_language ?? null);
-    }
-  }, [live]);
 
   const loadPrefs = useCallback(async () => {
     if (!live) return;
@@ -60,9 +50,6 @@ export default function Settings() {
   }, [live]);
 
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
-  useEffect(() => { loadLanguage(); }, [loadLanguage]);
-
-  useFocusEffect(useCallback(() => { loadLanguage(); }, [loadLanguage]));
 
   async function savePref(patch: Record<string, any>) {
     if (!live) return;

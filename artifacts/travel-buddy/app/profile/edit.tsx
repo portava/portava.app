@@ -4,13 +4,14 @@ import {
   ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
   Platform, SafeAreaView, Modal, FlatList,
 } from 'react-native';
-import { router, useNavigation } from 'expo-router';
+import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../src/lib/imageRender';
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
 import type { OwnProfile } from '../../src/types/models';
+import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 const BIO_MAX = 300;
@@ -68,6 +69,7 @@ type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 export default function EditProfileScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { preferredLanguage: ctxLanguage, updateLanguage } = useLanguagePreference();
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [profile, setProfile] = useState<OwnProfile | null>(null);
@@ -115,6 +117,8 @@ export default function EditProfileScreen() {
       if (res.ok && res.data) {
         const p = res.data as OwnProfile;
         setProfile(p);
+        // Prefer context value (already reflects any language-settings changes); fall back to profile
+        const langFromCtx = ctxLanguage !== undefined ? ctxLanguage : (p.preferredLanguage ?? null);
         const initial: FormState = {
           displayName: p.displayName ?? p.name ?? '',
           username: p.username ?? '',
@@ -124,7 +128,7 @@ export default function EditProfileScreen() {
           coverUri: null,
           avatarUrl: p.avatarUrl,
           coverUrl: p.coverPhotoUrl,
-          preferredLanguage: p.preferredLanguage ?? null,
+          preferredLanguage: langFromCtx,
         };
         setForm(initial);
         setOriginalForm(initial);
@@ -134,7 +138,34 @@ export default function EditProfileScreen() {
       if (alive) setLoadingProfile(false);
     });
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sync preferred language from context whenever the screen gains focus (e.g. after
+  // the user changed it in Settings) — but only when the field hasn't been modified locally.
+  const originalFormRef = useRef<FormState | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (ctxLanguage === undefined || ctxLanguage === null) return;
+      setForm((prev) => {
+        const isClean = prev.preferredLanguage === (originalFormRef.current?.preferredLanguage ?? null);
+        if (isClean && prev.preferredLanguage !== ctxLanguage) {
+          return { ...prev, preferredLanguage: ctxLanguage };
+        }
+        return prev;
+      });
+      setOriginalForm((prev) => {
+        if (!prev) return prev;
+        originalFormRef.current = { ...prev, preferredLanguage: ctxLanguage };
+        return originalFormRef.current;
+      });
+    }, [ctxLanguage]),
+  );
+
+  // Keep originalFormRef in sync whenever originalForm changes
+  useEffect(() => {
+    originalFormRef.current = originalForm;
+  }, [originalForm]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
@@ -247,9 +278,7 @@ export default function EditProfileScreen() {
     if (form.visibility !== (originalForm?.visibility ?? 'public')) {
       patch.passportVisibility = form.visibility;
     }
-    if (form.preferredLanguage !== (originalForm?.preferredLanguage ?? null)) {
-      patch.preferredLanguage = form.preferredLanguage;
-    }
+    // preferredLanguage is saved separately via the canonical language-settings endpoint below
 
     if (form.avatarUri) {
       // Step 1 — compress to 512×512 JPEG
@@ -283,28 +312,38 @@ export default function EditProfileScreen() {
       patch.coverUrl = upRes.data!.url;
     }
 
-    if (Object.keys(patch).length === 0) {
+    const langChanged = form.preferredLanguage !== (originalForm?.preferredLanguage ?? null);
+
+    if (Object.keys(patch).length === 0 && !langChanged) {
       setSaving(false);
       router.back();
       return;
     }
 
-    const res = await updateMyProfile(patch);
+    // Save language via canonical endpoint; save other profile fields via updateMyProfile
+    const [langRes, profileRes] = await Promise.all([
+      langChanged ? updateLanguage(form.preferredLanguage) : Promise.resolve({ ok: true as const }),
+      Object.keys(patch).length > 0 ? updateMyProfile(patch) : Promise.resolve({ ok: true as const }),
+    ]);
     setSaving(false);
 
-    if (!res.ok) {
-      if (res.errorKind === 'invalid_payload' && res.message?.toLowerCase().includes('username')) {
+    if (!langRes.ok) {
+      setSaveError(langRes.message ?? 'Failed to save language preference');
+      return;
+    }
+    if (!profileRes.ok) {
+      if ((profileRes as any).errorKind === 'invalid_payload' && (profileRes as any).message?.toLowerCase().includes('username')) {
         setUsernameStatus('taken');
-        setUsernameMessage(res.message ?? 'Username not available');
+        setUsernameMessage((profileRes as any).message ?? 'Username not available');
       } else {
-        setSaveError(res.message ?? 'Failed to save profile');
+        setSaveError((profileRes as any).message ?? 'Failed to save profile');
       }
       return;
     }
 
     setOriginalForm(form);
     router.back();
-  }, [form, originalForm, canSave]);
+  }, [form, originalForm, canSave, updateLanguage]);
 
   if (loadingProfile) {
     return (

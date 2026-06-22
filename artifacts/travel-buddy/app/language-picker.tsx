@@ -13,8 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, type as t, radius } from '../src/theme/tokens';
-import { updateMyProfile } from '../src/services/profile';
-import { updateMyLanguageSettings } from '../src/services/messaging';
+import { useLanguagePreference } from '../src/context/LanguagePreferenceContext';
 
 export const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
   { code: 'en',    name: 'English' },
@@ -41,7 +40,8 @@ export const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
 
 export default function LanguagePicker() {
   const params = useLocalSearchParams<{ current?: string; via?: string }>();
-  const [selected, setSelected] = useState<string | null>(params.current ?? null);
+  const { preferredLanguage: ctxLanguage, updateLanguage } = useLanguagePreference();
+  const [selected, setSelected] = useState<string | null>(params.current || ctxLanguage || null);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -58,12 +58,7 @@ export default function LanguagePicker() {
       const next = selected === code ? null : code;
       setSelected(next);
       setSaving(true);
-      let result: { ok: boolean; message?: string };
-      if (params.via === 'language-settings') {
-        result = await updateMyLanguageSettings({ preferred_language: next });
-      } else {
-        result = await updateMyProfile({ preferredLanguage: next });
-      }
+      const result = await updateLanguage(next);
       setSaving(false);
       if (!result.ok) {
         Alert.alert('Error', result.message ?? 'Failed to save language preference. Please try again.');
@@ -72,7 +67,7 @@ export default function LanguagePicker() {
       }
       router.back();
     },
-    [selected, params.via],
+    [selected, updateLanguage],
   );
 
   return (

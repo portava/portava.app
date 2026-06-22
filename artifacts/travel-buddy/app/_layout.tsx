@@ -11,6 +11,7 @@ import { PlanPickerControllerProvider } from '../src/components/PlanPickerContro
 import { AvailabilityProvider } from '../src/context/AvailabilityStore';
 import { SessionProvider } from '../src/context/SessionContext';
 import { LocationProvider } from '../src/context/LocationContext';
+import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceContext';
 import { usePushToken } from '../src/hooks/usePushToken';
 import { color } from '../src/theme/tokens';
 
@@ -49,6 +50,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <SessionProvider>
+          <LanguagePreferenceProvider>
           <LocationProvider>
             <AvailabilityProvider>
               <AttachmentProvider>
@@ -73,6 +75,7 @@ export default function RootLayout() {
               </AttachmentProvider>
             </AvailabilityProvider>
           </LocationProvider>
+          </LanguagePreferenceProvider>
         </SessionProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
