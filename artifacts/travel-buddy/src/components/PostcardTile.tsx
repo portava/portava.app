@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin } from 'lucide-react-native';
+import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
@@ -26,6 +26,12 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
           <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} />
         ) : (
           <View style={[StyleSheet.absoluteFill, pt.noImage]}><Text style={pt.noImageText} numberOfLines={3}>{post.title ?? post.caption}</Text></View>
+        )}
+        {/* video play badge */}
+        {post.media[0]?.kind === 'video' && (
+          <View style={pt.playBadge}>
+            <PlayCircle size={28} color="#FFFFFF" />
+          </View>
         )}
         {/* corner date stamp */}
         <View style={pt.dateStamp}><Text style={pt.dateText}>{date.toUpperCase()}</Text></View>
@@ -79,6 +85,10 @@ const pt = StyleSheet.create({
   media: { flex: 1, backgroundColor: color.deep },
   noImage: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center', padding: space.md },
   noImageText: { ...t.body, color: color.onInk, textAlign: 'center' },
+  playBadge: {
+    position: 'absolute', top: '50%', left: '50%',
+    transform: [{ translateX: -14 }, { translateY: -14 }],
+  },
   dateStamp: {
     position: 'absolute', top: 6, right: 6,
     borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)', borderStyle: 'dashed',

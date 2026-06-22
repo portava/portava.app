@@ -34,6 +34,7 @@ const VISIBILITIES: { value: HighlightVisibility; label: string }[] = [
   { value: 'public',           label: 'Everyone' },
   { value: 'travelers_nearby', label: 'Nearby travelers' },
   { value: 'circle_only',      label: 'My circle' },
+  { value: 'trip_only',        label: 'Trip members' },
   { value: 'private',          label: 'Only me' },
 ];
 

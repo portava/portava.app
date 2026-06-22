@@ -64,9 +64,10 @@ type LocState =
   | { source: 'manual'; name: string; city: string | null; country: string | null };
 
 function needsPlace(t: PostTypeId)  { return t === 'share_hidden_gem' || t === 'share_food_spot'; }
+function requiresMedia(t: PostTypeId) { return t === 'share_postcard'; }
 function requiresPhoto(t: PostTypeId) { return t === 'share_postcard'; }
 function photoLabel(t: PostTypeId) {
-  if (requiresPhoto(t)) return 'Add photo (required)';
+  if (requiresMedia(t)) return 'Add photo or video (required)';
   if (t === 'share_moment') return 'Add photo (recommended)';
   return 'Add photo (optional)';
 }
@@ -76,7 +77,7 @@ function validate(type: PostTypeId, text: string, placeName: string, media: Pick
     case 'post_update':     return (!text.trim() && !media) ? 'Add text or a photo.' : null;
     case 'ask_question':    return !text.trim() ? 'Type your question.' : null;
     case 'share_moment':    return (!text.trim() && !media) ? 'Add text or a photo.' : null;
-    case 'share_postcard':  return !media ? 'Add a photo for your postcard.' : null;
+    case 'share_postcard':  return !media ? 'Add a photo or video for your postcard.' : null;
     case 'share_hidden_gem': {
       if (!placeName.trim()) return 'Enter a place name.';
       if (!text.trim()) return 'Add a description.';
@@ -180,7 +181,12 @@ export function UnifiedPostComposer({
     setError(null);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { setError('Photo library permission required.'); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+    const allowVideo = selectedType === 'share_postcard';
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: allowVideo ? ['images', 'videos'] : ['images'],
+      quality: 0.85,
+      videoMaxDuration: allowVideo ? 30 : undefined,
+    });
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
     const picked: PickedMedia = {

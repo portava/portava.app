@@ -660,45 +660,44 @@ router.post("/highlights/:id/reply", async (req, res) => {
     return;
   }
 
-  // Find or create a DM thread between replier and highlight owner
-  const { data: existingThreads } = await sc
-    .from("message_threads")
-    .select("id")
-    .eq("kind", "dm")
-    .limit(100);
+  // Find or create a DM thread between replier and highlight owner.
+  // Mirrors the pattern used by POST /api/users/:userId/open-thread in messaging.ts:
+  //   - look up all threads the replier is in
+  //   - find one where BOTH users are members (2-person DM)
+  //   - create a new one if none exists
+  const { data: myMemberships } = await sc
+    .from("message_thread_members")
+    .select("thread_id")
+    .eq("user_id", user.id);
 
+  const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id as string);
   let threadId: string | null = null;
 
-  if (existingThreads && existingThreads.length > 0) {
-    const threadIds = existingThreads.map((t: any) => t.id as string);
-    const { data: memberRows } = await sc
+  if (myThreadIds.length > 0) {
+    const { data: allMembers } = await sc
       .from("message_thread_members")
       .select("thread_id, user_id")
-      .in("thread_id", threadIds)
-      .in("user_id", [user.id, ownerId]);
+      .in("thread_id", myThreadIds);
 
-    if (memberRows) {
-      // Find thread where both users are members
-      const countByThread: Record<string, Set<string>> = {};
-      for (const r of memberRows) {
-        const tid = (r as any).thread_id as string;
-        if (!countByThread[tid]) countByThread[tid] = new Set();
-        countByThread[tid].add((r as any).user_id as string);
-      }
-      for (const [tid, users] of Object.entries(countByThread)) {
-        if (users.has(user.id) && users.has(ownerId)) {
-          threadId = tid;
-          break;
-        }
+    const membersByThread: Record<string, Set<string>> = {};
+    for (const m of (allMembers ?? []) as any[]) {
+      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = new Set();
+      membersByThread[m.thread_id].add(m.user_id as string);
+    }
+    for (const [tid, members] of Object.entries(membersByThread)) {
+      if (members.size === 2 && members.has(user.id) && members.has(ownerId)) {
+        threadId = tid;
+        break;
       }
     }
   }
 
-  // Create new DM thread if none exists
+  // Create a new DM thread if none exists (same schema as messaging route)
   if (!threadId) {
+    const now = new Date().toISOString();
     const { data: newThread, error: threadErr } = await sc
       .from("message_threads")
-      .insert({ kind: "dm", created_by: user.id })
+      .insert({ created_at: now, updated_at: now })
       .select("id")
       .single();
     if (threadErr || !newThread) {
@@ -707,11 +706,10 @@ router.post("/highlights/:id/reply", async (req, res) => {
       return;
     }
     threadId = (newThread as any).id as string;
-
-    // Add both users as members
+    const now2 = new Date().toISOString();
     await sc.from("message_thread_members").insert([
-      { thread_id: threadId, user_id: user.id },
-      { thread_id: threadId, user_id: ownerId },
+      { thread_id: threadId, user_id: user.id, joined_at: now2 },
+      { thread_id: threadId, user_id: ownerId, joined_at: now2 },
     ]);
   }
 
