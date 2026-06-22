@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
-  AppState, type AppStateStatus,
+  AppState, type AppStateStatus, Image,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -540,6 +540,30 @@ export default function MeetupScreen() {
             <Text style={s.title}>{meetup.title}</Text>
             {meetup.description ? <Text style={s.desc}>{meetup.description}</Text> : null}
 
+            {/* Creator row */}
+            {meetup.creator ? (
+              <Pressable
+                style={s.creatorRow}
+                onPress={() => { if (meetup.creator?.handle) router.push(`/u/${meetup.creator.handle}` as any); }}
+                disabled={!meetup.creator.handle}
+              >
+                {meetup.creator.avatarUrl ? (
+                  <Image source={{ uri: meetup.creator.avatarUrl }} style={s.creatorAvatar} />
+                ) : (
+                  <View style={[s.creatorAvatar, s.creatorAvatarFallback]}>
+                    <Text style={s.creatorInitial}>
+                      {(meetup.creator.displayName ?? '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+                <Text style={s.creatorName} numberOfLines={1}>
+                  Organised by {meetup.creator.displayName ?? 'someone'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={s.creatorFallback}>Organised by someone</Text>
+            )}
+
             {meetup.locationName ? (
               <View style={s.metaRow}>
                 <MapPin size={14} color={color.mute} />
@@ -775,6 +799,12 @@ const s = StyleSheet.create({
   scopeTag: { ...t.small, color: color.mute, fontSize: 11 },
   title: { ...t.title, color: color.ink, fontSize: 22 },
   desc: { ...t.body, color: color.mute, lineHeight: 20 },
+  creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  creatorAvatar: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze },
+  creatorAvatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.signal + '22' },
+  creatorInitial: { fontSize: 10, fontWeight: '700', color: color.signal },
+  creatorName: { ...t.small, color: color.mute, fontSize: 12, flex: 1 },
+  creatorFallback: { ...t.small, color: color.faint, fontSize: 12, marginTop: 6 },
   sectionTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', marginBottom: 4 },
   metaRow:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
   metaText:       { ...t.body, color: color.mute },
