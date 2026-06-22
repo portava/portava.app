@@ -13,6 +13,7 @@ import {
   Alert,
   Modal,
   AppState,
+  Animated,
   type AppStateStatus,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -456,6 +457,22 @@ function MessageBubble({
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
+  // Brief highlight when a pending translation resolves to 'translated'
+  const flashAnim = useRef(new Animated.Value(0)).current;
+  const prevStatusRef = useRef<string | undefined>(item.translationStatus);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = item.translationStatus;
+    if (prev === 'pending' && item.translationStatus === 'translated') {
+      flashAnim.setValue(1);
+      Animated.timing(flashAnim, {
+        toValue: 0,
+        duration: 1400,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [item.translationStatus, flashAnim]);
+
   if (item.deleted) {
     return (
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
@@ -503,6 +520,10 @@ function MessageBubble({
         </Text>
       )}
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+        <Animated.View
+          style={[styles.translationFlash, StyleSheet.absoluteFillObject, { opacity: flashAnim }]}
+          pointerEvents="none"
+        />
         <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
           {bodyToShow}
         </Text>
@@ -997,6 +1018,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
     marginTop: 4,
+  },
+
+  translationFlash: {
+    borderRadius: radius.lg,
+    backgroundColor: color.signal + '28',
   },
 
   transLabel: {
