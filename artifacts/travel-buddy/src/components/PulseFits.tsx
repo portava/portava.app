@@ -5,6 +5,9 @@ import { MapPin, ChevronRight } from 'lucide-react-native';
 import type { CityEvent } from '../types/models';
 import { me, users } from '../data/cebu';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 /* avatar stack for attendees */
 function AvatarStack({ count }: { count: number }) {
@@ -26,6 +29,34 @@ const VIBE: Partial<Record<string, string>> = {
   culture: 'Culture', wellness: 'Wellness', events: 'Live Music',
 };
 
+/** Host avatar with HighlightRing support. */
+function HostAvatar({ host }: { host: NonNullable<CityEvent['host']> }) {
+  const ringState = useHighlightRingState(host.id);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  return (
+    <>
+      <HighlightRing
+        hasActive={ringState?.hasActive ?? false}
+        allViewed={ringState?.allViewed ?? false}
+        size={20}
+        ringWidth={1.5}
+        gap={1.5}
+        onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+      >
+        <Image source={{ uri: host.avatarUrl }} style={styles.hostAvatar} />
+      </HighlightRing>
+      {ringState?.highlights && (
+        <HighlightViewer
+          visible={viewerOpen}
+          highlights={ringState.highlights}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 /** Rich media plan card for "Fits your time". Horizontal-scroll width. */
 export function FitsCard({ ev }: { ev: CityEvent }) {
   const time = new Date(ev.startAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -44,7 +75,7 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
         <Text style={styles.title} numberOfLines={2}>{ev.title}</Text>
         {ev.host && (
           <View style={styles.hostRow}>
-            <Image source={{ uri: ev.host.avatarUrl }} style={styles.hostAvatar} />
+            <HostAvatar host={ev.host} />
             <Text style={styles.host}>Hosted by {ev.host.name.split(' ')[0]}</Text>
           </View>
         )}
@@ -66,7 +97,6 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
 export function FlexibleStrip({ events }: { events: CityEvent[] }) {
   const [open, setOpen] = useState(true);
   if (!events.length) return null;
-  // simple grouping by relative day label
   const buckets = [
     { label: 'Tonight', n: events.filter((e) => e.block === 'evening' || e.block === 'late').length },
     { label: 'Tomorrow', n: Math.min(2, events.length) },
@@ -77,7 +107,7 @@ export function FlexibleStrip({ events }: { events: CityEvent[] }) {
   return (
     <View style={fx.wrap}>
       <View style={fx.head}>
-        <Text style={fx.title}>When you’re flexible</Text>
+        <Text style={fx.title}>When you're flexible</Text>
         <View style={fx.badge}><Text style={fx.badgeText}>Outside your availability</Text></View>
         <View style={{ flex: 1 }} />
         <Pressable onPress={() => router.push('/(tabs)/trips')} style={fx.viewAll}>

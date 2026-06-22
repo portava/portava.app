@@ -1,22 +1,52 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, ScrollView, Image, StyleSheet } from 'react-native';
 import type { PassportPostcard } from '../types/models';
-import { color, space, type as t } from '../theme/tokens';
+import { users } from '../data/cebu';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+
+/** Single nearby-traveler chip: avatar with HighlightRing + name label. */
+function NearbyUserChip({ user }: { user: typeof users[number] }) {
+  const ringState = useHighlightRingState(user.id);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  return (
+    <>
+      <Pressable
+        style={mp.chip}
+        onPress={() => {
+          if (ringState?.hasActive) setViewerOpen(true);
+        }}
+      >
+        <HighlightRing
+          hasActive={ringState?.hasActive ?? false}
+          allViewed={ringState?.allViewed ?? false}
+          size={44}
+          ringWidth={2}
+          gap={2}
+          onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+        >
+          <Image source={{ uri: user.avatarUrl }} style={mp.chipAvatar} />
+        </HighlightRing>
+        <Text style={mp.chipName} numberOfLines={1}>{user.name.split(' ')[0]}</Text>
+      </Pressable>
+      {ringState?.highlights && (
+        <HighlightViewer
+          visible={viewerOpen}
+          highlights={ringState.highlights}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </>
+  );
+}
 
 /** Map tab — placeholder with city-level location grid. No exact GPS exposed. */
 export function MapTab({ postcards }: { postcards: PassportPostcard[] }) {
   const withLocation = postcards.filter((c) => c.locationCity || c.locationName);
   const cities = [...new Map(withLocation.map((c) => [c.locationCity ?? c.locationName, c])).entries()];
-
-  if (cities.length === 0) {
-    return (
-      <View style={mp.empty}>
-        <Text style={mp.emptyIcon}>🗺️</Text>
-        <Text style={mp.emptyTitle}>Map will appear when postcards have locations</Text>
-        <Text style={mp.emptySub}>Tag a city when creating a post to pin it here.</Text>
-      </View>
-    );
-  }
 
   return (
     <View style={mp.wrap}>
@@ -26,15 +56,31 @@ export function MapTab({ postcards }: { postcards: PassportPostcard[] }) {
         <Text style={mp.placeholderSub}>City-level only — exact GPS is never shown</Text>
       </View>
 
-      <Text style={mp.citiesLabel}>Postcard cities ({cities.length})</Text>
-      <View style={mp.chips}>
-        {cities.map(([city, card]) => (
-          <View key={city} style={[mp.chip, card.locationVerified && mp.chipVerified]}>
-            <Text style={mp.chipText}>{city}</Text>
-            {card.locationVerified && <Text style={mp.chipBadge}>✓</Text>}
-          </View>
+      {/* Nearby Travelers strip */}
+      <Text style={mp.sectionLabel}>Nearby Travelers</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={mp.nearbyStrip}
+      >
+        {users.map((u) => (
+          <NearbyUserChip key={u.id} user={u} />
         ))}
-      </View>
+      </ScrollView>
+
+      {cities.length > 0 && (
+        <>
+          <Text style={mp.citiesLabel}>Postcard cities ({cities.length})</Text>
+          <View style={mp.chips}>
+            {cities.map(([city, card]) => (
+              <View key={city} style={[mp.cityChip, card.locationVerified && mp.chipVerified]}>
+                <Text style={mp.chipText}>{city}</Text>
+                {card.locationVerified && <Text style={mp.chipBadge}>✓</Text>}
+              </View>
+            ))}
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -49,9 +95,16 @@ const mp = StyleSheet.create({
   placeholderIcon: { fontSize: 48 },
   placeholderText: { ...t.bodyStrong, color: color.ink },
   placeholderSub: { ...t.small, color: color.mute },
+
+  sectionLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },
+  nearbyStrip: { gap: space.md, paddingBottom: space.lg, paddingRight: space.md },
+  chip: { alignItems: 'center', gap: 4, width: 60 },
+  chipAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
+  chipName: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 10, textAlign: 'center' },
+
   citiesLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
+  cityChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: color.paperRaised, borderRadius: 20,
     borderWidth: 1, borderColor: color.haze,
@@ -60,8 +113,4 @@ const mp = StyleSheet.create({
   chipVerified: { borderColor: color.success, backgroundColor: '#E3F1EA' },
   chipText: { ...t.small, color: color.ink, fontWeight: '600' },
   chipBadge: { fontSize: 10, color: color.success },
-  empty: { paddingHorizontal: space.xl, paddingTop: space.xxxl, alignItems: 'center', gap: space.md },
-  emptyIcon: { fontSize: 48 },
-  emptyTitle: { ...t.heading, color: color.ink, textAlign: 'center' },
-  emptySub: { ...t.body, color: color.mute, textAlign: 'center' },
 });
