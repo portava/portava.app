@@ -314,7 +314,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const rsvpLabel = counts
     ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
     : null;
-  const showRsvpButtons = isAuthed && !isCancelled && !isConfirmed;
+  const showRsvpButtons = isAuthed && !isCancelled;
 
   return (
     <Pressable
@@ -373,12 +373,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         </View>
       ) : null}
 
-      {isConfirmed ? (
-        <View style={mc.footer}>
-          <Text style={[mc.see, mine && mc.seeMine]}>Tap to view details</Text>
-          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.success} />
-        </View>
-      ) : showRsvpButtons ? (
+      {showRsvpButtons ? (
         <View style={mc.rsvpRow}>
           {RSVP_BTNS.map((opt) => {
             const isActive = myRsvp === opt.key;
@@ -398,6 +393,11 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
               </Pressable>
             );
           })}
+        </View>
+      ) : isConfirmed ? (
+        <View style={mc.footer}>
+          <Text style={[mc.see, mine && mc.seeMine]}>Tap to view details</Text>
+          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.success} />
         </View>
       ) : (
         <View style={mc.footer}>
