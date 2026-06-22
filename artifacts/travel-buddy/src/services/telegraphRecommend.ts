@@ -39,6 +39,9 @@ export async function getForYouRecommendations(
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not signed in' };
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000); // 10 s hard cap
+
   try {
     const res = await fetch(`${base}/api/telegraph/recommend`, {
       method: 'POST',
@@ -52,12 +55,16 @@ export async function getForYouRecommendations(
         travelStyle: params.travelStyle ?? 'explorer',
         count: params.count ?? 8,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = (await res.json()) as { recommendations: TelegraphRecommendation[] };
     return { ok: true, recommendations: data.recommendations ?? [] };
-  } catch {
-    return { ok: false, error: 'Network error' };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    const isTimeout = e instanceof Error && e.name === 'AbortError';
+    return { ok: false, error: isTimeout ? 'Request timed out' : 'Network error' };
   }
 }

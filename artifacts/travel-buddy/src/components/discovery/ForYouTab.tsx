@@ -62,36 +62,59 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
   const [source, setSource]     = useState<'telegraph' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
 
+  // Monotonically-increasing counter so stale async callbacks from an old
+  // load() call can detect they've been superseded and bail out safely.
+  const loadIdRef = React.useRef(0);
+
   const load = useCallback(async (isRefresh = false) => {
     if (!destination) return;
+    const myId = ++loadIdRef.current;
+    const stale = () => loadIdRef.current !== myId;
+
     if (!isRefresh) setLoading(true);
 
-    // 1. Try Telegraph (requires auth, count capped at 5 by server)
-    if (isAuthed) {
-      const res = await getForYouRecommendations({ destination, count: 5 });
-      if (res.ok && res.recommendations.length > 0) {
-        setItems(res.recommendations.map((rec) => ({
-          kind: 'telegraph' as const,
-          rec,
-          place: recToPlace(rec),
-        })));
-        setSource('telegraph');
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-    }
+    // Fire OSM and Telegraph simultaneously.
+    // OSM is a simple geocode + database query (~1–2 s).
+    // Telegraph is an AI call — capped at 10 s by AbortController in the service.
+    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null });
+    const telPromise = isAuthed
+      ? getForYouRecommendations({ destination, count: 5 })
+      : null;
 
-    // 2. Fall back to OSM for_you mix
-    const osm = await getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null });
-    setLoading(false);
-    setRefreshing(false);
-    if (osm.ok && osm.data.places.length > 0) {
-      setItems(osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
-      setSource('osm');
-    } else {
-      setItems([]);
-      setSource('none');
+    // Show OSM content the instant it resolves — clears the skeleton immediately.
+    osmPromise.then((osm) => {
+      if (stale()) return;
+      setLoading(false);
+      setRefreshing(false);
+      if (osm.ok && osm.data.places.length > 0) {
+        setItems(osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
+        setSource('osm');
+      } else {
+        setItems([]);
+        setSource('none');
+      }
+    }).catch(() => {
+      if (!stale()) { setLoading(false); setRefreshing(false); }
+    });
+
+    // Silently upgrade to Telegraph AI picks when (if) the AI call returns.
+    // If it times out (10 s), OSM results are already visible — no extra wait.
+    if (telPromise) {
+      try {
+        const tel = await telPromise;
+        if (!stale() && tel.ok && tel.recommendations.length > 0) {
+          setItems(tel.recommendations.map((rec) => ({
+            kind: 'telegraph' as const,
+            rec,
+            place: recToPlace(rec),
+          })));
+          setSource('telegraph');
+        }
+      } catch {
+        // telegraph failed — OSM is already showing, nothing to do
+      }
+      // Guarantee loading is cleared even if osmPromise somehow never resolved
+      if (!stale()) { setLoading(false); setRefreshing(false); }
     }
   }, [destination, isAuthed]);
 
