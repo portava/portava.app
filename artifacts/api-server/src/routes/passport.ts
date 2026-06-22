@@ -14,8 +14,8 @@ const PUBLIC_PROFILE_COLUMNS_FALLBACK =
 const PUBLIC_POSTCARD_COLUMNS =
   "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at";
 
-const PUBLIC_POSTCARD_COLUMNS_FALLBACK =
-  "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, note, created_at";
+/** Fallback: select everything; mapPostcard handles missing fields with ?? null. */
+const PUBLIC_POSTCARD_COLUMNS_FALLBACK = "*";
 
 function mapPublicProfile(r: any) {
   return {
@@ -182,8 +182,8 @@ router.get("/me/passport/postcards", async (req, res) => {
   const OWNER_POSTCARD_COLUMNS =
     "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, stamp_reason, verification_method, visibility, status, pinned_at, note, created_at";
 
-  const OWNER_POSTCARD_COLUMNS_FALLBACK =
-    "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, stamp_reason, verification_method, visibility, status, note, created_at";
+  /** Fallback: select everything; mapper handles missing fields with ?? null. */
+  const OWNER_POSTCARD_COLUMNS_FALLBACK = "*";
 
   let { data, error } = await client
     .from("passport_postcards")

@@ -42,9 +42,8 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 const PROFILE_COLUMNS =
   "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language";
 
-/** Fallback column set: excludes columns added in pending migrations (0014). */
-const PROFILE_COLUMNS_FALLBACK =
-  "id, handle, name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, preferred_language";
+/** Fallback: select everything that exists; mapProfile handles every field with ?? null. */
+const PROFILE_COLUMNS_FALLBACK = "*";
 
 function mapProfile(r: any) {
   return {
