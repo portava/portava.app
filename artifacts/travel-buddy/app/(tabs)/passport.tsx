@@ -58,6 +58,9 @@ export default function PassportScreen() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
 
+  // Tracks whether the composer was triggered from inside the viewer (vs. ring/camera)
+  const composerFromViewer = useRef(false);
+
   // Ring press: view existing highlights or open composer to create a new one
   const handleOwnRingPress = useCallback(() => {
     if (hasOwnHighlights) setHighlightViewerOpen(true);
@@ -66,6 +69,14 @@ export default function PassportScreen() {
 
   // Camera button: always opens the composer directly (for adding a new highlight)
   const handleNewHighlightPress = useCallback(() => {
+    composerFromViewer.current = false;
+    setHighlightComposerOpen(true);
+  }, []);
+
+  // "+" button inside the viewer: close viewer, open composer, then return to viewer
+  const handleAddHighlightFromViewer = useCallback(() => {
+    composerFromViewer.current = true;
+    setHighlightViewerOpen(false);
     setHighlightComposerOpen(true);
   }, []);
 
@@ -74,6 +85,10 @@ export default function PassportScreen() {
     if (ownUserId) invalidateHighlightCache(ownUserId);
     setHighlightRefreshKey((k) => k + 1);
     setHighlightComposerOpen(false);
+    if (composerFromViewer.current) {
+      composerFromViewer.current = false;
+      setHighlightViewerOpen(true);
+    }
   }, [ownUserId]);
 
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
@@ -167,6 +182,7 @@ export default function PassportScreen() {
           highlights={ownRingState?.highlights ?? []}
           currentUserId={ownUserId ?? undefined}
           onClose={() => setHighlightViewerOpen(false)}
+          onAddHighlight={handleAddHighlightFromViewer}
         />
         <HighlightComposer
           visible={highlightComposerOpen}
@@ -208,6 +224,7 @@ export default function PassportScreen() {
         highlights={ownRingState?.highlights ?? []}
         currentUserId={ownUserId ?? undefined}
         onClose={() => setHighlightViewerOpen(false)}
+        onAddHighlight={handleAddHighlightFromViewer}
       />
       <HighlightComposer
         visible={highlightComposerOpen}

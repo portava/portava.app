@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
-import { X, Heart, MessageCircle, Flag, Eye, Share2 } from 'lucide-react-native';
+import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -45,6 +45,7 @@ interface Props {
   currentUserId?: string;
   onClose: () => void;
   onHighlightChange?: (index: number) => void;
+  onAddHighlight?: () => void;
 }
 
 export function HighlightViewer({
@@ -54,6 +55,7 @@ export function HighlightViewer({
   currentUserId,
   onClose,
   onHighlightChange,
+  onAddHighlight,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(startIndex);
@@ -271,6 +273,11 @@ export function HighlightViewer({
             </View>
           )}
           <View style={{ flex: 1 }} />
+          {isOwner && onAddHighlight && (
+            <Pressable onPress={onAddHighlight} hitSlop={8} style={[s.closeBtn, s.addBtn]}>
+              <Plus size={20} color="#fff" />
+            </Pressable>
+          )}
           <Pressable onPress={onClose} hitSlop={8} style={s.closeBtn}>
             <X size={20} color="#fff" />
           </Pressable>
@@ -425,6 +432,7 @@ const s = StyleSheet.create({
   timeChip: { backgroundColor: 'rgba(17,17,15,0.5)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.sm },
   timeText: { color: '#fff', fontSize: 11, fontFamily: 'Courier', fontWeight: '700' },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,15,0.4)' },
+  addBtn: { marginRight: 8 },
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },
