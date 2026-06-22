@@ -245,7 +245,6 @@ export default function Pulse() {
         filterCount={filterCount}
         onSearch={() => router.push('/(tabs)/discovery')}
         onFilter={() => setSheetOpen(true)}
-        onCreate={() => setCreateOpen(true)}
       />
       <FlatList
         data={feed}

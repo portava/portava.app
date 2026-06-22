@@ -13,7 +13,6 @@ export function PulseHeader({
   availabilityText = 'Open tonight',
   filterCount = 0,
   onFilter,
-  onCreate,
 }: {
   city?: string;
   area?: string;
@@ -25,7 +24,6 @@ export function PulseHeader({
   filterCount?: number;
   onSearch?: () => void;
   onFilter?: () => void;
-  onCreate?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const { messages: unreadMessages } = useUnreadCounts();
@@ -54,11 +52,6 @@ export function PulseHeader({
           {filterCount > 0 && (
             <View style={styles.badge}><Text style={styles.badgeText}>{filterCount}</Text></View>
           )}
-        </Pressable>
-
-        {/* Post pill — primary creation action */}
-        <Pressable style={styles.postBtn} onPress={onCreate} hitSlop={4} accessibilityLabel="Create post" accessibilityRole="button">
-          <Text style={styles.postBtnText}>Post</Text>
         </Pressable>
       </View>
 
@@ -125,21 +118,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     lineHeight: 11,
-  },
-  postBtn: {
-    height: 34,
-    minWidth: 56,
-    paddingHorizontal: 14,
-    borderRadius: radius.pill,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  postBtnText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 16,
   },
   statusRow: {
     flexDirection: 'row',
