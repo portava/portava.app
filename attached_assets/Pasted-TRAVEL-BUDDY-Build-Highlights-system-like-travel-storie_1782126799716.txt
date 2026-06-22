@@ -1,0 +1,501 @@
+TRAVEL BUDDY — Build Highlights system like travel stories + 10-second video Postcards.
+
+Mission:
+Build a Travel Buddy Highlight system similar to Instagram Stories, but designed around Passport, Pulse, Telegraph, Trips, and travel discovery.
+
+Users can post temporary pictures or short videos, choose how long they stay visible, see who viewed them, see who liked them, and receive replies through Telegraph. Active highlights should appear as a ring around the user’s display picture. Also allow users to upload or record short 10-second videos for Postcards.
+
+Do not break existing Post, Passport, Pulse, Telegraph, Trips, Discovery, profile photo upload, or like/comment/share systems.
+
+============================================================
+CORE HIGHLIGHT BEHAVIOR
+============================================================
+
+Users can create a Highlight with:
+- photo
+- video up to 10 seconds
+- caption optional
+- location optional
+- visibility setting
+- expiration duration
+
+Media source:
+- upload from gallery
+- take live photo from camera
+- record live video from camera
+
+Expiration options:
+- 3 hours
+- 6 hours
+- 12 hours
+- 24 hours default
+- 48 hours
+- until trip window ends if available
+- until I leave this city if location/session system supports it
+- custom if simple to support
+
+Active highlights are visible until expires_at.
+
+Expired highlights should not show publicly.
+
+============================================================
+DISPLAY
+============================================================
+
+Show highlight ring around user display picture when user has active highlights.
+
+Show ring in:
+- Pulse feed cards
+- Passport page
+- user mini profile cards
+- Telegraph thread list
+- Trip crew/member list
+- comments
+- Discovery shared cards where user avatar appears
+
+Tap ring/avatar:
+- opens Highlight viewer
+- loads active highlights for that user
+- marks highlight viewed
+- allows like/reaction
+- allows reply if permitted
+
+If no active highlights:
+- tapping avatar opens normal Passport/profile.
+
+============================================================
+HIGHLIGHT VIEWER
+============================================================
+
+Create HighlightViewer component.
+
+Viewer should:
+- show full-screen media
+- support photo and video
+- auto-advance through user’s active highlights
+- show progress bar per item
+- pause on hold/tap if simple to support
+- allow next/previous tap zones if simple
+- show caption/location
+- show like button
+- show reply button
+- show share button if public
+- show report button
+- close/back button
+
+For videos:
+- max 10 seconds
+- show generated thumbnail/poster while loading
+- autoplay muted if allowed by platform
+- controls minimal
+
+============================================================
+CREATOR INSIGHTS
+============================================================
+
+Creator can see:
+- total views
+- viewer list
+- who liked it
+- replies count if available
+- time viewed
+
+Add “Viewers” sheet for creator:
+- avatar
+- name
+- viewed time
+- liked indicator
+
+Only creator/admin can see viewer list.
+
+Do not expose viewer list publicly.
+
+============================================================
+LIKES / REPLIES / SHARES
+============================================================
+
+Users can:
+- like/unlike a highlight
+- reply through Telegraph
+- share if visibility permits
+- report highlight
+
+Like count persists.
+likedByMe persists.
+
+Reply:
+- opens Telegraph compose/thread with highlight attached or linked
+- preserves existing auto-translation behavior
+- does not break messaging
+
+Share:
+- public highlights can be shared
+- private/trip/circle highlights follow visibility rules
+
+============================================================
+PRIVACY / VISIBILITY
+============================================================
+
+Visibility options:
+- public
+- travelers_nearby
+- trip_only
+- circle_only
+- followers_or_connections if existing
+- private
+
+Default:
+travelers_nearby
+
+Rules:
+- public: authenticated users who can see public content may view/like/reply/share
+- travelers_nearby: users in same city/area can view if location system supports it
+- trip_only: accepted trip members only
+- circle_only: accepted trusted circle members only
+- private: owner only
+- deleted/expired/reported-restricted: hidden
+
+Add shared permission helper:
+canViewHighlight(user, highlight)
+canEngageWithHighlight(user, highlight, action)
+
+============================================================
+DATABASE
+============================================================
+
+Create tables if they do not exist:
+
+highlights:
+- id uuid primary key
+- user_id uuid not null
+- media_type text not null
+- media_url text not null
+- thumbnail_url text null
+- caption text null
+- location_label text null
+- city text null
+- district text null
+- place_id uuid null
+- visibility text not null default 'travelers_nearby'
+- duration_seconds integer not null
+- expires_at timestamptz not null
+- created_at timestamptz default now()
+- deleted_at timestamptz null
+
+highlight_views:
+- id uuid primary key
+- highlight_id uuid not null
+- viewer_id uuid not null
+- viewed_at timestamptz default now()
+- unique(highlight_id, viewer_id)
+
+highlight_likes:
+- id uuid primary key
+- highlight_id uuid not null
+- user_id uuid not null
+- created_at timestamptz default now()
+- unique(highlight_id, user_id)
+
+highlight_replies:
+- id uuid primary key
+- highlight_id uuid not null
+- sender_id uuid not null
+- telegraph_thread_id uuid null
+- message_id uuid null
+- body text null
+- created_at timestamptz default now()
+
+Optional:
+highlight_reports:
+- id uuid primary key
+- highlight_id uuid not null
+- reporter_id uuid not null
+- reason text
+- created_at timestamptz default now()
+
+Add indexes:
+- highlights(user_id)
+- highlights(expires_at)
+- highlights(visibility)
+- highlight_views(highlight_id)
+- highlight_likes(highlight_id)
+
+============================================================
+API
+============================================================
+
+Add endpoints:
+
+POST /api/highlights
+- create highlight
+- authenticated
+- accepts media upload or media reference
+- validates media type
+- validates video duration <= 10 seconds
+- validates expiration duration
+- saves highlight
+- returns highlight
+
+GET /api/highlights/active
+- returns active highlights visible to current user
+- supports city/trip/user filters
+
+GET /api/users/:userId/highlights
+- returns active highlights for a user if viewer has permission
+
+POST /api/highlights/:id/view
+- marks current user viewed
+- idempotent
+
+POST /api/highlights/:id/like
+- like
+- returns likedByMe and likeCount
+
+DELETE /api/highlights/:id/like
+- unlike
+
+GET /api/highlights/:id/viewers
+- creator/admin only
+- returns viewer list and liked status
+
+POST /api/highlights/:id/reply
+- creates Telegraph reply/share intent
+
+DELETE /api/highlights/:id
+- owner/admin only
+- soft delete
+
+POST /api/highlights/:id/report
+- report highlight
+
+============================================================
+MEDIA UPLOAD / COMPRESSION
+============================================================
+
+Use existing image compression/render system for photos.
+
+For videos:
+- allow upload/record up to 10 seconds
+- reject videos over 10 seconds with:
+  “Highlights and video Postcards can be up to 10 seconds.”
+- compress if existing stack supports it
+- generate thumbnail/poster image
+- store duration_seconds
+- store media dimensions if available
+
+If browser camera capture supported:
+- allow take photo
+- allow record short video
+- fallback to file picker if not supported
+
+HTML input support:
+- accept="image/*,video/*"
+- capture option for camera on mobile where appropriate
+
+Do not crash if camera permission denied.
+Show:
+“Camera access was denied. You can still upload from your gallery.”
+
+============================================================
+POSTCARD 10-SECOND VIDEOS
+============================================================
+
+Extend Postcards so users can attach:
+- photo
+- video up to 10 seconds
+
+Postcard media rules:
+- one photo or one video for MVP unless existing multi-media support exists
+- caption optional/required based on existing rules
+- generate video thumbnail
+- show play indicator on video postcard
+- video should play in postcard viewer/detail
+- feed card should use thumbnail, not autoplay heavy video in list unless already supported
+
+Update UnifiedPostComposer:
+Add video support for:
+- Share Postcard
+- Share Moment if desired
+- Share Highlight
+
+Post Update and Ask Question:
+- photo/video optional
+- still must support text-only
+
+============================================================
+UNIFIED POST FLOW
+============================================================
+
+Add “Share Highlight” as a post/create type if appropriate.
+
+Post options:
+- Post Update
+- Ask Question
+- Share a Moment
+- Share Postcard
+- Share Hidden Gem
+- Share Food Spot
+- Share Highlight
+
+Share Highlight:
+- opens highlight composer
+- asks media, visibility, duration, caption
+- publishes highlight
+- shows ring around profile picture
+
+Also add quick entry:
+- tapping own profile picture/ring can open “Add Highlight”
+- plus/create can open unified composer
+
+============================================================
+FRONTEND COMPONENTS
+============================================================
+
+Create or update:
+
+HighlightRing
+HighlightViewer
+HighlightComposer
+HighlightViewersSheet
+HighlightLikeButton
+HighlightReplyButton
+HighlightPrivacySelector
+HighlightDurationSelector
+MediaCapturePicker
+VideoPostcardPlayer
+
+Use shared media utilities where possible.
+
+HighlightRing:
+- wraps avatar/profile picture
+- ring visible if activeHighlightCount > 0
+- different ring style for unviewed vs viewed if possible
+- owner can have add indicator
+
+Example:
+- active unviewed: bright gradient ring
+- active viewed: muted ring
+- no active highlight: no ring
+
+============================================================
+PROFILE/PASSPORT INTEGRATION
+============================================================
+
+Passport page:
+- display profile photo with highlight ring
+- owner sees “Add Highlight”
+- viewer taps ring to watch
+- show active highlights section if useful
+- archive can be TODO if not built now
+
+Pulse:
+- feed card avatars show highlight ring
+- tap avatar ring opens viewer
+
+Telegraph:
+- thread avatars show ring
+- tap opens highlights/profile based on UX
+
+Trips:
+- trip crew avatars show rings
+
+============================================================
+ARCHIVE / SAVE OPTION
+============================================================
+
+After highlight expires, owner should eventually be able to:
+- save as Postcard
+- save to Trip Memory
+- delete
+
+MVP:
+- add backend structure to support archived/saved later if simple
+- or add TODO
+- do not block active highlight MVP
+
+============================================================
+SAFETY / MODERATION
+============================================================
+
+Add:
+- report highlight
+- delete own highlight
+- visibility restrictions
+- private/trip/circle access checks
+- block user respect if block system exists
+- do not show highlights from blocked users
+
+Do not allow:
+- viewing expired/deleted highlights
+- viewing private highlights as another user
+- viewing trip-only highlights as outsider
+- accessing viewer list unless owner/admin
+
+============================================================
+NOTIFICATIONS
+============================================================
+
+If notification system exists:
+- notify user when someone replies to highlight
+- optionally notify likes in batch
+- do not notify for every view
+- do not notify self-actions
+
+If not ready, add TODO.
+
+============================================================
+ACCEPTANCE CRITERIA
+============================================================
+
+Highlights:
+- user can upload photo highlight
+- user can record/take live camera media if supported
+- user can upload video highlight up to 10 seconds
+- video over 10 seconds is rejected
+- user can choose expiration duration
+- active highlight ring appears around display picture
+- tapping ring opens viewer
+- viewer marks highlight viewed
+- viewer can like highlight
+- creator can see viewer list
+- creator can see who liked
+- viewer can reply through Telegraph or safe reply flow
+- expired highlights disappear publicly
+- privacy rules work
+
+Postcards:
+- user can attach/upload 10-second video to Postcard
+- user can record video if supported
+- video over 10 seconds rejected
+- video postcard shows thumbnail/play state
+- video postcard plays in detail/viewer
+- photo postcards still work
+
+Integration:
+- Pulse avatars show rings
+- Passport avatar shows ring
+- Telegraph/trip avatars show rings if available
+- existing profile picture upload still works
+- existing Post flow still works
+- like/comment/share still works
+- mobile layout not cluttered
+- build/typecheck passes
+- no console errors
+
+FINAL REPORT:
+Return:
+- Files created
+- Files modified
+- Database migration added
+- APIs added
+- Highlight components added
+- Media upload/video handling
+- Viewer tracking implementation
+- Like/reply/share implementation
+- Postcard video changes
+- Privacy/access checks
+- Screens tested
+- Remaining TODOs
+
+Final result:
+Travel Buddy has temporary media Highlights around user display pictures, with photo/video upload or live capture, expiration controls, viewer/like tracking, Telegraph replies, privacy controls, and 10-second video support for Postcards.

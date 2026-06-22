@@ -57,6 +57,9 @@ function PostCard({ item }: { item: PulseFeedItem }) {
         likeCount={item.likeCount ?? 0}
         commentCount={item.commentCount ?? 0}
         likedByMe={item.likedByMe ?? false}
+        canLike={item.canLike !== false}
+        canComment={item.canComment !== false}
+        canShare={item.canShare !== false}
       />
     </View>
   );
@@ -80,6 +83,9 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
           likeCount={item.likeCount ?? 0}
           commentCount={item.commentCount ?? 0}
           likedByMe={item.likedByMe ?? false}
+          canLike={item.canLike !== false}
+          canComment={item.canComment !== false}
+          canShare={item.canShare !== false}
         />
       )}
     </View>

@@ -18,6 +18,9 @@ interface Props {
   commentCount: number;
   shareCount?: number;
   likedByMe: boolean;
+  canLike?: boolean;
+  canComment?: boolean;
+  canShare?: boolean;
   onCommentCountChange?: (n: number) => void;
 }
 
@@ -26,6 +29,9 @@ export function PostEngagementBar({
   likeCount,
   commentCount,
   likedByMe,
+  canLike = true,
+  canComment = true,
+  canShare = true,
   onCommentCountChange,
 }: Props) {
   const [localLiked, setLocalLiked] = useState(likedByMe);
@@ -34,6 +40,8 @@ export function PostEngagementBar({
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [liking, setLiking] = useState(false);
+
+  if (!canLike && !canComment && !canShare) return null;
 
   const handleLike = useCallback(async () => {
     if (liking) return;

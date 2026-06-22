@@ -329,6 +329,9 @@ router.get("/posts", async (req, res) => {
         likeCount: eng.likeCount,
         commentCount: eng.commentCount,
         likedByMe: eng.likedByMe,
+        canLike: true,
+        canComment: true,
+        canShare: true,
       };
     });
 
@@ -396,6 +399,9 @@ router.get("/posts", async (req, res) => {
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
+      canLike: true,
+      canComment: true,
+      canShare: true,
     };
   });
 
@@ -453,7 +459,48 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  res.status(200).json({ posts: data ?? [], isMember: accepted });
+  const tripPosts: any[] = data ?? [];
+  const tripPostIds = tripPosts.map((p) => p.id);
+  const tripAuthorIds = [...new Set(tripPosts.map((p) => p.author_id))];
+
+  const tripSvc = getServiceClient();
+  let tripProfileMap: Record<string, any> = {};
+  if (tripSvc && tripAuthorIds.length > 0) {
+    const { data: profiles } = await tripSvc
+      .from("profiles").select("id, handle, name, avatar_url").in("id", tripAuthorIds);
+    for (const p of profiles ?? []) tripProfileMap[p.id] = p;
+  }
+
+  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+  if (tripSvc && tripPostIds.length > 0) {
+    const [{ data: engData }, { data: likedData }] = await Promise.all([
+      tripSvc.from("posts").select("id, like_count, comment_count").in("id", tripPostIds),
+      tripSvc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
+    ]);
+    const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+    for (const r of engData ?? []) {
+      tripEngMap[r.id] = { likeCount: r.like_count ?? 0, commentCount: r.comment_count ?? 0, likedByMe: likedSet.has(r.id) };
+    }
+  }
+
+  const mergedTrip = tripPosts.map((p) => {
+    const pr = tripProfileMap[p.author_id];
+    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    // public: any authenticated user; trip_only: accepted members only; private: no public engagement
+    const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
+    return {
+      ...p,
+      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+      likeCount: eng.likeCount,
+      commentCount: eng.commentCount,
+      likedByMe: eng.likedByMe,
+      canLike: canEngage,
+      canComment: canEngage,
+      canShare: canEngage,
+    };
+  });
+
+  res.status(200).json({ posts: mergedTrip, isMember: accepted });
 });
 
 /* ===========================================================================
@@ -575,10 +622,30 @@ function isValidUuid(s: string) {
   return /^[0-9a-f-]{36}$/i.test(s);
 }
 
+/** Returns true if the caller may engage with a post; sends 403 and returns false otherwise. */
+async function checkEngagePermission(
+  res: any,
+  post: { visibility: string; trip_id: string | null },
+  userId: string,
+  userClient: any,
+): Promise<boolean> {
+  if (post.visibility === "private") {
+    sendError(res, "forbidden", "Cannot engage with a private post");
+    return false;
+  }
+  if (post.visibility === "trip_only") {
+    if (!post.trip_id || !(await isAcceptedTripMember(userClient, post.trip_id, userId))) {
+      sendError(res, "forbidden", "Only accepted trip members can engage with this post");
+      return false;
+    }
+  }
+  return true;
+}
+
 router.post("/posts/:postId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
@@ -586,9 +653,11 @@ router.post("/posts/:postId/like", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { data: post, error: postErr } = await sc
-    .from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+    .from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
   if (postErr) { sendError(res, "db_error", postErr.message); return; }
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   // Upsert (ignoreDuplicates = no-op if already liked)
   const { error: upsertErr } = await sc
@@ -606,12 +675,17 @@ router.post("/posts/:postId/like", async (req, res) => {
 router.delete("/posts/:postId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Allow unlike even if currently inaccessible (idempotent removal)
+  const { data: post } = await sc
+    .from("posts").select("id, visibility, trip_id").eq("id", postId).maybeSingle();
+  if (post && !(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   const { error: delErr } = await sc
     .from("posts_likes").delete().eq("post_id", postId).eq("user_id", user.id);
@@ -632,16 +706,17 @@ router.delete("/posts/:postId/like", async (req, res) => {
 router.get("/posts/:postId/comments", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Verify post exists
-  const { data: post } = await sc.from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+  // Verify post exists and caller has read access
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   const { data: rows, error: listErr } = await sc
     .from("posts_comments")
@@ -679,7 +754,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
 router.post("/posts/:postId/comments", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
@@ -690,8 +765,9 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: post } = await sc.from("posts").select("id").eq("id", postId).eq("status", "active").maybeSingle();
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   const { data: comment, error: insertErr } = await sc
     .from("posts_comments")
@@ -727,7 +803,7 @@ router.post("/posts/:postId/comments", async (req, res) => {
 router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId, commentId } = req.params;
   if (!isValidUuid(postId) || !isValidUuid(commentId)) {
     sendError(res, "invalid_payload", "Invalid id"); return;

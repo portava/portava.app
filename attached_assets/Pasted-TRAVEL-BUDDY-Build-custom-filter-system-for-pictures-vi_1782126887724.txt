@@ -1,0 +1,525 @@
+TRAVEL BUDDY — Build custom filter system for pictures/videos posted to Highlights/Stories and Postcards.
+
+Mission:
+Build a custom media filter system so users can apply Travel Buddy-style filters to photos and short videos before posting them as Highlights/Stories or Postcards.
+
+This should work for:
+- Highlight photo
+- Highlight video up to 10 seconds
+- Postcard photo
+- Postcard video up to 10 seconds
+- Share Moment media if it uses the same composer
+
+Do not break existing media upload.
+Do not break image compression/rendering.
+Do not break 10-second video validation.
+Do not break Highlight creation.
+Do not break Postcard creation.
+Do not require filters to post.
+Filters are optional.
+
+============================================================
+CORE USER FLOW
+============================================================
+
+When user uploads or captures media:
+
+1. User selects/takes photo or records/uploads short video.
+2. App opens Media Editor before posting.
+3. User can choose a filter.
+4. User can adjust intensity.
+5. User can preview result.
+6. User can save/apply.
+7. Filtered media is rendered/compressed.
+8. Filtered media is uploaded to Highlight/Postcard.
+9. Original upload does not need to be stored unless existing system requires it.
+
+The Media Editor should support:
+- filter carousel
+- intensity slider
+- reset
+- preview before/after if simple
+- apply
+- cancel/back
+
+============================================================
+FILTER PACK
+============================================================
+
+Create custom Travel Buddy filter presets.
+
+Required filters:
+
+1. Original
+- no filter
+
+2. Passport Glow
+- bright, clean travel look
+- slight contrast
+- slight saturation
+- warm tone
+
+3. Golden Hour
+- warm highlights
+- softer contrast
+- slight orange/gold tint
+
+4. Beach Day
+- brighter blues/cyans
+- high clarity
+- gentle saturation
+
+5. Night Market
+- deeper contrast
+- warmer lights
+- richer shadows
+
+6. City Lights
+- neon contrast
+- stronger highlights
+- cooler shadows
+
+7. Foodie Pop
+- higher saturation
+- warmer whites
+- slightly sharper
+
+8. Vintage Postcard
+- faded blacks
+- warm tint
+- slight grain if easy
+
+9. Clean Portrait
+- soft contrast
+- natural skin tone
+- slightly brightened
+
+10. Hidden Gem
+- moody travel discovery look
+- soft green/teal shadows
+- warm highlights
+
+11. Island Soft
+- soft pastel
+- lighter exposure
+- gentle saturation
+
+12. Black & White
+- grayscale
+- slight contrast
+
+Filter metadata:
+{
+  id,
+  name,
+  description,
+  cssFilter,
+  canvasAdjustments,
+  supportsVideo,
+  defaultIntensity
+}
+
+============================================================
+TECHNICAL APPROACH
+============================================================
+
+Use lightweight browser-based filters first.
+
+For preview:
+- photos: CSS filter preview is acceptable
+- videos: CSS filter preview over video element is acceptable
+
+For final exported media:
+- photos: render filter onto canvas, then compress/export.
+- videos: if browser/server video processing is not ready, store filter metadata and apply CSS filter during playback/display for MVP.
+
+Preferred MVP:
+Photo filters are baked into output image.
+Video filters are saved as metadata and rendered with CSS/filter overlay during playback.
+
+If ffmpeg.wasm or server-side video processing already exists, optionally bake video filters into the video file. But do not add heavy dependencies unless approved.
+
+Do not block video posting because baking is unavailable.
+
+============================================================
+FILTER MODEL
+============================================================
+
+Create:
+
+src/lib/media/filters.ts
+
+Export:
+
+mediaFilters = [
+  {
+    id: "original",
+    name: "Original",
+    description: "No filter",
+    cssFilter: "none",
+    defaultIntensity: 1,
+    supportsVideo: true
+  },
+  ...
+]
+
+Create helper:
+
+getMediaFilter(filterId)
+buildCssFilter(filter, intensity)
+applyPhotoFilterToCanvas(image, filterId, intensity)
+
+The intensity slider should go:
+0 to 100
+
+At 0:
+- filter should look close to original
+
+At 100:
+- full preset strength
+
+============================================================
+PHOTO FILTER RENDERING
+============================================================
+
+Extend existing image render/compression system.
+
+Current profile/photo render system should not be duplicated if it exists.
+
+Create reusable utility:
+
+renderFilteredImage({
+  file,
+  filterId,
+  intensity,
+  crop,
+  maxWidth,
+  maxHeight,
+  outputFormat,
+  quality
+})
+
+Output:
+{
+  file,
+  blob,
+  width,
+  height,
+  size,
+  filterId,
+  filterIntensity
+}
+
+Implementation:
+- decode image
+- apply orientation correction if already supported
+- draw image to canvas
+- apply filter adjustments
+- export as webp or jpeg
+- compress to target size
+- return optimized file/blob
+
+Support:
+- jpg
+- jpeg
+- png
+- webp
+- heic/heif only if current stack supports it
+
+If filter render fails:
+- show error:
+  “We couldn’t apply this filter. Try Original or choose another photo.”
+- allow user to post Original.
+
+============================================================
+VIDEO FILTER HANDLING
+============================================================
+
+For videos:
+- enforce 10-second max for Highlights/Postcards.
+- generate thumbnail/poster using selected filter.
+- save filter metadata with video:
+  filter_id
+  filter_intensity
+
+During playback:
+- apply CSS filter to video element using saved metadata.
+- apply same CSS filter to thumbnail/poster if generated client-side.
+
+If baking video filters is available:
+- optional: render/export filtered video.
+- but MVP should not depend on heavy video processing.
+
+Video data saved should include:
+{
+  mediaType: "video",
+  mediaUrl,
+  thumbnailUrl,
+  durationSeconds,
+  filterId,
+  filterIntensity
+}
+
+============================================================
+MEDIA EDITOR COMPONENT
+============================================================
+
+Create:
+
+MediaFilterEditor
+
+Used by:
+- HighlightComposer
+- UnifiedPostComposer for Postcards
+- Share Moment composer if media attached
+
+Props:
+{
+  file,
+  mediaType,
+  initialFilterId,
+  initialIntensity,
+  onApply,
+  onCancel
+}
+
+UI:
+- preview area
+- filter carousel at bottom
+- intensity slider
+- Reset button
+- Apply button
+- Cancel/back button
+
+Mobile:
+- full-screen or bottom-sheet editor
+- no overlapping bottom nav
+- safe-area bottom padding
+- filter chips/cards horizontal scroll
+- preview maintains aspect ratio
+- buttons at least 44px tap target
+
+Filter carousel:
+[Original] [Passport Glow] [Golden Hour] [Beach Day] [Night Market] ...
+
+For videos:
+- show video preview with selected filter
+- show “Video filter preview” note if filter is metadata-only
+
+============================================================
+HIGHLIGHT COMPOSER INTEGRATION
+============================================================
+
+When creating Highlight:
+- after media selected/captured, open MediaFilterEditor
+- user applies filter
+- save filtered photo or video filter metadata
+- continue to caption/visibility/duration
+- submit highlight
+
+For photo highlight:
+- upload filtered image
+
+For video highlight:
+- upload video
+- upload filtered thumbnail
+- save filter metadata
+
+Highlight viewer:
+- apply saved filter to video playback if video
+- photo already baked with filter
+- show media normally
+
+============================================================
+POSTCARD INTEGRATION
+============================================================
+
+When creating Postcard:
+- after media selected/captured, open MediaFilterEditor
+- user chooses filter
+- photo postcard uploads filtered image
+- video postcard saves filter metadata and filtered thumbnail
+- Postcard card displays filter correctly
+- Postcard detail/viewer displays filter correctly
+
+Postcard should support:
+- photo with filter
+- 10-second video with filter metadata
+- thumbnail/play state for video
+
+============================================================
+DATABASE / MEDIA MODEL
+============================================================
+
+Add fields to shared media/post/highlight/postcard records if missing:
+
+filter_id text null default 'original'
+filter_intensity integer null default 100
+media_thumbnail_url text null
+media_duration_seconds integer null
+media_width integer null
+media_height integer null
+
+If Highlights and Postcards have separate tables, add the fields to both or to the shared media table.
+
+Do not break existing media without filter fields.
+Default old media:
+filter_id = original
+filter_intensity = 100
+
+============================================================
+API / PAYLOAD
+============================================================
+
+Update create Highlight and create Postcard APIs to accept:
+
+filterId
+filterIntensity
+mediaThumbnailUrl
+mediaDurationSeconds
+mediaWidth
+mediaHeight
+
+Validate:
+- filterId is known
+- intensity between 0 and 100
+- video duration <= 10 seconds
+- media type allowed
+
+Do not trust frontend metadata blindly.
+If server can inspect media duration/dimensions, validate them.
+
+============================================================
+CAMERA / LIVE CAPTURE
+============================================================
+
+Media source options:
+- Upload from gallery
+- Take photo
+- Record video
+
+After capture:
+- open MediaFilterEditor
+- allow filter selection
+- apply/save
+
+If camera permission denied:
+show:
+“Camera access was denied. You can still upload from your gallery.”
+
+============================================================
+FILTER DESIGN DETAILS
+============================================================
+
+Implement these presets using CSS filters and/or canvas adjustments.
+
+Suggested CSS previews:
+
+original:
+filter: none
+
+passport_glow:
+brightness(1.06) contrast(1.08) saturate(1.12) sepia(0.04)
+
+golden_hour:
+brightness(1.05) contrast(1.02) saturate(1.15) sepia(0.18) hue-rotate(-8deg)
+
+beach_day:
+brightness(1.08) contrast(1.05) saturate(1.18) hue-rotate(4deg)
+
+night_market:
+brightness(0.98) contrast(1.18) saturate(1.22) sepia(0.08)
+
+city_lights:
+brightness(1.02) contrast(1.2) saturate(1.25) hue-rotate(8deg)
+
+foodie_pop:
+brightness(1.04) contrast(1.12) saturate(1.3) sepia(0.05)
+
+vintage_postcard:
+brightness(1.03) contrast(0.94) saturate(0.82) sepia(0.22)
+
+clean_portrait:
+brightness(1.06) contrast(1.02) saturate(1.04) sepia(0.03)
+
+hidden_gem:
+brightness(0.98) contrast(1.12) saturate(1.08) sepia(0.07) hue-rotate(6deg)
+
+island_soft:
+brightness(1.1) contrast(0.96) saturate(1.08) sepia(0.05)
+
+black_white:
+grayscale(1) contrast(1.08)
+
+Intensity:
+Create interpolation between original and full CSS values. If interpolation is too complex, use opacity/layer approach or approximate formulas.
+
+============================================================
+ACCESSIBILITY / UX
+============================================================
+
+- Filter buttons need accessible labels.
+- Selected filter should be clear.
+- Intensity slider needs label.
+- Apply/Cancel buttons must be reachable.
+- Video preview should not autoplay with sound.
+- Large media should show processing state:
+  “Applying filter…”
+- Do not freeze UI without feedback.
+
+============================================================
+PERFORMANCE
+============================================================
+
+- Avoid rendering full 4K images at full size.
+- Downscale before/while applying filter.
+- Use canvas max dimension based on target:
+  Highlights: 1080 max side
+  Postcards: 1080 max side
+  thumbnails: 512 or lower
+- Revoke object URLs.
+- Debounce intensity preview if needed.
+- For video, do not attempt heavy frame-by-frame processing unless supported.
+
+============================================================
+TESTS / VERIFICATION
+============================================================
+
+Test:
+1. Upload photo highlight, apply Golden Hour, post.
+2. Upload photo postcard, apply Vintage Postcard, post.
+3. Upload video highlight under 10 seconds, apply City Lights, post.
+4. Upload video postcard under 10 seconds, apply Beach Day, post.
+5. Upload video over 10 seconds, confirm rejection.
+6. Take live photo from camera, apply filter, post.
+7. Record live video, apply filter, post.
+8. Reset to Original.
+9. Adjust intensity to 0 and 100.
+10. Old posts without filters still render.
+11. Highlight viewer displays filtered media.
+12. Postcard feed/detail displays filtered media.
+13. Mobile editor does not overlap bottom nav.
+14. Build passes.
+15. TypeScript passes.
+16. No console errors.
+
+============================================================
+FINAL REPORT
+============================================================
+
+Return:
+1. Files created
+2. Files modified
+3. Filter presets added
+4. Media editor component added
+5. Photo filter render implementation
+6. Video filter metadata/playback implementation
+7. Highlight integration
+8. Postcard integration
+9. Database/API fields added
+10. Camera/gallery support status
+11. Tests run
+12. TODOs
+
+Final result:
+Travel Buddy users can apply custom travel-style filters to photos and 10-second videos before posting Highlights/Stories or Postcards, with photo filters rendered into the image and video filters previewed/stored as metadata for playback.

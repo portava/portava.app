@@ -38,6 +38,9 @@ export interface PostRow {
   commentCount: number;
   shareCount: number;
   likedByMe: boolean;
+  canLike: boolean;
+  canComment: boolean;
+  canShare: boolean;
 }
 
 export type PostErrorKind =
@@ -78,6 +81,9 @@ function mapPost(r: any): PostRow {
     commentCount: r.commentCount ?? r.comment_count ?? 0,
     shareCount: r.shareCount ?? r.share_count ?? 0,
     likedByMe: r.likedByMe ?? false,
+    canLike: r.canLike ?? (r.visibility === 'public'),
+    canComment: r.canComment ?? (r.visibility === 'public'),
+    canShare: r.canShare ?? (r.visibility === 'public'),
   };
 }
 
