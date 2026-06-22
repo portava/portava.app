@@ -1,27 +1,27 @@
 /**
  * PlanPickerController — global "Add to Trip Plan" flow.
  *
- * Call `usePlanPicker().open(source)` from any card to:
- *   1. Show the user's real trips in a bottom-sheet picker.
- *   2. On selection, call the real plan API:
- *        - type === 'meetup'  → addMeetupToPlan (dedicated meetup endpoint)
- *        - all other types   → addPlaceToPlan  (dedicated place-copy endpoint),
- *                              fallback to createPlanItem on 404 (stub/mock IDs)
- *   3. Guard duplicates (409 → "Already added ✓" inline + toast).
- *   4. Toast on success.
+ * Two-step sheet:
+ *   Step 1 — Pick a trip (only trips where the user has plan-edit permission)
+ *   Step 2 — Optional day / time selector → Confirm
+ *
+ * Usage: call `usePlanPicker().open(source)` from any card.
+ * Track whether a source was already added with `usePlanPicker().isAdded(sourceId)`.
  */
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, {
+  createContext, useContext, useState, useCallback, useRef, useEffect, useMemo,
+} from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Check, Plus, MapPin } from 'lucide-react-native';
+import { X, Check, MapPin, ChevronLeft } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { listMyTrips } from '../services/trips';
-import { createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan';
-import type { TripRow } from '../services/trips';
+import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan';
+import type { EditableTripRow } from '../services/tripPlan';
 import type { TripPlanCategory } from '../types/models';
 import { useSession } from '../context/SessionContext';
+import { DatePickerField } from './DateTimePickerField';
 
 // ── Source descriptor ─────────────────────────────────────────────────────────
 
@@ -37,32 +37,67 @@ export interface PlanPickerSource {
 // ── Context ───────────────────────────────────────────────────────────────────
 
 type OpenFn = (source: PlanPickerSource) => void;
-const PlanPickerContext = createContext<{ open: OpenFn } | null>(null);
+
+interface PlanPickerContextValue {
+  open: OpenFn;
+  isAdded: (sourceId: string) => boolean;
+}
+
+const PlanPickerContext = createContext<PlanPickerContextValue | null>(null);
 
 // ── Category mapping ──────────────────────────────────────────────────────────
 
 function sourceToCategory(type: string): TripPlanCategory {
-  if (type === 'meetup') return 'meeting_point';
-  if (type === 'dining') return 'dining';
-  if (type === 'transport') return 'transport';
+  if (type === 'meetup')        return 'meeting_point';
+  if (type === 'dining')        return 'dining';
+  if (type === 'transport')     return 'transport';
   if (type === 'accommodation') return 'accommodation';
   return 'activity';
 }
 
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function dateToDayStr(d: Date): string {
+  const y  = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${dy}`;
+}
+
+function dateToHHMM(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function buildTimestamp(date: Date | null, time: Date | null): string | undefined {
+  if (!date || !time) return undefined;
+  return `${dateToDayStr(date)}T${dateToHHMM(time)}:00`;
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────────
+
+type Step = 'pick_trip' | 'pick_time';
 
 export function PlanPickerControllerProvider({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [source, setSource] = useState<PlanPickerSource | null>(null);
-  const [trips, setTrips] = useState<TripRow[]>([]);
+  const [step, setStep]           = useState<Step>('pick_trip');
+  const [source, setSource]       = useState<PlanPickerSource | null>(null);
+  const [trips, setTrips]         = useState<EditableTripRow[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
+  const [selectedTrip, setSelectedTrip] = useState<EditableTripRow | null>(null);
 
+  const [dayDate, setDayDate]   = useState<Date | null>(null);
+  const [startsAt, setStartsAt] = useState<Date | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+
+  // Per-source added tracking — persists across open() calls in this session
+  const [addedSourceIds, setAddedSourceIds] = useState<Set<string>>(new Set());
+
+  // Toast
   const [toast, setToast] = useState<string | null>(null);
   const toastY = useRef(new Animated.Value(80)).current;
 
@@ -74,92 +109,129 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
     }, 2500);
   }, [toastY]);
 
-  const open: OpenFn = useCallback((src) => {
-    setSource(src);
-    setAddedIds(new Set());
-    setError(null);
-    setBusyId(null);
-    setSheetOpen(true);
-  }, []);
-
+  // Load editable trips when sheet opens
   useEffect(() => {
     if (!sheetOpen || !isAuthed) return;
     setLoadingTrips(true);
-    listMyTrips()
+    fetchPlanEditableTrips()
       .then(setTrips)
       .catch(() => setTrips([]))
       .finally(() => setLoadingTrips(false));
   }, [sheetOpen, isAuthed]);
 
-  const addToTrip = useCallback(async (trip: TripRow) => {
-    if (!source) return;
-    setBusyId(trip.id);
+  const open: OpenFn = useCallback((src) => {
+    setSource(src);
+    setSelectedTrip(null);
+    setDayDate(null);
+    setStartsAt(null);
     setError(null);
+    setStep('pick_trip');
+    setSheetOpen(true);
+  }, []);
+
+  const close = useCallback(() => {
+    setSheetOpen(false);
+  }, []);
+
+  const handlePickTrip = useCallback((trip: EditableTripRow) => {
+    setSelectedTrip(trip);
+    setDayDate(null);
+    setStartsAt(null);
+    setError(null);
+    setStep('pick_time');
+  }, []);
+
+  const handleConfirm = useCallback(async () => {
+    if (!source || !selectedTrip || submitting) return;
+    setError(null);
+    setSubmitting(true);
+
     try {
       if (source.type === 'meetup') {
-        // Dedicated meetup → plan endpoint — copies only trusted fields
-        await addMeetupToPlan(source.id, trip.id);
+        await addMeetupToPlan(source.id, selectedTrip.id);
       } else {
-        // Dedicated place → plan endpoint — safe place-copy semantics
-        // Falls back to createPlanItem when the source is a mock/stub ID (404)
         try {
-          await addPlaceToPlan(source.id, trip.id);
+          await addPlaceToPlan(source.id, selectedTrip.id, {
+            dayDate:  dayDate  ? dateToDayStr(dayDate)                    : undefined,
+            startsAt: buildTimestamp(dayDate, startsAt),
+          });
         } catch (placeErr: any) {
           const msg = (placeErr.message ?? '').toLowerCase();
           if (msg.includes('404') || msg.includes('not found') || msg.includes('no place')) {
-            // Place doesn't exist in DB yet (mock/stub ID) — use generic item create
-            await createPlanItem(trip.id, {
-              title: source.title,
-              category: sourceToCategory(source.type),
-              sourceType: 'place',
-              sourceId: source.id,
+            await createPlanItem(selectedTrip.id, {
+              title:        source.title,
+              category:     sourceToCategory(source.type),
+              sourceType:   'place',
+              sourceId:     source.id,
               locationName: source.locationName ?? source.city,
+              dayDate:      dayDate  ? dateToDayStr(dayDate)              : undefined,
+              startsAt:     buildTimestamp(dayDate, startsAt),
             });
           } else {
             throw placeErr;
           }
         }
       }
-      setAddedIds((prev) => new Set(prev).add(trip.id));
-      setSheetOpen(false);
-      showToast(`Added to "${trip.title}"`);
+
+      setAddedSourceIds((prev) => {
+        const next = new Set(prev);
+        next.add(source.id);
+        return next;
+      });
+      close();
+      showToast(`Added to "${selectedTrip.title}"`);
     } catch (e: any) {
       const msg = (e.message ?? '').toLowerCase();
       if (msg.includes('duplicate') || msg.includes('409') || msg.includes('already')) {
-        // 409 duplicate — treat as "already added", not an error
-        setAddedIds((prev) => new Set(prev).add(trip.id));
-        showToast(`Already in "${trip.title}" — no duplicate added`);
-        setSheetOpen(false);
+        setAddedSourceIds((prev) => {
+          const next = new Set(prev);
+          next.add(source.id);
+          return next;
+        });
+        close();
+        showToast(`Already in "${selectedTrip.title}" — no duplicate added`);
       } else {
         setError(e.message ?? 'Could not add item. Please try again.');
       }
     } finally {
-      setBusyId(null);
+      setSubmitting(false);
     }
-  }, [source, showToast]);
+  }, [source, selectedTrip, dayDate, startsAt, submitting, close, showToast]);
+
+  const contextValue = useMemo<PlanPickerContextValue>(() => ({
+    open,
+    isAdded: (sourceId: string) => addedSourceIds.has(sourceId),
+  }), [open, addedSourceIds]);
 
   return (
-    <PlanPickerContext.Provider value={{ open }}>
+    <PlanPickerContext.Provider value={contextValue}>
       {children}
 
       <Modal
         visible={sheetOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => setSheetOpen(false)}
+        onRequestClose={close}
       >
-        <Pressable style={s.backdrop} onPress={() => setSheetOpen(false)} />
+        <Pressable style={s.backdrop} onPress={close} />
         <View style={[s.sheet, { paddingBottom: insets.bottom + space.lg }]}>
           <View style={s.grab} />
 
+          {/* Header */}
           <View style={s.head}>
+            {step === 'pick_time' ? (
+              <Pressable onPress={() => setStep('pick_trip')} hitSlop={layout.hitSlop} style={s.backBtn}>
+                <ChevronLeft size={18} color={color.ink} />
+              </Pressable>
+            ) : null}
             <Text style={s.title}>Add to Trip Plan</Text>
             <View style={{ flex: 1 }} />
-            <Pressable onPress={() => setSheetOpen(false)} hitSlop={layout.hitSlop} style={s.xBtn}>
+            <Pressable onPress={close} hitSlop={layout.hitSlop} style={s.xBtn}>
               <X size={18} color={color.ink} />
             </Pressable>
           </View>
 
+          {/* Source preview */}
           {source && (
             <View style={s.preview}>
               <View style={s.previewIcon}><MapPin size={16} color={color.onInk} /></View>
@@ -178,26 +250,24 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
             <View style={s.emptyWrap}>
               <Text style={s.emptyText}>Sign in to add items to a trip plan.</Text>
             </View>
-          ) : loadingTrips ? (
-            <ActivityIndicator color={color.signal} style={{ marginVertical: space.xl }} />
-          ) : trips.length === 0 ? (
-            <View style={s.emptyWrap}>
-              <Text style={s.emptyText}>
-                No trips yet. Create a trip first, then add items to its plan.
-              </Text>
-            </View>
-          ) : (
-            <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: space.sm }}>
-              <Text style={s.pickerLabel}>Pick a trip</Text>
-              {trips.map((trip) => {
-                const already = addedIds.has(trip.id);
-                const busy = busyId === trip.id;
-                return (
+          ) : step === 'pick_trip' ? (
+            /* ── Step 1: pick a trip ── */
+            loadingTrips ? (
+              <ActivityIndicator color={color.signal} style={{ marginVertical: space.xl }} />
+            ) : trips.length === 0 ? (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>
+                  No trips with edit access yet. Create a trip or ask the trip owner to grant you edit permission.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: space.sm }}>
+                <Text style={s.pickerLabel}>Pick a trip</Text>
+                {trips.map((trip) => (
                   <Pressable
                     key={trip.id}
                     style={({ pressed }) => [s.tripRow, pressed && { opacity: layout.pressedOpacity }]}
-                    onPress={() => addToTrip(trip)}
-                    disabled={busy || already}
+                    onPress={() => handlePickTrip(trip)}
                   >
                     <View style={s.tripIcon}><MapPin size={14} color={color.deep} /></View>
                     <View style={{ flex: 1 }}>
@@ -206,19 +276,51 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
                         <Text style={s.tripMeta} numberOfLines={1}>{trip.destinationCity}</Text>
                       ) : null}
                     </View>
-                    {busy ? (
-                      <ActivityIndicator size="small" color={color.signal} />
-                    ) : already ? (
-                      <View style={s.addedBadge}>
-                        <Check size={12} color={color.success} />
-                        <Text style={s.addedText}>Added</Text>
-                      </View>
-                    ) : (
-                      <Plus size={18} color={color.signal} />
-                    )}
                   </Pressable>
-                );
-              })}
+                ))}
+              </ScrollView>
+            )
+          ) : (
+            /* ── Step 2: day / time + confirm ── */
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.sm }}>
+              {selectedTrip && (
+                <View style={s.selectedTripChip}>
+                  <MapPin size={12} color={color.signal} />
+                  <Text style={s.selectedTripText} numberOfLines={1}>{selectedTrip.title}</Text>
+                </View>
+              )}
+
+              <Text style={s.fieldLabel}>
+                Date <Text style={s.fieldOpt}>(optional)</Text>
+              </Text>
+              <DatePickerField
+                value={dayDate}
+                onChange={setDayDate}
+                onClear={() => { setDayDate(null); setStartsAt(null); }}
+                placeholder="Select a date (optional)"
+              />
+
+              <Text style={s.fieldLabel}>
+                Time <Text style={s.fieldOpt}>(optional)</Text>
+              </Text>
+              <DatePickerField
+                mode="time"
+                value={startsAt}
+                onChange={setStartsAt}
+                onClear={() => setStartsAt(null)}
+                placeholder="Pick a time"
+              />
+
+              <Pressable
+                style={[s.confirmBtn, submitting && s.confirmBtnDisabled]}
+                onPress={handleConfirm}
+                disabled={submitting}
+              >
+                {submitting
+                  ? <ActivityIndicator size="small" color={color.onInk} />
+                  : <Text style={s.confirmBtnText}>Add to Plan</Text>
+                }
+              </Pressable>
             </ScrollView>
           )}
         </View>
@@ -237,9 +339,9 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   );
 }
 
-export function usePlanPicker() {
+export function usePlanPicker(): PlanPickerContextValue {
   const ctx = useContext(PlanPickerContext);
-  return ctx ?? { open: () => {} };
+  return ctx ?? { open: () => {}, isAdded: () => false };
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -248,12 +350,14 @@ const s = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(17,17,15,0.4)' },
   sheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: color.paper, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    backgroundColor: color.paper,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
     padding: space.lg, gap: space.md, ...shadow.float,
   },
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze },
-  head: { flexDirection: 'row', alignItems: 'center' },
+  head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { ...t.title, color: color.ink, fontSize: 19 },
+  backBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   xBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   preview: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.sm },
   previewIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
@@ -265,10 +369,17 @@ const s = StyleSheet.create({
   tripIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
   tripTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   tripMeta: { ...t.small, color: color.mute, fontSize: 11 },
-  addedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  addedText: { ...t.small, color: color.success, fontWeight: '700', fontSize: 12 },
   emptyWrap: { paddingVertical: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center' },
+
+  selectedTripChip: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: color.signal + '12', borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal + '40', paddingHorizontal: space.md, paddingVertical: 5 },
+  selectedTripText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
+  fieldLabel: { ...t.small, fontWeight: '700', color: color.ink, marginTop: 2 },
+  fieldOpt: { fontWeight: '400', color: color.mute },
+  confirmBtn: { marginTop: space.sm, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
+  confirmBtnDisabled: { opacity: 0.6 },
+  confirmBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 15 },
+
   toast: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.ink, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, ...shadow.float },
   toastText: { ...t.bodyStrong, color: color.onInk },
 });

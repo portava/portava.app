@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, ChevronRight, Bookmark, Navigation } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
+import { usePlanPicker } from '../PlanPickerController';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 
 interface PlaceCardProps {
@@ -14,6 +15,8 @@ interface PlaceCardProps {
 export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
   const [saved, setSaved] = useState(false);
   const accent = categoryColor(place.category);
+  const { isAdded } = usePlanPicker();
+  const alreadyAdded = isAdded(place.id);
 
   useEffect(() => {
     isSaved(place.id).then(setSaved).catch(() => {});
@@ -92,12 +95,22 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
         {/* Action row */}
         <View style={styles.actionRow}>
           <Pressable
-            style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
-            onPress={onAddToPlan}
+            style={({ pressed }) => [
+              styles.actionBtn,
+              alreadyAdded && styles.actionBtnAdded,
+              !alreadyAdded && pressed && { opacity: 0.7 },
+            ]}
+            onPress={alreadyAdded ? undefined : onAddToPlan}
+            disabled={alreadyAdded}
             hitSlop={6}
           >
-            <Plus size={14} color={color.signal} />
-            <Text style={[styles.actionText, { color: color.signal }]}>Plan</Text>
+            {alreadyAdded
+              ? <Check size={14} color={color.deep} />
+              : <Plus size={14} color={color.signal} />
+            }
+            <Text style={[styles.actionText, { color: alreadyAdded ? color.deep : color.signal }]}>
+              {alreadyAdded ? 'Added ✓' : 'Plan'}
+            </Text>
           </Pressable>
 
           {(place.lat != null || place.name) && (
@@ -261,6 +274,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.sm,
     backgroundColor: color.haze,
+  },
+  actionBtnAdded: {
+    opacity: 0.65,
   },
   actionText: {
     ...t.stamp,

@@ -12,16 +12,17 @@ import {
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, MapPin, CalendarClock, Users, Check, ThumbsUp, ThumbsDown,
+  ArrowLeft, MapPin, CalendarClock, Check, ThumbsUp, ThumbsDown,
   Minus, Plus, Trophy, Pencil, X,
 } from 'lucide-react-native';
 import {
   getMeetup, rsvpMeetup, voteTimeOption, confirmTime,
-  addMeetupToTripPlan, cancelMeetup, updateMeetup,
+  cancelMeetup, updateMeetup,
   type MeetupDetail, type TimeOptionVotes, type VoteValue, type RsvpStatus, type TimeBlock,
 } from '../../src/services/meetups';
 import { DatePickerField } from '../../src/components/DateTimePickerField';
 import { useSession } from '../../src/context/SessionContext';
+import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
@@ -117,6 +118,7 @@ export default function MeetupScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
+  const { open: openPlanPicker, isAdded } = usePlanPicker();
 
   const [meetup, setMeetup] = useState<MeetupDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -255,17 +257,14 @@ export default function MeetupScreen() {
     ]);
   }
 
-  async function handleAddToTrip() {
-    if (!meetup?.tripId || !id || actioning) return;
-    setActioning('add_to_plan');
-    const res = await addMeetupToTripPlan(id, meetup.tripId);
-    setActioning(null);
-    if (res.ok) {
-      if (res.data?.idempotent) Alert.alert('Already added', 'This meetup is already in the trip plan.');
-      else Alert.alert('Added!', 'Meetup has been added to the trip plan.');
-    } else {
-      Alert.alert('Error', res.message ?? 'Could not add to trip plan');
-    }
+  function handleAddToTrip() {
+    if (!meetup || !id) return;
+    openPlanPicker({
+      id,
+      type:         'meetup',
+      title:        meetup.title,
+      locationName: meetup.locationName ?? undefined,
+    });
   }
 
   async function handleCancel() {
@@ -608,18 +607,20 @@ export default function MeetupScreen() {
           </View>
         ) : null}
 
-        {/* Add to trip plan */}
-        {meetup.tripId && !isCancelled && (
+        {/* Add to trip plan — only for confirmed meetups */}
+        {meetup.status === 'confirmed' && isAuthed && (
           <Pressable
-            style={[s.addPlanBtn, actioning === 'add_to_plan' && { opacity: 0.6 }]}
-            onPress={handleAddToTrip}
-            disabled={actioning === 'add_to_plan'}
+            style={[s.addPlanBtn, isAdded(meetup.id) && s.addPlanBtnAdded]}
+            onPress={isAdded(meetup.id) ? undefined : handleAddToTrip}
+            disabled={isAdded(meetup.id)}
           >
-            {actioning === 'add_to_plan'
-              ? <ActivityIndicator size="small" color={color.onInk} />
+            {isAdded(meetup.id)
+              ? <Check size={16} color={color.onInk} />
               : <Plus size={16} color={color.onInk} />
             }
-            <Text style={s.addPlanBtnText}>Add to Trip Plan</Text>
+            <Text style={s.addPlanBtnText}>
+              {isAdded(meetup.id) ? 'In Plan ✓' : 'Add to Trip Plan'}
+            </Text>
           </Pressable>
         )}
 
@@ -700,6 +701,7 @@ const s = StyleSheet.create({
   voteHint: { ...t.small, color: color.faint, fontSize: 11, marginTop: 4 },
 
   addPlanBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
+  addPlanBtnAdded: { backgroundColor: color.deep, opacity: 0.75 },
   addPlanBtnText: { ...t.bodyStrong, color: color.onInk },
   linkBtn: { alignItems: 'center', paddingVertical: space.sm },
   linkBtnText: { ...t.bodyStrong, color: color.signal },

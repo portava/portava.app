@@ -19,7 +19,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 
 const router = Router();
@@ -765,20 +765,10 @@ router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const { tripId } = parsed.data;
 
-  // Must be trip owner or member
-  const { data: membership } = await client
-    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).in("role", ["owner", "member"]).maybeSingle();
-  if (!membership) { sendError(res, "not_member", "Not an accepted trip member"); return; }
-
-  // Only owner/admin adds to plan
-  if ((membership as any).role !== "owner") {
-    const { data: ownerRow } = await client
-      .from("trip_members").select("user_id").eq("trip_id", tripId).eq("role", "owner").maybeSingle();
-    if ((ownerRow as any)?.user_id !== user.id) {
-      sendError(res, "forbidden", "Only the trip owner can add meetups to the plan");
-      return;
-    }
-  }
+  // Caller must have plan-edit permission on the target trip
+  const canEdit = await canEditPlan(client, tripId, user.id);
+  if (canEdit === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!canEdit) { sendError(res, "forbidden", "You do not have permission to add items to this trip's plan"); return; }
 
   const { data: meetup } = await client
     .from("meetups").select("id, title, starts_at, location_name, status, trip_id, visibility").eq("id", meetupId).maybeSingle();

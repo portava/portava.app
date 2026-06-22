@@ -174,6 +174,26 @@ export async function reorderPlanItem(
   }
 }
 
+// ── Editable trips ─────────────────────────────────────────────────────────────
+
+export interface EditableTripRow {
+  id: string;
+  title: string;
+  destinationCity: string;
+  destinationCountry: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  coverUrl: string | null;
+}
+
+export async function fetchPlanEditableTrips(): Promise<EditableTripRow[]> {
+  if (!isSupabaseConfigured) return [];
+  const res = await authedFetch(`${apiBase()}/api/me/plan-editable-trips`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.trips ?? []) as EditableTripRow[];
+}
+
 export async function addMeetupToPlan(meetupId: string, tripId: string): Promise<TripPlanItem> {
   const res = await authedFetch(`${apiBase()}/api/meetups/${meetupId}/add-to-trip-plan`, {
     method: 'POST',

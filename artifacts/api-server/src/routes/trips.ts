@@ -469,6 +469,80 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   res.status(200).json({ status: "declined", tripId });
 });
 
+/* ===========================================================================
+ * GET /me/plan-editable-trips  — trips where caller has plan-edit permission
+ * ===========================================================================
+ * Returns only trips where the calling user can add/edit plan items.
+ * Respects plan_edit_permission: owner_only | all_members | specific_members.
+ */
+router.get("/me/plan-editable-trips", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Get all trip memberships for this user (owner or member)
+  const { data: memberRows, error: memErr } = await sc
+    .from("trip_members")
+    .select("trip_id, role")
+    .eq("user_id", user.id)
+    .in("role", ["owner", "member"]);
+
+  if (memErr) { sendError(res, "db_error", memErr.message); return; }
+  if (!memberRows || memberRows.length === 0) { res.json({ trips: [] }); return; }
+
+  const tripIds = memberRows.map((r: any) => r.trip_id as string);
+
+  // Fetch trip details including plan_edit_permission
+  const { data: trips, error: tripsErr } = await sc
+    .from("trips")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, plan_edit_permission")
+    .in("id", tripIds);
+
+  if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
+  if (!trips || trips.length === 0) { res.json({ trips: [] }); return; }
+
+  // Collect plan_editors for trips with specific_members permission
+  const specificIds = trips
+    .filter((t: any) => t.plan_edit_permission === "specific_members")
+    .map((t: any) => t.id as string);
+
+  const editorMap: Record<string, string[]> = {};
+  if (specificIds.length > 0) {
+    const { data: editorRows } = await sc
+      .from("plan_editors")
+      .select("trip_id, user_id")
+      .in("trip_id", specificIds);
+    for (const e of editorRows ?? []) {
+      const eid = (e as any).trip_id as string;
+      if (!editorMap[eid]) editorMap[eid] = [];
+      editorMap[eid].push((e as any).user_id as string);
+    }
+  }
+
+  const editable = (trips as any[]).filter((trip) => {
+    if (trip.owner_id === user.id) return true;
+    const perm: string = trip.plan_edit_permission ?? "all_members";
+    if (perm === "all_members") return true;
+    if (perm === "owner_only")  return false;
+    return (editorMap[trip.id] ?? []).includes(user.id);
+  });
+
+  res.json({
+    trips: editable.map((t: any) => ({
+      id:                 t.id,
+      title:              t.title,
+      destinationCity:    t.destination_city,
+      destinationCountry: t.destination_country ?? null,
+      startDate:          t.start_date ?? null,
+      endDate:            t.end_date ?? null,
+      coverUrl:           t.cover_url ?? null,
+    })),
+  });
+});
+
 // ── Zod schemas for plan items ────────────────────────────────────────────────
 
 const UUID = /^[0-9a-f-]{36}$/i;
