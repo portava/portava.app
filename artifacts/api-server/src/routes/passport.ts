@@ -339,14 +339,17 @@ router.get("/users/:username/profile", async (req, res) => {
     return;
   }
 
-  const [{ count: tripCount }, { count: stampCount }] = await Promise.all([
+  const [tripResult, stampResult] = await Promise.all([
     sc
       ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id)
-      : Promise.resolve({ count: 0 }),
+      : Promise.resolve({ count: 0, error: null }),
     sc
       ? sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false)
-      : Promise.resolve({ count: 0 }),
+      : Promise.resolve({ count: 0, error: null }),
   ]);
+  const tripCount = tripResult.count;
+  // PGRST205 = stamps table not yet migrated — treat as 0
+  const stampCount = (stampResult as any).error?.code === "PGRST205" ? 0 : stampResult.count;
 
   res.status(200).json({
     id: profile.id,
@@ -383,6 +386,11 @@ router.get("/me/stamps", async (req, res) => {
     .order("first_earned_at", { ascending: false });
 
   if (error) {
+    // PGRST205 = table not found in schema cache (migration pending) — return empty gracefully
+    if ((error as any).code === "PGRST205") {
+      res.status(200).json({ stamps: [] });
+      return;
+    }
     req.log.error({ err: error }, "Failed to load stamps");
     sendError(res, "db_error", error.message);
     return;

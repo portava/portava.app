@@ -636,7 +636,26 @@ router.get('/me/unread-counts', async (req, res) => {
       .maybeSingle(),
   ]);
 
-  const { data: memberships, error: mErr } = membershipsResult;
+  let { data: memberships, error: mErr } = membershipsResult;
+
+  // Migration 0016 adds last_read_at to message_thread_members. If it hasn't
+  // been applied yet (pg error 42703 = undefined column), fall back to a query
+  // without it — every thread is treated as potentially unread.
+  if (mErr && (mErr as any).code === '42703') {
+    const fallback = await sc
+      .from('message_thread_members')
+      .select('thread_id')
+      .eq('user_id', user.id)
+      .is('left_at', null);
+    if (fallback.error) {
+      req.log.error({ err: fallback.error }, 'unread-counts membership query failed');
+      sendError(res, 'db_error', fallback.error.message);
+      return;
+    }
+    memberships = (fallback.data ?? []).map((r) => ({ ...r, last_read_at: null }));
+    mErr = null;
+  }
+
   if (mErr) {
     req.log.error({ err: mErr }, 'unread-counts membership query failed');
     sendError(res, 'db_error', mErr.message);
@@ -652,6 +671,7 @@ router.get('/me/unread-counts', async (req, res) => {
   if (threadIds.length > 0) {
     const readAtByThread: Record<string, string | null> = {};
     for (const m of memberships ?? []) {
+      // last_read_at may be absent if migration 0016 is pending; default null
       readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
     }
 
