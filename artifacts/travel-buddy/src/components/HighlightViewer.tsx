@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
-import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus } from 'lucide-react-native';
+import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -28,9 +28,10 @@ import {
   toggleHighlightLike,
   replyToHighlight,
   reportHighlight,
+  deleteHighlight,
 } from '../services/highlights';
 import { markHighlightsViewed } from '../services/messaging';
-import { markViewed } from '../hooks/useHighlightRingState';
+import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState';
 import { HighlightViewersSheet } from './HighlightViewersSheet';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -61,6 +62,7 @@ export function HighlightViewer({
   const [index, setIndex] = useState(startIndex);
   const [progress, setProgress] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [localHighlights, setLocalHighlights] = useState<Highlight[]>(highlights);
   const [likeMap, setLikeMap] = useState<Record<string, { liked: boolean; count: number }>>({});
   const [viewersOpen, setViewersOpen] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
@@ -71,13 +73,14 @@ export function HighlightViewer({
   // goNextRef lets the stable handleVideoStatus callback call the latest goNext
   const goNextRef = useRef<() => void>(() => {});
 
-  const current = highlights[index];
+  const current = localHighlights[index];
   const isOwner = current?.ownerId === currentUserId;
   const isVideo = (current?.mediaType ?? '').startsWith('video/');
 
   // Reset when visible/startIndex changes; mark all circle highlights read when viewer opens.
   useEffect(() => {
     if (visible) {
+      setLocalHighlights(highlights);
       setIndex(startIndex);
       setProgress(0);
       setPaused(false);
@@ -144,7 +147,7 @@ export function HighlightViewer({
   }, []);
 
   function goNext() {
-    if (index < highlights.length - 1) {
+    if (index < localHighlights.length - 1) {
       const next = index + 1;
       setIndex(next);
       setProgress(0);
@@ -152,6 +155,38 @@ export function HighlightViewer({
     } else {
       onClose();
     }
+  }
+
+  async function handleDelete() {
+    if (!current || !isOwner) return;
+    Alert.alert(
+      'Delete Highlight',
+      'Remove this highlight? This can\u2019t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const ownerId = current.ownerId;
+            const result = await deleteHighlight(current.id);
+            if (!result.ok) {
+              Alert.alert('Could not delete', result.message ?? 'Please try again.');
+              return;
+            }
+            invalidateHighlightCache(ownerId);
+            const remaining = localHighlights.filter((h) => h.id !== current.id);
+            if (remaining.length === 0) {
+              onClose();
+            } else {
+              setLocalHighlights(remaining);
+              setIndex((i) => Math.min(i, remaining.length - 1));
+              setProgress(0);
+            }
+          },
+        },
+      ],
+    );
   }
 
   function goPrev() {
@@ -246,7 +281,7 @@ export function HighlightViewer({
 
         {/* Progress bars */}
         <View style={[s.progressRow, { marginTop: insets.top + 8 }]}>
-          {highlights.map((h, i) => (
+          {localHighlights.map((h, i) => (
             <View key={h.id} style={s.progressTrack}>
               <View
                 style={[
@@ -347,6 +382,12 @@ export function HighlightViewer({
               <Pressable onPress={() => setViewersOpen(true)} style={s.actionBtn}>
                 <Eye size={22} color="#fff" />
                 <Text style={s.actionCount}>{current.viewCount}</Text>
+              </Pressable>
+            )}
+
+            {isOwner && (
+              <Pressable onPress={handleDelete} style={s.actionBtn} hitSlop={HIT_SLOP}>
+                <Trash2 size={20} color="rgba(255,255,255,0.7)" />
               </Pressable>
             )}
 
