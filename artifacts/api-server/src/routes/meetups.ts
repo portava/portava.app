@@ -297,19 +297,19 @@ router.get("/meetups/:meetupId", async (req, res) => {
   const isCreator = meetup.creator_id === user.id;
 
   // Fetch creator profile + going attendee profiles in parallel
-  let creator: { id: string; displayName: string | null; avatarUrl: string | null } | null = null;
+  let creator: { id: string; handle: string | null; displayName: string | null; avatarUrl: string | null } | null = null;
   let goingAttendees: Array<{ id: string; handle: string | null; displayName: string | null; avatarUrl: string | null }> = [];
   const sc = getServiceClient();
   if (sc) {
     const [creatorResult, goingResult] = await Promise.all([
-      sc.from("profiles").select("id, name, avatar_url").eq("id", meetup.creator_id).maybeSingle(),
+      sc.from("profiles").select("id, handle, name, avatar_url").eq("id", meetup.creator_id).maybeSingle(),
       goingIds.length > 0
         ? sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingIds)
         : Promise.resolve({ data: [] }),
     ]);
     if (creatorResult.data) {
       const cp = creatorResult.data as any;
-      creator = { id: cp.id, displayName: cp.name ?? null, avatarUrl: cp.avatar_url ?? null };
+      creator = { id: cp.id, handle: (cp.handle as string | null) ?? null, displayName: cp.name ?? null, avatarUrl: cp.avatar_url ?? null };
     }
     goingAttendees = ((goingResult as any).data ?? []).map((p: any) => ({
       id:          p.id as string,

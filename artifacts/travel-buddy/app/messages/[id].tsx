@@ -339,12 +339,16 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
 
       {/* Creator row — shown once getMeetup() resolves */}
       {creator !== undefined ? (
-        <View style={mc.creatorRow}>
+        <Pressable
+          style={mc.creatorRow}
+          onPress={() => { if (creator?.handle) router.push(`/u/${creator.handle}` as any); }}
+          disabled={!creator?.handle}
+        >
           <CreatorAvatar creator={creator} />
           <Text style={mc.creatorText} numberOfLines={1}>
             {creator?.displayName ?? 'Someone'} planned a meetup
           </Text>
-        </View>
+        </Pressable>
       ) : null}
 
       <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>

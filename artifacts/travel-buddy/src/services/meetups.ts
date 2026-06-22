@@ -48,6 +48,7 @@ export interface MeetupCounts { going: number; maybe: number; declined: number; 
 
 export interface MeetupCreator {
   id: string;
+  handle: string | null;
   displayName: string | null;
   avatarUrl: string | null;
 }
