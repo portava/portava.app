@@ -8,6 +8,9 @@ import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { useRequestCount } from '../../src/hooks/useRequests';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
+import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
+import { HighlightViewer } from '../../src/components/HighlightViewer';
+import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
 import { CompactStatsRow } from '../../src/components/CompactStatsRow';
@@ -36,6 +39,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, loading, error, reload } = usePassport();
+  const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<Tab>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -43,6 +47,11 @@ export default function PassportScreen() {
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const insets = useSafeAreaInsets();
+
+  // Own highlight ring state
+  const ownRingState = useHighlightRingState(ownUserId);
+  const hasOwnHighlights = ownRingState?.hasActive ?? false;
+  const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
 
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
 
@@ -102,49 +111,71 @@ export default function PassportScreen() {
       lookingFor: [], comfortLevel: null, availabilityTags: [],
       planningStyle: null, publicSocialLinks: {}, preferredLanguage: null,
     };
-    return <PassportContent
-      profile={fallbackProfile}
-      postcards={[]}
-      stamps={mock.stamps}
-      trips={[]}
-      tab={tab}
-      setTab={setTab}
-      menuOpen={menuOpen}
-      setMenuOpen={setMenuOpen}
-      settingsOpen={settingsOpen}
-      setSettingsOpen={setSettingsOpen}
-      settingsSection={settingsSection}
-      openSettings={openSettings}
-      actions={actions}
-      handleSaved={handleSaved}
-      handleEditProfile={handleEditProfile}
-      handleViewAsPublic={handleViewAsPublic}
-      reload={reload}
-      insets={insets}
-    />;
+    return (
+      <View style={{ flex: 1 }}>
+        <PassportContent
+          profile={fallbackProfile}
+          postcards={[]}
+          stamps={mock.stamps}
+          trips={[]}
+          tab={tab}
+          setTab={setTab}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          settingsOpen={settingsOpen}
+          setSettingsOpen={setSettingsOpen}
+          settingsSection={settingsSection}
+          openSettings={openSettings}
+          actions={actions}
+          handleSaved={handleSaved}
+          handleEditProfile={handleEditProfile}
+          handleViewAsPublic={handleViewAsPublic}
+          reload={reload}
+          insets={insets}
+          hasHighlights={hasOwnHighlights}
+          onHighlightRingPress={() => setHighlightViewerOpen(true)}
+        />
+        <HighlightViewer
+          visible={highlightViewerOpen}
+          highlights={ownRingState?.highlights ?? []}
+          currentUserId={ownUserId ?? undefined}
+          onClose={() => setHighlightViewerOpen(false)}
+        />
+      </View>
+    );
   }
 
   return (
-    <PassportContent
-      profile={profile}
-      postcards={localPostcards}
-      stamps={stamps}
-      trips={trips}
-      tab={tab}
-      setTab={setTab}
-      menuOpen={menuOpen}
-      setMenuOpen={setMenuOpen}
-      settingsOpen={settingsOpen}
-      setSettingsOpen={setSettingsOpen}
-      settingsSection={settingsSection}
-      openSettings={openSettings}
-      actions={actions}
-      handleSaved={handleSaved}
-      handleEditProfile={handleEditProfile}
-      handleViewAsPublic={handleViewAsPublic}
-      reload={reload}
-      insets={insets}
-    />
+    <View style={{ flex: 1 }}>
+      <PassportContent
+        profile={profile}
+        postcards={localPostcards}
+        stamps={stamps}
+        trips={trips}
+        tab={tab}
+        setTab={setTab}
+        menuOpen={menuOpen}
+        setMenuOpen={setMenuOpen}
+        settingsOpen={settingsOpen}
+        setSettingsOpen={setSettingsOpen}
+        settingsSection={settingsSection}
+        openSettings={openSettings}
+        actions={actions}
+        handleSaved={handleSaved}
+        handleEditProfile={handleEditProfile}
+        handleViewAsPublic={handleViewAsPublic}
+        reload={reload}
+        insets={insets}
+        hasHighlights={hasOwnHighlights}
+        onHighlightRingPress={() => setHighlightViewerOpen(true)}
+      />
+      <HighlightViewer
+        visible={highlightViewerOpen}
+        highlights={ownRingState?.highlights ?? []}
+        currentUserId={ownUserId ?? undefined}
+        onClose={() => setHighlightViewerOpen(false)}
+      />
+    </View>
   );
 }
 
@@ -152,6 +183,7 @@ function PassportContent({
   profile, postcards, stamps, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
   settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
+  hasHighlights, onHighlightRingPress,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -171,6 +203,8 @@ function PassportContent({
   handleViewAsPublic: () => void;
   reload: () => void;
   insets: { top: number; bottom: number };
+  hasHighlights?: boolean;
+  onHighlightRingPress?: () => void;
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { count: requestCount, reload: reloadCount } = useRequestCount();
@@ -193,8 +227,10 @@ function PassportContent({
         <PassportHero
           profile={profile}
           isOwner
+          hasHighlights={hasHighlights}
           onMenuPress={() => setMenuOpen(true)}
           onAvatarPress={() => openSettings('profile')}
+          onHighlightRingPress={onHighlightRingPress}
         />
 
         {/* Compact stats row */}

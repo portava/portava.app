@@ -136,7 +136,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
       height: a.height,
       type: a.type,
     };
-    const v = validateMedia(picked);
+    const v = validateMedia(picked, { maxVideoDurationSeconds: 10 });
     if (!v.ok) { setError(v.message); return; }
 
     setMediaUri(a.uri);

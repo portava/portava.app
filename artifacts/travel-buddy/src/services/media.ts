@@ -50,7 +50,15 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-export function validateMedia(media: PickedMedia): { ok: true } | { ok: false; kind: MediaErrorKind; message: string } {
+export interface ValidateMediaOptions {
+  /** Maximum allowed video duration in seconds. Applies to highlights (10s) and video postcards (10s). */
+  maxVideoDurationSeconds?: number;
+}
+
+export function validateMedia(
+  media: PickedMedia,
+  opts?: ValidateMediaOptions,
+): { ok: true } | { ok: false; kind: MediaErrorKind; message: string } {
   const mime = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
   const isImage = ALLOWED_IMAGE_TYPES.includes(mime);
   const isVideo = ALLOWED_VIDEO_TYPES.includes(mime);
@@ -61,6 +69,16 @@ export function validateMedia(media: PickedMedia): { ok: true } | { ok: false; k
     const max = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
     if (media.fileSize > max) {
       return { ok: false, kind: 'too_large', message: `File too large (${Math.round(media.fileSize / 1024 / 1024)}MB; max ${Math.round(max / 1024 / 1024)}MB)` };
+    }
+  }
+  if (isVideo && opts?.maxVideoDurationSeconds != null) {
+    const duration = (media as any).duration as number | null | undefined;
+    if (duration != null && duration > opts.maxVideoDurationSeconds) {
+      return {
+        ok: false,
+        kind: 'too_large',
+        message: `Highlights and video Postcards can be up to ${opts.maxVideoDurationSeconds} seconds.`,
+      };
     }
   }
   return { ok: true };

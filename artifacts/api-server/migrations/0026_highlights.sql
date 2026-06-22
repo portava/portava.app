@@ -45,16 +45,40 @@ CREATE POLICY "highlights_update_own" ON highlights
   FOR UPDATE TO authenticated
   USING (owner_id = auth.uid());
 
--- Any authenticated user can see active, non-deleted, public highlights
--- (visibility-level filtering happens in the application layer)
+-- Visibility-enforced SELECT policy.
+-- Clients may query Supabase directly, so we enforce all tiers in SQL.
+-- 'public'/'travelers_nearby' — any authenticated user (not blocked by owner)
+-- 'circle_only'              — viewer must be in the owner's circle_memberships
+-- 'trip_only'                — viewer and owner must share at least one trip
+-- 'private'                  — only the owner
 CREATE POLICY "highlights_select_active" ON highlights
   FOR SELECT TO authenticated
   USING (
     deleted_at IS NULL
     AND expires_at > now()
+    AND NOT is_blocked(auth.uid(), owner_id)
     AND (
       owner_id = auth.uid()
-      OR visibility IN ('public', 'travelers_nearby', 'circle_only', 'trip_only')
+      OR (
+        visibility IN ('public', 'travelers_nearby')
+      )
+      OR (
+        visibility = 'circle_only'
+        AND EXISTS (
+          SELECT 1 FROM circle_memberships cm
+          WHERE cm.owner_id = highlights.owner_id
+            AND cm.member_id = auth.uid()
+        )
+      )
+      OR (
+        visibility = 'trip_only'
+        AND EXISTS (
+          SELECT 1 FROM trip_members tm1
+          JOIN trip_members tm2 ON tm1.trip_id = tm2.trip_id
+          WHERE tm1.user_id = highlights.owner_id
+            AND tm2.user_id = auth.uid()
+        )
+      )
     )
   );
 

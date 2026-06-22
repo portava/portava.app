@@ -185,7 +185,7 @@ export function UnifiedPostComposer({
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: allowVideo ? ['images', 'videos'] : ['images'],
       quality: 0.85,
-      videoMaxDuration: allowVideo ? 30 : undefined,
+      videoMaxDuration: allowVideo ? 10 : undefined,
     });
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
@@ -194,7 +194,7 @@ export function UnifiedPostComposer({
       fileName: a.fileName, fileSize: a.fileSize ?? null,
       width: a.width, height: a.height, type: a.type,
     };
-    const v = validateMedia(picked);
+    const v = validateMedia(picked, selectedType === 'share_postcard' ? { maxVideoDurationSeconds: 10 } : undefined);
     if (!v.ok) { setError(v.message); return; }
     setMedia(picked);
     if (selectedType === 'share_postcard' || selectedType === 'share_moment') setAddToPassport(true);

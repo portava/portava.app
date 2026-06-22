@@ -88,12 +88,16 @@ export function HighlightViewer({
     markHighlightViewed(current.id);
   }, [visible, current?.id]);
 
-  // Progress timer
+  // Progress timer — for videos, respect actual video_duration_seconds (capped at 10s);
+  // for images, use the default 5s dwell time.
   useEffect(() => {
     if (!visible || paused) return;
     if (intervalRef.current) clearInterval(intervalRef.current);
     setProgress(0);
-    const totalMs = ITEM_DURATION_MS;
+    const videoDurMs = isVideo && current?.videoDurationSeconds
+      ? Math.min(current.videoDurationSeconds, 10) * 1000
+      : null;
+    const totalMs = videoDurMs ?? ITEM_DURATION_MS;
     const tickMs = 50;
     intervalRef.current = setInterval(() => {
       setProgress((p) => {

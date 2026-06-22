@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays } from 'lucide-react-native';
+import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui';
@@ -86,7 +86,14 @@ function StandardCard({ post }: { post: Post }) {
         <Locator post={post} />
       </View>
       {hasMedia && (
-        <Image source={{ uri: post.media[0].url }} style={styles.stdImage} />
+        <View>
+          <Image source={{ uri: post.media[0].url }} style={styles.stdImage} />
+          {post.media[0]?.kind === 'video' && (
+            <View style={styles.playBadge}>
+              <PlayCircle size={32} color="#FFFFFF" />
+            </View>
+          )}
+        </View>
       )}
       <View style={styles.stdBody}>
         <View style={styles.stampRow}>
@@ -172,6 +179,7 @@ const styles = StyleSheet.create({
   standard: {},
   stdHead: { flexDirection: 'row', alignItems: 'center', padding: space.md, gap: space.sm },
   stdImage: { width: '100%', aspectRatio: 4 / 3, backgroundColor: color.haze },
+  playBadge: { position: 'absolute', top: '50%', left: '50%', transform: [{ translateX: -16 }, { translateY: -16 }] },
   stdBody: { padding: space.lg, gap: space.md },
 
   question: { padding: space.lg, gap: space.md },
