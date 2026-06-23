@@ -12,6 +12,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { getServiceClient } from "../lib/supabase";
 import { openai } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
@@ -87,11 +88,22 @@ Rules:
   }
 
   // CompassLocationContext — enrich prompt with city-level location context.
-  // Gated: only inject when user has location data; falls back gracefully.
+  // Feature-flagged: only build context when `compass_location_context_enabled` is on.
+  // Falls back gracefully when flag is absent, disabled, or DB is unavailable.
   let compassCtx: Awaited<ReturnType<typeof buildCompassContext>> | null = null;
   try {
-    compassCtx = await buildCompassContext(auth.client, auth.user.id);
-  } catch { /* non-fatal */ }
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: flag } = await sc
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "compass_location_context_enabled")
+        .maybeSingle();
+      if ((flag as any)?.enabled) {
+        compassCtx = await buildCompassContext(auth.client, auth.user.id);
+      }
+    }
+  } catch { /* non-fatal — degrade to no location context */ }
 
   const locationLines: string[] = [];
   if (compassCtx?.currentCity) {

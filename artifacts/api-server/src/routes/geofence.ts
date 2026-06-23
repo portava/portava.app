@@ -49,11 +49,14 @@ async function isTripMember(db: ReturnType<typeof getServiceClient>, tripId: str
 
     if ((trip as any)?.owner_id === userId) return true;
 
+    // Only accepted members (role='member') can access geofence data;
+    // invited/pending users are excluded to prevent coordinate leakage.
     const { data: member } = await db
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
+      .eq("role", "member")
       .maybeSingle();
 
     return Boolean(member);

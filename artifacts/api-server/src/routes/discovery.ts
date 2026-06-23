@@ -22,7 +22,7 @@ import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { sendError } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
-import type { DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
+import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
 
 const router = Router();
 
@@ -311,6 +311,67 @@ async function queryOverpass(
     .slice(0, MAX_FETCH);
 }
 
+// ── Composite ranking ─────────────────────────────────────────────────────────
+//
+// When a DiscoveryContext is present (authenticated caller), re-sort places
+// using a weighted composite score so that:
+//   - Verified/trusted places (from GeoZoneService) are boosted
+//   - Distance weight is dialled per mode (near_me → high, in_city → low)
+//   - Trip/vibe context elevates relevant categories
+//   - Safety-score weight lifts well-tagged places for safe_nearby mode
+//
+// PRIVACY: no exact coords are used in scoring. Distance is expressed in km
+// from the OSM element centre (already computed by queryOverpass).
+
+const MAX_DISTANCE_KM = 20; // distance normalisation ceiling
+
+function scoreWithContext(places: DiscoveryPlace[], ctx: DiscoveryContext): DiscoveryPlace[] {
+  const w = ctx.weights;
+  const verifiedSet = new Set(ctx.verifiedPlaceIds);
+
+  function score(p: DiscoveryPlace): number {
+    let s = 0;
+
+    // Distance factor (inverted — closer = higher score)
+    if (w.distance > 0 && p.distanceKm != null) {
+      const distFactor = Math.max(0, 1 - p.distanceKm / MAX_DISTANCE_KM);
+      s += w.distance * distFactor;
+    }
+
+    // Verified places boost — from GeoZoneService (curated, trust-reviewed)
+    if (w.verifiedPlaces > 0 && verifiedSet.has(p.id)) {
+      s += w.verifiedPlaces;
+    }
+
+    // Rating signal — boosts well-reviewed places slightly (consistent across modes)
+    if (p.rating != null && p.rating > 0) {
+      s += 0.15 * (p.rating / 5);
+    }
+
+    // City match — all results are already in the city, constant contribution
+    s += w.cityMatch * 0.4;
+
+    // Trip match boost — adds lift when going_soon context is active
+    if (w.tripMatch > 0) {
+      s += w.tripMatch * 0.3;
+    }
+
+    // Safety signal — prefer places with structured opening hours (proxy for legitimacy)
+    if (w.safetyScore > 0 && p.openingHours) {
+      s += w.safetyScore * 0.2;
+    }
+
+    // Vibe match — currently a constant lift per mode (trip / vibe data not local)
+    if (w.vibeMatch > 0) {
+      s += w.vibeMatch * 0.2;
+    }
+
+    return s;
+  }
+
+  return [...places].sort((a, b) => score(b) - score(a));
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 const VALID_CATEGORIES = ["for_you", "places", "food", "nightlife", "activities", "events", "beaches", "transport"];
@@ -339,8 +400,7 @@ router.get("/discovery", async (req, res) => {
 
   // Optional auth — enrich with DiscoveryLocationContext when present.
   // Never blocks unauthenticated callers; degrades gracefully.
-  let discoveryCtxLabel: string | null = null;
-  let contextRadiusKm: number | null = null;
+  let discoveryCtx: DiscoveryContext | null = null;
 
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ") && isServiceClientReady) {
@@ -365,12 +425,10 @@ router.get("/discovery", async (req, res) => {
         const currentCity    = (locState.data as any)?.city ?? null;
         const currentCountry = (locState.data as any)?.country ?? null;
 
-        const ctx = await buildDiscoveryContext({
+        discoveryCtx = await buildDiscoveryContext({
           db: sc, userId: authData.user.id, prefs, mode,
           currentCity, currentCountry,
         });
-        discoveryCtxLabel = ctx.label;
-        contextRadiusKm   = ctx.radiusKm;
       }
     } catch { /* degrade — non-fatal */ }
   }
@@ -381,7 +439,7 @@ router.get("/discovery", async (req, res) => {
     : null;
 
   // Adjust radius based on context mode (DiscoveryContext overrides when available)
-  const defaultRadius = contextRadiusKm ?? (
+  const defaultRadius = discoveryCtx?.radiusKm ?? (
     contextMode === "near_me" ? 5
     : contextMode === "safe_nearby" ? 3
     : contextMode === "going_soon" ? 15
@@ -418,8 +476,8 @@ router.get("/discovery", async (req, res) => {
   }
 
   const cityLabel = destination.split(",")[0]?.trim() ?? null;
-  // discoveryCtxLabel (from DiscoveryLocationContext) takes precedence over generic label
-  const ctxLabel  = discoveryCtxLabel ?? (contextMode ? contextModeLabel(contextMode, cityLabel) : null);
+  // discoveryCtx.label (from DiscoveryLocationContext) takes precedence over generic label
+  const ctxLabel  = discoveryCtx?.label ?? (contextMode ? contextModeLabel(contextMode, cityLabel) : null);
 
   if (cached && isFresh(cached)) {
     const filtered = applyFilters(cached.places);
@@ -442,7 +500,9 @@ router.get("/discovery", async (req, res) => {
       cache.set(key, { places, cachedAt: Date.now() });
     }
 
-    const filtered = applyFilters(places);
+    // Apply context-aware composite ranking when DiscoveryContext is available
+    const ranked  = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
+    const filtered = applyFilters(ranked);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false });
   } catch (err) {
