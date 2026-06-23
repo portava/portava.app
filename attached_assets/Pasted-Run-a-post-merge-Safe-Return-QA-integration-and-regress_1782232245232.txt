@@ -1,0 +1,251 @@
+Run a post-merge Safe Return QA, integration, and regression pass for Travel Buddy.
+
+Task #310 Safe Return has already merged successfully. This pass should verify that the merged system is stable, correctly wired, privacy-safe, and ready to connect cleanly with Task #314 Trip Crew privacy-safe location coordination and Task #324 Notifications / Real-Time Activity Center.
+
+Do not add new Safe Return features in this pass unless required to fix confirmed wiring or safety issues.
+
+Do not conflict with Task #314 or Task #324 while those agents are still working.
+
+SCOPE
+
+Verify the merged Safe Return system across:
+
+- Backend services
+- safeReturn.ts routes
+- Migration 0040_safe_return.sql
+- safe_return_admin_logs_enabled feature flag
+- Safe Return session creation
+- Safe Return check-in scheduling
+- Escalation logic
+- Trusted Circle notifications
+- Temporary location sharing
+- Admin routes
+- TripPlanSection integration
+- PlanItemSheet integration
+- circle.tsx integration
+- SafeReturnSetupSheet
+- SafeReturnStatusCard
+- MissedCheckinPrompt
+- EmergencyHelpSheet
+- SafeReturnActiveBar
+
+PHASE 1 — POST-MERGE INVENTORY
+
+Confirm the exact merged files and routes.
+
+List:
+
+- Safe Return backend service files
+- Safe Return route endpoints
+- Database tables from 0040_safe_return.sql
+- Feature flags added or seeded
+- Mobile components added
+- Screens/components where Safe Return is mounted
+- Existing tests covering Safe Return
+
+Classify each area as:
+
+1. Fully wired
+2. Partially wired
+3. Missing test coverage
+4. Privacy-sensitive
+5. Needs integration with Task #314
+6. Needs integration with Task #324
+7. Bug found
+
+PHASE 2 — BACKEND ROUTE VERIFICATION
+
+Verify every Safe Return endpoint:
+
+- Creates session correctly
+- Starts session correctly
+- Gets active session correctly
+- Extends timer correctly
+- Confirms safe correctly
+- Cancels session correctly
+- Handles missed check-in correctly
+- Starts live share correctly
+- Stops live share correctly
+- Expires live share correctly
+- Lists user history correctly
+- Enforces user ownership
+- Enforces trusted contact access
+- Enforces admin feature flag
+- Rejects unauthorized access
+
+Confirm no endpoint exposes exact GPS to unauthorized users.
+
+PHASE 3 — DATABASE / MIGRATION VERIFICATION
+
+Verify migration 0040_safe_return.sql.
+
+Confirm:
+
+- Tables exist
+- Required indexes exist
+- Foreign keys are correct
+- Status fields are constrained where appropriate
+- Created/updated timestamps exist
+- Admin logs flag is seeded TRUE
+- Safe Return session rows are linked to user/plan/trip where expected
+- Live-share rows expire correctly
+- Events/logs are created for critical actions
+
+Check for:
+
+- Missing cascade/restrict behavior
+- Orphan risk
+- Duplicate active sessions where only one should exist
+- Missing indexes for active session lookup
+- Missing indexes for admin review/log lookup
+
+PHASE 4 — PRIVACY AND SECURITY VERIFICATION
+
+Verify these rules in backend responses, not only UI:
+
+1. Exact GPS is never public.
+2. Safe Return history is private to the user.
+3. Trusted Circle alerts require opt-in.
+4. Live sharing requires opt-in.
+5. Live sharing expires automatically.
+6. User can stop live sharing anytime.
+7. Non-selected contacts cannot view live share.
+8. Host is not notified unless enabled.
+9. Trip Crew is not notified unless enabled.
+10. Admin routes are gated by safe_return_admin_logs_enabled and proper admin permissions.
+11. Missed check-in does not automatically call law enforcement.
+12. EmergencyHelpSheet only presents options; it does not auto-call or auto-message without user action.
+13. Push/system notification payloads must not include exact GPS in preview.
+14. Safe Return data does not leak into public Pulse, Discovery, Passport, or public plan surfaces.
+
+Treat any violation as high priority.
+
+PHASE 5 — MOBILE UI REGRESSION CHECK
+
+Verify the Safe Return mobile flow end-to-end.
+
+Check:
+
+- SafeReturnSetupSheet opens from TripPlanSection
+- SafeReturnSetupSheet opens from PlanItemSheet
+- SafeReturnStatusCard reflects active session state
+- SafeReturnActiveBar appears only when appropriate
+- MissedCheckinPrompt appears at the correct state
+- EmergencyHelpSheet opens correctly
+- circle.tsx integration does not expose private location
+- UI handles loading states
+- UI handles missing plan/trip gracefully
+- UI handles failed API calls gracefully
+- UI handles disabled feature flag gracefully
+- UI handles expired/cancelled sessions gracefully
+
+Confirm Safe Return does not break existing trip/plan screens.
+
+PHASE 6 — INTEGRATION SEAMS FOR TASK #314
+
+Task #314 Trip Crew privacy-safe location coordination is in progress.
+
+Do not modify #314 unless necessary, but verify Safe Return exposes clean integration seams for Trip Crew.
+
+Confirm Safe Return can provide Trip Crew with privacy-safe statuses only:
+
+- Safe Return active
+- Confirmed safe
+- Needs check-in
+- Live sharing active, only if authorized
+- No exact location unless explicitly authorized
+
+Confirm Safe Return does not force full crew notification unless user enabled notify_trip_crew_enabled.
+
+Confirm removed trip members cannot access Safe Return status or live-share data.
+
+Return any integration notes for Task #314.
+
+PHASE 7 — INTEGRATION SEAMS FOR TASK #324
+
+Task #324 Notifications / Real-Time Activity Center is in progress.
+
+Do not modify #324 unless necessary, but verify Safe Return emits clean notification events.
+
+Confirm Safe Return creates or can create events for:
+
+- Safe Return suggested
+- Safe Return timer started
+- Timer ending soon
+- Confirm safe prompt
+- Missed check-in
+- Trusted Circle alert
+- Live share started
+- Live share ending soon
+- Live share expired
+- Safe Return completed
+- Safe Return cancelled
+
+Confirm notification payloads are privacy-safe.
+
+Confirm exact GPS is not included in push previews or activity-center summaries.
+
+Return any integration notes for Task #324.
+
+PHASE 8 — TEST COVERAGE
+
+Run existing backend tests.
+
+Add or repair tests only for confirmed gaps.
+
+Required Safe Return tests:
+
+- Safe Return can be manually started.
+- Safe Return can be started from a plan.
+- Default escalation is reminder only.
+- Trusted Circle notification is not sent unless enabled.
+- Live share is not started unless enabled.
+- Confirming safe closes the session.
+- Extending timer updates timer_end_at.
+- Cancelling session prevents escalation.
+- Missed check-in triggers correct escalation behavior.
+- Live share expires automatically.
+- Expired live-share access is denied.
+- Non-recipient cannot access live share.
+- Host is not notified unless notify_host_enabled is true.
+- Trip Crew is not notified unless notify_trip_crew_enabled is true.
+- Admin routes respect safe_return_admin_logs_enabled.
+- Exact GPS does not appear in unauthorized responses.
+- Emergency prompt does not auto-call law enforcement.
+
+If mobile/UI tests exist, add smoke coverage for:
+
+- SafeReturnSetupSheet render
+- SafeReturnStatusCard render
+- MissedCheckinPrompt render
+- EmergencyHelpSheet render
+- SafeReturnActiveBar active/inactive states
+
+PHASE 9 — FINAL REPORT
+
+Return a concise report with:
+
+1. What Safe Return files/routes/components were verified
+2. What tests passed
+3. What tests were added or repaired
+4. Any privacy/security issues found
+5. Any fixes made
+6. Any integration notes for Task #314
+7. Any integration notes for Task #324
+8. Any remaining risks
+9. Whether Safe Return is ready for the full platform wiring pass
+
+ACCEPTANCE CRITERIA
+
+This pass is complete only when:
+
+- Safe Return backend tests pass.
+- Safe Return routes enforce ownership and permissions.
+- Exact GPS cannot leak through Safe Return.
+- Trusted Circle and live sharing remain opt-in.
+- Live sharing expires.
+- Mobile Safe Return UI does not break trip/plan screens.
+- Admin logs/routes are properly gated.
+- Task #314 has clean Safe Return status seams.
+- Task #324 has clean Safe Return notification seams.
+- Final report clearly states Safe Return is stable or lists exact blockers.

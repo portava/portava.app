@@ -209,6 +209,9 @@ export function TripMapPreview() {
   );
 }
 
+/* ── Trip Crew Map section ── */
+export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection';
+
 /* ── Safety / Check-In (compact stub) ── */
 export function TripSafety() {
   return (

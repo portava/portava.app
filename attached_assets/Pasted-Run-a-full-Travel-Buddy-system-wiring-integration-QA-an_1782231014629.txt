@@ -1,0 +1,491 @@
+Run a full Travel Buddy system wiring, integration, QA, and convergence pass.
+
+This pass is not for adding new feature ideas.
+
+Goal:
+Make sure every Travel Buddy feature already implemented by Replit and every feature we have already commanded is properly connected, not duplicated, not mocked in live flows, not half-wired, and not breaking existing screens.
+
+Audit first, then fix confirmed wiring issues.
+
+Do not expand into monetization, Passport Perks, paid guides, marketplace, or new feature systems during this pass.
+
+SCOPE
+
+Review and wire together:
+
+- Onboarding
+- User profile / Passport
+- Availability
+- Trips
+- Plans
+- Plan joins/approvals
+- City Pulse
+- Discovery
+- Telegraph messaging
+- Auto-translation
+- Compass AI recommendations
+- GPS / Location Intelligence Layer
+- Location privacy modes
+- Discovery GPS
+- Pulse GPS
+- Plans geofencing
+- Safe Return
+- Temporary live sharing
+- Trip Crew privacy-safe map
+- Ghost Mode
+- Passport Stamps
+- Verified location memories
+- Hidden Gems
+- Local Guides
+- Trust Score / Reliability Engine
+- Notifications / Activity Center
+- Admin controls already implemented by Replit
+- Existing Replit frontend/backend features
+
+CORE RULE
+
+Do not assume a feature works because a screen exists.
+
+For every feature, verify:
+
+- Frontend screen/component exists
+- Navigation route works
+- Backend route/API exists
+- Database table exists
+- Service/helper exists
+- State is persisted
+- Feature flag works, if present
+- Permissions are enforced
+- Privacy rules are enforced in backend, not only UI
+- Tests exist or are added
+- Mock/demo data is not used in live flows unless clearly marked
+
+PHASE 1 — FULL INVENTORY
+
+Create a complete Travel Buddy feature inventory.
+
+For each feature, classify it as:
+
+1. Fully wired
+2. UI-only
+3. Backend-only
+4. Partially wired
+5. Duplicated/conflicting
+6. Broken
+7. Missing
+8. Implemented but unsafe
+9. Mock/demo only
+10. Needs product decision
+
+For each feature, list:
+
+- Files/components
+- Backend routes
+- Database tables
+- Services/helpers
+- Feature flags
+- Current status
+- What is broken or missing
+- What needs to be wired
+
+PHASE 2 — CURRENT ARCHITECTURE MAP
+
+Map how the platform currently connects:
+
+- User → Passport
+- User → Trips
+- User → Plans
+- Plans → Discovery
+- Plans → City Pulse
+- Plans → Telegraph
+- Plans → Safe Return
+- Plans → GPS/geofencing
+- Trips → Trip Crew
+- Trips → Telegraph group chat
+- GPS → Discovery
+- GPS → Pulse
+- GPS → Plans
+- GPS → Passport Stamps
+- Compass AI → Discovery
+- Compass AI → Telegraph
+- Compass AI → Plans
+- Hidden Gems → Discovery
+- Hidden Gems → Passport
+- Hidden Gems → Compass
+- Trust Engine → Plans
+- Trust Engine → Hosting/joining restrictions
+- Notifications → every major event
+- Admin → reports/reviews/settings
+
+For each connection, identify:
+
+- Source of truth
+- API endpoint
+- Database table
+- UI consumer
+- Permission rule
+- Privacy rule
+- Whether it is working
+
+PHASE 3 — REMOVE DUPLICATION AND CONFLICTS
+
+Search for and resolve duplicate systems.
+
+Specifically check for:
+
+- Multiple user profile stores
+- Multiple Passport profile models
+- Multiple trip membership systems
+- Multiple plan/join request systems
+- Multiple message/thread systems
+- Multiple Discovery feeds
+- Multiple Pulse feeds
+- Multiple GPS/location services
+- Multiple notification systems
+- Multiple Trust Score formulas
+- Multiple Hidden Gem models
+- Multiple admin report systems
+- Old mock data still connected
+- Old screens still reachable from navigation
+- Frontend-only state pretending to be backend state
+
+For each duplicate, decide:
+
+- Keep
+- Merge
+- Delete
+- Feature-flag off
+- Deprecate safely
+
+Do not leave duplicate live paths unless clearly justified.
+
+PHASE 4 — END-TO-END FLOW TESTING AND WIRING
+
+Wire and test these core user flows end-to-end.
+
+FLOW A — New user setup
+
+- Create account/profile
+- Complete Passport basics
+- Set language
+- Set availability
+- Set preferences
+- Set location mode
+- Enter Discovery
+
+Expected result:
+User has real persisted profile data and can use the app without mock state.
+
+FLOW B — Discover and join a plan
+
+- User sees plan in Discovery or Pulse
+- Opens plan detail
+- Requests to join
+- Host accepts
+- User receives notification
+- Private meetup location is revealed only if allowed
+- User can check in if geofence is enabled
+- Attendance status updates
+
+Expected result:
+No pending/rejected/removed user can access private plan data.
+
+FLOW C — Create and host a plan
+
+- User creates plan
+- Sets location visibility
+- Sets trust requirements
+- Sets check-in rules
+- Plan appears in Discovery/Pulse where allowed
+- Join requests arrive
+- Host approves/denies
+- Host sees attendance/check-in status
+
+Expected result:
+Plan is persisted, discoverable, permissioned, and not leaking exact GPS.
+
+FLOW D — Telegraph messaging
+
+- User starts 1:1 message
+- User starts trip/group message if applicable
+- Messages persist
+- Auto-translation works when languages differ
+- Compass can suggest activity into Telegraph
+- Telegraph does not leak hidden GPS/plan data
+
+Expected result:
+Messaging works end-to-end and uses the current Telegraph system only.
+
+FLOW E — City Pulse
+
+- User views city Pulse
+- User views neighborhood Pulse
+- User views trip-city Pulse
+- User creates post
+- User selects location visibility
+- Post appears correctly
+- Reports/moderation path exists
+
+Expected result:
+Pulse never exposes exact user GPS publicly.
+
+FLOW F — GPS/location privacy
+
+- Location Off mode works
+- City-only mode works
+- Nearby mode works
+- Live during activity works
+- Trusted Circle live sharing works only when enabled
+- Ghost Mode works
+- Exact GPS is never public
+
+Expected result:
+Privacy is enforced in backend responses, not just hidden in UI.
+
+FLOW G — Safe Return
+
+- User starts Safe Return from plan
+- Timer runs
+- User confirms safe
+- User misses check-in
+- Escalation follows selected level
+- Trusted Circle is notified only if enabled
+- Live share expires
+
+Expected result:
+Safe Return is private, permissioned, and does not auto-call law enforcement.
+
+FLOW H — Trip Crew map
+
+- Accepted trip members can view crew coordination
+- Pending users cannot
+- Removed users lose access
+- Approximate statuses show
+- Exact pins show only during approved live share
+- Ghost Mode hides user status/location
+
+Expected result:
+Trip Crew location is useful but privacy-safe.
+
+FLOW I — Compass AI
+
+- Compass receives safe location context only
+- Compass recommends nearby plans/places/activities
+- Compass can suggest safer meetup options
+- Compass can recommend into Telegraph
+- Compass respects Ghost Mode/location mode
+- Compass does not expose private coordinates
+
+Expected result:
+AI cannot leak exact GPS, hidden plan location, hotel/home location, or another user’s private status.
+
+FLOW J — Passport Stamps and memories
+
+- User earns city stamp
+- User earns plan stamp
+- User earns Safe Return memory
+- User earns Hidden Gem memory
+- Suggested memory appears
+- User saves/skips
+- Visibility controls work
+
+Expected result:
+Passport shows verified memories without route history or private coordinates.
+
+FLOW K — Hidden Gems and Local Guides
+
+- User submits Hidden Gem
+- User saves Hidden Gem
+- User verifies visit if allowed
+- Hidden Gem appears in Discovery
+- Hidden Gem can be shared to Telegraph
+- Hidden Gem can create Passport memory
+- Admin/moderation path exists
+
+Expected result:
+Sensitive gems do not leak exact locations.
+
+FLOW L — Trust Score / Reliability
+
+- Trust events are recorded from plans, check-ins, Safe Return, reports, Hidden Gems, Telegraph, and admin actions
+- Trust profile recalculates
+- Public trust display is safe
+- Serious events create caps/reviews
+- Easy positive actions cannot bypass serious caps
+
+Expected result:
+Trust is useful, fair, and not gameable.
+
+FLOW M — Notifications / Activity Center
+
+- Plan approval notification works
+- Telegraph notification works
+- Safe Return notification works
+- Passport memory notification works
+- Hidden Gem notification works
+- Trust review notification works
+- Deep links route correctly
+- Preferences are respected
+
+Expected result:
+One notification system handles app events without duplicate alert logic.
+
+FLOW N — Admin controls
+
+- Admin can review reports
+- Admin can review trust cases
+- Admin can review GPS flags
+- Admin can review Safe Return logs
+- Admin can review Hidden Gems
+- Admin can manage users/settings where already implemented
+- Sensitive access is permissioned and logged
+
+Expected result:
+Admin can manage the platform without unnecessary privacy exposure.
+
+PHASE 5 — PRIVACY AND SAFETY AUDIT
+
+Verify these rules across all backend responses and UI surfaces:
+
+1. Exact GPS is never public.
+2. Public Discovery never exposes exact user pins.
+3. Public Pulse never exposes exact user coordinates.
+4. Pending users cannot see private plan meetup locations.
+5. Rejected users cannot see private plan meetup locations.
+6. Removed users immediately lose private trip/plan access.
+7. Safe Return is private by default.
+8. Trusted Circle alerts require opt-in.
+9. Live sharing is opt-in and temporary.
+10. Ghost Mode hides location/status.
+11. Compass AI receives safe context only.
+12. Telegraph recommendations do not leak private location.
+13. Passport does not show route history.
+14. Hidden Gems respect sensitivity rules.
+15. Trust Score does not publicly shame users or reveal reporter identity.
+16. Admin sensitive access is permissioned and audit logged.
+
+Any privacy issue found must be treated as high priority.
+
+PHASE 6 — FIX CONFIRMED WIRING ISSUES
+
+After the audit, fix confirmed issues in priority order:
+
+1. Broken navigation
+2. Broken authentication/user state
+3. Broken backend/API connections
+4. Mock data in live flows
+5. Privacy leaks
+6. Permission bugs
+7. Duplicate/conflicting data stores
+8. Missing persistence
+9. Broken notifications/deep links
+10. Broken tests
+11. UI polish only after logic is stable
+
+Do not add unrelated new features.
+
+Do not create a second version of a system when an existing system should be extended.
+
+Do not leave old screens connected if newer screens replace them.
+
+PHASE 7 — TEST COVERAGE
+
+Add or repair tests for:
+
+- Onboarding
+- Passport
+- Availability
+- Trips
+- Plans
+- Plan join/approval
+- Discovery
+- Pulse
+- Telegraph
+- Auto-translation
+- GPS privacy
+- Plan geofencing
+- Safe Return
+- Temporary live share
+- Trip Crew map
+- Ghost Mode
+- Compass safe context
+- Passport Stamps
+- Hidden Gems
+- Trust events/scoring
+- Notifications
+- Admin permissions
+
+Required tests:
+
+- Unit tests for services
+- API route tests
+- Permission/privacy tests
+- Integration tests for core flows
+- UI smoke tests where available
+
+PHASE 8 — FINAL QA REPORT
+
+Return a final implementation report with:
+
+1. What Replit had already implemented
+2. What was fully wired
+3. What was UI-only
+4. What was backend-only
+5. What was missing
+6. What was duplicated
+7. What was unsafe
+8. What was fixed
+9. What was feature-flagged off
+10. What tests were added
+11. What tests passed
+12. What tests failed
+13. Remaining risks
+14. Recommended next build order
+
+ACCEPTANCE CRITERIA
+
+This pass is complete only when:
+
+- Main navigation routes to current working screens.
+- Core features use real persisted backend state.
+- No live screen depends on mock/demo data unless clearly labeled.
+- Trips, Plans, Discovery, Pulse, Telegraph, Passport, Safe Return, Trip Crew, Compass, Hidden Gems, Trust, Notifications, and Admin connect to the same user/plan/trip data model.
+- Privacy rules are enforced in backend.
+- Removed users lose private access immediately.
+- Exact GPS cannot leak publicly.
+- Compass AI cannot leak private location.
+- Telegraph cannot leak private location.
+- Passport cannot leak private route/location history.
+- Notifications deep-link correctly.
+- Admin sensitive access is permissioned and logged.
+- Tests cover critical flows.
+- Final report clearly states what works and what remains.
+
+FEATURE FLAGS TO VERIFY
+
+Verify these flags or create them if missing:
+
+- gps_v2_enabled
+- pulse_geo_enabled
+- discovery_geo_enabled
+- plan_geofence_enabled
+- safe_return_enabled
+- safe_return_live_share_enabled
+- trip_crew_map_enabled
+- trip_crew_ghost_mode_enabled
+- compass_location_context_enabled
+- telegraph_recommendations_enabled
+- passport_stamps_enabled
+- passport_memories_enabled
+- hidden_gems_enabled
+- local_guides_enabled
+- trust_engine_enabled
+- notifications_enabled
+- activity_center_enabled
+- admin_hub_enabled
+
+FINAL INSTRUCTION
+
+Do not move to new Travel Buddy features until this wiring pass is complete.
+
+First make the platform coherent, connected, privacy-safe, and testable.
