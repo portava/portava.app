@@ -5,14 +5,16 @@
  * - Loads cached suggestions from AsyncStorage on mount so they survive restarts.
  * - Shows a subtle "From earlier" label while serving cached suggestions.
  * - Renders 1–2 TelegraphChatCard components.
+ * - When 3+ suggestions span 2+ categories, shows dynamic filter chips so the
+ *   user can narrow the tray in-place (category facet; OR within the facet).
  * - Shows nothing when list is empty (no spinner, no error banner).
  * - Fails silently if the API errors.
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, Animated, ScrollView, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Clock } from 'lucide-react-native';
-import { color, space, type as t, icon } from '../theme/tokens';
+import { color, space, radius, type as t, icon } from '../theme/tokens';
 import { TelegraphChatCard } from './TelegraphChatCard';
 import {
   getTelegraphSuggestions,
@@ -25,6 +27,30 @@ import {
 
 const MAX_CACHED = 10;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Show the filter chip row only once there are enough cards to be worth narrowing. */
+const MIN_SUGGESTIONS_FOR_FILTERS = 3;
+
+/** Display labels for the category facet (suggestions only carry a raw `category`). */
+const CATEGORY_LABELS: Record<string, string> = {
+  food: 'Food',
+  nightlife: 'Nightlife',
+  beach: 'Beach',
+  attraction: 'Attraction',
+  transport: 'Transport',
+  meetup: 'Meetup',
+  poll: 'Time Poll',
+  plan: 'Plan',
+  availability: 'Availability',
+  activity: 'Activity',
+};
+
+function labelFor(category: string): string {
+  return (
+    CATEGORY_LABELS[category] ??
+    category.charAt(0).toUpperCase() + category.slice(1)
+  );
+}
 
 interface CacheEntry {
   suggestions: TelegraphSuggestion[];
@@ -111,6 +137,7 @@ export function TelegraphSuggestionTray({
 }: TelegraphSuggestionTrayProps) {
   const [suggestions, setSuggestions] = useState<TelegraphSuggestion[]>([]);
   const [stale, setStale] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const prevMessage = useRef<string | undefined>(undefined);
   const opacity = useRef(new Animated.Value(0)).current;
   const hasFreshLoad = useRef(false);
@@ -173,6 +200,51 @@ export function TelegraphSuggestionTray({
       load(lastSentMessage);
     }
   }, [lastSentMessage, load]);
+
+  // Distinct categories present in the current suggestions, in first-seen order.
+  const categories = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const s of suggestions) {
+      if (!seen.has(s.category)) {
+        seen.add(s.category);
+        out.push(s.category);
+      }
+    }
+    return out;
+  }, [suggestions]);
+
+  // Drop any active filter whose category is no longer present after a reload.
+  useEffect(() => {
+    setActiveFilters((prev) => {
+      const next = prev.filter((c) => categories.includes(c));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [categories]);
+
+  // OR within the single category facet: a card matches if no filter is active
+  // or its category is one of the selected ones.
+  const visible = useMemo(() => {
+    if (activeFilters.length === 0) return suggestions;
+    const set = new Set(activeFilters);
+    return suggestions.filter((s) => set.has(s.category));
+  }, [suggestions, activeFilters]);
+
+  const showFilters =
+    categories.length >= 2 && suggestions.length >= MIN_SUGGESTIONS_FOR_FILTERS;
+  const filtersActive = activeFilters.length > 0;
+
+  function toggleFilter(category: string) {
+    setActiveFilters((prev) =>
+      prev.includes(category)
+        ? prev.filter((c) => c !== category)
+        : [...prev, category],
+    );
+  }
+
+  function clearFilters() {
+    setActiveFilters([]);
+  }
 
   async function handleDismiss(id: string) {
     const next = suggestions.filter((s) => s.id !== id);
@@ -257,7 +329,52 @@ export function TelegraphSuggestionTray({
           <Text style={styles.staleLabel}>From earlier</Text>
         </View>
       )}
-      {suggestions.map((s) => (
+      {showFilters && (
+        <View style={styles.filterSection}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterScroll}
+            contentContainerStyle={styles.filterRow}
+          >
+            {categories.map((c) => {
+              const active = activeFilters.includes(c);
+              return (
+                <Pressable
+                  key={c}
+                  onPress={() => toggleFilter(c)}
+                  hitSlop={6}
+                  style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      active ? styles.chipTextActive : styles.chipTextIdle,
+                    ]}
+                  >
+                    {labelFor(c)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+            {filtersActive && (
+              <Pressable
+                onPress={clearFilters}
+                hitSlop={6}
+                style={[styles.chip, styles.chipClear]}
+              >
+                <Text style={[styles.chipText, styles.chipClearText]}>Clear</Text>
+              </Pressable>
+            )}
+          </ScrollView>
+          {filtersActive && (
+            <Text style={styles.countBadge}>
+              {visible.length} of {suggestions.length}
+            </Text>
+          )}
+        </View>
+      )}
+      {visible.map((s) => (
         <TelegraphChatCard
           key={s.id}
           suggestion={s}
@@ -294,5 +411,55 @@ const styles = StyleSheet.create({
     ...t.stamp,
     color: color.faint,
     textTransform: 'uppercase',
+  },
+  filterSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  filterScroll: {
+    flex: 1,
+  },
+  filterRow: {
+    gap: space.xs,
+    alignItems: 'center',
+    paddingRight: space.xs,
+  },
+  chip: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+  },
+  chipIdle: {
+    backgroundColor: 'transparent',
+    borderColor: color.haze,
+  },
+  chipActive: {
+    backgroundColor: color.signal,
+    borderColor: color.signal,
+  },
+  chipClear: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    paddingHorizontal: space.xs,
+  },
+  chipText: {
+    ...t.small,
+    fontWeight: '600',
+  },
+  chipTextIdle: {
+    color: color.mute,
+  },
+  chipTextActive: {
+    color: color.onInk,
+  },
+  chipClearText: {
+    color: color.signal,
+    fontWeight: '700',
+  },
+  countBadge: {
+    ...t.stamp,
+    color: color.faint,
   },
 });
