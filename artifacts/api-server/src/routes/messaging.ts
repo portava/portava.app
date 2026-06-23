@@ -39,6 +39,7 @@ import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
+import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 
 const router = Router();
 
@@ -421,6 +422,12 @@ router.post('/users/:userId/message-request', async (req, res) => {
   }
 
   res.status(201).json({ requestId: (newReq as any).id, status: 'pending' });
+
+  // Realtime: notify the recipient a new message request arrived.
+  void publishToUsers([recipientId], {
+    type: 'request.created',
+    payload: { requestId: (newReq as any).id, senderId: user.id },
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -578,6 +585,15 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
   res.status(200).json({ status: 'accepted', threadId, requestId });
 
+  // Realtime: notify the original sender that their request was accepted and a
+  // thread now exists. Members of the (possibly new) thread get a thread.updated.
+  void publishToUsers([req_.sender_id], {
+    type: 'request.accepted',
+    threadId,
+    payload: { requestId, threadId, byUserId: user.id },
+  });
+  void publishToThread(sc, threadId, { type: 'thread.updated', payload: { threadId } });
+
   // After response: if there is a preview message, insert it as a real message and translate.
   // Only run if the preview_text was not already inserted (new thread creation path or no messages yet).
   const previewBody = typeof req_.preview_text === 'string' ? req_.preview_text.trim() : '';
@@ -629,7 +645,7 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
 
   const { data: mr } = await sc
     .from('message_requests')
-    .select('id, recipient_id, status')
+    .select('id, sender_id, recipient_id, status')
     .eq('id', requestId)
     .maybeSingle();
 
@@ -642,6 +658,14 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   await sc.from('message_requests').update({ status: 'declined', responded_at: now }).eq('id', requestId);
 
   res.status(200).json({ status: 'declined', requestId });
+
+  // Realtime: notify the original sender their request was declined.
+  if (req_.sender_id) {
+    void publishToUsers([req_.sender_id], {
+      type: 'request.declined',
+      payload: { requestId },
+    });
+  }
 });
 
 /* ---------------------------------------------------------------------------
@@ -995,6 +1019,14 @@ router.post('/threads/:threadId/read', async (req, res) => {
   }
 
   res.status(200).json({ ok: true, threadId, lastReadAt: now });
+
+  // Realtime: let other members update read receipts for this user.
+  void publishToThread(
+    sc,
+    threadId,
+    { type: 'read.updated', payload: { userId: user.id, lastReadAt: now } },
+    { excludeUserId: user.id },
+  );
 });
 
 /* ---------------------------------------------------------------------------
@@ -1307,6 +1339,9 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';
   const msgType = msgTypeRaw === 'system' ? 'system' : 'text';
   const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;
+  // Optional client-generated id used to correlate optimistic sends with the
+  // server message (echoed in the response and in the realtime event).
+  const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
   const { data: membership } = await client
     .from('message_thread_members')
@@ -1370,6 +1405,31 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     canShowOriginal: false,
     msgType: m.msg_type ?? 'text',
     subtype: m.subtype ?? null,
+    clientId,
+  });
+
+  // Realtime: notify other active members a new message landed, and bump the
+  // thread for inbox ordering. Fire-and-forget — delivery must never affect the
+  // write path (clients keep polling as a fallback).
+  void publishToThread(
+    sc,
+    threadId,
+    {
+      type: 'message.created',
+      payload: {
+        messageId: m.id,
+        senderId: m.sender_id,
+        msgType: m.msg_type ?? 'text',
+        subtype: m.subtype ?? null,
+        createdAt: m.created_at,
+        clientId,
+      },
+    },
+    { excludeUserId: user.id },
+  );
+  void publishToThread(sc, threadId, {
+    type: 'thread.updated',
+    payload: { lastMessageAt: now },
   });
 
   // Fire-and-forget: translate in background (does not block the response).
@@ -1519,6 +1579,14 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     deleted: false,
     editedAt: now,
   });
+
+  // Realtime: notify other members the message body changed.
+  void publishToThread(
+    sc,
+    threadId,
+    { type: 'message.updated', payload: { messageId, editedAt: now } },
+    { excludeUserId: user.id },
+  );
 
   // Invalidate existing translations and regenerate for updated body.
   await markTranslationsPending(sc, messageId);
@@ -1716,6 +1784,14 @@ router.post('/threads/:threadId/leave', async (req, res) => {
   if (error) { req.log.error({ err: error }, 'leave thread failed'); sendError(res, 'db_error', error.message); return; }
 
   res.status(200).json({ ok: true });
+
+  // Realtime: notify remaining members that someone left.
+  void publishToThread(
+    sc,
+    threadId,
+    { type: 'member.left', payload: { userId: user.id } },
+    { excludeUserId: user.id },
+  );
 });
 
 // ── Report thread ─────────────────────────────────────────────────────────────

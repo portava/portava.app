@@ -22,6 +22,7 @@ import {
   markHighlightsViewed,
   getThreadMessages,
   sendMessage,
+  sendTyping,
   retryTranslation,
   getMyLanguageSettings,
   updateMyLanguageSettings,
@@ -32,10 +33,24 @@ import {
   type Message,
   type LanguageSettings,
 } from '../services/messaging';
+import {
+  telegraphRealtime,
+  type TelegraphEvent,
+} from '../services/telegraphRealtimeService';
 
+// When realtime is connected we lean on pushed events and poll only as a slow
+// safety net. When realtime is unavailable the service reports 'polling' and
+// these intervals carry the full load.
 const THREAD_POLL_MS = 3_000;
 const INBOX_POLL_MS = 7_000;
 const UNREAD_POLL_MS = 15_000;
+
+/** How long a peer is shown as "typing" before we auto-clear it. */
+const TYPING_TTL_MS = 6_000;
+
+function makeClientId(): string {
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 // ── Message permission (for profile / passport) ───────────────────────────────
 
@@ -171,6 +186,21 @@ export function useMyThreads() {
     };
   }, [silentPoll]);
 
+  // Realtime: refresh the inbox immediately when a relevant event arrives.
+  useEffect(() => {
+    const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
+      if (
+        evt.type === 'message.created' ||
+        evt.type === 'thread.updated' ||
+        evt.type === 'member.left' ||
+        evt.type === 'request.accepted'
+      ) {
+        void silentPoll();
+      }
+    });
+    return unsub;
+  }, [silentPoll]);
+
   return { data, loading, error, reload };
 }
 
@@ -181,8 +211,11 @@ export function useThreadMessages(threadId: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const sendingRef = useRef(false);
+  const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const lastTypingSentRef = useRef(0);
 
   const reload = useCallback(async () => {
     if (!threadId) return;
@@ -244,22 +277,159 @@ export function useThreadMessages(threadId: string | null) {
     };
   }, [silentPoll]);
 
+  // Realtime: react to events scoped to this thread.
+  useEffect(() => {
+    if (!threadId) return;
+    const clearTyping = (uid: string) => {
+      const t = typingTimers.current.get(uid);
+      if (t) { clearTimeout(t); typingTimers.current.delete(uid); }
+      setTypingUserIds((prev) => prev.filter((id) => id !== uid));
+    };
+
+    const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
+      if (evt.threadId && evt.threadId !== threadId) return;
+
+      switch (evt.type) {
+        case 'message.created':
+        case 'message.updated':
+        case 'message.translated':
+        case 'read.updated':
+          void silentPoll();
+          break;
+        case 'typing.started': {
+          const uid = (evt.payload?.userId as string) ?? '';
+          if (!uid) break;
+          const existing = typingTimers.current.get(uid);
+          if (existing) clearTimeout(existing);
+          typingTimers.current.set(uid, setTimeout(() => clearTyping(uid), TYPING_TTL_MS));
+          setTypingUserIds((prev) => (prev.includes(uid) ? prev : [...prev, uid]));
+          break;
+        }
+        case 'typing.stopped': {
+          const uid = (evt.payload?.userId as string) ?? '';
+          if (uid) clearTyping(uid);
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    const timers = typingTimers.current;
+    return () => {
+      unsub();
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+      setTypingUserIds([]);
+    };
+  }, [threadId, silentPoll]);
+
+  /** Optimistically append a message, then reconcile with the server response. */
   const send = useCallback(
     async (body: string, opts?: { msgType?: string; subtype?: string }) => {
-      if (!threadId || !body.trim()) return;
+      const trimmed = body.trim();
+      if (!threadId || !trimmed) return;
+      const clientId = makeClientId();
+      const optimistic: Message = {
+        id: clientId,
+        clientId,
+        threadId,
+        senderId: '',
+        senderHandle: null,
+        senderName: null,
+        senderAvatarUrl: null,
+        body: trimmed,
+        deleted: false,
+        createdAt: new Date().toISOString(),
+        editedAt: null,
+        displayBody: trimmed,
+        originalBody: trimmed,
+        originalLanguage: null,
+        translated: false,
+        translationStatus: null,
+        translationLabel: null,
+        canShowOriginal: false,
+        msgType: opts?.msgType ?? 'text',
+        subtype: opts?.subtype ?? null,
+        deliveryStatus: 'sending',
+      };
+
       sendingRef.current = true;
       setSending(true);
-      const res = await sendMessage(threadId, body.trim(), opts);
+      setMessages((prev) => [...prev, optimistic]);
+
+      const res = await sendMessage(threadId, trimmed, { ...opts, clientId });
       if (res.ok && res.data) {
+        const server = res.data as Message;
         setMessages((prev) => {
-          const exists = prev.some((m) => m.id === (res.data as Message).id);
-          if (exists) return prev;
-          return [...prev, res.data as Message];
+          // Replace the optimistic placeholder; drop if the real one already
+          // arrived via realtime/poll to avoid duplicates.
+          const withoutTemp = prev.filter((m) => m.clientId !== clientId);
+          if (withoutTemp.some((m) => m.id === server.id)) return withoutTemp;
+          return [...withoutTemp, { ...server, deliveryStatus: 'sent' as const }];
         });
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+          ),
+        );
       }
       setSending(false);
       sendingRef.current = false;
       return res;
+    },
+    [threadId],
+  );
+
+  /** Resend a previously-failed optimistic message (matched by its clientId). */
+  const retrySend = useCallback(
+    async (clientId: string) => {
+      if (!threadId) return;
+      const failed = messages.find((m) => m.clientId === clientId);
+      if (!failed || !failed.body) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const } : m,
+        ),
+      );
+      const res = await sendMessage(threadId, failed.body, {
+        msgType: failed.msgType,
+        subtype: failed.subtype ?? undefined,
+        clientId,
+      });
+      if (res.ok && res.data) {
+        const server = res.data as Message;
+        setMessages((prev) => {
+          const withoutTemp = prev.filter((m) => m.clientId !== clientId);
+          if (withoutTemp.some((m) => m.id === server.id)) return withoutTemp;
+          return [...withoutTemp, { ...server, deliveryStatus: 'sent' as const }];
+        });
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+          ),
+        );
+      }
+      return res;
+    },
+    [threadId, messages],
+  );
+
+  /** Relay a typing indicator, throttled so we send at most one ping / 2 s. */
+  const notifyTyping = useCallback(
+    (isTyping: boolean) => {
+      if (!threadId) return;
+      if (!isTyping) {
+        lastTypingSentRef.current = 0;
+        void sendTyping(threadId, false);
+        return;
+      }
+      const now = Date.now();
+      if (now - lastTypingSentRef.current < 2_000) return;
+      lastTypingSentRef.current = now;
+      void sendTyping(threadId, true);
     },
     [threadId],
   );
@@ -281,7 +451,18 @@ export function useThreadMessages(threadId: string | null) {
     [],
   );
 
-  return { messages, loading, error, sending, reload, send, retry };
+  return {
+    messages,
+    loading,
+    error,
+    sending,
+    typingUserIds,
+    reload,
+    send,
+    retrySend,
+    notifyTyping,
+    retry,
+  };
 }
 
 // ── Unread counts (for tab badge) ─────────────────────────────────────────────

@@ -132,6 +132,10 @@ export interface Message {
   canShowOriginal: boolean;
   msgType: string;
   subtype: string | null;
+  /** Client-generated id for optimistic-send correlation (set locally; echoed by the server). */
+  clientId?: string | null;
+  /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
+  deliveryStatus?: 'sending' | 'sent' | 'failed';
 }
 
 export type MsgErrorKind =
@@ -377,9 +381,20 @@ export async function getThreadMessages(
 export async function sendMessage(
   threadId: string,
   body: string,
-  opts?: { msgType?: string; subtype?: string },
+  opts?: { msgType?: string; subtype?: string; clientId?: string },
 ): Promise<MsgResult<Message>> {
   return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
+}
+
+/**
+ * Relay a transient typing indicator to the other thread members. Best-effort —
+ * a failed call is silently ignored (typing is non-critical presence).
+ */
+export async function sendTyping(
+  threadId: string,
+  typing: boolean,
+): Promise<void> {
+  await apiPost(`/api/threads/${threadId}/typing`, { typing }).catch(() => undefined);
 }
 
 export async function muteThread(

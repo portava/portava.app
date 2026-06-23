@@ -21,6 +21,7 @@ import {
   languageDisplayName,
   validateTranslation,
 } from '../lib/translation';
+import { publishToUsers } from '../lib/telegraphEvents';
 
 // ── Types shared with routes ───────────────────────────────────────────────────
 
@@ -233,6 +234,12 @@ export async function translateMessageForThread(
           { messageId, recipientId, source: sourceLanguage, target: targetLanguage, provider: result.provider },
           'translation_ok',
         );
+        // Realtime: the translated text can now swap in live for this recipient.
+        publishToUsers([recipientId], {
+          type: 'message.translated',
+          threadId,
+          payload: { messageId, status: 'translated' },
+        });
       } catch (e: unknown) {
         const errCode =
           e instanceof Error ? (e.message.length < 80 ? e.message : 'translation_error') : 'unknown';

@@ -7,7 +7,7 @@
  * Translation display hook: shows translated body when available;
  * otherwise shows original_body. No-op until Task #7 populates translation rows.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getTripChat,
   getCircleChat,
@@ -18,6 +18,10 @@ import {
   type GroupThread,
   type Message,
 } from '../services/messaging';
+import {
+  telegraphRealtime,
+  type TelegraphEvent,
+} from '../services/telegraphRealtimeService';
 
 export type GroupChatState =
   | 'loading'
@@ -48,6 +52,8 @@ export function useGroupChat(
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const threadIdRef = useRef<string | null>(null);
+  threadIdRef.current = thread?.id ?? null;
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -87,6 +93,43 @@ export function useGroupChat(
   useEffect(() => {
     if (id) load();
   }, [load, id]);
+
+  // Silent refetch — merges new/updated messages without flipping to 'loading'.
+  const silentRefresh = useCallback(async () => {
+    const tid = threadIdRef.current;
+    if (!tid) return;
+    const res = await getThreadMessages(tid);
+    if (!res.ok || !res.data) return;
+    const incoming = res.data.messages ?? [];
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]));
+      let changed = false;
+      for (const m of incoming) {
+        if (!byId.has(m.id)) changed = true;
+        byId.set(m.id, m);
+      }
+      if (!changed && byId.size === prev.length) return prev;
+      return Array.from(byId.values()).sort((a, b) =>
+        a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+      );
+    });
+  }, []);
+
+  // Realtime: refresh on message events scoped to this group thread.
+  useEffect(() => {
+    const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
+      const tid = threadIdRef.current;
+      if (!tid || (evt.threadId && evt.threadId !== tid)) return;
+      if (
+        evt.type === 'message.created' ||
+        evt.type === 'message.updated' ||
+        evt.type === 'message.translated'
+      ) {
+        void silentRefresh();
+      }
+    });
+    return unsub;
+  }, [silentRefresh]);
 
   const send = useCallback(async (body: string): Promise<{ ok: boolean }> => {
     if (!thread || !body.trim()) return { ok: false };

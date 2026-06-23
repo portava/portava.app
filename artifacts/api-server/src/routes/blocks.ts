@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
+import { publishToUsers } from "../lib/telegraphEvents";
 
 const router = Router();
 
@@ -44,6 +45,13 @@ router.post("/users/:userId/block", async (req, res) => {
   ]).catch((e) => req.log.warn({ err: e }, "cleanup after block partially failed"));
 
   res.status(200).json({ blocked: true, userId: target });
+
+  // Realtime: let the blocker's other sessions refresh (threads/follow state
+  // may have changed). Not sent to the blocked user.
+  void publishToUsers([user.id], {
+    type: "user.blocked",
+    payload: { blockedId: target },
+  });
 });
 
 /* ===========================================================================
