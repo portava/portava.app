@@ -25,9 +25,9 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw,
+  RefreshCw, Clock,
 } from 'lucide-react-native';
-import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings, useMessagePermission, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
@@ -940,6 +940,18 @@ export default function TelegraphThread() {
   const defaultShowOriginal = threadShowOriginal ?? langSettings?.show_original_messages ?? false;
   const isGroupThread = threadType === 'trip' || threadType === 'circle';
 
+  // Sender-side rate-limit: check if this DM is in "waiting for reply" state.
+  // Only relevant for direct threads with a known other user.
+  const { verdict: msgVerdict } = useMessagePermission(
+    threadType === 'direct' ? (otherUserId ?? null) : null,
+  );
+  // "Waiting for reply" = the recipient requires a message request AND the
+  // current user has already sent at least one message (request is in flight).
+  const isWaitingForReply =
+    threadType === 'direct' &&
+    msgVerdict === 'requires_request' &&
+    messages.some((m) => m.senderId === userId);
+
   const headerTitle = title && title.trim() ? title : 'Chat';
 
   useEffect(() => {
@@ -1251,6 +1263,16 @@ export default function TelegraphThread() {
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
 
+      {/* Waiting-for-reply banner — shown when the user's first message is pending acceptance */}
+      {isWaitingForReply && (
+        <View style={styles.waitingBanner}>
+          <Clock size={14} color="#92400E" />
+          <Text style={styles.waitingBannerText}>
+            Waiting for reply — your message is in their requests.
+          </Text>
+        </View>
+      )}
+
       {/* Failed-send banner — sits above the composer, offers retry */}
       {sendFailed && lastSentMessage && (
         <View style={styles.failedBanner}>
@@ -1307,20 +1329,20 @@ export default function TelegraphThread() {
         </Pressable>
 
         <TextInput
-          style={styles.inputField}
-          placeholder="Write a Telegraph…"
+          style={[styles.inputField, isWaitingForReply && { opacity: 0.45 }]}
+          placeholder={isWaitingForReply ? 'Waiting for reply…' : 'Write a Telegraph…'}
           placeholderTextColor={color.faint}
           value={input}
           onChangeText={setInput}
           onSubmitEditing={handleSend}
           returnKeyType="send"
-          editable={!sending}
+          editable={!sending && !isWaitingForReply}
           multiline
         />
         <Pressable
-          style={[styles.sendBtn, (input.trim() && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled]}
+          style={[styles.sendBtn, (input.trim() && !sending && !isWaitingForReply) ? styles.sendBtnActive : styles.sendBtnDisabled]}
           onPress={handleSend}
-          disabled={!input.trim() || sending}
+          disabled={!input.trim() || sending || isWaitingForReply}
         >
           {sending ? (
             <ActivityIndicator size="small" color={color.onInk} />
@@ -1537,6 +1559,19 @@ const styles = StyleSheet.create({
 
   // Composer icon buttons (attach, meetup, discovery, ai)
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+
+  // Waiting-for-reply banner above the composer
+  waitingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: space.lg,
+    paddingVertical: 7,
+    backgroundColor: '#FFFBEB',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#FDE68A',
+  },
+  waitingBannerText: { ...t.small, color: '#92400E', flex: 1, fontSize: 11 },
 
   // Failed-send banner above the composer
   failedBanner: {
