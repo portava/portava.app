@@ -13,6 +13,7 @@ import {
   getMessagePermission,
   sendMessageRequest,
   getIncomingMessageRequests,
+  getOutgoingRequestStatus,
   acceptMessageRequest,
   declineMessageRequest,
   getMyThreads,
@@ -72,6 +73,27 @@ export function useMessagePermission(userId: string | null | undefined) {
   );
 
   return { verdict, result, loading, error, reload, send };
+}
+
+// ── Outgoing request status (for sender-side "Waiting for reply" state) ───────
+
+export function useOutgoingRequestStatus(otherUserId: string | null | undefined) {
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!otherUserId) return;
+    setLoading(true);
+    const res = await getOutgoingRequestStatus(otherUserId);
+    if (res.ok && res.data) setPending(res.data.pending);
+    setLoading(false);
+  }, [otherUserId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  return { pending, loading, reload };
 }
 
 // ── Incoming message requests (for Request Inbox) ─────────────────────────────

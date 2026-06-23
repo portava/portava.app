@@ -273,6 +273,12 @@ export async function getIncomingMessageRequests(): Promise<MsgResult<{ requests
   return apiGet('/api/me/message-requests');
 }
 
+export async function getOutgoingRequestStatus(
+  userId: string,
+): Promise<MsgResult<{ pending: boolean; requestId: string | null }>> {
+  return apiGet(`/api/users/${userId}/outgoing-request`);
+}
+
 export async function acceptMessageRequest(
   requestId: string,
 ): Promise<MsgResult<{ status: string; threadId: string }>> {

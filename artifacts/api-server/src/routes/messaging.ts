@@ -329,6 +329,38 @@ router.post('/users/:userId/open-thread', async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * GET /api/users/:userId/outgoing-request
+ * Returns whether the current user has a pending message request to :userId.
+ * ---------------------------------------------------------------------------
+ */
+router.get('/users/:userId/outgoing-request', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const recipientId = req.params.userId;
+  if (!isUuid(recipientId)) { sendError(res, 'invalid_payload', 'Invalid user id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const { data, error } = await sc
+    .from('message_requests')
+    .select('id, status')
+    .eq('sender_id', user.id)
+    .eq('recipient_id', recipientId)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, 'outgoing-request check failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json({ pending: data !== null, requestId: (data as any)?.id ?? null });
+});
+
+/* ---------------------------------------------------------------------------
  * POST /api/users/:userId/message-request
  * ---------------------------------------------------------------------------
  */

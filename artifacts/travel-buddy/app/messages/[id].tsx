@@ -27,7 +27,7 @@ import {
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
   RefreshCw, Clock,
 } from 'lucide-react-native';
-import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
@@ -940,15 +940,14 @@ export default function TelegraphThread() {
   const defaultShowOriginal = threadShowOriginal ?? langSettings?.show_original_messages ?? false;
   const isGroupThread = threadType === 'trip' || threadType === 'circle';
 
-  // Sender-side rate-limit: "Waiting for reply" means the current user has
-  // sent messages but the other person hasn't responded yet (their request is
-  // still pending acceptance). Derived purely from message history so it
-  // correctly clears as soon as the recipient sends their first reply.
-  const isWaitingForReply =
-    threadType === 'direct' &&
-    messages.length > 0 &&
-    messages.some((m) => m.senderId === userId) &&
-    !messages.some((m) => m.senderId !== userId && m.senderId != null);
+  // Sender-side rate-limit: "Waiting for reply" = the current user has a
+  // PENDING outgoing message request to this person. We check the server so
+  // that normal friends/followers who simply haven't replied yet are never
+  // blocked. The status clears automatically once the recipient accepts.
+  const { pending: hasOutgoingRequest } = useOutgoingRequestStatus(
+    threadType === 'direct' ? (otherUserId ?? null) : null,
+  );
+  const isWaitingForReply = threadType === 'direct' && hasOutgoingRequest === true;
 
   const headerTitle = title && title.trim() ? title : 'Chat';
 
