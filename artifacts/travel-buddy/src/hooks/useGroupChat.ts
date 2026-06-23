@@ -33,7 +33,7 @@ export interface GroupChatData {
   sending: boolean;
   errorMessage: string | null;
   reload: () => void;
-  send: (body: string) => Promise<void>;
+  send: (body: string) => Promise<{ ok: boolean }>;
   edit: (messageId: string, body: string) => Promise<void>;
   remove: (messageId: string) => Promise<void>;
   loadMore: () => Promise<void>;
@@ -88,14 +88,15 @@ export function useGroupChat(
     if (id) load();
   }, [load, id]);
 
-  const send = useCallback(async (body: string) => {
-    if (!thread || !body.trim()) return;
+  const send = useCallback(async (body: string): Promise<{ ok: boolean }> => {
+    if (!thread || !body.trim()) return { ok: false };
     setSending(true);
     const res = await sendMessage(thread.id, body.trim());
     if (res.ok && res.data) {
       setMessages((prev) => [...prev, res.data as Message]);
     }
     setSending(false);
+    return { ok: res.ok };
   }, [thread]);
 
   const edit = useCallback(async (messageId: string, body: string) => {

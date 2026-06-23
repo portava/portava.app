@@ -4,11 +4,11 @@
  * Handles all 5 states:
  *   loading, empty, no-access (removed), pending-invite, error
  *
- * Reuses the MessageBubble shape from direct messages.
- * Keyboard-safe composer — stays above keyboard on iOS and Android.
- * Fits 390 px and 430 px viewports.
+ * Features: day dividers, system-event pills, long-press action sheet,
+ * read receipts, rich header with type badge + action icons,
+ * updated composer with Discovery / AI stub icons.
  */
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -20,48 +20,197 @@ import {
   Platform,
   ActivityIndicator,
   Image,
+  Alert,
+  Modal,
+  Share,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, Send, Users } from 'lucide-react-native';
+import {
+  ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
+  Compass, Bot, Copy, Trash2, Flag, Reply, CheckCheck,
+} from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat';
 import { useSession } from '../context/SessionContext';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import type { Message } from '../services/messaging';
+import { deleteMessage } from '../services/messaging';
+import * as Haptics from 'expo-haptics';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDayLabel(isoDay: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (isoDay === today) return 'Today';
+  if (isoDay === yest) return 'Yesterday';
+  return new Date(isoDay + 'T12:00:00').toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+}
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <View style={dd.wrap}>
+      <View style={dd.line} />
+      <Text style={dd.label}>{label}</Text>
+      <View style={dd.line} />
+    </View>
+  );
+}
+const dd = StyleSheet.create({
+  wrap: { flexDirection: 'row', alignItems: 'center', marginVertical: 12, paddingHorizontal: 4 },
+  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
+  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
+});
+
+function LongPressActionSheet({
+  message,
+  mine,
+  onClose,
+  onDeleteForMe,
+}: {
+  message: Message | null;
+  mine: boolean;
+  onClose: () => void;
+  onDeleteForMe: (id: string) => Promise<void>;
+}) {
+  if (!message) return null;
+  const text = message.displayBody ?? message.body ?? '';
+  const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
+    ['reply', 'Reply', Reply],
+    ['copy', 'Copy text', Copy],
+    ['translate', 'Translate', Languages],
+    ['report', 'Report', Flag],
+  ];
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={las.overlay} onPress={onClose} />
+      <View style={las.sheet}>
+        <View style={las.handle} />
+        {text.length > 0 && (
+          <Text style={las.preview} numberOfLines={2}>{text}</Text>
+        )}
+        {actions.map(([key, label, Icon]) => (
+          <Pressable
+            key={key}
+            style={las.row}
+            onPress={() => {
+              onClose();
+              if (key === 'copy') {
+                Share.share({ message: text }).catch(() => {});
+              } else if (key === 'report') {
+                Alert.alert('Report message', 'Are you sure you want to report this message?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Report', style: 'destructive', onPress: () => {} },
+                ]);
+              } else {
+                Alert.alert(label, 'This feature is coming soon.');
+              }
+            }}
+          >
+            <Icon size={18} color={color.ink} />
+            <Text style={las.rowLabel}>{label}</Text>
+          </Pressable>
+        ))}
+        {mine && (
+          <Pressable
+            style={las.row}
+            onPress={() => {
+              onClose();
+              Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete',
+                  style: 'destructive',
+                  onPress: () => onDeleteForMe(message.id),
+                },
+              ]);
+            }}
+          >
+            <Trash2 size={18} color="#EF4444" />
+            <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
+          </Pressable>
+        )}
+      </View>
+    </Modal>
+  );
+}
+const las = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingBottom: 34,
+    paddingTop: space.sm,
+  },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
+  preview: { ...t.small, color: color.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  rowLabel: { ...t.body, color: color.ink },
+});
+
 function GroupMessageBubble({
   item,
   mine,
+  onLongPress,
+  isLastOwn,
 }: {
   item: Message;
   mine: boolean;
+  onLongPress?: () => void;
+  isLastOwn?: boolean;
 }) {
   if (item.deleted) {
     return (
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+      <Pressable
+        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+      >
         <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute }]}>
           This message was deleted.
         </Text>
-      </View>
+      </Pressable>
     );
   }
 
   const bodyToShow = item.displayBody ?? item.body ?? '';
 
   return (
-    <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+    <View>
       {!mine && item.senderName ? (
         <Text style={styles.senderName}>{item.senderName}</Text>
       ) : null}
-      <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text>
-      <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
-        {formatTime(item.createdAt)}
-        {item.editedAt ? '  ·  edited' : ''}
-      </Text>
+      <Pressable
+        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+      >
+        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text>
+        <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
+          {formatTime(item.createdAt)}
+          {item.editedAt ? '  ·  edited' : ''}
+        </Text>
+      </Pressable>
+      {mine && isLastOwn && (
+        <View style={styles.receiptRow}>
+          <CheckCheck size={11} color={color.signal} />
+          <Text style={styles.receiptSent}>Sent</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -78,6 +227,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const { userId } = useSession();
   const { state, thread, messages, sending, errorMessage, reload, send } = useGroupChat(type, id);
   const [input, setInput] = useState('');
+  const [sendFailed, setSendFailed] = useState(false);
+  const [actionMsg, setActionMsg] = useState<Message | null>(null);
+  const [actionMsgMine, setActionMsgMine] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   const displayTitle = thread?.title ?? title ?? (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
@@ -89,11 +241,44 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     }
   }, [messages.length]);
 
+  // Build list items with day separators
+  type ListItem =
+    | { _t: 'msg'; data: Message }
+    | { _t: 'day'; label: string; key: string };
+
+  const listItems = useMemo<ListItem[]>(() => {
+    const items: ListItem[] = [];
+    let lastDay = '';
+    for (const m of messages) {
+      const day = m.createdAt.slice(0, 10);
+      if (day !== lastDay) {
+        lastDay = day;
+        items.push({ _t: 'day', label: formatDayLabel(day), key: `day-${day}` });
+      }
+      items.push({ _t: 'msg', data: m });
+    }
+    return items;
+  }, [messages]);
+
+  const lastOwnMsgId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].senderId === userId) return messages[i].id;
+    }
+    return null;
+  }, [messages, userId]);
+
+  const handleDeleteForMe = useCallback(async (msgId: string) => {
+    await deleteMessage(msgId);
+    reload();
+  }, [reload]);
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending || isNoAccess) return;
     setInput('');
-    await send(text);
+    setSendFailed(false);
+    const res = await send(text);
+    if (!res?.ok) setSendFailed(true);
     listRef.current?.scrollToEnd({ animated: true });
   }
 
@@ -102,6 +287,11 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
       <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
         <ArrowLeft size={20} color={color.ink} />
       </Pressable>
+      <View style={[styles.headerIconBadge, type === 'circle' && { backgroundColor: color.ink }]}>
+        {type === 'trip'
+          ? <Globe size={14} color={color.onInk} />
+          : <Users size={14} color={color.onInk} />}
+      </View>
       <View style={styles.headerMeta}>
         <Text style={styles.headerName} numberOfLines={1}>{displayTitle}</Text>
         {memberLabel ? (
@@ -110,6 +300,29 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             <Text style={styles.headerTag}>{memberLabel}</Text>
           </View>
         ) : null}
+      </View>
+      <View style={styles.headerActions}>
+        <Pressable
+          hitSlop={8}
+          style={styles.headerIconBtn}
+          onPress={() => Alert.alert('Thread info', 'Thread info coming soon.')}
+        >
+          <Info size={18} color={color.mute} />
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          style={styles.headerIconBtn}
+          onPress={() => Alert.alert('Translation', 'Adjust translation preferences in Settings → Language.')}
+        >
+          <Languages size={18} color={color.mute} />
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          style={styles.headerIconBtn}
+          onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}
+        >
+          <VolumeX size={18} color={color.mute} />
+        </Pressable>
       </View>
     </View>
   );
@@ -174,8 +387,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
 
       <FlatList
         ref={listRef}
-        data={messages}
-        keyExtractor={(m) => m.id}
+        data={listItems}
+        keyExtractor={(item) => item._t === 'day' ? item.key : item.data.id}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.center}>
@@ -189,21 +402,38 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           </View>
         }
         renderItem={({ item }) => {
-          const mine = item.senderId === userId;
+          if (item._t === 'day') {
+            return <DayDivider label={item.label} />;
+          }
+          const m = item.data;
+          const mine = m.senderId === userId;
+          // System-event messages render as centred pill labels
+          if (m.msgType === 'system') {
+            return <TelegraphSystemNotice text={m.body ?? ''} />;
+          }
           return (
             <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
               {!mine && (
                 <View style={[styles.avatar, styles.avatarSmall]}>
-                  {item.senderAvatarUrl ? (
-                    <Image source={{ uri: item.senderAvatarUrl }} style={styles.avatarSmall} />
+                  {m.senderAvatarUrl ? (
+                    <Image source={{ uri: m.senderAvatarUrl }} style={styles.avatarSmall} />
                   ) : (
                     <Text style={styles.avatarInitial}>
-                      {(item.senderName?.[0] ?? '?').toUpperCase()}
+                      {(m.senderName?.[0] ?? '?').toUpperCase()}
                     </Text>
                   )}
                 </View>
               )}
-              <GroupMessageBubble item={item} mine={mine} />
+              <GroupMessageBubble
+                item={m}
+                mine={mine}
+                onLongPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setActionMsg(m);
+                  setActionMsgMine(mine);
+                }}
+                isLastOwn={m.id === lastOwnMsgId && !sendFailed}
+              />
             </View>
           );
         }}
@@ -218,9 +448,30 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           </View>
         ) : (
           <>
+            <Pressable
+              style={styles.composeIconBtn}
+              onPress={() => Alert.alert('Attach', 'File attachments coming soon.')}
+              hitSlop={6}
+            >
+              <Paperclip size={18} color={color.mute} />
+            </Pressable>
+            <Pressable
+              style={styles.composeIconBtn}
+              onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}
+              hitSlop={6}
+            >
+              <Compass size={18} color={color.mute} />
+            </Pressable>
+            <Pressable
+              style={styles.composeIconBtn}
+              onPress={() => Alert.alert('AI Suggestions', 'Compass AI suggestions — coming soon.')}
+              hitSlop={6}
+            >
+              <Bot size={18} color={color.mute} />
+            </Pressable>
             <TextInput
               style={styles.inputField}
-              placeholder="Message…"
+              placeholder="Write a Telegraph…"
               placeholderTextColor={color.faint}
               value={input}
               onChangeText={setInput}
@@ -246,6 +497,13 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           </>
         )}
       </View>
+
+      <LongPressActionSheet
+        message={actionMsg}
+        mine={actionMsgMine}
+        onClose={() => setActionMsg(null)}
+        onDeleteForMe={handleDeleteForMe}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -257,7 +515,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.md,
+    gap: space.sm,
     paddingHorizontal: space.lg,
     paddingBottom: space.md,
     borderBottomWidth: 1,
@@ -265,10 +523,21 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   backBtn: { padding: 4, flexShrink: 0 },
+  headerIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   headerMeta: { flex: 1, minWidth: 0 },
   headerName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
   headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
+  headerIconBtn: { padding: 5 },
 
   stateIcon: { fontSize: 36, marginBottom: space.md },
   stateTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center', marginBottom: space.sm },
@@ -312,11 +581,14 @@ const styles = StyleSheet.create({
 
   senderName: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, marginBottom: 2, letterSpacing: 0.2 },
 
-  bubbleText: { ...t.body, color: color.ink, lineHeight: 20, flexWrap: 'wrap' },
+  bubbleText: { ...t.body, color: color.ink, lineHeight: 20, flexShrink: 1, flexWrap: 'wrap' },
   bubbleTextMine: { color: color.onInk },
 
   bubbleTime: { ...t.stamp, fontFamily: 'Courier', color: color.faint, fontSize: 10, marginTop: 2, textAlign: 'right' },
   bubbleTimeMine: { color: color.onInk + '88' },
+
+  receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
 
   compose: {
     flexDirection: 'row',
@@ -328,6 +600,7 @@ const styles = StyleSheet.create({
     borderTopColor: color.haze,
     backgroundColor: color.paperRaised,
   },
+  composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   inputField: {
     flex: 1,
     minHeight: 38,
@@ -345,10 +618,6 @@ const styles = StyleSheet.create({
   sendBtnActive: { backgroundColor: color.signal },
   sendBtnDisabled: { backgroundColor: color.haze },
 
-  noAccessBar: {
-    flex: 1,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
+  noAccessBar: { flex: 1, paddingVertical: space.md, alignItems: 'center' },
   noAccessText: { ...t.small, color: color.mute, textAlign: 'center' },
 });

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,20 +14,27 @@ import {
   Modal,
   AppState,
   Animated,
+  Share,
   type AppStateStatus,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight, CheckCircle, MoreVertical } from 'lucide-react-native';
+import {
+  ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
+  CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
+  Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle,
+} from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
+import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
+import { deleteMessage } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import * as Haptics from 'expo-haptics';
@@ -53,6 +60,111 @@ function fmtDateTime(iso: string): string {
 const BLOCK_SHORT: Record<string, string> = {
   morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', late: 'Late night',
 };
+
+// ── Day label helpers ─────────────────────────────────────────────────────────
+
+function formatDayLabel(isoDay: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (isoDay === today) return 'Today';
+  if (isoDay === yest) return 'Yesterday';
+  return new Date(isoDay + 'T12:00:00').toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+}
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <View style={dd.wrap}>
+      <View style={dd.line} />
+      <Text style={dd.label}>{label}</Text>
+      <View style={dd.line} />
+    </View>
+  );
+}
+const dd = StyleSheet.create({
+  wrap: { flexDirection: 'row', alignItems: 'center', marginVertical: 12, paddingHorizontal: 4 },
+  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
+  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
+});
+
+// ── Long-press action sheet ───────────────────────────────────────────────────
+
+function LongPressActionSheet({
+  message,
+  mine,
+  onClose,
+  onDeleteForMe,
+}: {
+  message: Message | null;
+  mine: boolean;
+  onClose: () => void;
+  onDeleteForMe: (id: string) => Promise<void>;
+}) {
+  if (!message) return null;
+  const text = message.displayBody ?? message.body ?? '';
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={las.overlay} onPress={onClose} />
+      <View style={las.sheet}>
+        <View style={las.handle} />
+        {text.length > 0 && (
+          <Text style={las.preview} numberOfLines={2}>{text}</Text>
+        )}
+        {([
+          ['reply',     'Reply',      Reply,    false],
+          ['copy',      'Copy text',  Copy,     false],
+          ['translate', 'Translate',  Languages,false],
+          ['report',    'Report',     Flag,     false],
+        ] as [string, string, React.ComponentType<{ size: number; color: string }>, boolean][]).map(([key, label, Icon, _]) => (
+          <Pressable
+            key={key}
+            style={las.row}
+            onPress={() => {
+              onClose();
+              if (key === 'copy') {
+                Share.share({ message: text }).catch(() => {});
+              } else if (key === 'report') {
+                Alert.alert('Report message', 'Are you sure you want to report this message?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Report', style: 'destructive', onPress: () => {} },
+                ]);
+              } else {
+                Alert.alert(label, 'This feature is coming soon.');
+              }
+            }}
+          >
+            <Icon size={18} color={color.ink} />
+            <Text style={las.rowLabel}>{label}</Text>
+          </Pressable>
+        ))}
+        {mine && (
+          <Pressable
+            style={las.row}
+            onPress={() => {
+              onClose();
+              Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
+              ]);
+            }}
+          >
+            <Trash2 size={18} color='#EF4444' />
+            <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
+          </Pressable>
+        )}
+      </View>
+    </Modal>
+  );
+}
+const las = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheet: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: space.lg, paddingBottom: 34, paddingTop: space.sm },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
+  preview: { ...t.small, color: color.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze },
+  rowLabel: { ...t.body, color: color.ink },
+});
 
 /** Format a single time-poll slot as "Fri Jun 27 · 7:00 PM" (exact) or "Fri Jun 27 · Evening" (block) */
 function fmtTimeOption(opt: MeetupTimeOption): string {
@@ -449,12 +561,18 @@ function MessageBubble({
   autoTranslate,
   defaultShowOriginal,
   isGroupThread,
+  onLongPress,
+  isLastOwn,
+  sendFailed,
 }: {
   item: Message;
   mine: boolean;
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
+  onLongPress?: () => void;
+  isLastOwn?: boolean;
+  sendFailed?: boolean;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -477,23 +595,26 @@ function MessageBubble({
 
   if (item.deleted) {
     return (
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
-        <Text
-          style={[
-            styles.bubbleText,
-            { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute },
-          ]}
-        >
+      <Pressable
+        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+      >
+        <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute }]}>
           This message was deleted.
         </Text>
-      </View>
+      </Pressable>
     );
   }
 
-  // Meetup card — special rendering
+  // Meetup card — special rendering (long-press wrapper added)
   const meetupPayload = parseMeetupCard(item.body ?? '', item);
   if (meetupPayload) {
-    return <MeetupCard payload={meetupPayload} mine={mine} />;
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <MeetupCard payload={meetupPayload} mine={mine} />
+      </Pressable>
+    );
   }
 
   let bodyToShow: string;
@@ -505,8 +626,6 @@ function MessageBubble({
 
   const isTranslated = item.translated && autoTranslate && !showOriginal;
   const isPending = item.translationStatus === 'pending';
-  // Show the translation row only when there's something meaningful to render:
-  // a pending indicator, an actual label, or the show-original toggle.
   const showLabel = !mine && (
     isPending ||
     (isTranslated && !!item.translationLabel) ||
@@ -521,7 +640,11 @@ function MessageBubble({
           {item.senderHandle ? ` @${item.senderHandle}` : ''}
         </Text>
       )}
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+      <Pressable
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}
+      >
         <Animated.View
           style={[styles.translationFlash, StyleSheet.absoluteFillObject, { opacity: flashAnim }]}
           pointerEvents="none"
@@ -556,7 +679,24 @@ function MessageBubble({
             )}
           </View>
         )}
-      </View>
+      </Pressable>
+
+      {/* Read receipt — shown on the last own message only */}
+      {mine && isLastOwn && (
+        <View style={styles.receiptRow}>
+          {sendFailed ? (
+            <Pressable style={styles.receiptFailRow} onPress={onLongPress}>
+              <AlertCircle size={11} color='#EF4444' />
+              <Text style={styles.receiptFail}>Failed to send</Text>
+            </Pressable>
+          ) : (
+            <>
+              <CheckCheck size={11} color={color.signal} />
+              <Text style={styles.receiptSent}>Sent</Text>
+            </>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -644,11 +784,19 @@ export default function TelegraphThread() {
   const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
+  const [sendFailed, setSendFailed] = useState(false);
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
+  // Long-press action sheet state
+  const [actionMsg, setActionMsg] = useState<Message | null>(null);
+  const [actionMsgMine, setActionMsgMine] = useState(false);
+  // DM profile for richer header
+  const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
+  // Member count for trip/circle threads
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
 
   function handleBlockPress() {
@@ -681,6 +829,37 @@ export default function TelegraphThread() {
     });
   }, []);
 
+  // Fetch DM partner's profile for the rich Direct header
+  useEffect(() => {
+    if (threadType !== 'direct' || !otherUserId) return;
+    supabase
+      .from('profiles')
+      .select('name, handle, avatar_url, city')
+      .eq('id', otherUserId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setDmProfile({
+            name: (data as any).name ?? null,
+            handle: (data as any).handle ?? null,
+            avatarUrl: (data as any).avatar_url ?? null,
+            city: (data as any).city ?? null,
+          });
+        }
+      });
+  }, [threadType, otherUserId]);
+
+  // Fetch member count for trip / circle threads
+  useEffect(() => {
+    if (threadType === 'direct' || !id) return;
+    supabase
+      .from('message_thread_members')
+      .select('*', { count: 'exact', head: true })
+      .eq('thread_id', id)
+      .is('left_at', null)
+      .then(({ count }) => { if (count !== null) setMemberCount(count); });
+  }, [id, threadType]);
+
   // Permission gate: accepted thread members only (DMs always pass; trip/circle
   // check message_thread_members — only accepted members are in the thread).
   useEffect(() => {
@@ -706,7 +885,6 @@ export default function TelegraphThread() {
   const isGroupThread = threadType === 'trip' || threadType === 'circle';
 
   const headerTitle = title && title.trim() ? title : 'Chat';
-  const HeaderIcon = threadType === 'trip' ? Globe : threadType === 'circle' ? Users : null;
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -714,12 +892,47 @@ export default function TelegraphThread() {
     }
   }, [messages.length]);
 
+  // Build list items with day separators interspersed
+  type ListItem =
+    | { _t: 'msg'; data: Message }
+    | { _t: 'day'; label: string; key: string };
+
+  const listItems = useMemo<ListItem[]>(() => {
+    const items: ListItem[] = [];
+    let lastDay = '';
+    for (const m of messages) {
+      const day = m.createdAt.slice(0, 10);
+      if (day !== lastDay) {
+        lastDay = day;
+        items.push({ _t: 'day', label: formatDayLabel(day), key: `day-${day}` });
+      }
+      items.push({ _t: 'msg', data: m });
+    }
+    return items;
+  }, [messages]);
+
+  // ID of the last message sent by the current user (for read receipts)
+  const lastOwnMsgId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].senderId === userId) return messages[i].id;
+    }
+    return null;
+  }, [messages, userId]);
+
+  // Handle delete for me from the action sheet
+  const handleDeleteForMe = useCallback(async (msgId: string) => {
+    await deleteMessage(msgId);
+    reload();
+  }, [reload]);
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
     setLastSentMessage(text);
-    await send(text);
+    setSendFailed(false);
+    const res = await send(text);
+    if (!res?.ok) setSendFailed(true);
     listRef.current?.scrollToEnd({ animated: true });
   }
 
@@ -776,21 +989,124 @@ export default function TelegraphThread() {
     );
   }, []);
 
+  // Shared back + title header element (used in loading/error states too)
+  function ThreadHeader({ compact }: { compact?: boolean }) {
+    const displayName = threadType === 'direct'
+      ? (dmProfile?.name ?? headerTitle)
+      : headerTitle;
+    const subtitle = threadType === 'trip'
+      ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
+      : threadType === 'circle'
+        ? (memberCount !== null ? `${memberCount} members` : 'Trusted Circle')
+        : (dmProfile?.city ?? 'Telegraph');
+
+    return (
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+          <ArrowLeft size={20} color={color.ink} />
+        </Pressable>
+
+        {/* Direct: small avatar */}
+        {threadType === 'direct' && (
+          <View style={styles.dmAvatarWrap}>
+            {dmProfile?.avatarUrl ? (
+              <Image source={{ uri: dmProfile.avatarUrl }} style={styles.dmAvatar} />
+            ) : (
+              <View style={styles.dmAvatarFallback}>
+                <Text style={styles.dmAvatarInitial}>
+                  {(displayName[0] ?? '?').toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Trip / Circle: coloured badge */}
+        {threadType === 'trip' && (
+          <View style={styles.headerIconBadge}>
+            <Globe size={14} color={color.onInk} />
+          </View>
+        )}
+        {threadType === 'circle' && (
+          <View style={[styles.headerIconBadge, { backgroundColor: color.ink }]}>
+            <Users size={14} color={color.onInk} />
+          </View>
+        )}
+
+        <View style={styles.headerMeta}>
+          <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
+          <View style={styles.headerTagRow}>
+            {compact ? (
+              <>
+                <Zap size={9} color={color.signal} fill={color.signal} />
+                <Text style={styles.headerTag}>Telegraph</Text>
+              </>
+            ) : (
+              <Text style={styles.headerTag} numberOfLines={1}>{subtitle}</Text>
+            )}
+          </View>
+        </View>
+
+        {/* Right-side action icons */}
+        {!compact && (
+          <View style={styles.headerActions}>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Search', 'Message search coming soon.')}>
+              <Info size={18} color={color.mute} />
+            </Pressable>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Translation', 'Adjust translation preferences in Settings → Language.')}>
+              <Languages size={18} color={color.mute} />
+            </Pressable>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}>
+              <VolumeX size={18} color={color.mute} />
+            </Pressable>
+            {threadType === 'direct' && otherUserId ? (
+              <Pressable style={styles.headerIconBtn} onPress={handleBlockPress} hitSlop={8}>
+                <MoreVertical size={18} color={color.mute} />
+              </Pressable>
+            ) : null}
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // Quick-action bar shown below the header for trip / circle threads
+  function QuickActionBar() {
+    if (threadType === 'trip' && contextId) {
+      return (
+        <View style={styles.quickBar}>
+          <Pressable style={styles.quickBtn} onPress={() => router.push(`/trip/${contextId}` as any)}>
+            <Globe size={12} color={color.signal} />
+            <Text style={styles.quickBtnText}>View Trip</Text>
+          </Pressable>
+          <Pressable style={styles.quickBtn} onPress={handlePlanMeetupButton}>
+            <CalendarClock size={12} color={color.signal} />
+            <Text style={styles.quickBtnText}>Plan Meetup</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    if (threadType === 'circle' && contextId) {
+      return (
+        <View style={styles.quickBar}>
+          <Pressable style={styles.quickBtn} onPress={() => router.push(`/circle/${contextId}` as any)}>
+            <Users size={12} color={color.signal} />
+            <Text style={styles.quickBtnText}>View Circle</Text>
+          </Pressable>
+          <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}>
+            <Compass size={12} color={color.signal} />
+            <Text style={styles.quickBtnText}>Share Place</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return null;
+  }
+
   if (loading) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-            <ArrowLeft size={20} color={color.ink} />
-          </Pressable>
-          <View style={styles.headerMeta}>
-            <Text style={styles.headerName}>{headerTitle}</Text>
-            <View style={styles.headerTagRow}>
-              <Zap size={9} color={color.signal} fill={color.signal} />
-              <Text style={styles.headerTag}>Telegraph</Text>
-            </View>
-          </View>
-        </View>
+        <ThreadHeader compact />
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
       </View>
     );
@@ -799,14 +1115,7 @@ export default function TelegraphThread() {
   if (error) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-            <ArrowLeft size={20} color={color.ink} />
-          </Pressable>
-          <View style={styles.headerMeta}>
-            <Text style={styles.headerName}>{headerTitle}</Text>
-          </View>
-        </View>
+        <ThreadHeader compact />
         <View style={styles.center}><Text style={styles.errText}>{error}</Text></View>
       </View>
     );
@@ -817,33 +1126,13 @@ export default function TelegraphThread() {
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-          <ArrowLeft size={20} color={color.ink} />
-        </Pressable>
-        {HeaderIcon && (
-          <View style={styles.headerIconBadge}>
-            <HeaderIcon size={14} color={color.onInk} />
-          </View>
-        )}
-        <View style={styles.headerMeta}>
-          <Text style={styles.headerName} numberOfLines={1}>{headerTitle}</Text>
-          <View style={styles.headerTagRow}>
-            <Zap size={9} color={color.signal} fill={color.signal} />
-            <Text style={styles.headerTag}>Telegraph</Text>
-          </View>
-        </View>
-        {threadType === 'direct' && otherUserId ? (
-          <Pressable style={styles.headerMenuBtn} onPress={handleBlockPress} hitSlop={8}>
-            <MoreVertical size={20} color={color.mute} />
-          </Pressable>
-        ) : null}
-      </View>
+      <ThreadHeader />
+      <QuickActionBar />
 
       <FlatList
         ref={listRef}
-        data={messages}
-        keyExtractor={(m) => m.id}
+        data={listItems}
+        keyExtractor={(item) => item._t === 'day' ? item.key : item.data.id}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.center}>
@@ -851,15 +1140,30 @@ export default function TelegraphThread() {
           </View>
         }
         renderItem={({ item }) => {
-          const mine = item.senderId === userId;
+          if (item._t === 'day') {
+            return <DayDivider label={item.label} />;
+          }
+          const m = item.data;
+          const mine = m.senderId === userId;
+          // System event messages (non-meetup) render as centred pill labels
+          if (m.msgType === 'system' && !parseMeetupCard(m.body ?? '', m)) {
+            return <TelegraphSystemNotice text={m.body ?? ''} />;
+          }
           return (
             <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
               <MessageBubble
-                item={item}
+                item={m}
                 mine={mine}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 isGroupThread={isGroupThread}
+                onLongPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setActionMsg(m);
+                  setActionMsgMine(mine);
+                }}
+                isLastOwn={m.id === lastOwnMsgId}
+                sendFailed={m.id === lastOwnMsgId && sendFailed}
               />
             </View>
           );
@@ -880,16 +1184,31 @@ export default function TelegraphThread() {
       )}
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        {/* Plan meetup button — only accepted trip/circle members; DMs always shown unscoped */}
+        {/* Attachment stub */}
+        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Attach', 'File attachments coming soon.')} hitSlop={6}>
+          <Paperclip size={18} color={color.mute} />
+        </Pressable>
+
+        {/* Plan meetup button */}
         {isAcceptedMember && (
-          <Pressable style={styles.planMeetupBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
+          <Pressable style={styles.composeIconBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
             <CalendarClock size={18} color={color.signal} />
           </Pressable>
         )}
 
+        {/* Discovery card stub */}
+        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')} hitSlop={6}>
+          <Compass size={18} color={color.mute} />
+        </Pressable>
+
+        {/* AI suggestion stub */}
+        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('AI Suggestions', 'Compass AI suggestions — coming soon.')} hitSlop={6}>
+          <Bot size={18} color={color.mute} />
+        </Pressable>
+
         <TextInput
           style={styles.inputField}
-          placeholder="Message…"
+          placeholder="Write a Telegraph…"
           placeholderTextColor={color.faint}
           value={input}
           onChangeText={setInput}
@@ -923,12 +1242,8 @@ export default function TelegraphThread() {
             if (!id) return;
             const isScoped = Boolean(meetupSheetCtx?.tripId || meetupSheetCtx?.circleOwnerId);
             if (isScoped) {
-              // Backend already posts the system message via postMeetupSystemMessage —
-              // just reload to pick it up.
               reload();
             } else {
-              // DM or unscoped meetup: backend has no thread to post to, so the
-              // client sends the card directly.
               send(JSON.stringify({
                 type: 'meetup_card',
                 meetupId: meetup.id,
@@ -942,6 +1257,14 @@ export default function TelegraphThread() {
           }}
         />
       )}
+
+      {/* Long-press action sheet */}
+      <LongPressActionSheet
+        message={actionMsg}
+        mine={actionMsgMine}
+        onClose={() => setActionMsg(null)}
+        onDeleteForMe={handleDeleteForMe}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -963,7 +1286,6 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   backBtn: { padding: 4 },
-  headerMenuBtn: { padding: 4, marginLeft: 4 },
   headerIconBadge: {
     width: 26,
     height: 26,
@@ -1001,7 +1323,7 @@ const styles = StyleSheet.create({
   },
   bubbleMine: { backgroundColor: color.signal, borderBottomRightRadius: 4 },
 
-  bubbleText: { ...t.body, color: color.ink, lineHeight: 20 },
+  bubbleText: { ...t.body, color: color.ink, lineHeight: 20, flexShrink: 1, flexWrap: 'wrap' },
   bubbleTextMine: { color: color.onInk },
 
   bubbleTime: {
@@ -1067,7 +1389,30 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.ink,
   },
-  planMeetupBtn: { width: 36, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  // DM avatar in header
+  dmAvatarWrap: { flexShrink: 0 },
+  dmAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: color.haze },
+  dmAvatarFallback: { width: 32, height: 32, borderRadius: 16, backgroundColor: color.signal + '22', alignItems: 'center', justifyContent: 'center' },
+  dmAvatarInitial: { fontSize: 13, fontWeight: '700', color: color.signal },
+
+  // Header right-side action row
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
+  headerIconBtn: { padding: 5 },
+
+  // Quick-action bar (trip/circle)
+  quickBar: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze, backgroundColor: color.paperRaised },
+  quickBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal + '55', backgroundColor: color.signal + '0A' },
+  quickBtnText: { ...t.small, color: color.signal, fontSize: 11, fontWeight: '600' },
+
+  // Read receipt
+  receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+  receiptFailRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  receiptFail: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier' },
+
+  // Composer icon buttons (attach, meetup, discovery, ai)
+  composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+
   sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: color.signal },
   sendBtnDisabled: { backgroundColor: color.haze },
