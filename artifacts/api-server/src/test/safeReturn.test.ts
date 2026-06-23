@@ -608,7 +608,7 @@ describe("Live share authorization", () => {
       started_at: new Date().toISOString(), expires_at: futureExpiry, stopped_at: null,
     };
     setClients(makeFakeClient({
-      featureFlags: { safe_return_enabled: true },
+      featureFlags: { safe_return_enabled: true, safe_return_live_share_enabled: true },
       liveShares: [share],
       sessions: [{ id: SESSION_ID, user_id: USER_ID, city: "Tokyo", district: null, country: "Japan" }],
       profiles: [{ id: USER_ID, display_name: "Alice" }],
@@ -628,7 +628,7 @@ describe("Live share authorization", () => {
       started_at: new Date().toISOString(), expires_at: pastExpiry, stopped_at: null,
     };
     setClients(makeFakeClient({
-      featureFlags: { safe_return_enabled: true },
+      featureFlags: { safe_return_enabled: true, safe_return_live_share_enabled: true },
       liveShares: [share],
       sessions: [{ id: SESSION_ID, user_id: USER_ID, city: "Paris", district: null, country: "France" }],
     }));

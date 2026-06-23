@@ -163,6 +163,27 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
     }
   } catch { /* non-fatal */ }
 
+  // Check for location caution flag via geo_zones (safety_rating = caution | avoid)
+  let hasLocationCautionFlag = false;
+  try {
+    const lat = (item as any).lat as number | null;
+    const lng = (item as any).lng as number | null;
+    if (lat != null && lng != null) {
+      // Bounding-box pre-filter (~50 km) then check safety_rating
+      const delta = 0.45; // ~50 km in degrees
+      const { data: zones } = await db
+        .from("geo_zones")
+        .select("safety_rating")
+        .in("safety_rating", ["caution", "avoid"])
+        .gte("center_lat", lat - delta)
+        .lte("center_lat", lat + delta)
+        .gte("center_lng", lng - delta)
+        .lte("center_lng", lng + delta)
+        .limit(1);
+      hasLocationCautionFlag = !!zones && zones.length > 0;
+    }
+  } catch { /* non-fatal */ }
+
   const planItemCtx = {
     id: (item as any).id,
     category: (item as any).category ?? "other",
@@ -170,6 +191,7 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
     dayDate: (item as any).day_date ?? null,
     locationName: (item as any).location_name ?? null,
     attendeeCount,
+    hasLocationCautionFlag,
   };
 
   const result = shouldSuggest(planItemCtx, user.id, { homeCity, currentCity });
@@ -483,6 +505,13 @@ router.get("/safe-return/live-share/:shareId", async (req, res) => {
 
   const db = getServiceClient() ?? client;
 
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return;
+  }
+  if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
+    sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
+  }
+
   const result = await getRecipientView(db, req.params.shareId, user.id);
 
   if ("error" in result) {
@@ -515,8 +544,36 @@ router.get("/me/safe-return/history", async (req, res) => {
   const limit = Math.min(50, parseInt(String(req.query.limit ?? "20"), 10) || 20);
   const sessions = await listHistory(db, user.id, limit);
 
+  // Fetch per-session event aggregates in one query
+  const sessionIds = sessions.map((s) => s.id);
+  let eventsBySession: Record<string, { alertsSent: number; missedCount: number; liveShareStarted: number; liveShareStopped: number }> = {};
+  try {
+    if (sessionIds.length > 0) {
+      const { data: events } = await db
+        .from("safe_return_events")
+        .select("session_id, event_type")
+        .in("session_id", sessionIds);
+
+      for (const ev of (events as any[]) ?? []) {
+        const sid = ev.session_id as string;
+        if (!eventsBySession[sid]) {
+          eventsBySession[sid] = { alertsSent: 0, missedCount: 0, liveShareStarted: 0, liveShareStopped: 0 };
+        }
+        const agg = eventsBySession[sid]!;
+        const t = ev.event_type as string;
+        if (t === "alert_sent")          agg.alertsSent++;
+        if (t === "check_in_missed")     agg.missedCount++;
+        if (t === "live_share_started")  agg.liveShareStarted++;
+        if (t === "live_share_stopped" || t === "live_share_expired") agg.liveShareStopped++;
+      }
+    }
+  } catch { /* non-fatal — omit aggregates */ }
+
   res.status(200).json({
-    sessions: sessions.map(toPublicSession),
+    sessions: sessions.map((s) => ({
+      ...toPublicSession(s),
+      events: eventsBySession[s.id] ?? { alertsSent: 0, missedCount: 0, liveShareStarted: 0, liveShareStopped: 0 },
+    })),
   });
 });
 

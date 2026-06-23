@@ -432,6 +432,29 @@ export async function listContacts(
   }
 }
 
+/**
+ * Find all active sessions whose timer has expired.
+ * Intended for the background scheduler only (service-role client).
+ */
+export async function findExpiredActiveSessions(
+  db: SupabaseClient,
+): Promise<SafeReturnSession[]> {
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await db
+      .from("safe_return_sessions")
+      .select("*")
+      .eq("status", "active")
+      .not("timer_end_at", "is", null)
+      .lt("timer_end_at", now);
+
+    if (error || !data) return [];
+    return (data as any[]).map(mapSession);
+  } catch {
+    return [];
+  }
+}
+
 /** Mark a contact as notified. */
 export async function markContactNotified(
   db: SupabaseClient,

@@ -11,7 +11,7 @@ import { router } from 'expo-router';
 import { Shield, CheckCircle, AlertCircle, Clock, X, ChevronLeft } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { getHistory, type SafeReturnSession } from '../src/services/safeReturn';
+import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
 import { useSession } from '../src/context/SessionContext';
 
 // ── Status display map ────────────────────────────────────────────────────────
@@ -70,6 +70,26 @@ function formatDuration(session: SafeReturnSession): string | null {
 
 // ── Session row ───────────────────────────────────────────────────────────────
 
+function EventBadges({ events }: { events: SafeReturnSessionEvents }) {
+  const items: Array<{ label: string; value: number; color: string }> = [
+    { label: 'Alerts sent', value: events.alertsSent, color: '#F5A623' },
+    { label: 'Missed', value: events.missedCount, color: color.signal },
+    { label: 'Live share', value: events.liveShareStarted, color: color.deep },
+  ].filter((i) => i.value > 0);
+
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.eventBadgeRow}>
+      {items.map((item) => (
+        <View key={item.label} style={[styles.eventBadge, { borderColor: item.color + '40' }]}>
+          <Text style={[styles.eventBadgeCount, { color: item.color }]}>{item.value}</Text>
+          <Text style={styles.eventBadgeLabel}>{item.label}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function SessionRow({ session }: { session: SafeReturnSession }) {
   const [expanded, setExpanded] = useState(false);
   const Icon = STATUS_ICON[session.status] ?? Clock;
@@ -89,6 +109,10 @@ function SessionRow({ session }: { session: SafeReturnSession }) {
         </View>
         {duration ? <Text style={styles.duration}>{duration}</Text> : null}
       </View>
+
+      {session.events && (
+        <EventBadges events={session.events} />
+      )}
 
       {expanded && (
         <View style={styles.detail}>
@@ -115,6 +139,9 @@ function SessionRow({ session }: { session: SafeReturnSession }) {
           )}
           {session.emergencyNote && (
             <Text style={styles.detailLine}>Note: {session.emergencyNote}</Text>
+          )}
+          {session.events && session.events.alertsSent === 0 && session.events.missedCount === 0 && session.events.liveShareStarted === 0 && (
+            <Text style={styles.detailLine}>No alerts or escalations recorded</Text>
           )}
         </View>
       )}
@@ -236,4 +263,13 @@ const styles = StyleSheet.create({
   duration: { ...t.small, color: color.mute, fontSize: 11 },
   detail: { marginTop: space.md, paddingTop: space.md, borderTopWidth: 1, borderTopColor: color.haze, gap: 4 },
   detailLine: { ...t.small, color: color.mute, fontSize: 12, lineHeight: 18 },
+  eventBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  eventBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 3,
+    backgroundColor: color.paper,
+  },
+  eventBadgeCount: { ...t.bodyStrong, fontSize: 12 },
+  eventBadgeLabel: { ...t.small, color: color.mute, fontSize: 11 },
 });

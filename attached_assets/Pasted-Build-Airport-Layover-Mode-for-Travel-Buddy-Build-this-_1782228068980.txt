@@ -1,0 +1,550 @@
+Build Airport / Layover Mode for Travel Buddy.
+
+Build this after the full platform wiring pass so Airport Mode can reuse GPS, Discovery, City Pulse, Plans, Safe Return, Trip Crew, Compass AI, Telegraph, Passport, Hidden Gems, and trusted location systems.
+
+Stay focused on Airport / Layover Mode only. Do not expand into flight booking, airline booking, hotel booking, or paid travel marketplace in this pass unless only creating backend seams.
+
+CORE PRINCIPLE
+
+Airport / Layover Mode helps travelers decide what they can safely do during a layover, airport wait, arrival window, or short stopover.
+
+It should recommend time-safe activities, food, hotels, areas, meetups, hidden gems, and routes based on:
+- Airport location
+- User’s available time
+- Immigration/customs risk
+- Distance from airport
+- Return buffer
+- Traffic/time of day
+- User vibe/preferences
+- Safety
+- Trusted plans/people nearby
+
+Airport Mode should protect the user from risky recommendations that could make them miss a flight.
+
+AIRPORT MODE ENTRY POINTS
+
+Airport Mode should be available from:
+
+- Discovery
+- Compass AI
+- Trip screen
+- Plan screen
+- City Pulse
+- User itinerary/travel plan, if available
+- Manual “I have a layover” button
+- Airport detection, if GPS places user near an airport
+- Future trip planning screen
+
+User should be able to enter:
+
+- Airport
+- Arrival time
+- Boarding/departure time
+- Total layover length
+- Domestic or international flight
+- Whether they need immigration
+- Whether they have checked bags
+- Whether they have lounge access
+- Whether they want to leave the airport
+- Comfort level: safe only, moderate, adventurous
+- Vibe: food, nightlife, shopping, culture, hotel/rest, meetups, hidden gems
+
+LAYOVER SAFETY ENGINE
+
+Create a Layover Safety Engine that calculates whether an activity is safe based on available time.
+
+It should consider:
+
+- Time until boarding
+- Airport return buffer
+- Immigration/customs time
+- Security re-entry time
+- Travel time to/from activity
+- Traffic risk
+- Time of day
+- Distance from airport
+- User’s luggage situation
+- Whether the user is in a new country
+- Whether the user has local transport confidence
+- Whether the activity is indoors/outdoors
+- Whether activity is verified
+- Whether user is alone or with Trip Crew
+
+Recommendation categories:
+
+1. Safe
+- Low chance of missing flight
+- Close to airport or inside airport
+- Comfortable time buffer
+
+2. Possible but risky
+- Can work if user moves fast
+- Requires strict return time
+- Show warning
+
+3. Not recommended
+- Too far, too little time, uncertain immigration/security, heavy traffic, or late-night risk
+
+4. Airport-only
+- User should stay inside airport
+
+Do not recommend risky activities as primary options.
+
+TIME BUFFER RULES
+
+Create configurable buffer defaults:
+
+Domestic:
+- Minimum airport return buffer: 60–90 minutes
+
+International:
+- Minimum airport return buffer: 2–3 hours
+
+If immigration/customs required:
+- Add extra buffer
+
+If checked bags / recheck required:
+- Add extra buffer
+
+If traffic risk high:
+- Add extra buffer
+
+If late-night / unfamiliar city:
+- Add caution
+
+Compass AI should say things like:
+- “This is safe with your time window.”
+- “This is possible, but your return buffer is tight.”
+- “I would not leave the airport with this layover.”
+- “Stay within 15–20 minutes of the airport.”
+- “Use rideshare, not walking, for this one.”
+
+AIRPORT DISCOVERY MODES
+
+Airport Mode should include:
+
+1. Inside Airport
+- Lounges
+- Food
+- Shopping
+- Rest zones
+- Showers
+- Work areas
+- Airport hotels
+- Meetups inside terminal if allowed
+
+2. Near Airport
+- Hotels
+- Food
+- Cafes
+- Short activities
+- Malls
+- Safe public meetup spots
+
+3. Quick City Escape
+- Only if time-safe
+- Popular areas within safe travel range
+- Verified routes
+- Return deadline
+
+4. Layover Meetups
+- Trusted/verified users nearby
+- Group plans near airport
+- Public meetup spots
+- No exact user pins
+
+5. Rest Mode
+- Day-use hotels
+- Airport hotel
+- Lounge
+- Quiet cafes
+- Sleep/rest areas
+
+6. Night Layover
+- Safety-first recommendations
+- Avoid isolated areas
+- Prefer airport hotels, lounges, verified transport, group plans
+
+COMPASS AI INTEGRATION
+
+Compass AI should be able to answer:
+
+- “Can I leave the airport?”
+- “What can I do with 6 hours at TPE?”
+- “Is Ximending safe for a 10-hour layover?”
+- “Where should I eat near the airport?”
+- “Can I meet people nearby without risking my flight?”
+- “What’s the safest plan before my flight?”
+- “How much time should I leave to get back?”
+- “Should I stay inside the airport?”
+
+Compass must use safe location context only.
+
+Compass should never:
+- Push risky plans as safe
+- Ignore airport return buffer
+- Expose user exact location publicly
+- Expose nearby users’ exact location
+- Recommend private/isolated meetups for layovers
+
+LAYOVER PLAN CREATION
+
+Allow users to create layover plans.
+
+Plan type:
+- Layover meetup
+- Airport food
+- Nearby cafe
+- Lounge meetup
+- Quick city activity
+- Hotel/rest meetup
+- Shopping stop
+
+Layover plans should include:
+- Airport
+- Time window
+- Hard return deadline
+- Public meetup location
+- Check-in radius
+- Safe Return suggestion
+- Verified venue preference
+- Auto-expire after flight window
+
+Public plan card should show:
+- Airport / city
+- Time window
+- Activity type
+- Approximate area
+- Trust requirement
+- “Layover-safe” badge if verified by engine
+
+Do not show exact meetup spot until accepted if private.
+
+TELEGRAPH INTEGRATION
+
+Telegraph should support layover suggestions.
+
+Examples:
+- “Want to grab food near TPE? I have 5 safe hours.”
+- “Compass says this is layover-safe and 15 minutes from the airport.”
+- “Invite Trip Crew to airport lounge meetup.”
+- “Send return deadline reminder.”
+
+Do not include private GPS or hidden meetup coordinates in Telegraph suggestions.
+
+CITY PULSE INTEGRATION
+
+City Pulse should support Airport Pulse / Layover Pulse.
+
+Tabs or filters:
+- Airport Pulse
+- Near Airport
+- Layover Plans
+- Travelers Nearby
+- Quick Food
+- Rest Options
+
+Pulse should show:
+- Public posts near airport
+- Verified airport-area tips
+- Layover-safe plans
+- Warnings/cautions
+- Hidden gems only when time-safe
+
+No exact user GPS publicly.
+
+PASSPORT INTEGRATION
+
+Prepare Passport seams for:
+
+- Airport layover stamp
+- First layover meetup
+- City quick-stop memory
+- Airport food memory
+- Safe layover completed
+
+Do not force rewards in this pass.
+
+SAFE RETURN INTEGRATION
+
+Safe Return should be suggested for:
+
+- Night layovers
+- Leaving airport alone
+- Meeting someone during layover
+- Going far from airport
+- Late-night rideshare
+- New country/city
+
+TRIP CREW INTEGRATION
+
+Trip Crew should support:
+
+- “Crew near airport”
+- “Meet at terminal/cafe”
+- “Return deadline”
+- “Who is already back near airport”
+- Privacy-safe approximate statuses
+
+LOCATION PRIVACY
+
+Airport Mode must follow all GPS privacy rules:
+
+1. Exact GPS is never public.
+2. Nearby travelers are shown as approximate only.
+3. Layover plans hide exact meetup locations until accepted if private.
+4. Trip Crew location remains permission-based.
+5. Safe Return remains private.
+6. Passport memories do not expose exact airport route history.
+7. Compass AI uses only safe location context.
+8. Hotel/rest locations are blurred unless user chooses to share with accepted plan/crew.
+
+DATA MODEL
+
+Create or update tables:
+
+airport_profiles:
+- id
+- iata_code
+- airport_name
+- city
+- country
+- timezone
+- latitude
+- longitude
+- terminal_info nullable
+- default_domestic_buffer_minutes
+- default_international_buffer_minutes
+- created_at
+- updated_at
+
+layover_sessions:
+- id
+- user_id
+- airport_id
+- trip_id nullable
+- arrival_time nullable
+- departure_time nullable
+- boarding_time nullable
+- layover_minutes
+- flight_type
+- immigration_required
+- checked_bags
+- comfort_level
+- wants_to_leave_airport
+- status
+- created_at
+- updated_at
+
+layover_recommendations:
+- id
+- session_id
+- recommendation_type
+- place_id nullable
+- plan_id nullable
+- title
+- safety_rating
+- estimated_travel_time_minutes
+- estimated_activity_time_minutes
+- required_return_buffer_minutes
+- hard_return_time
+- warning_reason nullable
+- created_at
+
+layover_events:
+- id
+- session_id
+- event_type
+- metadata
+- created_at
+
+Suggested event types:
+- created
+- airport_detected
+- recommendation_generated
+- user_chose_activity
+- return_deadline_set
+- return_reminder_sent
+- safe_return_started
+- completed
+- cancelled
+- expired
+
+SERVICES
+
+Create services:
+
+AirportProfileService:
+- Resolve airport by GPS, city, IATA code, or manual search
+- Return airport metadata and buffer defaults
+
+LayoverSessionService:
+- Create/update layover session
+- Store user time window and preferences
+- Expire layover session after flight window
+
+LayoverSafetyEngine:
+- Calculate safe/possible/not recommended
+- Determine return buffer
+- Estimate time risk
+- Rank options by safety and fit
+
+LayoverRecommendationService:
+- Recommend inside-airport, near-airport, quick-city, rest, food, plans, and meetups
+
+LayoverCompassService:
+- Generate safe AI explanations
+- Answer “can I leave airport?” questions
+
+LayoverPrivacyGuard:
+- Prevent exact GPS leakage
+- Prevent private plan/location leakage
+- Respect Ghost Mode and location mode
+
+LayoverNotificationService:
+- Send return deadline reminders
+- Send boarding/return buffer reminders
+- Suggest Safe Return when appropriate
+
+API ENDPOINTS
+
+Add endpoints for:
+
+- Search/resolve airport
+- Create layover session
+- Update layover session
+- Get layover recommendations
+- Get layover safety rating
+- Ask Compass layover question
+- Create layover plan
+- Set return deadline
+- Send Telegraph layover suggestion
+- Get Airport Pulse
+- End/cancel layover session
+
+UI REQUIREMENTS
+
+Create Airport / Layover Mode screen.
+
+Screen sections:
+
+1. Layover setup
+- Airport
+- Time available
+- Departure/boarding time
+- Flight type
+- Immigration/check bags
+- Comfort level
+- Leave airport toggle
+
+2. Recommendation cards
+- Inside airport
+- Near airport
+- Food
+- Rest
+- Quick city escape
+- Meetups
+- Hidden gems
+
+3. Safety badge
+- Safe
+- Possible but risky
+- Not recommended
+- Stay inside airport
+
+4. Return deadline
+- Hard return time
+- Reminder button
+- Add to plan/trip
+
+5. Compass explanation
+- Why this is safe/risky
+- Travel time
+- Buffer
+- Recommended action
+
+6. Actions
+- Save
+- Add to Plan
+- Invite Crew
+- Send in Telegraph
+- Start Safe Return
+- Open map
+- Stay airport-only
+
+UI wording examples:
+
+- “Safe with your current time window.”
+- “Possible, but your return buffer is tight.”
+- “Not recommended for this layover.”
+- “Stay within 20 minutes of the airport.”
+- “Be back by 6:45 PM to keep your buffer.”
+
+ADMIN SUPPORT
+
+Admin should be able to:
+
+- Add/edit airport profiles
+- Configure airport buffer defaults
+- Configure caution zones near airports
+- Verify airport-area places
+- Review unsafe layover recommendations
+- Configure airport Pulse zones
+- Mark airport-area scams/cautions
+- Review layover plan reports
+
+TESTS
+
+Add tests for:
+
+- Airport resolves by IATA code.
+- Airport resolves by GPS proximity.
+- Layover session calculates available time.
+- Domestic buffer applies.
+- International buffer applies.
+- Immigration adds extra buffer.
+- Checked bags add extra buffer.
+- Activity too far is marked not recommended.
+- Inside-airport activity is safe for short layover.
+- Night layover recommends safer options.
+- Compass does not expose exact GPS.
+- Nearby traveler exact location is not shown.
+- Layover plan hides exact meetup until accepted.
+- Return deadline reminder is created.
+- Safe Return suggested for risky layover context.
+- Telegraph layover suggestion does not leak private location.
+- Passport seam records memory/stamp event without exact route history.
+- Admin can configure airport buffer defaults.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- airport_mode_enabled
+- layover_safety_engine_enabled
+- airport_pulse_enabled
+- layover_plans_enabled
+- layover_compass_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Airport profile service
+3. Layover session service
+4. Layover safety engine
+5. Layover recommendation service
+6. Compass layover support
+7. Telegraph layover suggestion support
+8. Airport / Layover Mode UI
+9. Layover plan support
+10. Return deadline reminders
+11. Safe Return integration
+12. Airport Pulse support
+13. Admin airport controls
+14. Privacy guards
+15. Tests
+16. Implementation report
+
+Do not break GPS, Discovery, Pulse, Plans, Safe Return, Trip Crew, Compass AI, Telegraph, Passport, Hidden Gems, Trusted Circle, or existing Trips flows.
+
+Keep this pass focused on Airport / Layover Mode.

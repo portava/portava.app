@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
 import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
+import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -28,6 +29,7 @@ app.listen(port, (err) => {
   startDailyBriefCleanup();
   startWeatherCacheCleanup();
   initTelegraphBroadcast();
+  startSafeReturnScheduler();
 
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across

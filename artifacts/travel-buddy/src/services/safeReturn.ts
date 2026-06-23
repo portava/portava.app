@@ -34,6 +34,13 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<any> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface SafeReturnSessionEvents {
+  alertsSent: number;
+  missedCount: number;
+  liveShareStarted: number;
+  liveShareStopped: number;
+}
+
 export interface SafeReturnSession {
   id: string;
   status: 'pending' | 'active' | 'safe' | 'missed' | 'cancelled';
@@ -51,6 +58,8 @@ export interface SafeReturnSession {
   closedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Per-session event counts, included in history responses. */
+  events?: SafeReturnSessionEvents;
 }
 
 export interface SafeReturnContactInput {
