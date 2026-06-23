@@ -71,6 +71,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0035_plan_geofences.sql` | Creates `plan_geofences` table (id, trip_id→trips, plan_item_id→trip_plan_items, zone_id→geo_zones, trigger_type enum, notify_members bool, message_template, last_triggered_at); RLS (trip members read/manage) | pending |
 | `0036_pulse_geo_tags.sql` | Creates `pulse_geo_tags` table (id, post_id→posts, geo_zone_id→geo_zones, tag_type enum, display_label, confidence_score, source enum, created_at); RLS (public read); used by Pulse location context display | pending |
 | `0037_feature_flags.sql` | Creates `feature_flags` table (flag text PK, enabled bool, description, updated_at); seed rows for location intelligence phases 1–6; service-role manages flags | pending |
+| `0039_plan_geofence_full.sql` | Expands `plan_geofences` (public_preview_level, exact_visibility, check_in_required, window start/end, arrival_status_visible, no_show_affects_reliability, location_name, city, neighborhood, venue_name, host_revealed, UNIQUE trip_id); adds `plan_checkins` (per-member attendance status with upsert), `plan_attendance_events` (audit log: suspicious/late/override events), `geofence_admin_settings` (single-row id=1 default/min/max radius config) | pending |
 
 ## Gotchas
 

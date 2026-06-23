@@ -336,4 +336,104 @@ router.post("/admin/venues/:id/moderate", async (req, res) => {
   res.json({ venue: data });
 });
 
+// ── Geofence admin controls ───────────────────────────────────────────────────
+// Table: geofence_admin_settings (migration 0039)
+// Single-row config for default/min/max check-in radius and global no-show flag.
+
+/** GET /admin/geofence-settings — read current admin radius config */
+router.get("/admin/geofence-settings", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { data, error } = await sc
+    .from("geofence_admin_settings")
+    .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability, updated_at")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({
+    settings: data ?? {
+      default_radius_m: 150,
+      min_radius_m: 50,
+      max_radius_m: 5000,
+      no_show_affects_reliability: false,
+    },
+  });
+});
+
+/** PATCH /admin/geofence-settings — update radius defaults */
+const geofenceSettingsSchema = z.object({
+  defaultRadiusM:            z.number().int().min(10).max(10_000).optional(),
+  minRadiusM:                z.number().int().min(10).max(1_000).optional(),
+  maxRadiusM:                z.number().int().min(100).max(50_000).optional(),
+  noShowAffectsReliability:  z.boolean().optional(),
+});
+
+router.patch("/admin/geofence-settings", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = geofenceSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (parsed.data.defaultRadiusM           !== undefined) patch.default_radius_m           = parsed.data.defaultRadiusM;
+  if (parsed.data.minRadiusM               !== undefined) patch.min_radius_m               = parsed.data.minRadiusM;
+  if (parsed.data.maxRadiusM               !== undefined) patch.max_radius_m               = parsed.data.maxRadiusM;
+  if (parsed.data.noShowAffectsReliability !== undefined) patch.no_show_affects_reliability = parsed.data.noShowAffectsReliability;
+
+  const { data, error } = await sc
+    .from("geofence_admin_settings")
+    .update(patch)
+    .eq("id", 1)
+    .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ settings: data });
+});
+
+/** POST /admin/geofence/:tripId/override-reveal — admin can force-reveal exact location */
+router.post("/admin/geofence/:tripId/override-reveal", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { data, error } = await sc
+    .from("plan_geofences")
+    .update({ host_revealed: true, updated_at: new Date().toISOString() })
+    .eq("trip_id", req.params.tripId)
+    .select("id, trip_id, host_revealed")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data)  { sendError(res, "not_found", "No geofence for this trip"); return; }
+  res.json({ geofence: data });
+});
+
+/** GET /admin/geofence/:tripId/suspicious-checkins — suspicious check-in events for a trip */
+router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { data, error } = await sc
+    .from("plan_attendance_events")
+    .select("id, user_id, event_type, metadata, created_at")
+    .eq("trip_id", req.params.tripId)
+    .eq("event_type", "suspicious_check_in")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ events: data ?? [], total: (data ?? []).length });
+});
+
 export default router;
+
