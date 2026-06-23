@@ -5,11 +5,15 @@
  * Mutating routes publish small, structured events to the set of affected
  * users; each open SSE connection registers one subscriber callback.
  *
- * This is intentionally process-local. With a single API-server instance the
- * fan-out is complete; the mobile client always keeps a polling fallback so
- * any missed event (multi-instance, dropped socket) self-heals on the next
- * poll. The bus never throws into callers — publish failures are logged and
- * swallowed so realtime delivery can never break a write path.
+ * Single-instance delivery is handled by `publishToUsersLocal`, which writes
+ * directly to the in-memory subscriber map.  `publishToUsers` additionally
+ * calls the broadcast hook (when registered) so the same event reaches clients
+ * connected to other server instances via the cross-instance channel
+ * (telegraphBroadcast).
+ *
+ * The bus never throws into callers — publish failures are logged and swallowed
+ * so realtime delivery can never break a write path.  The mobile client always
+ * keeps a polling fallback, so any missed event self-heals on the next poll.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -44,6 +48,29 @@ type Subscriber = (event: TelegraphEvent) => void;
 /** userId -> set of subscriber callbacks (one per open SSE connection). */
 const subscribers = new Map<string, Set<Subscriber>>();
 
+// ── Cross-instance broadcast hook ─────────────────────────────────────────────
+
+/**
+ * Optional hook registered by telegraphBroadcast at startup.  When set,
+ * publishToUsers fans the event out to other server instances after local
+ * delivery.
+ */
+let _broadcastHook:
+  | ((userIds: string[], event: TelegraphEvent) => void)
+  | null = null;
+
+/**
+ * Register the cross-instance broadcast hook.  Called once at server startup
+ * by initTelegraphBroadcast().  Subsequent calls replace the previous hook.
+ */
+export function setBroadcastHook(
+  hook: (userIds: string[], event: TelegraphEvent) => void,
+): void {
+  _broadcastHook = hook;
+}
+
+// ── Subscriber management ─────────────────────────────────────────────────────
+
 /**
  * Register a subscriber for a user. Returns an unsubscribe function that must
  * be called when the connection closes.
@@ -74,9 +101,38 @@ export function isUserConnected(userId: string): boolean {
   return Boolean(s && s.size > 0);
 }
 
+// ── Delivery ──────────────────────────────────────────────────────────────────
+
 /**
- * Publish an event to an explicit set of user ids. De-duplicates ids and
- * never throws — a misbehaving subscriber callback is isolated and logged.
+ * Deliver an event to local subscribers only (no cross-instance fan-out).
+ * Used by telegraphBroadcast when it receives a remote event so it doesn't
+ * re-broadcast and cause infinite loops.
+ */
+export function publishToUsersLocal(
+  userIds: Iterable<string>,
+  event: TelegraphEvent,
+): void {
+  for (const uid of userIds) {
+    if (!uid) continue;
+    const set = subscribers.get(uid);
+    if (!set) continue;
+    for (const cb of set) {
+      try {
+        cb(event);
+      } catch (err) {
+        logger.warn(
+          { err, type: event.type },
+          "telegraph remote subscriber callback threw",
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Publish an event to an explicit set of user ids.  De-duplicates ids,
+ * delivers to local subscribers, then fans out to other instances via the
+ * registered broadcast hook (if any).  Never throws.
  */
 export function publishToUsers(
   userIds: Iterable<string>,
@@ -84,6 +140,7 @@ export function publishToUsers(
 ): void {
   const full: TelegraphEvent = { ...event, ts: event.ts ?? new Date().toISOString() };
   const seen = new Set<string>();
+
   for (const uid of userIds) {
     if (!uid || seen.has(uid)) continue;
     seen.add(uid);
@@ -95,6 +152,15 @@ export function publishToUsers(
       } catch (err) {
         logger.warn({ err, type: full.type }, "telegraph subscriber callback threw");
       }
+    }
+  }
+
+  // Fan out to other instances — fire-and-forget, never block callers.
+  if (_broadcastHook && seen.size > 0) {
+    try {
+      _broadcastHook(Array.from(seen), full);
+    } catch (err) {
+      logger.warn({ err, type: full.type }, "telegraph broadcast hook threw");
     }
   }
 }
