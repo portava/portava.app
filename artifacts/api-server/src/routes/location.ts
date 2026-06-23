@@ -9,7 +9,6 @@
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
-import { getServiceClient } from "../lib/supabase";
 import { reverseGeocode } from "../services/geocodingService";
 
 const router = Router();
@@ -31,10 +30,7 @@ function sanitizeText(v: unknown, maxLen = 128): string | null {
 router.get("/me/location-state", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  const { client: sc, user } = auth;
 
   const { data, error } = await sc
     .from("user_location_state")
@@ -81,10 +77,7 @@ router.get("/me/location-state", async (req, res) => {
 router.post("/me/location-state", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  const { client: sc, user } = auth;
 
   const body = req.body ?? {};
   const source = sanitizeText(body.source, 32);
@@ -175,10 +168,7 @@ router.post("/location/reverse-geocode", async (req, res) => {
 router.get("/me/passport-stamps/gps", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  const { client: sc, user } = auth;
 
   const { data, error } = await sc
     .from("passport_stamps_gps")
@@ -199,10 +189,7 @@ router.get("/me/passport-stamps/gps", async (req, res) => {
 router.post("/me/passport-stamps/gps", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  const { client: sc, user } = auth;
 
   const body = req.body ?? {};
   const VALID_TYPES = [
@@ -263,6 +250,15 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     }
   }
 
+  // Merge trustLevel into metadata so it is durably persisted with the stamp.
+  // The client can read trustLevel from metadata.trust_level to show a verified/
+  // pending badge on the Passport without needing a schema migration.
+  const stampMetadata = {
+    ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}),
+    trust_level: trustLevel,
+    trust_checked_at: new Date().toISOString(),
+  };
+
   // Upsert — unique on (user_id, stamp_type, country_code, city)
   const { data: stamp, error } = await sc
     .from("passport_stamps_gps")
@@ -279,11 +275,11 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
         source,
         related_postcard_id: relatedPostcardId,
         related_trip_id: relatedTripId,
-        metadata: body.metadata ?? null,
+        metadata: stampMetadata,
       },
       { onConflict: "user_id,stamp_type,country_code,city", ignoreDuplicates: false },
     )
-    .select("id, stamp_type, city, country, country_code, unlocked_at")
+    .select("id, stamp_type, city, country, country_code, unlocked_at, metadata")
     .single();
 
   if (error) {

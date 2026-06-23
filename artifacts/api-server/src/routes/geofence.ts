@@ -67,10 +67,7 @@ async function isTripMember(db: ReturnType<typeof getServiceClient>, tripId: str
 router.get("/trips/:tripId/geofence", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const db = getServiceClient();
-  if (!db) { sendError(res, "server_not_configured"); return; }
+  const { client: db, user } = auth;
 
   if (!await isFeatureEnabled(db)) {
     res.status(200).json({ geofence: null, featureEnabled: false });
@@ -121,10 +118,7 @@ router.get("/trips/:tripId/geofence", async (req, res) => {
 router.post("/trips/:tripId/geofence", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const db = getServiceClient();
-  if (!db) { sendError(res, "server_not_configured"); return; }
+  const { client: db, user } = auth;
 
   if (!await isFeatureEnabled(db)) {
     sendError(res, "feature_disabled", "Plan geofencing is not enabled");
@@ -151,22 +145,43 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     return;
   }
 
-  const { error } = await db
+  // Manual upsert — plan_geofences has no UNIQUE(trip_id) in the current schema,
+  // so we check for an existing row first, then update or insert accordingly.
+  const { data: existing } = await db
     .from("plan_geofences")
-    .upsert({
-      trip_id:          tripId,
-      lat:              parsed.data.lat,
-      lng:              parsed.data.lng,
-      check_in_radius_m:parsed.data.checkInRadiusM,
-      visibility:       parsed.data.visibility,
-      host_enabled:     parsed.data.hostEnabled,
-      created_by:       user.id,
-      updated_at:       new Date().toISOString(),
-    }, { onConflict: "trip_id" });
+    .select("id")
+    .eq("trip_id", tripId)
+    .maybeSingle();
 
-  if (error) {
-    req.log.error({ err: error }, "geofence: upsert failed");
-    sendError(res, "db_error", error.message);
+  const record = {
+    trip_id:           tripId,
+    lat:               parsed.data.lat,
+    lng:               parsed.data.lng,
+    check_in_radius_m: parsed.data.checkInRadiusM,
+    visibility:        parsed.data.visibility,
+    host_enabled:      parsed.data.hostEnabled,
+    created_by:        user.id,
+    updated_at:        new Date().toISOString(),
+  };
+
+  let writeError: Error | null = null;
+
+  if ((existing as any)?.id) {
+    const { error } = await db
+      .from("plan_geofences")
+      .update(record)
+      .eq("id", (existing as any).id);
+    writeError = error;
+  } else {
+    const { error } = await db
+      .from("plan_geofences")
+      .insert(record);
+    writeError = error;
+  }
+
+  if (writeError) {
+    req.log.error({ err: writeError }, "geofence: write failed");
+    sendError(res, "db_error", writeError.message);
     return;
   }
 
