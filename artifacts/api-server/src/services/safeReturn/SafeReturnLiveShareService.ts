@@ -236,17 +236,16 @@ export async function getRecipientView(
       }
     }
 
-    // Fetch approximate area from session (no GPS)
-    const { data: session } = await db
-      .from("safe_return_sessions")
-      .select("city, district, country, user_id")
-      .eq("id", s.sessionId)
+    // Fetch approximate area from user_location_state (city/country — no raw GPS)
+    const { data: locState } = await db
+      .from("user_location_state")
+      .select("city, country")
+      .eq("user_id", s.userId)
       .maybeSingle();
 
     const parts: string[] = [];
-    if ((session as any)?.district) parts.push((session as any).district);
-    if ((session as any)?.city) parts.push((session as any).city);
-    if ((session as any)?.country) parts.push((session as any).country);
+    if ((locState as any)?.city) parts.push((locState as any).city);
+    if ((locState as any)?.country) parts.push((locState as any).country);
     const approximateArea = parts.length > 0 ? parts.join(", ") : "location unknown";
 
     // Sharer name

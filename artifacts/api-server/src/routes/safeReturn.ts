@@ -151,12 +151,25 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
     currentCity = (locState as any)?.city ?? null;
   } catch { /* non-fatal */ }
 
+  // Fetch trip member count for solo-activity signal
+  let attendeeCount: number | undefined;
+  try {
+    if ((item as any).trip_id) {
+      const { count } = await client
+        .from("trip_members")
+        .select("*", { count: "exact", head: true })
+        .eq("trip_id", (item as any).trip_id);
+      attendeeCount = count ?? undefined;
+    }
+  } catch { /* non-fatal */ }
+
   const planItemCtx = {
     id: (item as any).id,
     category: (item as any).category ?? "other",
     startsAt: (item as any).starts_at ?? null,
     dayDate: (item as any).day_date ?? null,
     locationName: (item as any).location_name ?? null,
+    attendeeCount,
   };
 
   const result = shouldSuggest(planItemCtx, user.id, { homeCity, currentCity });
@@ -537,6 +550,43 @@ router.get("/me/safe-return/trusted-contacts", async (req, res) => {
     res.status(200).json({ contacts });
   } catch {
     res.status(200).json({ contacts: [] });
+  }
+});
+
+// ── GET /api/me/safe-return/sessions/:id/contacts ─────────────────────────────
+// List contacts attached to a session (supports "Share Location Now" picker)
+
+router.get("/me/safe-return/sessions/:id/contacts", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ contacts: [], featureEnabled: false }); return;
+  }
+
+  const session = await getSessionById(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "not_found", "Session not found"); return;
+  }
+
+  try {
+    const { data: rows } = await db
+      .from("safe_return_contacts")
+      .select("id, contact_user_id, contact_name, can_receive_live_location")
+      .eq("session_id", session.id);
+
+    const contacts = ((rows as any[]) ?? []).map((r: any) => ({
+      id:                    r.id,
+      contactUserId:         r.contact_user_id ?? null,
+      contactName:           r.contact_name ?? null,
+      canReceiveLiveLocation: !!r.can_receive_live_location,
+    }));
+
+    res.status(200).json({ ok: true, contacts });
+  } catch {
+    res.status(200).json({ ok: true, contacts: [] });
   }
 });
 

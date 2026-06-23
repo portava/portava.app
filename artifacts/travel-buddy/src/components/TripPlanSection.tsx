@@ -626,6 +626,7 @@ export function TripPlanSection({
         visible={safeReturnSetupOpen}
         planItemId={safeReturnSetupItem?.id}
         tripId={tripId}
+        planEndsAt={safeReturnSetupItem?.endsAt ?? null}
         onClose={() => { setSafeReturnSetupOpen(false); setSafeReturnSetupItem(null); }}
         onStarted={() => {
           setSafeReturnSetupOpen(false);

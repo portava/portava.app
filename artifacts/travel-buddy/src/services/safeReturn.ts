@@ -129,12 +129,24 @@ export async function cancelSession(sessionId: string): Promise<{ ok: boolean; e
 
 export async function startLiveShare(
   sessionId: string,
-  opts: { recipientUserId?: string | null; durationMinutes?: number },
+  opts: { recipientContactId: string; durationMinutes?: number },
 ): Promise<{ ok: boolean; share?: { id: string; expiresAt: string | null }; error?: string }> {
   return apiFetch(`/api/me/safe-return/sessions/${sessionId}/live-share/start`, {
     method: 'POST',
     body: JSON.stringify(opts),
   });
+}
+
+export interface SessionContact {
+  id: string;
+  contactUserId: string | null;
+  contactName: string | null;
+  canReceiveLiveLocation: boolean;
+}
+
+export async function getSessionContacts(sessionId: string): Promise<SessionContact[]> {
+  const data = await apiFetch(`/api/me/safe-return/sessions/${sessionId}/contacts`);
+  return data?.contacts ?? [];
 }
 
 export async function stopLiveShare(sessionId: string, shareId: string): Promise<{ ok: boolean; error?: string }> {

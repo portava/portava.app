@@ -9,12 +9,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
-import { Shield, CheckCircle, Clock, X, PhoneCall, MapPin, ChevronRight } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { Shield, CheckCircle, Clock, X, PhoneCall, MapPin, ChevronRight, Share2, MessageCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   confirmSafe,
   cancelSession,
   extendTimer,
+  startLiveShare,
+  getSessionContacts,
   type SafeReturnSession,
 } from '../../services/safeReturn';
 import { EmergencyHelpSheet } from './EmergencyHelpSheet';
@@ -74,9 +77,11 @@ const STATUS_LABEL: Record<string, string> = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated, compact = false }: Props) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [showEmergency, setShowEmergency] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
   const countdown = useCountdown(session.timerEndAt);
 
   const handleConfirmSafe = useCallback(async () => {
@@ -101,6 +106,53 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
       Alert.alert('Error', 'Could not extend timer.');
     }
   }, [session.id, onSessionUpdated]);
+
+  const handleShareLocation = useCallback(async () => {
+    if (!session.liveShareEnabled) {
+      Alert.alert('Not configured', 'Enable "Share my approximate area" in Safe Return settings to use this feature.');
+      return;
+    }
+    setShareLoading(true);
+    const contacts = await getSessionContacts(session.id);
+    const eligible = contacts.filter((c) => c.canReceiveLiveLocation);
+    setShareLoading(false);
+
+    if (eligible.length === 0) {
+      Alert.alert('No contacts', 'No contacts in this session have location sharing enabled.');
+      return;
+    }
+
+    if (eligible.length === 1) {
+      const contact = eligible[0]!;
+      const r = await startLiveShare(session.id, { recipientContactId: contact.id });
+      if (r.ok) {
+        Alert.alert('Sharing started', `Your approximate area is now visible to ${contact.contactName ?? 'your contact'} for 1 hour.`);
+      } else {
+        Alert.alert('Error', 'Could not start location share. Please try again.');
+      }
+      return;
+    }
+
+    // Multiple contacts — let user pick
+    Alert.alert(
+      'Share with…',
+      'Choose a contact to share your approximate area with.',
+      [
+        ...eligible.map((c) => ({
+          text: c.contactName ?? 'Contact',
+          onPress: async () => {
+            const r = await startLiveShare(session.id, { recipientContactId: c.id });
+            if (!r.ok) Alert.alert('Error', 'Could not start location share.');
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  }, [session.id, session.liveShareEnabled]);
+
+  const handleMessageCircle = useCallback(() => {
+    router.push('/messages');
+  }, [router]);
 
   const handleCancel = useCallback(() => {
     Alert.alert(
@@ -144,11 +196,14 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
             statusLabel={statusLabel}
             statusColor={statusColor}
             loading={loading}
+            shareLoading={shareLoading}
             onClose={() => setExpanded(false)}
             onConfirmSafe={handleConfirmSafe}
             onExtend={handleExtend}
             onCancel={handleCancel}
             onEmergency={() => setShowEmergency(true)}
+            onShareLocation={handleShareLocation}
+            onMessageCircle={handleMessageCircle}
           />
         )}
         <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} />
@@ -189,6 +244,23 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
           </Pressable>
         </View>
 
+        {/* Quick-action row */}
+        <View style={styles.quickActions}>
+          <Pressable style={styles.quickBtn} onPress={handleShareLocation} disabled={shareLoading}>
+            {shareLoading
+              ? <ActivityIndicator size="small" color={color.deep} />
+              : <>
+                  <Share2 size={13} color={color.deep} />
+                  <Text style={styles.quickBtnText}>Share Location</Text>
+                </>
+            }
+          </Pressable>
+          <Pressable style={styles.quickBtn} onPress={handleMessageCircle}>
+            <MessageCircle size={13} color={color.deep} />
+            <Text style={styles.quickBtnText}>Message Circle</Text>
+          </Pressable>
+        </View>
+
         <Pressable style={styles.cancelLink} onPress={handleCancel}>
           <Text style={styles.cancelLinkText}>Cancel Safe Return</Text>
         </Pressable>
@@ -200,17 +272,20 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
 
 // ── Full-screen expand modal ──────────────────────────────────────────────────
 
-function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading, onClose, onConfirmSafe, onExtend, onCancel, onEmergency }: {
+function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading, shareLoading, onClose, onConfirmSafe, onExtend, onCancel, onEmergency, onShareLocation, onMessageCircle }: {
   session: SafeReturnSession;
   countdown: string;
   statusLabel: string;
   statusColor: string;
   loading: boolean;
+  shareLoading: boolean;
   onClose: () => void;
   onConfirmSafe: () => void;
   onExtend: () => void;
   onCancel: () => void;
   onEmergency: () => void;
+  onShareLocation: () => void;
+  onMessageCircle: () => void;
 }) {
   return (
     <Modal animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -249,6 +324,19 @@ function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading
           </Pressable>
           <Pressable style={styles.modalSecondaryBtn} onPress={onExtend} disabled={loading}>
             <Text style={styles.modalSecondaryBtnText}>Extend 15 minutes</Text>
+          </Pressable>
+          <Pressable style={[styles.modalSecondaryBtn, styles.modalActionBtn]} onPress={onShareLocation} disabled={shareLoading}>
+            {shareLoading
+              ? <ActivityIndicator size="small" color={color.deep} />
+              : <>
+                  <Share2 size={16} color={color.deep} />
+                  <Text style={[styles.modalSecondaryBtnText, { color: color.deep }]}>Share Location Now</Text>
+                </>
+            }
+          </Pressable>
+          <Pressable style={[styles.modalSecondaryBtn, styles.modalActionBtn]} onPress={onMessageCircle}>
+            <MessageCircle size={16} color={color.deep} />
+            <Text style={[styles.modalSecondaryBtnText, { color: color.deep }]}>Message Trusted Circle</Text>
           </Pressable>
           <Pressable style={styles.modalSecondaryBtn} onPress={onEmergency}>
             <Text style={[styles.modalSecondaryBtnText, { color: color.signal }]}>Emergency Help</Text>
@@ -329,4 +417,12 @@ const styles = StyleSheet.create({
   },
   modalSecondaryBtnText: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   modalCancelLink: { alignItems: 'center', paddingVertical: space.md },
+  modalActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm },
+  quickActions: { flexDirection: 'row', gap: space.sm, marginBottom: space.xs },
+  quickBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 4, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    backgroundColor: color.paperRaised, paddingVertical: space.sm,
+  },
+  quickBtnText: { ...t.small, color: color.deep, fontSize: 12 },
 });

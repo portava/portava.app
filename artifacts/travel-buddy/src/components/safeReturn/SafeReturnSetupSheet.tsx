@@ -27,6 +27,8 @@ interface Props {
   onStarted?: (sessionId: string) => void;
   planItemId?: string;
   tripId?: string;
+  /** ISO timestamp of when the linked plan item ends (enables "Until plan ends" timer chip). */
+  planEndsAt?: string | null;
   suggestionReason?: string | null;
 }
 
@@ -49,7 +51,7 @@ const ESCALATION_OPTIONS: Array<{ level: 0 | 1 | 2 | 3; label: string; desc: str
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, suggestionReason }: Props) {
+export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason }: Props) {
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
   const [escalationLevel, setEscalationLevel] = useState<0 | 1 | 2 | 3>(0);
   const [trustedCircleEnabled, setTrustedCircleEnabled] = useState(false);
@@ -180,6 +182,20 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
                 </Text>
               </Pressable>
             ))}
+            {planEndsAt && new Date(planEndsAt) > new Date() ? (() => {
+              const planEndMinutes = Math.max(5, Math.round((new Date(planEndsAt).getTime() - Date.now()) / 60_000));
+              return (
+                <Pressable
+                  key="plan-ends"
+                  style={[styles.chip, timerMinutes === planEndMinutes && styles.chipActive]}
+                  onPress={() => setTimerMinutes(planEndMinutes)}
+                >
+                  <Text style={[styles.chipText, timerMinutes === planEndMinutes && styles.chipTextActive]}>
+                    Until plan ends
+                  </Text>
+                </Pressable>
+              );
+            })() : null}
           </View>
 
           {/* Escalation level */}
