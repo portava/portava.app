@@ -1,0 +1,100 @@
+!
+
+Log 1 of 1
+Uncaught Error
+A navigator cannot contain multiple 'Screen' components with the same name (found duplicate screen named 'settings')
+Source
+ 
+ 80 |
+ type 
+Step
+ 
+=
+ 
+'pick_trip'
+ 
+|
+ 
+'pick_time'
+;
+ 
+ 81 |
+>
+ 82 |
+ 
+export
+ 
+function
+ 
+PlanPickerControllerProvider
+({ children }
+:
+ { children
+:
+ 
+React
+.
+ReactNode
+ }) {
+ 
+    |
+                                                
+^
+ 
+ 83 |
+   
+const
+ insets 
+=
+ useSafeAreaInsets()
+;
+ 
+ 84 |
+   
+const
+ { isAuthed } 
+=
+ useSession()
+;
+ 
+ 85 |
+Call Stack
+useNavigationBuilder
+node_modules/.pnpm/@react-navigation+core@7.21.1_react@19.1.0/node_modules/@react-navigation/core/lib/module/useNavigationBuilder.js:206:13
+NativeStackNavigator
+node_modules/.pnpm/expo-router@6.0.24_@expo+metro-runtime@6.1.2_@types+react-dom@19.1.11_@types+react@19.1_8472e5b30deff9f5532c2616249b5deb/node_modules/expo-router/build/fork/native-stack/createNativeStackNavigator.js:42:110
+callComponent.reactStackBottomFrame
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:23863:20
+renderWithHooks
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:5529:22
+updateFunctionComponent
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:8897:19
+beginWork
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:10522:18
+runWithFiberInDEV
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:1519:30
+performUnitOfWork
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:15132:22
+workLoopSync
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:14956:41
+renderRootSync
+node_modules/.pnpm/react-dom@19.1.0_react@19.1.0/node_modules/react-dom/cjs/react-dom-client.development.js:14936:11
+Collapse all 10 frames
+Component Stack
+PlanPickerControllerProvider
+src/components/PlanPickerController.tsx:82:48
+AttachControllerProvider
+src/components/AttachController.tsx:18:44
+AttachmentProvider
+src/context/AttachmentStore.tsx:20:8
+AvailabilityProvider
+src/context/AvailabilityStore.tsx:32:40
+LocationProvider
+src/context/LocationContext.tsx:41:8
+LanguagePreferenceProvider
+src/context/LanguagePreferenceContext.tsx:17:8
+SessionProvider
+src/context/SessionContext.tsx:20:8
+RootLayout
+app/_layout.tsx:50:16
+See 40 more frames
