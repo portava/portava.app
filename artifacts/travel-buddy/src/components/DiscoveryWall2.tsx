@@ -74,7 +74,12 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
         {gem.submittedBy ? (
           <View style={g.byRow}>
             <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
-            <Text style={g.by}>By {gem.submittedBy.name}</Text>
+            <Pressable
+              hitSlop={layout.hitSlop}
+              onPress={gem.submittedBy.id ? () => router.push(`/profile/${gem.submittedBy!.id}` as any) : undefined}
+            >
+              <Text style={g.by}>By {gem.submittedBy.name}</Text>
+            </Pressable>
           </View>
         ) : null}
         <View style={g.btnRow}>
@@ -136,7 +141,12 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
       <View style={tp.head}>
         <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} />
         <View style={{ flex: 1 }}>
-          <Text style={tp.user}>{pick.user.name}</Text>
+          <Pressable
+            hitSlop={layout.hitSlop}
+            onPress={pick.user.id ? () => router.push(`/profile/${pick.user.id}` as any) : undefined}
+          >
+            <Text style={tp.user}>{pick.user.name}</Text>
+          </Pressable>
           <Text style={tp.time}>{pick.timeAgo}</Text>
         </View>
         <View style={tp.tag}><Text style={tp.tagText}>{pick.tag}</Text></View>
