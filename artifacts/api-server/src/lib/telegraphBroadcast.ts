@@ -1,54 +1,117 @@
 /**
  * Cross-instance realtime fan-out for the Telegraph event bus.
  *
- * Uses Supabase Realtime broadcast to propagate events from one API server
- * instance to all other instances.  Each instance:
+ * Uses Supabase Realtime broadcast on a *private* channel so that only
+ * server-side clients (using the service role key, which bypasses RLS) can
+ * join. Mobile clients that hold the public anon key cannot subscribe to
+ * private channels without an explicit Realtime authorization policy — and
+ * we create none for this channel.
  *
+ * Every outbound payload is signed with HMAC-SHA256 (key derived from the
+ * service role secret). Incoming payloads are verified before delivery.
+ * This means even if a client somehow subscribes, they cannot inject events
+ * without the service role secret.
+ *
+ * Each instance:
  *   1. Generates a unique INSTANCE_ID at startup.
- *   2. Subscribes to the shared 'telegraph:events' Realtime channel.
- *   3. Tags outgoing broadcasts with its INSTANCE_ID.
- *   4. Ignores incoming broadcasts that originated from itself.
- *   5. Delivers remote events only to local subscribers (via publishToUsersLocal),
- *      not via publishToUsers, to avoid re-broadcasting in an infinite loop.
+ *   2. Subscribes to the private 'telegraph:events' channel with self: false.
+ *   3. Signs outgoing payloads; tags them with INSTANCE_ID.
+ *   4. On receipt, verifies the HMAC and ignores its own payloads (via INSTANCE_ID).
+ *   5. Delivers verified remote events only via publishToUsersLocal to avoid
+ *      re-broadcasting and infinite loops.
  *
- * The mobile client always retains polling as a fallback, so if the Realtime
- * channel is temporarily unavailable the only impact is slightly stale push
- * delivery — correctness is never compromised.
- *
- * initTelegraphBroadcast() is a no-op when SUPABASE_URL or
- * SUPABASE_SERVICE_ROLE_KEY are absent, allowing the server to start
- * without credentials (local dev / tests).
+ * initTelegraphBroadcast() is a no-op when credentials are absent (local dev
+ * / tests) — local-only delivery continues to work.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { logger } from "./logger";
-import { setBroadcastHook, publishToUsersLocal, type TelegraphEvent } from "./telegraphEvents";
+import {
+  setBroadcastHook,
+  publishToUsersLocal,
+  type TelegraphEvent,
+} from "./telegraphEvents";
 
 const CHANNEL_NAME = "telegraph:events";
 const BROADCAST_EVENT = "publish";
+/** Versioned prefix so a schema change automatically invalidates old signatures. */
+const HMAC_CONTEXT = "telegraph-broadcast-v1";
 
-/** Opaque identifier for this process. */
+/** Opaque identifier for this process instance. */
 const INSTANCE_ID: string = (() => {
-  // crypto.randomUUID() is available in Node 14.17+ / v16+.
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  // Fallback for older runtimes.
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 })();
 
-interface BroadcastPayload {
-  sourceInstanceId: string;
-  userIds: string[];
-  event: TelegraphEvent;
+// ── HMAC helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Derive a channel-specific signing secret from the service role key.
+ * We never use the raw key as an HMAC secret directly.
+ */
+function deriveSecret(serviceKey: string): string {
+  return createHmac("sha256", serviceKey).update(HMAC_CONTEXT).digest("hex");
 }
 
 /**
+ * Produce a deterministic, canonical signature for the fields that matter for
+ * delivery integrity. We sort userIds so ordering differences don't affect the
+ * signature.
+ */
+function signPayload(
+  instanceId: string,
+  userIds: string[],
+  event: TelegraphEvent,
+  secret: string,
+): string {
+  const canonical = `${instanceId}|${[...userIds].sort().join(",")}|${event.type}|${event.ts}`;
+  return createHmac("sha256", secret).update(canonical).digest("hex");
+}
+
+/** Constant-time HMAC verification to prevent timing attacks. */
+function verifySignature(
+  payload: BroadcastPayload,
+  secret: string,
+): boolean {
+  if (!payload.sig) return false;
+  const expected = signPayload(
+    payload.sourceInstanceId,
+    payload.userIds,
+    payload.event,
+    secret,
+  );
+  const a = Buffer.from(payload.sig, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || a.length === 0) return false;
+  try {
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface BroadcastPayload {
+  /** Which instance produced this payload — receivers ignore their own. */
+  sourceInstanceId: string;
+  /** User IDs the event should be delivered to. */
+  userIds: string[];
+  /** The event to relay. */
+  event: TelegraphEvent;
+  /** HMAC-SHA256 authenticity signature. */
+  sig: string;
+}
+
+// ── Initialisation ────────────────────────────────────────────────────────────
+
+/**
  * Initialise the cross-instance broadcast channel.  Must be called once after
- * the server starts listening (e.g. inside app.listen callback).
- *
- * Safe to call in environments without Supabase credentials — logs a warning
- * and returns without throwing.
+ * the server starts listening.  Safe to call without credentials — logs a
+ * warning and returns without throwing.
  */
 export function initTelegraphBroadcast(): void {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -56,84 +119,129 @@ export function initTelegraphBroadcast(): void {
 
   if (!supabaseUrl || !serviceKey) {
     logger.warn(
-      "telegraphBroadcast: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set " +
-        "— cross-instance broadcast disabled, falling back to local-only delivery",
+      "telegraphBroadcast: credentials absent — cross-instance broadcast disabled, " +
+        "falling back to local-only delivery",
     );
     return;
   }
+
+  const secret = deriveSecret(serviceKey);
 
   logger.info(
     { instanceId: INSTANCE_ID, channel: CHANNEL_NAME },
     "telegraphBroadcast: initialising",
   );
 
-  // Dedicated client for the persistent Realtime WebSocket.  Not shared with
-  // the per-request service client (which is short-lived and has no Realtime).
+  // Dedicated long-lived client for the persistent Realtime WebSocket.
+  // Not shared with the per-request service client (which is short-lived).
   const realtimeClient = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     realtime: {
       params: {
-        // Allow up to 100 events/second from this server.
+        // Allow up to 100 events/second from this server instance.
         eventsPerSecond: 100,
       },
     },
   });
 
+  // Private channel: only service-role clients (which bypass RLS) can join.
+  // Anon-key clients require an explicit Realtime authorization policy, which
+  // we never create for this channel — so they are denied.
   const channel = realtimeClient.channel(CHANNEL_NAME, {
     config: {
+      private: true,
       broadcast: {
-        // Do not echo our own messages back to us — the sender already
-        // delivered locally.  We still use sourceInstanceId as a belt-
-        // and-suspenders guard for future flexibility.
+        // Do not echo our own messages; INSTANCE_ID check is belt-and-suspenders.
         self: false,
         ack: false,
       },
     },
   });
 
-  // Receive broadcasts from other instances and deliver to local subscribers.
+  // ── Receive remote events ───────────────────────────────────────────────────
+
   channel.on(
     "broadcast",
     { event: BROADCAST_EVENT },
     ({ payload }: { payload: BroadcastPayload }) => {
-      if (!payload) return;
-      // Double-check: ignore our own messages if 'self: false' isn't honoured.
+      // Basic shape guard before touching the payload.
+      if (
+        !payload ||
+        typeof payload.sourceInstanceId !== "string" ||
+        !Array.isArray(payload.userIds) ||
+        typeof payload.event !== "object" ||
+        payload.event === null ||
+        typeof payload.sig !== "string"
+      ) {
+        logger.warn("telegraphBroadcast: malformed payload — rejected");
+        return;
+      }
+
+      // Ignore our own broadcasts (redundant given self: false, but defensive).
       if (payload.sourceInstanceId === INSTANCE_ID) return;
-      if (!Array.isArray(payload.userIds) || !payload.event) return;
+
+      // Verify authenticity — reject forged or tampered payloads.
+      if (!verifySignature(payload, secret)) {
+        logger.warn(
+          { sourceInstance: payload.sourceInstanceId, type: payload.event?.type },
+          "telegraphBroadcast: HMAC verification failed — payload rejected",
+        );
+        return;
+      }
 
       logger.debug(
-        { sourceInstance: payload.sourceInstanceId, type: payload.event.type, count: payload.userIds.length },
-        "telegraphBroadcast: received remote event",
+        {
+          sourceInstance: payload.sourceInstanceId,
+          type: payload.event.type,
+          recipientCount: payload.userIds.length,
+        },
+        "telegraphBroadcast: received verified remote event",
       );
 
+      // Deliver to local subscribers without re-broadcasting (avoids loops).
       publishToUsersLocal(payload.userIds, payload.event);
     },
   );
+
+  // ── Channel status ──────────────────────────────────────────────────────────
 
   channel.subscribe((status, err) => {
     if (status === "SUBSCRIBED") {
       logger.info(
         { instanceId: INSTANCE_ID, channel: CHANNEL_NAME },
-        "telegraphBroadcast: subscribed — multi-instance fan-out active",
+        "telegraphBroadcast: subscribed to private channel — multi-instance fan-out active",
       );
     } else if (status === "CHANNEL_ERROR") {
-      logger.warn({ err }, "telegraphBroadcast: channel error — remote delivery degraded");
+      logger.warn(
+        { err },
+        "telegraphBroadcast: channel error — remote delivery degraded",
+      );
     } else if (status === "TIMED_OUT") {
-      logger.warn("telegraphBroadcast: subscription timed out — Realtime will retry");
+      logger.warn(
+        "telegraphBroadcast: subscription timed out — Realtime will retry",
+      );
     } else if (status === "CLOSED") {
       logger.info("telegraphBroadcast: channel closed");
     }
   });
 
-  // Wire the broadcast hook into the event bus so publishToUsers() fans out
-  // to other instances automatically.
+  // ── Register the broadcast hook ─────────────────────────────────────────────
+
+  // Wire into the event bus so publishToUsers() automatically fans out to other
+  // instances after delivering locally.
   setBroadcastHook((userIds, event) => {
-    // channel.send returns a Promise — we fire-and-forget but log failures.
+    const payload: BroadcastPayload = {
+      sourceInstanceId: INSTANCE_ID,
+      userIds,
+      event,
+      sig: signPayload(INSTANCE_ID, userIds, event, secret),
+    };
+
     channel
       .send({
         type: "broadcast",
         event: BROADCAST_EVENT,
-        payload: { sourceInstanceId: INSTANCE_ID, userIds, event } satisfies BroadcastPayload,
+        payload,
       })
       .then((result) => {
         if (result === "rate limited") {
