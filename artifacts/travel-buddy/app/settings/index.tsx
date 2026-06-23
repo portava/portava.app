@@ -135,6 +135,8 @@ export default function Settings() {
       label === 'Message permissions'
     ) {
       Alert.alert('Privacy Settings', `${label} preferences are coming soon.`, [{ text: 'OK' }]);
+    } else if (label === 'Safe Return history') {
+      router.push('/safety-history' as any);
     } else if (label === 'Report history' || label === 'Muted words') {
       Alert.alert('Coming Soon', `${label} will be available in a future update.`, [{ text: 'OK' }]);
     }
@@ -152,7 +154,7 @@ export default function Settings() {
 
   const BASIC_GROUPS = [
     { h: 'Privacy', items: ['Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
-    { h: 'Safety', items: ['Blocked accounts', 'Report history', 'Muted words'] },
+    { h: 'Safety', items: ['Blocked accounts', 'Safe Return history', 'Report history', 'Muted words'] },
     { h: 'Account', items: ['Edit profile', 'Notifications', 'Location settings', 'Log out'] },
   ];
 

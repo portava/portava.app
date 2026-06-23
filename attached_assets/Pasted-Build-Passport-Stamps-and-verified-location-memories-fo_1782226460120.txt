@@ -1,0 +1,470 @@
+Build Passport Stamps and verified location memories for Travel Buddy.
+
+Build this on top of the shared Location Intelligence Layer, Plans geofencing, Safe Return, Trip Crew map, Discovery GPS, City Pulse GPS, and Compass AI Location Intelligence.
+
+Stay focused on Passport Stamps, verified memories, location-based identity, and safe contribution history. Do not expand into full rewards marketplace, paid perks, or monetization in this pass unless only creating backend seams.
+
+CORE PRINCIPLE
+
+Passport Stamps should prove meaningful travel activity without storing or exposing exact private location history.
+
+Users should earn city, neighborhood, plan, hidden gem, and activity stamps from verified presence, check-ins, and completed travel actions.
+
+Exact GPS must never be public.
+
+Passport should show memories and verified presence, not raw coordinates or full movement history.
+
+PASSPORT STAMP TYPES
+
+Create stamp types:
+
+1. Country Stamp
+- User verified presence in a country.
+
+2. City Stamp
+- User verified presence in a city.
+
+3. Neighborhood Stamp
+- User verified presence in a neighborhood or zone.
+
+4. Plan Stamp
+- User attended or checked into a plan.
+
+5. Host Stamp
+- User hosted a verified plan.
+
+6. Hidden Gem Stamp
+- User verified or visited a hidden gem.
+
+7. City Pulse Contributor Stamp
+- User posted useful local content from a city/neighborhood.
+
+8. Trip Crew Stamp
+- User participated in a trip crew activity.
+
+9. Safe Traveler Stamp
+- User completed Safe Return after a plan.
+
+10. Explorer Category Stamp
+- Food, nightlife, beach, culture, shopping, landmarks, nature, events.
+
+11. Verified Venue Stamp
+- User visited or checked into a verified venue.
+
+12. First-Time Stamp
+- First city, first country, first hosted plan, first hidden gem, first Trip Crew activity.
+
+STAMP PRIVACY RULES
+
+Public Passport should never show exact coordinates.
+
+Stamp visibility options:
+- Public
+- Friends / Trusted Circle
+- Trip Crew only
+- Private
+
+Default:
+- Country/city stamps can be public.
+- Neighborhood stamps default to friends/trusted circle or private depending on user settings.
+- Plan stamps follow plan privacy.
+- Safe Return stamps default private.
+- Hidden Gem stamps can hide exact place if gem is sensitive.
+- Hotel/home/stay-area stamps are never public.
+
+Passport should use safe labels:
+- “Tokyo, Japan”
+- “Makati nightlife”
+- “Mactan beach day”
+- “Da Nang hidden gem”
+- “Cebu food explorer”
+- “Safe Return completed”
+
+Do not show:
+- Exact latitude/longitude
+- Hotel address
+- Home/private stay location
+- Private meetup address
+- Hidden plan coordinates
+- Another user’s private location
+
+VERIFICATION SOURCES
+
+Passport stamps can be created from:
+
+- GPS city verification
+- Plan geofence check-in
+- QR check-in
+- Host manual confirmation
+- Safe Return completion
+- Hidden Gem proximity verification
+- Verified venue check-in
+- City Pulse post with geo tag
+- Trip Crew participation
+- Compass AI completed recommendation
+- Admin verification when needed
+
+Support confidence levels:
+- Verified
+- Likely
+- Manual review
+- User-added memory
+
+Only Verified or approved memories should affect future rewards/trust.
+
+PASSPORT MEMORIES
+
+Create Passport memory cards.
+
+Memory card examples:
+
+- “First time in Tokyo”
+- “Nightlife in Makati”
+- “Beach day in Mactan”
+- “Hidden Gem verified in Da Nang”
+- “Joined 3 plans in Cebu”
+- “Hosted a food crawl in Hanoi”
+- “Safe Return completed after nightlife plan”
+- “Explored 5 neighborhoods in Vietnam”
+
+Each memory should include:
+- Title
+- City/country/neighborhood label
+- Date or trip period
+- Category
+- Verification level
+- Visibility
+- Optional photo/post attachment
+- Optional plan reference
+- Optional Trip Crew reference
+- No exact coordinates publicly
+
+PASSPORT PROFILE UI
+
+Upgrade Passport profile with:
+
+- Stamp grid
+- Travel map using city/neighborhood markers only
+- Recent memories
+- Country count
+- City count
+- Neighborhood count
+- Plan attendance count
+- Host count
+- Hidden Gem count
+- Safe Traveler count
+- Explorer categories
+- Private/public visibility controls
+
+Add tabs:
+- Stamps
+- Memories
+- Cities
+- Plans
+- Hidden Gems
+- Safe Traveler
+- Contributions
+
+PASSPORT MAP
+
+Create a privacy-safe Passport map.
+
+Map should show:
+- Countries visited
+- Cities visited
+- Neighborhood zones explored
+- Verified hidden gems, if public
+- Hosted plans, if public
+- Travel timeline
+
+Map should not show:
+- Exact route history
+- Hotel/home locations
+- Private plan locations
+- Exact check-in pins unless user explicitly marks a venue public
+
+Use city/neighborhood-level markers and heat zones.
+
+LOCATION MEMORY CREATION FLOW
+
+When a user completes a relevant action, suggest a memory:
+
+Examples:
+
+After check-in:
+“You checked into a plan in Makati. Add this to your Passport?”
+
+After Safe Return:
+“Safe Return completed. Save this privately as a Safe Traveler memory?”
+
+After hidden gem visit:
+“You verified a hidden gem in Da Nang. Add it to your Passport?”
+
+After new city detected:
+“First time in Cebu? Add a city stamp?”
+
+User can:
+- Save
+- Edit title
+- Add photo
+- Set visibility
+- Skip
+
+Do not auto-publicize memories.
+
+HIDDEN GEMS INTEGRATION
+
+Hidden Gem stamps should support:
+- Verified visit
+- User-submitted hidden gem
+- Community confirmation
+- Admin verification
+- Sensitive-location hiding
+- Category tags
+
+If a hidden gem is sensitive, do not reveal exact location publicly.
+
+TRUST / CONTRIBUTION SEAMS
+
+Prepare backend seams for future Trust Score and Passport Perks.
+
+Positive contribution events:
+- Verified city visit
+- Verified plan attendance
+- Successful hosted plan
+- Hidden gem verified
+- Useful Pulse contribution
+- Safe Return completed
+- QR check-in validated
+- Trip Crew participation
+
+Do not directly change Trust Score in this pass unless existing system already supports it safely.
+
+Create contribution events for future scoring.
+
+DATA MODEL
+
+Create or update tables:
+
+passport_stamps:
+- id
+- user_id
+- stamp_type
+- country
+- city
+- neighborhood
+- place_id nullable
+- plan_id nullable
+- trip_id nullable
+- source_type
+- verification_level
+- visibility
+- earned_at
+- created_at
+- updated_at
+
+passport_memories:
+- id
+- user_id
+- title
+- description nullable
+- country
+- city
+- neighborhood nullable
+- category
+- visibility
+- verification_level
+- source_type
+- source_id nullable
+- photo_url nullable
+- plan_id nullable
+- trip_id nullable
+- place_id nullable
+- earned_at
+- created_at
+- updated_at
+
+passport_contribution_events:
+- id
+- user_id
+- event_type
+- source_type
+- source_id nullable
+- verification_level
+- metadata
+- created_at
+
+passport_visibility_preferences:
+- user_id
+- default_stamp_visibility
+- default_memory_visibility
+- show_city_map
+- show_neighborhoods
+- show_plan_stamps
+- show_safe_return_stamps
+- created_at
+- updated_at
+
+SERVICES
+
+Create services:
+
+PassportStampService:
+- Create stamp
+- Deduplicate stamps
+- Update visibility
+- Validate source
+- Resolve safe label
+
+PassportMemoryService:
+- Create memory
+- Suggest memory
+- Edit memory
+- Attach photo/post
+- Update visibility
+
+PassportContributionService:
+- Record contribution events
+- Prepare future Trust/Perks integration
+- Avoid duplicate contribution credit
+
+PassportPrivacyGuard:
+- Strip exact coordinates
+- Hide hotel/home/private stay locations
+- Respect plan privacy
+- Respect Safe Return privacy
+- Respect Hidden Gem sensitivity
+- Enforce visibility settings
+
+PassportMapService:
+- Build privacy-safe map
+- Return city/neighborhood markers only
+- Hide private locations
+
+API ENDPOINTS
+
+Add endpoints for:
+
+- Get user Passport stamps
+- Get user Passport memories
+- Create Passport memory
+- Update memory visibility
+- Update stamp visibility
+- Get Passport map
+- Get Passport stats
+- Get suggested memories
+- Accept suggested memory
+- Dismiss suggested memory
+- Get visibility preferences
+- Update visibility preferences
+
+UI REQUIREMENTS
+
+Passport screen:
+- Stamp grid
+- Memory cards
+- Privacy-safe map
+- Stats summary
+- Visibility controls
+- Filter by country/city/category
+- Filter by public/private
+- Suggested memories
+
+Memory card:
+- Title
+- City/country label
+- Category
+- Date
+- Verification badge
+- Visibility badge
+- Optional photo
+- Edit visibility button
+
+Stamp card:
+- Stamp icon/category
+- Location label
+- Earned date
+- Verification badge
+- Visibility badge
+
+Suggested memory modal:
+- Suggested title
+- Why it was suggested
+- Source
+- Visibility selector
+- Save / edit / skip
+
+ADMIN SUPPORT
+
+Admin should be able to:
+- Review disputed stamps
+- Review fake location stamps
+- Review hidden gem verification
+- Remove abusive/fake stamps
+- Mark hidden gems sensitive
+- Configure stamp categories
+- Configure contribution event types
+
+Admin should not see exact private location history unless required through a proper safety/review path.
+
+PRIVACY AND SECURITY RULES
+
+1. Passport does not expose exact GPS publicly.
+2. Passport does not store full route history.
+3. Hotel/home/private stay areas are not public.
+4. Safe Return memories default private.
+5. Private plan locations stay private.
+6. Hidden Gem exact location can be hidden when sensitive.
+7. User controls stamp and memory visibility.
+8. Suggested memories are not public until user saves/approves visibility.
+9. Suspicious GPS stamps go to review.
+10. Contribution events do not automatically punish or reward until future scoring is approved.
+
+TESTS
+
+Add tests for:
+
+- City stamp creation from verified GPS.
+- Plan stamp creation from geofence check-in.
+- Safe Return stamp defaults private.
+- Hidden Gem stamp respects sensitivity.
+- Passport map does not expose exact coordinates.
+- Hotel/home locations are blurred.
+- Private plan location does not leak through Passport.
+- User can change stamp visibility.
+- User can change memory visibility.
+- Duplicate stamps are deduped.
+- Suspicious GPS creates review/contribution event but does not auto-reward.
+- Public profile only shows public stamps.
+- Trusted Circle visibility works.
+- Suggested memory is not public until saved.
+- Admin can review disputed stamps without casual live tracking.
+- Contribution events are recorded without directly changing Trust Score.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- passport_stamps_enabled
+- passport_memories_enabled
+- passport_map_enabled
+- passport_contribution_events_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Passport stamp service
+3. Passport memory service
+4. Passport contribution event service
+5. Passport privacy guard
+6. Passport map service
+7. API endpoints
+8. Passport UI upgrades
+9. Suggested memory flow
+10. Admin review foundation
+11. Tests
+12. Implementation report
+
+Do not break GPS, Discovery, Pulse, Plans, Safe Return, Trip Crew, Compass AI, Telegraph, Trusted Circle, or existing Passport profile flows.
+
+Keep this pass focused on Passport Stamps and verified location memories.

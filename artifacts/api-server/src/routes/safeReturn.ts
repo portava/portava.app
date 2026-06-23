@@ -1,41 +1,74 @@
 /**
- * Safe Return routes (Phase 4 seam — gated by safe_return_geo_enabled flag)
+ * Safe Return routes
  *
- * POST /api/me/safe-return/start      — start a Safe Return session
- * POST /api/me/safe-return/checkin    — "I made it back" / check-in
- * GET  /api/me/safe-return/active     — list active sessions (public labels only)
+ * All user-facing routes are gated by the 'safe_return_enabled' feature flag.
+ * Live-share routes additionally require 'safe_return_live_share_enabled'.
  *
- * PRIVACY: exact coords stored server-side only. Public responses contain
- * only city/district labels, timer info, and status.
+ * Endpoint set:
+ *   GET  /api/me/safe-return/suggest/:planItemId
+ *   POST /api/me/safe-return/sessions
+ *   POST /api/me/safe-return/sessions/:id/start
+ *   GET  /api/me/safe-return/sessions/active
+ *   POST /api/me/safe-return/sessions/:id/extend
+ *   POST /api/me/safe-return/sessions/:id/confirm
+ *   POST /api/me/safe-return/sessions/:id/cancel
+ *   POST /api/me/safe-return/sessions/:id/trigger-missed
+ *   POST /api/me/safe-return/sessions/:id/live-share/start
+ *   POST /api/me/safe-return/sessions/:id/live-share/stop
+ *   GET  /api/safe-return/live-share/:shareId
+ *   GET  /api/me/safe-return/history
+ *   GET  /api/me/safe-return/trusted-contacts
+ *
+ * Privacy: exact coords never appear in API responses (enforced by toPublicSession).
  */
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
-import { startSession, endSession, getActiveSessions } from "../services/location/LocationSessionService";
+import {
+  createSession,
+  startSession,
+  extendTimer,
+  confirmSafe,
+  cancelSession,
+  markMissed,
+  getActiveSession,
+  getSessionById,
+  listHistory,
+  listContacts,
+  markContactNotified,
+} from "../services/safeReturn/SafeReturnService";
+import {
+  shouldSuggest,
+  getSuggestionReason,
+} from "../services/safeReturn/SafeReturnTriggerService";
+import {
+  sendMissedCheckIn,
+  notifyTrustedCircle,
+  notifyHost,
+  notifyTripCrew,
+} from "../services/safeReturn/SafeReturnNotificationService";
+import {
+  startShare,
+  stopShare,
+  getRecipientView,
+} from "../services/safeReturn/SafeReturnLiveShareService";
+import {
+  toPublicSession,
+  toPublicContact,
+} from "../services/safeReturn/SafeReturnPrivacyGuard";
 
 const router = Router();
 
-const VALID_TIMERS = ["15min", "30min", "1hr", "until_plan_ends", "manual"] as const;
+// ── Feature flag helpers ──────────────────────────────────────────────────────
 
-const startSchema = z.object({
-  timer:          z.enum(VALID_TIMERS).default("30min"),
-  city:           z.string().max(128).nullable().optional(),
-  district:       z.string().max(128).nullable().optional(),
-  country:        z.string().max(128).nullable().optional(),
-  countryCode:    z.string().max(8).nullable().optional(),
-  lat:            z.number().min(-90).max(90).nullable().optional(),
-  lng:            z.number().min(-180).max(180).nullable().optional(),
-  relatedTripId:  z.string().uuid().nullable().optional(),
-});
-
-async function isFeatureEnabled(db: ReturnType<typeof getServiceClient>): Promise<boolean> {
+async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<boolean> {
   if (!db) return false;
   try {
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", "safe_return_geo_enabled")
+      .eq("key", flag)
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {
@@ -43,118 +76,448 @@ async function isFeatureEnabled(db: ReturnType<typeof getServiceClient>): Promis
   }
 }
 
-// ── POST /api/me/safe-return/start ────────────────────────────────────────────
+// ── Schemas ───────────────────────────────────────────────────────────────────
 
-router.post("/me/safe-return/start", async (req, res) => {
+const contactSchema = z.object({
+  contactUserId:          z.string().uuid().optional().nullable(),
+  contactName:            z.string().max(200).optional().nullable(),
+  contactPhone:           z.string().max(30).optional().nullable(),
+  contactEmail:           z.string().email().max(200).optional().nullable(),
+  contactMethod:          z.enum(["in_app", "sms", "email"]),
+  canReceiveLiveLocation: z.boolean().optional().default(false),
+});
+
+const createSessionSchema = z.object({
+  planItemId:           z.string().uuid().optional().nullable(),
+  tripId:               z.string().uuid().optional().nullable(),
+  triggerReason:        z.string().max(500).optional().nullable(),
+  escalationLevel:      z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional().default(0),
+  timerMinutes:         z.number().int().min(5).max(480).optional().nullable(),
+  trustedCircleEnabled: z.boolean().optional().default(false),
+  liveShareEnabled:     z.boolean().optional().default(false),
+  notifyHostEnabled:    z.boolean().optional().default(false),
+  notifyTripCrewEnabled:z.boolean().optional().default(false),
+  emergencyNote:        z.string().max(1000).optional().nullable(),
+  contacts:             z.array(contactSchema).max(10).optional().default([]),
+});
+
+const extendSchema = z.object({
+  minutes: z.number().int().min(5).max(240),
+});
+
+// ── GET /api/me/safe-return/suggest/:planItemId ───────────────────────────────
+
+router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { client, user } = auth;
 
-  const db = getServiceClient();
-  if (!db) { sendError(res, "server_not_configured"); return; }
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ suggest: false, featureEnabled: false });
+    return;
+  }
 
-  if (!await isFeatureEnabled(db)) {
+  const { planItemId } = req.params;
+
+  // Fetch plan item
+  const { data: item } = await client
+    .from("trip_plan_items")
+    .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id")
+    .eq("id", planItemId)
+    .maybeSingle();
+
+  if (!item) {
+    sendError(res, "not_found", "Plan item not found");
+    return;
+  }
+
+  // Fetch user location context (best-effort)
+  let homeCity: string | null = null;
+  let currentCity: string | null = null;
+  try {
+    const { data: profile } = await client
+      .from("profiles")
+      .select("home_city")
+      .eq("id", user.id)
+      .maybeSingle();
+    homeCity = (profile as any)?.home_city ?? null;
+
+    const { data: locState } = await client
+      .from("user_location_state")
+      .select("city")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    currentCity = (locState as any)?.city ?? null;
+  } catch { /* non-fatal */ }
+
+  const planItemCtx = {
+    id: (item as any).id,
+    category: (item as any).category ?? "other",
+    startsAt: (item as any).starts_at ?? null,
+    dayDate: (item as any).day_date ?? null,
+    locationName: (item as any).location_name ?? null,
+  };
+
+  const result = shouldSuggest(planItemCtx, user.id, { homeCity, currentCity });
+
+  res.status(200).json({
+    suggest: result.shouldSuggest,
+    reasons: result.reasons,
+    confidence: result.confidence,
+    reasonText: result.shouldSuggest ? getSuggestionReason(result.reasons) : null,
+    planItemId,
+  });
+});
+
+// ── POST /api/me/safe-return/sessions ────────────────────────────────────────
+
+router.post("/me/safe-return/sessions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
     sendError(res, "feature_disabled", "Safe Return is not yet enabled");
     return;
   }
 
-  const parsed = startSchema.safeParse(req.body);
+  const parsed = createSessionSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
 
-  const session = await startSession(db, {
-    userId:        user.id,
-    sessionType:   "safe_return",
-    timer:         parsed.data.timer,
-    city:          parsed.data.city,
-    district:      parsed.data.district,
-    country:       parsed.data.country,
-    countryCode:   parsed.data.countryCode,
-    lat:           parsed.data.lat,
-    lng:           parsed.data.lng,
-    relatedTripId: parsed.data.relatedTripId,
-  });
-
+  const session = await createSession(db, { userId: user.id, ...parsed.data });
   if (!session) {
-    sendError(res, "db_error", "Failed to start session");
+    sendError(res, "db_error", "Failed to create session");
     return;
   }
 
-  // Return public shape — no coords
+  res.status(201).json({ ok: true, session: toPublicSession(session) });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/start ───────────────────────────────
+
+router.post("/me/safe-return/sessions/:id/start", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const session = await startSession(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "not_found", "Session not found or cannot be started");
+    return;
+  }
+
+  res.status(200).json({ ok: true, session: toPublicSession(session) });
+});
+
+// ── GET /api/me/safe-return/sessions/active ───────────────────────────────────
+
+router.get("/me/safe-return/sessions/active", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ session: null, featureEnabled: false }); return;
+  }
+
+  const session = await getActiveSession(db, user.id);
+  res.status(200).json({ session: session ? toPublicSession(session) : null });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/extend ─────────────────────────────
+
+router.post("/me/safe-return/sessions/:id/extend", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = extendSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid minutes");
+    return;
+  }
+
+  const session = await extendTimer(db, req.params.id, user.id, parsed.data.minutes);
+  if (!session) {
+    sendError(res, "not_found", "Session not found or cannot be extended");
+    return;
+  }
+
+  res.status(200).json({ ok: true, session: toPublicSession(session) });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/confirm ────────────────────────────
+
+router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const session = await confirmSafe(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "not_found", "Session not found or already closed");
+    return;
+  }
+
+  res.status(200).json({ ok: true, session: toPublicSession(session) });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/cancel ─────────────────────────────
+
+router.post("/me/safe-return/sessions/:id/cancel", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const session = await cancelSession(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "not_found", "Session not found or already closed");
+    return;
+  }
+
+  res.status(200).json({ ok: true, session: toPublicSession(session) });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/trigger-missed ─────────────────────
+// Internal/cron endpoint — marks a session as missed and escalates based on level.
+
+router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  // Fetch session first to get escalation level and options
+  const existing = await getSessionById(db, req.params.id, user.id);
+  if (!existing || existing.status !== "active") {
+    sendError(res, "not_found", "Active session not found");
+    return;
+  }
+
+  const session = await markMissed(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "db_error", "Failed to mark session as missed");
+    return;
+  }
+
+  // Escalation: Level 0 = notify only the user
+  //             Level 1 = user + TC (if enabled)
+  //             Level 2 = user + TC + live share prompt
+  //             Level 3 = user + TC + host + crew
+
+  await sendMissedCheckIn(db, session);
+
+  if (session.escalationLevel >= 1) {
+    const contacts = await listContacts(db, session.id, user.id);
+    const flagTcEnabled = await isFlagEnabled(db, "safe_return_trusted_circle_alerts_enabled");
+    if (flagTcEnabled) {
+      await notifyTrustedCircle(db, session, contacts);
+      // Mark contacts as notified
+      await Promise.all(contacts.map((c) => markContactNotified(db, c.id)));
+    }
+  }
+
+  if (session.escalationLevel >= 3) {
+    await notifyHost(db, session);
+    await notifyTripCrew(db, session);
+  }
+
+  res.status(200).json({ ok: true, session: toPublicSession(session), escalationLevel: session.escalationLevel });
+});
+
+// ── POST /api/me/safe-return/sessions/:id/live-share/start ───────────────────
+
+router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+  if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
+    sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
+  }
+
+  const session = await getSessionById(db, req.params.id, user.id);
+  if (!session) {
+    sendError(res, "not_found", "Session not found"); return;
+  }
+  if (!session.liveShareEnabled) {
+    sendError(res, "forbidden", "Live share was not enabled for this session"); return;
+  }
+
+  const schema = z.object({
+    recipientUserId:    z.string().uuid().optional().nullable(),
+    recipientContactId: z.string().uuid().optional().nullable(),
+    durationMinutes:    z.number().int().min(5).max(240).optional().default(60),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const share = await startShare(
+    db,
+    session.id,
+    user.id,
+    parsed.data.recipientUserId ?? null,
+    parsed.data.recipientContactId ?? null,
+    parsed.data.durationMinutes,
+  );
+
+  if (!share) {
+    sendError(res, "db_error", "Failed to start live share"); return;
+  }
+
   res.status(201).json({
     ok: true,
-    session: {
-      id:          session.id,
-      sessionType: session.sessionType,
-      startedAt:   session.startedAt,
-      expiresAt:   session.expiresAt,
-      city:        session.city,
-      district:    session.district,
-      country:     session.country,
-      safeReturnActive: true,
+    share: {
+      id: share.id,
+      status: share.status,
+      startedAt: share.startedAt,
+      expiresAt: share.expiresAt,
+      // No GPS in response
     },
   });
 });
 
-// ── POST /api/me/safe-return/checkin ─────────────────────────────────────────
+// ── POST /api/me/safe-return/sessions/:id/live-share/stop ────────────────────
 
-router.post("/me/safe-return/checkin", async (req, res) => {
+router.post("/me/safe-return/sessions/:id/live-share/stop", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { client, user } = auth;
 
-  const db = getServiceClient();
-  if (!db) { sendError(res, "server_not_configured"); return; }
-
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Safe Return is not yet enabled");
-    return;
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    sendError(res, "feature_disabled"); return;
   }
 
-  const { sessionId } = (req.body ?? {}) as { sessionId?: string };
-
-  if (sessionId) {
-    // End a specific session ("I made it back")
-    const ok = await endSession(db, sessionId, user.id);
-    res.status(200).json({ ok, safeReturnActive: !ok });
-    return;
+  const { shareId } = req.body ?? {};
+  if (!shareId || typeof shareId !== "string") {
+    sendError(res, "invalid_payload", "shareId is required"); return;
   }
 
-  // End all active safe_return sessions
-  const active = await getActiveSessions(db, user.id, "safe_return");
-  await Promise.all(active.map((s) => endSession(db, s.id, user.id)));
-  res.status(200).json({ ok: true, ended: active.length, safeReturnActive: false });
+  const share = await stopShare(db, shareId, user.id);
+  if (!share) {
+    sendError(res, "not_found", "Live share not found or already stopped"); return;
+  }
+
+  res.status(200).json({ ok: true, share: { id: share.id, status: share.status, stoppedAt: share.stoppedAt } });
 });
 
-// ── GET /api/me/safe-return/active ────────────────────────────────────────────
+// ── GET /api/safe-return/live-share/:shareId ──────────────────────────────────
+// Recipient view (requires the caller to be an authorized recipient)
 
-router.get("/me/safe-return/active", async (req, res) => {
+router.get("/safe-return/live-share/:shareId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { client, user } = auth;
 
-  const db = getServiceClient();
-  if (!db) { res.status(200).json({ sessions: [], safeReturnActive: false }); return; }
+  const db = getServiceClient() ?? client;
 
-  if (!await isFeatureEnabled(db)) {
-    res.status(200).json({ sessions: [], safeReturnActive: false, featureEnabled: false });
+  const result = await getRecipientView(db, req.params.shareId, user.id);
+
+  if ("error" in result) {
+    if (result.error === "not_found") { sendError(res, "not_found", "Live share not found"); return; }
+    if (result.error === "expired")   { sendError(res, "not_found", "Live share has expired"); return; }
+    if (result.error === "stopped")   { sendError(res, "not_found", "Live share has been stopped"); return; }
+    if (result.error === "forbidden") { sendError(res, "forbidden", "You are not authorized to view this share"); return; }
+  }
+
+  if ("view" in result) {
+    res.status(200).json({ ok: true, share: result.view });
     return;
   }
 
-  const active = await getActiveSessions(db, user.id, "safe_return");
+  sendError(res, "not_found");
+});
+
+// ── GET /api/me/safe-return/history ──────────────────────────────────────────
+
+router.get("/me/safe-return/history", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ sessions: [], featureEnabled: false }); return;
+  }
+
+  const limit = Math.min(50, parseInt(String(req.query.limit ?? "20"), 10) || 20);
+  const sessions = await listHistory(db, user.id, limit);
+
   res.status(200).json({
-    safeReturnActive: active.length > 0,
-    sessions: active.map((s) => ({
-      id:          s.id,
-      startedAt:   s.startedAt,
-      expiresAt:   s.expiresAt,
-      city:        s.city,
-      district:    s.district,
-      country:     s.country,
-    })),
+    sessions: sessions.map(toPublicSession),
   });
+});
+
+// ── GET /api/me/safe-return/trusted-contacts ──────────────────────────────────
+// List the user's Trusted Circle members (for contact selection in setup)
+
+router.get("/me/safe-return/trusted-contacts", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ contacts: [], featureEnabled: false }); return;
+  }
+
+  // Trusted Circle = mutual follows (following each other) or circle members
+  try {
+    const { data: following } = await client
+      .from("follows")
+      .select("followee_id, profiles!follows_followee_id_fkey(id, display_name, handle, avatar_url)")
+      .eq("follower_id", auth.user.id);
+
+    const contacts = ((following as any[]) ?? []).map((f: any) => ({
+      userId:      f.followee_id,
+      displayName: f.profiles?.display_name ?? null,
+      handle:      f.profiles?.handle ?? null,
+      avatarUrl:   f.profiles?.avatar_url ?? null,
+    }));
+
+    res.status(200).json({ contacts });
+  } catch {
+    res.status(200).json({ contacts: [] });
+  }
 });
 
 export default router;

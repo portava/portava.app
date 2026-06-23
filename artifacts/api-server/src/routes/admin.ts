@@ -435,5 +435,125 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
   res.json({ events: data ?? [], total: (data ?? []).length });
 });
 
+// ── Safe Return admin routes ──────────────────────────────────────────────────
+// All gated by safe_return_admin_logs_enabled feature flag + requireAdmin.
+
+async function isSafeReturnAdminEnabled(sc: any): Promise<boolean> {
+  try {
+    const { data } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", "safe_return_admin_logs_enabled")
+      .maybeSingle();
+    return Boolean((data as any)?.enabled);
+  } catch { return false; }
+}
+
+/**
+ * GET /admin/safe-return/logs
+ * Returns recent Safe Return events (all users) — admin only.
+ */
+router.get("/admin/safe-return/logs", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  if (!await isSafeReturnAdminEnabled(sc)) {
+    sendError(res, "feature_disabled", "Safe Return admin logs are not enabled");
+    return;
+  }
+
+  const limit = Math.min(100, parseInt(String((req.query as any).limit ?? "50"), 10) || 50);
+  const { data, error } = await sc
+    .from("safe_return_events")
+    .select("id, session_id, user_id, event_type, metadata, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ events: data ?? [], total: (data ?? []).length });
+});
+
+/**
+ * GET /admin/safe-return/config
+ * Returns current Safe Return feature flag states.
+ */
+router.get("/admin/safe-return/config", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  if (!await isSafeReturnAdminEnabled(sc)) {
+    sendError(res, "feature_disabled", "Safe Return admin logs are not enabled");
+    return;
+  }
+
+  const flags = [
+    "safe_return_enabled",
+    "safe_return_live_share_enabled",
+    "safe_return_trusted_circle_alerts_enabled",
+    "safe_return_admin_logs_enabled",
+  ];
+
+  const { data, error } = await sc
+    .from("feature_flags")
+    .select("key, enabled, description, updated_at")
+    .in("key", flags);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ config: data ?? [] });
+});
+
+/**
+ * PATCH /admin/safe-return/config
+ * Update one or more Safe Return feature flags.
+ * Body: { flags: { safe_return_enabled?: boolean, ... } }
+ */
+router.patch("/admin/safe-return/config", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  if (!await isSafeReturnAdminEnabled(sc)) {
+    sendError(res, "feature_disabled", "Safe Return admin logs are not enabled");
+    return;
+  }
+
+  const allowedFlags = new Set([
+    "safe_return_enabled",
+    "safe_return_live_share_enabled",
+    "safe_return_trusted_circle_alerts_enabled",
+    "safe_return_admin_logs_enabled",
+  ]);
+
+  const flags = (req.body ?? {}).flags as Record<string, boolean>;
+  if (!flags || typeof flags !== "object") {
+    sendError(res, "invalid_payload", "Body must have { flags: { flagKey: boolean } }");
+    return;
+  }
+
+  const updates = Object.entries(flags).filter(
+    ([key, val]) => allowedFlags.has(key) && typeof val === "boolean",
+  );
+
+  if (updates.length === 0) {
+    sendError(res, "invalid_payload", "No valid flag keys provided");
+    return;
+  }
+
+  const results: Record<string, boolean> = {};
+  await Promise.all(
+    updates.map(async ([key, enabled]) => {
+      const { error } = await sc
+        .from("feature_flags")
+        .update({ enabled, updated_at: new Date().toISOString() })
+        .eq("key", key);
+      if (!error) results[key] = enabled;
+    }),
+  );
+
+  res.json({ ok: true, updated: results });
+});
+
 export default router;
 
