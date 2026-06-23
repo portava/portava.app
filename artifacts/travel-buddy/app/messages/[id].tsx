@@ -15,8 +15,10 @@ import {
   AppState,
   Animated,
   Share,
+  Switch,
   type AppStateStatus,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -38,6 +40,7 @@ import type { Message } from '../../src/services/messaging';
 import { deleteMessage } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
+import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 
@@ -681,6 +684,11 @@ function MessageBubble({
             )}
           </View>
         )}
+
+        {/* Translation unavailable — shown when translation was attempted but failed */}
+        {!mine && item.translationStatus === 'failed' && autoTranslate && (
+          <Text style={styles.transUnavailable}>Translation unavailable.</Text>
+        )}
       </Pressable>
 
       {/* Read receipt — shown on the last own message only */}
@@ -800,6 +808,10 @@ export default function TelegraphThread() {
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  // Per-thread translation overrides (null = fall back to global langSettings)
+  const [threadAutoTranslate, setThreadAutoTranslate] = useState<boolean | null>(null);
+  const [threadShowOriginal, setThreadShowOriginal] = useState<boolean | null>(null);
+  const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   // DM profile for richer header
   const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
   // Other party's last_read_at for DM read receipts
@@ -827,6 +839,26 @@ export default function TelegraphThread() {
         },
       ],
     );
+  }
+
+  // Load per-thread translation prefs from AsyncStorage
+  useEffect(() => {
+    if (!id) return;
+    AsyncStorage.getItem(`thread_translation:${id}`)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw) as { autoTranslate?: boolean; showOriginal?: boolean };
+          if (typeof parsed.autoTranslate === 'boolean') setThreadAutoTranslate(parsed.autoTranslate);
+          if (typeof parsed.showOriginal === 'boolean') setThreadShowOriginal(parsed.showOriginal);
+        } catch { /* ignore corrupt entries */ }
+      })
+      .catch(() => {});
+  }, [id]);
+
+  async function saveThreadTranslationPrefs(at: boolean, so: boolean) {
+    if (!id) return;
+    await AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }));
   }
 
   // Resolve display name once (for the planned-by label in meetup cards)
@@ -903,8 +935,9 @@ export default function TelegraphThread() {
     markThreadRead(id).catch(() => {});
   }, [id]);
 
-  const autoTranslate = langSettings?.auto_translate_messages ?? true;
-  const defaultShowOriginal = langSettings?.show_original_messages ?? false;
+  // Merge: per-thread override takes precedence over global langSettings
+  const autoTranslate = threadAutoTranslate ?? langSettings?.auto_translate_messages ?? true;
+  const defaultShowOriginal = threadShowOriginal ?? langSettings?.show_original_messages ?? false;
   const isGroupThread = threadType === 'trip' || threadType === 'circle';
 
   const headerTitle = title && title.trim() ? title : 'Chat';
@@ -1100,8 +1133,8 @@ export default function TelegraphThread() {
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Search messages', 'Message search coming soon.')}>
               <Search size={18} color={color.mute} />
             </Pressable>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Translation settings', 'Adjust translation preferences in Settings → Language.')}>
-              <Languages size={18} color={color.mute} />
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
+              <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
             </Pressable>
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}>
               <VolumeX size={18} color={color.mute} />
@@ -1332,6 +1365,22 @@ export default function TelegraphThread() {
         onClose={() => setActionMsg(null)}
         onDeleteForMe={handleDeleteForMe}
       />
+
+      {/* Per-thread translation settings */}
+      <TranslationSettingsSheet
+        visible={showTranslationSheet}
+        autoTranslate={autoTranslate}
+        showOriginalFirst={defaultShowOriginal}
+        onChangeAutoTranslate={(v) => {
+          setThreadAutoTranslate(v);
+          saveThreadTranslationPrefs(v, threadShowOriginal ?? langSettings?.show_original_messages ?? false);
+        }}
+        onChangeShowOriginalFirst={(v) => {
+          setThreadShowOriginal(v);
+          saveThreadTranslationPrefs(threadAutoTranslate ?? langSettings?.auto_translate_messages ?? true, v);
+        }}
+        onClose={() => setShowTranslationSheet(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1432,6 +1481,15 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   transToggleMine: { color: color.onInk + 'CC' },
+
+  transUnavailable: {
+    fontSize: 10,
+    color: color.mute,
+    fontFamily: 'Courier',
+    fontStyle: 'italic',
+    letterSpacing: 0.2,
+    marginTop: 4,
+  },
 
   compose: {
     flexDirection: 'row',

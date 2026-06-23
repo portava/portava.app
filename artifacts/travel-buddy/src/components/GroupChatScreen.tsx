@@ -23,7 +23,9 @@ import {
   Alert,
   Modal,
   Share,
+  Switch,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
@@ -35,6 +37,7 @@ import { useGroupChat } from '../hooks/useGroupChat';
 import { useSession } from '../context/SessionContext';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { TelegraphSystemNotice } from './TelegraphSystemNotice';
+import { TranslationSettingsSheet } from './TranslationSettingsSheet';
 import type { Message } from '../services/messaging';
 import { deleteMessage } from '../services/messaging';
 import * as Haptics from 'expo-haptics';
@@ -171,12 +174,18 @@ function GroupMessageBubble({
   mine,
   onLongPress,
   receiptState,
+  autoTranslate,
+  defaultShowOriginal,
 }: {
   item: Message;
   mine: boolean;
   onLongPress?: () => void;
   receiptState?: 'sent' | 'delivered' | 'read' | null;
+  autoTranslate: boolean;
+  defaultShowOriginal: boolean;
 }) {
+  const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
+
   if (item.deleted) {
     return (
       <Pressable
@@ -191,7 +200,22 @@ function GroupMessageBubble({
     );
   }
 
-  const bodyToShow = item.displayBody ?? item.body ?? '';
+  // Choose which body to display based on translation settings
+  let bodyToShow: string;
+  if (mine || !autoTranslate || showOriginal) {
+    bodyToShow = item.originalBody ?? item.body ?? '';
+  } else {
+    bodyToShow = item.displayBody ?? item.body ?? '';
+  }
+
+  const isTranslated = !mine && item.translated && autoTranslate && !showOriginal;
+  const isPending = !mine && item.translationStatus === 'pending';
+  const isTranslationFailed = !mine && item.translationStatus === 'failed' && autoTranslate;
+  const showLabel = !mine && (
+    isPending ||
+    (isTranslated && !!item.translationLabel) ||
+    !!item.canShowOriginal
+  );
 
   return (
     <View>
@@ -208,6 +232,29 @@ function GroupMessageBubble({
           {formatTime(item.createdAt)}
           {item.editedAt ? '  ·  edited' : ''}
         </Text>
+
+        {/* Translation label + original/translated toggle */}
+        {showLabel && (
+          <View style={styles.translationRow}>
+            {isPending ? (
+              <Text style={styles.transLabel}>Translating…</Text>
+            ) : isTranslated && item.translationLabel ? (
+              <Text style={styles.transLabel}>{item.translationLabel}</Text>
+            ) : null}
+            {item.canShowOriginal && autoTranslate && (
+              <Pressable onPress={() => setShowOriginal((v) => !v)} hitSlop={8}>
+                <Text style={styles.transToggle}>
+                  {showOriginal ? 'Show translation' : 'Show original'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
+        {/* Translation unavailable */}
+        {isTranslationFailed && (
+          <Text style={styles.transUnavailable}>Translation unavailable.</Text>
+        )}
       </Pressable>
       {mine && receiptState && (
         <View style={styles.receiptRow}>
@@ -249,6 +296,10 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  // Per-thread translation settings (AsyncStorage-persisted)
+  const [autoTranslate, setAutoTranslate] = useState(true);
+  const [defaultShowOriginal, setDefaultShowOriginal] = useState(false);
+  const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   const displayTitle = thread?.title ?? title ?? (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
@@ -259,6 +310,24 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
       listRef.current?.scrollToEnd({ animated: true });
     }
   }, [messages.length]);
+
+  // Load per-thread translation prefs from AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem(`thread_translation:${id}`)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw) as { autoTranslate?: boolean; showOriginal?: boolean };
+          if (typeof parsed.autoTranslate === 'boolean') setAutoTranslate(parsed.autoTranslate);
+          if (typeof parsed.showOriginal === 'boolean') setDefaultShowOriginal(parsed.showOriginal);
+        } catch { /* ignore corrupt entries */ }
+      })
+      .catch(() => {});
+  }, [id]);
+
+  async function saveTranslationPrefs(at: boolean, so: boolean) {
+    await AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }));
+  }
 
   // Build list items with day separators
   type ListItem =
@@ -348,9 +417,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         <Pressable
           hitSlop={8}
           style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Translation settings', 'Adjust translation preferences in Settings → Language.')}
+          onPress={() => setShowTranslationSheet(true)}
         >
-          <Languages size={18} color={color.mute} />
+          <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
         </Pressable>
         <Pressable
           hitSlop={8}
@@ -496,6 +565,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   setActionMsgMine(mine);
                 }}
                 receiptState={m.id === lastOwnMsgId ? receiptState : null}
+                autoTranslate={autoTranslate}
+                defaultShowOriginal={defaultShowOriginal}
               />
             </View>
           );
@@ -588,6 +659,22 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onClose={() => setActionMsg(null)}
         onDeleteForMe={handleDeleteForMe}
       />
+
+      {/* Per-thread translation settings */}
+      <TranslationSettingsSheet
+        visible={showTranslationSheet}
+        autoTranslate={autoTranslate}
+        showOriginalFirst={defaultShowOriginal}
+        onChangeAutoTranslate={(v) => {
+          setAutoTranslate(v);
+          saveTranslationPrefs(v, defaultShowOriginal);
+        }}
+        onChangeShowOriginalFirst={(v) => {
+          setDefaultShowOriginal(v);
+          saveTranslationPrefs(autoTranslate, v);
+        }}
+        onClose={() => setShowTranslationSheet(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -673,6 +760,35 @@ const styles = StyleSheet.create({
 
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+
+  translationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  transLabel: {
+    fontSize: 10,
+    color: color.mute,
+    fontFamily: 'Courier',
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
+  transToggle: {
+    fontSize: 10,
+    color: color.signal,
+    fontFamily: 'Courier',
+    textDecorationLine: 'underline',
+  },
+  transUnavailable: {
+    fontSize: 10,
+    color: color.mute,
+    fontFamily: 'Courier',
+    fontStyle: 'italic',
+    letterSpacing: 0.2,
+    marginTop: 4,
+  },
 
   compose: {
     flexDirection: 'row',
