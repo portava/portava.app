@@ -687,6 +687,15 @@ export interface PulseFeedItem {
   relatedPlanId?: ID | null;
   relatedGemId?: ID | null;
   relatedTripId?: ID | null;
+
+  /** Resolved from pulse_geo_tags.location_visibility — drives LocationChip variant. */
+  locationVisibility?: 'city_only' | 'neighborhood' | 'venue_tagged' | 'exact_hidden' | 'no_location' | null;
+  /** Venue name when location_visibility = 'venue_tagged'. */
+  venueName?: string | null;
+  /** District/neighborhood label when location_visibility = 'neighborhood' or 'venue_tagged'. */
+  locationDistrict?: string | null;
+  /** Country name for display. */
+  locationCountry?: string | null;
 }
 
 export const PULSE_FILTERS = [

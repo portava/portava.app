@@ -27,6 +27,8 @@ import geofenceRouter from "./geofence";
 import safeReturnRouter from "./safeReturn";
 import highlightsRouter from "./highlights";
 import placesRouter from "./places";
+import pulseRouter from "./pulse";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -58,5 +60,7 @@ router.use(geofenceRouter);
 router.use(safeReturnRouter);
 router.use(highlightsRouter);
 router.use(placesRouter);
+router.use(pulseRouter);
+router.use(adminRouter);
 
 export default router;

@@ -24,6 +24,15 @@ const mediaUrls = z
 
 export const locationSource = z.enum(['gps', 'manual', 'none']);
 
+/** Per-post location visibility override — user can reduce precision below their default pref. */
+export const pulseLocationVisibility = z.enum([
+  'city_only',
+  'neighborhood',
+  'venue_tagged',
+  'exact_hidden',
+  'no_location',
+]);
+
 const lat = z.number().min(-90).max(90);
 const lng = z.number().min(-180).max(180);
 
@@ -63,6 +72,8 @@ export const createPostSchema = z
     userGpsLat: lat.nullish(),
     userGpsLng: lng.nullish(),
     locationSource: locationSource.optional().default('none'),
+    // per-post location visibility override (user can reduce precision; never increase above prefs)
+    locationVisibility: pulseLocationVisibility.optional(),
     // media filter fields
     filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
     filterIntensity: z.number().int().min(0).max(100).optional().default(100),

@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var express_1 = require("express");
+var health_1 = require("./health");
+var trips_1 = require("./trips");
+var posts_1 = require("./posts");
+var follows_1 = require("./follows");
+var router = (0, express_1.Router)();
+router.use(health_1.default);
+router.use(trips_1.default);
+router.use(posts_1.default);
+router.use(follows_1.default);
+exports.default = router;

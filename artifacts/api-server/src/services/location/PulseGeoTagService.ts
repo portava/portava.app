@@ -33,6 +33,12 @@ export interface PulseGeoTagInput {
   locationDistrict?: string | null;
   locationCountryCode?: string | null;
   venueName?: string | null;
+  /**
+   * Per-post visibility override from the user at posting time.
+   * This can only REDUCE precision below the user's preference default;
+   * it can never increase it above what the preferences allow.
+   */
+  locationVisibilityOverride?: PulseVisibility | null;
 }
 
 // Ordered from least-precise to most-precise.
@@ -81,6 +87,16 @@ export async function writePulseGeoTag(
 
     // 3. Compute the effective visibility from mode + explicit preference
     let visibility: PulseVisibility = effectivePulseVisibility(prefs);
+
+    // Per-post override: pick the LESS precise of (pref default, per-post override).
+    // Users can reduce precision at posting time; they cannot exceed their mode default.
+    if (input.locationVisibilityOverride != null) {
+      const overrideRank  = VISIBILITY_RANK[input.locationVisibilityOverride] ?? 99;
+      const preferenceRank = VISIBILITY_RANK[visibility] ?? 99;
+      visibility = overrideRank <= preferenceRank
+        ? input.locationVisibilityOverride
+        : visibility;
+    }
     let hotelBlurApplied = false;
 
     // 4. Hotel / private-stay blur:

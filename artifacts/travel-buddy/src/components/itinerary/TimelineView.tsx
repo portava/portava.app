@@ -163,12 +163,17 @@ function PlanItemCard({
                   <Text style={ic.metaText}>{timeStr}</Text>
                 </View>
               )}
-              {item.locationName && (
+              {item.locationName ? (
                 <View style={ic.metaItem}>
                   <MapPin size={11} color={color.mute} />
                   <Text style={ic.metaText} numberOfLines={1}>{item.locationName}</Text>
                 </View>
-              )}
+              ) : (item.category === 'accommodation' || item.category === 'meeting_point') ? (
+                <View style={[ic.metaItem, ic.locationHidden]}>
+                  <MapPin size={11} color="#8B6914" />
+                  <Text style={ic.locationHiddenText}>Location TBD</Text>
+                </View>
+              ) : null}
             </View>
           )}
         </Pressable>
@@ -589,8 +594,10 @@ const ic = StyleSheet.create({
   title:       { ...t.body, color: color.ink, fontWeight: '600', lineHeight: 20 },
   titleDone:   { textDecorationLine: 'line-through', color: color.mute },
   metaRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 2 },
-  metaItem:    { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText:    { ...t.small, color: color.mute },
+  metaItem:         { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  metaText:         { ...t.small, color: color.mute },
+  locationHidden:   { backgroundColor: '#FFF8E7', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
+  locationHiddenText: { ...t.small, color: '#8B6914', fontWeight: '500' },
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   menuSheet:   { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.lg, paddingBottom: 36, gap: 4 },
   menuTitle:   { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 8 },

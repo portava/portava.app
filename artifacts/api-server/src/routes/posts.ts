@@ -103,6 +103,7 @@ router.post("/posts", async (req, res) => {
   const {
     mediaType, addToPassport, locationName, locationPlaceId, locationCity,
     locationCountry, locationLat, locationLng, userGpsLat, userGpsLng, locationSource,
+    locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
   } = parsed.data;
 
@@ -228,13 +229,14 @@ router.post("/posts", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       writePulseGeoTag(sc, {
-        postId:              (data as any).id,
-        userId:              user.id,
-        userGpsLat:          userGpsLat   ?? null,
-        userGpsLng:          userGpsLng   ?? null,
-        locationCity:        locationCity ?? null,
-        locationCountry:     locationCountry ?? null,
-        venueName:           locationName ?? null,
+        postId:                    (data as any).id,
+        userId:                    user.id,
+        userGpsLat:                userGpsLat   ?? null,
+        userGpsLng:                userGpsLng   ?? null,
+        locationCity:              locationCity ?? null,
+        locationCountry:           locationCountry ?? null,
+        venueName:                 locationName ?? null,
+        locationVisibilityOverride: (locationVisibility ?? null) as any,
       }).catch((err) => {
         req.log.warn({ err }, "pulse_geo_tag write failed (non-fatal)");
       });

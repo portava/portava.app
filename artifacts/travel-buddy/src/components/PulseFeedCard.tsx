@@ -14,6 +14,28 @@ import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { useSession } from '../context/SessionContext';
+import { LocationChip } from './LocationChip';
+import type { LocationChipVariant } from './LocationChip';
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Map pulse_geo_tags.location_visibility to the LocationChip variant.
+ * Falls back to city-level when no visibility info is available.
+ */
+function resolveLocationChipVariant(
+  visibility: PulseFeedItem['locationVisibility'],
+  neighborhood?: string,
+): LocationChipVariant {
+  switch (visibility) {
+    case 'venue_tagged': return neighborhood ? 'neighborhood' : 'current_city';
+    case 'neighborhood': return 'neighborhood';
+    case 'city_only':    return 'current_city';
+    case 'exact_hidden': return 'exact_private';
+    case 'no_location':  return 'no_location';
+    default:             return 'current_city';
+  }
+}
 
 /* shared bits */
 function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
@@ -84,6 +106,10 @@ function FitBadge() {
 
 /* ── Traveler Post ── */
 function PostCard({ item }: { item: PulseFeedItem }) {
+  const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
+  const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
+  const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
+
   return (
     <View style={s.card}>
       <AuthorRow item={item} />
@@ -95,6 +121,17 @@ function PostCard({ item }: { item: PulseFeedItem }) {
       ) : null}
       {item.caption ? <Text style={s.caption}>{item.caption}</Text> : null}
       <TagRow tags={item.tags} />
+      {chipVariant !== 'no_location' && (
+        <View style={s.locationRow}>
+          <LocationChip
+            variant={chipVariant}
+            label={chipLabel}
+            sublabel={chipSublabel}
+            size="sm"
+            muted
+          />
+        </View>
+      )}
       <PostEngagementBar
         postId={item.id}
         likeCount={item.likeCount ?? 0}
@@ -308,6 +345,7 @@ const s = StyleSheet.create({
   blurb: { ...t.small, color: color.mute },
   line: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   lineText: { ...t.small, color: color.mute },
+  locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: -2 },
 
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tag: { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 3 },
