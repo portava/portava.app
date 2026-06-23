@@ -13,6 +13,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 
 const router = Router();
 
@@ -299,7 +300,7 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
           .eq("key", "passport_stamps_enabled")
           .maybeSingle();
         if (!(flagRow as any)?.enabled) return;
-        await createStamp(sc, {
+        const result = await createStamp(sc, {
           userId: user.id,
           stampType: "city",
           country: country ?? null,
@@ -307,6 +308,26 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
           verificationLevel: "gps",
           sourceType: "gps_pipeline",
         });
+        if (result?.isNew) {
+          const { data: memFlagRow } = await sc
+            .from("feature_flags")
+            .select("enabled")
+            .eq("key", "passport_memories_enabled")
+            .maybeSingle();
+          if ((memFlagRow as any)?.enabled) {
+            await createSuggestedMemory(sc, {
+              userId: user.id,
+              title: `${city}${country ? `, ${country}` : ""}`,
+              country: country ?? null,
+              city,
+              district: district ?? null,
+              category: "city_visit",
+              sourceType: "gps_pipeline",
+              verificationLevel: "gps",
+              suggestionReason: "You visited a new city",
+            } as any);
+          }
+        }
       } catch {}
     })();
   }

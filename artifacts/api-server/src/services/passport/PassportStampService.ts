@@ -64,10 +64,25 @@ export async function createStamp(
     verificationLevel = "unverified", earnedAt,
   } = input;
 
-  // Safe Return stamps default to private
-  const visibility: VisibilityTier =
-    input.visibility ??
-    (stampType === "safe_return" ? "private" : "public");
+  // Apply visibility: explicit > safe_return default > user preference > "public"
+  let visibility: VisibilityTier;
+  if (input.visibility) {
+    visibility = input.visibility;
+  } else if (stampType === "safe_return") {
+    visibility = "private";
+  } else {
+    // Look up user's default stamp visibility preference
+    try {
+      const { data: prefRow } = await db
+        .from("passport_visibility_preferences")
+        .select("default_stamp_visibility")
+        .eq("user_id", userId)
+        .maybeSingle();
+      visibility = ((prefRow as any)?.default_stamp_visibility as VisibilityTier) ?? "public";
+    } catch {
+      visibility = "public";
+    }
+  }
 
   // Check for existing stamp — mirrors COALESCE(country,'') / COALESCE(city,'') unique index
   // Use .is(col, null) for null values; .eq(col, val) for non-null values.

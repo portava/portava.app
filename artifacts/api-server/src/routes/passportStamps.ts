@@ -648,8 +648,32 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
     return;
   }
 
-  const rows = await loadStamps(sc, (profile as any).id, { visibility: "public" });
-  const stamps = rows.map((s: any) => ({
+  // Determine caller context for visibility filtering
+  let callerCtx: import("../services/passport/PassportPrivacyGuard.js").CallerContext = "public";
+  const authHeader2 = req.headers.authorization ?? "";
+  const token2 = authHeader2.startsWith("Bearer ") ? authHeader2.slice(7) : null;
+  if (token2) {
+    const { data: authData2 } = await sc.auth.getUser(token2);
+    const callerId2 = authData2?.user?.id;
+    if (callerId2 === (profile as any).id) {
+      callerCtx = "owner";
+    } else if (callerId2) {
+      const { data: circleRow2 } = await sc
+        .from("friend_connections")
+        .select("id")
+        .eq("user_a_id", callerId2)
+        .eq("user_b_id", (profile as any).id)
+        .eq("status", "connected")
+        .maybeSingle();
+      if (circleRow2) callerCtx = "circle";
+    }
+  }
+
+  const rows = await loadStamps(sc, (profile as any).id);
+  const { filterStamps } = await import("../services/passport/PassportPrivacyGuard.js");
+  const visible = filterStamps(rows, callerCtx);
+
+  const stamps = visible.map((s: any) => ({
     id: s.id,
     stampType: s.stamp_type,
     country: s.country,

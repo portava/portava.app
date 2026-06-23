@@ -13,6 +13,8 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import passportStampsRouter from "../routes/passportStamps.js";
+import { isVisible, filterStamps } from "../services/passport/PassportPrivacyGuard.js";
+import { createStamp } from "../services/passport/PassportStampService.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -455,5 +457,176 @@ describe("Contribution events — no Trust Score modification", () => {
     // Verify no trust_score table was touched
     const touchedTables = client._inserted.map((i: any) => i.table);
     assert.ok(!touchedTables.includes("trust_scores"), "trust_scores must not be written");
+  });
+});
+
+// ── Privacy guard unit tests ───────────────────────────────────────────────────
+
+describe("Privacy guard — visibility tier isolation", () => {
+  it("trip_crew stamp is NOT visible to a circle-only caller", () => {
+    assert.equal(isVisible("trip_crew", "circle"), false);
+  });
+
+  it("trip_crew stamp IS visible to a trip_crew caller", () => {
+    assert.equal(isVisible("trip_crew", "trip_crew"), true);
+  });
+
+  it("circle_only stamp is NOT visible to a public caller", () => {
+    assert.equal(isVisible("circle_only", "public"), false);
+  });
+
+  it("circle_only stamp IS visible to a circle caller", () => {
+    assert.equal(isVisible("circle_only", "circle"), true);
+  });
+
+  it("public stamp is visible to all caller contexts", () => {
+    for (const ctx of ["owner", "circle", "trip_crew", "public"] as const) {
+      assert.equal(isVisible("public", ctx), true, `public stamp should be visible to ${ctx}`);
+    }
+  });
+
+  it("private stamp is only visible to owner", () => {
+    assert.equal(isVisible("private", "public"), false);
+    assert.equal(isVisible("private", "circle"), false);
+    assert.equal(isVisible("private", "trip_crew"), false);
+    assert.equal(isVisible("private", "owner"), true);
+  });
+
+  it("filterStamps removes circle_only stamps from public view", () => {
+    const stamps: any[] = [
+      { id: "s1", stamp_type: "city", country: "JP", city: "Tokyo", neighborhood: null, place_id: null, plan_id: null, trip_id: null, source_type: "gps", verification_level: "gps", visibility: "public", earned_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" },
+      { id: "s2", stamp_type: "plan", country: "JP", city: "Osaka", neighborhood: null, place_id: null, plan_id: null, trip_id: null, source_type: "checkin", verification_level: "checkin", visibility: "circle_only", earned_at: "2026-01-02T00:00:00Z", created_at: "2026-01-02T00:00:00Z" },
+      { id: "s3", stamp_type: "safe_return", country: null, city: null, neighborhood: null, place_id: null, plan_id: null, trip_id: null, source_type: "safe_return", verification_level: "safe_return", visibility: "private", earned_at: "2026-01-03T00:00:00Z", created_at: "2026-01-03T00:00:00Z" },
+    ];
+
+    const publicView = filterStamps(stamps, "public");
+    assert.equal(publicView.length, 1, "public caller sees only public stamps");
+    assert.equal(publicView[0].id, "s1");
+
+    const circleView = filterStamps(stamps, "circle");
+    assert.equal(circleView.length, 2, "circle caller sees public + circle_only stamps");
+
+    const ownerView = filterStamps(stamps, "owner");
+    assert.equal(ownerView.length, 3, "owner sees all stamps");
+  });
+});
+
+// ── Stamp dedup — null country/city handling ──────────────────────────────────
+
+describe("Passport Stamps — dedup with null city", () => {
+  it("createStamp returns isNew=false when a null-city stamp already exists for the user", async () => {
+    let dedupQueryFired = false;
+
+    const fakeDb: any = {
+      from(table: string) {
+        const builder: any = {
+          select() { return builder; },
+          update() { return builder; },
+          insert() { return builder; },
+          upsert() { return builder; },
+          eq(col: string, val: any) {
+            if (table === "passport_stamps" && col === "stamp_type" && val === "plan") {
+              dedupQueryFired = true;
+            }
+            return builder;
+          },
+          is() { return builder; },
+          neq() { return builder; },
+          in() { return builder; },
+          order() { return builder; },
+          limit() { return builder; },
+          maybeSingle() {
+            // Simulate finding existing stamp
+            if (table === "passport_stamps") return Promise.resolve({ data: { id: "existing-plan-stamp" }, error: null });
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() { return Promise.resolve({ data: null, error: null }); },
+          then(onF: any) { return Promise.resolve({ data: [], error: null }).then(onF); },
+        };
+        return builder;
+      },
+    };
+
+    const result = await createStamp(fakeDb, {
+      userId: USER_ID,
+      stampType: "plan",
+      city: null,
+      country: null,
+      tripId: "trip-123",
+      verificationLevel: "checkin",
+    });
+
+    assert.ok(dedupQueryFired, "dedup query should have been fired");
+    assert.ok(result !== null, "result must not be null");
+    assert.equal(result!.isNew, false, "stamp must NOT be new (dedup hit)");
+    assert.equal(result!.id, "existing-plan-stamp");
+  });
+
+  it("createStamp returns isNew=true when no matching stamp exists for the city", async () => {
+    const fakeDb: any = {
+      from(table: string) {
+        const builder: any = {
+          select() { return builder; },
+          update() { return builder; },
+          insert() { return builder; },
+          upsert() { return builder; },
+          eq() { return builder; },
+          is() { return builder; },
+          neq() { return builder; },
+          in() { return builder; },
+          order() { return builder; },
+          limit() { return builder; },
+          maybeSingle() {
+            // No existing stamp found / no prefs
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() {
+            if (table === "passport_stamps") return Promise.resolve({ data: { id: "new-stamp-id" }, error: null });
+            return Promise.resolve({ data: null, error: null });
+          },
+          then(onF: any) { return Promise.resolve({ data: [], error: null }).then(onF); },
+        };
+        return builder;
+      },
+    };
+
+    const result = await createStamp(fakeDb, {
+      userId: USER_ID,
+      stampType: "city",
+      city: "Tokyo",
+      country: "Japan",
+      verificationLevel: "gps",
+    });
+
+    assert.ok(result !== null, "result must not be null");
+    assert.equal(result!.isNew, true, "stamp should be new");
+    assert.equal(result!.id, "new-stamp-id");
+  });
+});
+
+// ── Visibility preferences as stamp creation default ──────────────────────────
+
+describe("Passport Stamps — visibility preference applied on creation", () => {
+  it("PATCH visibility-preferences stores user defaults", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: {},
+        stamps: [],
+        memories: [],
+        contributions: [],
+        visibilityPrefs: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("PATCH", "/api/me/passport/visibility-preferences", {
+      defaultStampVisibility: "circle_only",
+      defaultMemoryVisibility: "trip_crew",
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.defaultStampVisibility, "circle_only");
+    assert.equal(r.body.defaultMemoryVisibility, "trip_crew");
   });
 });

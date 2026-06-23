@@ -25,6 +25,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { createStamp } from "../services/passport/PassportStampService.js";
+import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 import {
   createSession,
   startSession,
@@ -331,6 +333,46 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
+
+  // Fire-and-forget: award a Safe Return stamp + suggested memory behind feature flag
+  void (async () => {
+    try {
+      const sc = getServiceClient();
+      if (!sc) return;
+      const { data: flagRow } = await sc
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "passport_stamps_enabled")
+        .maybeSingle();
+      if (!(flagRow as any)?.enabled) return;
+      const result = await createStamp(sc, {
+        userId: user.id,
+        stampType: "safe_return",
+        tripId: (session as any).trip_id ?? null,
+        verificationLevel: "safe_return",
+        sourceType: "safe_return_confirm",
+        visibility: "private",
+      });
+      if (result?.isNew) {
+        const { data: memFlagRow } = await sc
+          .from("feature_flags")
+          .select("enabled")
+          .eq("key", "passport_memories_enabled")
+          .maybeSingle();
+        if ((memFlagRow as any)?.enabled) {
+          await createSuggestedMemory(sc, {
+            userId: user.id,
+            title: "Safe return confirmed",
+            category: "safe_return",
+            tripId: (session as any).trip_id ?? null,
+            sourceType: "safe_return_confirm",
+            verificationLevel: "safe_return",
+            suggestionReason: "You confirmed a Safe Return",
+          });
+        }
+      }
+    } catch {}
+  })();
 
   res.status(200).json({ ok: true, session: toPublicSession(session) });
 });

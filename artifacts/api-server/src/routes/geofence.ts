@@ -17,6 +17,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { calculateDistanceMeters } from "../lib/locationVerify.js";
 import { checkAndRecordSnapshot } from "../services/location/LocationSafetyService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 
 const router = Router();
 
@@ -453,7 +454,7 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
   // Load geofence
   const { data: gf, error: gfErr } = await db
     .from("plan_geofences")
-    .select("id, lat, lng, check_in_radius_m, check_in_required, check_in_window_start, check_in_window_end, host_enabled, trip_id")
+    .select("id, lat, lng, check_in_radius_m, check_in_required, check_in_window_start, check_in_window_end, host_enabled, trip_id, city, neighborhood, location_name")
     .eq("trip_id", tripId)
     .maybeSingle();
 
@@ -537,7 +538,10 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
     metadata:  { distanceBucket: distanceM <= 100 ? "same_venue" : "inside_radius" },
   });
 
-  // Fire-and-forget: award a plan check-in stamp behind feature flag
+  // Fire-and-forget: award a plan check-in stamp + suggested memory behind feature flag
+  const gfCity: string | null = (geofence as any).city ?? null;
+  const gfNeighborhood: string | null = (geofence as any).neighborhood ?? null;
+  const gfLocationName: string | null = (geofence as any).location_name ?? null;
   void (async () => {
     try {
       const sc = getServiceClient();
@@ -548,13 +552,36 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
         .eq("key", "passport_stamps_enabled")
         .maybeSingle();
       if (!(flagRow as any)?.enabled) return;
-      await createStamp(sc, {
+      const result = await createStamp(sc, {
         userId: user.id,
         stampType: "plan",
         tripId,
+        city: gfCity,
+        neighborhood: gfNeighborhood,
         verificationLevel: "checkin",
         sourceType: "geofence_checkin",
       });
+      if (result?.isNew) {
+        const { data: memFlagRow } = await sc
+          .from("feature_flags")
+          .select("enabled")
+          .eq("key", "passport_memories_enabled")
+          .maybeSingle();
+        if ((memFlagRow as any)?.enabled) {
+          await createSuggestedMemory(sc, {
+            userId: user.id,
+            title: gfLocationName ?? gfCity ?? "Meetup check-in",
+            country: null,
+            city: gfCity,
+            neighborhood: gfNeighborhood,
+            category: "meetup",
+            tripId,
+            sourceType: "geofence_checkin",
+            verificationLevel: "checkin",
+            suggestionReason: "You checked in to a trip meetup",
+          });
+        }
+      }
     } catch {}
   })();
 
