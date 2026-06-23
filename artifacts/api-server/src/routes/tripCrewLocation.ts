@@ -85,6 +85,32 @@ async function getMemberRole(
   }
 }
 
+/**
+ * Returns all accepted member IDs for a trip (owner + role=member rows).
+ * Used to validate allowedMemberIds in live-share start.
+ */
+async function getAcceptedMemberIds(
+  db: ReturnType<typeof getServiceClient>,
+  tripId: string,
+): Promise<string[]> {
+  if (!db) return [];
+  try {
+    const [ownerRes, membersRes] = await Promise.all([
+      db.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+      db.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
+    ]);
+    const ids: string[] = [];
+    const ownerId = (ownerRes.data as any)?.owner_id;
+    if (ownerId) ids.push(ownerId);
+    for (const row of ((membersRes.data as any[]) ?? [])) {
+      if (row.user_id && !ids.includes(row.user_id)) ids.push(row.user_id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const VISIBILITY_VALUES = ["hidden", "city_only", "neighborhood", "nearby", "arrived_only"] as const;
@@ -284,8 +310,15 @@ router.post("/trips/:tripId/crew/live-share/start", async (req, res) => {
   const role = await getMemberRole(sc, tripId, user.id);
   if (!role) { sendError(res, "not_member"); return; }
 
-  // Verify allowedMemberIds are actually accepted members of this trip
   const { duration, visibilityLevel, allowedMemberIds, planEndAt } = parsed.data;
+
+  // Validate allowedMemberIds are accepted members of this trip (not pending/non-members)
+  const acceptedMemberIds = await getAcceptedMemberIds(sc, tripId);
+  const invalid = allowedMemberIds.filter((id) => !acceptedMemberIds.includes(id));
+  if (invalid.length > 0) {
+    sendError(res, "invalid_payload", `These user IDs are not accepted trip members: ${invalid.join(", ")}`);
+    return;
+  }
 
   const result = await startLiveShare(sc, {
     tripId,

@@ -74,6 +74,18 @@ CREATE POLICY "crew_sessions_recipients_read" ON trip_crew_location_sessions
     status = 'active'
     AND expires_at > now()
     AND auth.uid()::text = ANY(allowed_member_ids)
+    AND (
+      EXISTS (
+        SELECT 1 FROM trips
+        WHERE trips.id = trip_id AND trips.owner_id = auth.uid()
+      )
+      OR EXISTS (
+        SELECT 1 FROM trip_members
+        WHERE trip_members.trip_id = trip_crew_location_sessions.trip_id
+          AND trip_members.user_id = auth.uid()
+          AND trip_members.role IN ('owner', 'member')
+      )
+    )
   );
 
 -- ── trip_crew_location_events ─────────────────────────────────────────────────

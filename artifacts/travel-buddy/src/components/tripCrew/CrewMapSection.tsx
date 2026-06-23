@@ -93,11 +93,53 @@ function DensityMap({ members }: { members: CrewMemberCardType[] }) {
 
 // ── Main section ──────────────────────────────────────────────────────────────
 
+type VisibilityLevel = 'hidden' | 'city_only' | 'neighborhood' | 'nearby' | 'arrived_only';
+
+const VISIBILITY_OPTIONS: { value: VisibilityLevel; label: string; sub: string }[] = [
+  { value: 'hidden',       label: 'Hidden',         sub: 'Never shown on crew map' },
+  { value: 'city_only',   label: 'City only',       sub: 'Shows city name only' },
+  { value: 'neighborhood', label: 'Neighborhood',    sub: 'Shows district or area' },
+  { value: 'nearby',       label: 'Nearby',          sub: 'Shows when in the same area' },
+  { value: 'arrived_only', label: 'Arrived only',    sub: 'Only shows when checked in' },
+];
+
+function VisibilitySelector({
+  value,
+  onChange,
+  saving,
+}: {
+  value: VisibilityLevel;
+  onChange: (v: VisibilityLevel) => void;
+  saving: boolean;
+}) {
+  return (
+    <View style={vs.wrap}>
+      <Text style={vs.label}>Default visibility</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={vs.row}>
+        {VISIBILITY_OPTIONS.map((opt) => (
+          <Pressable
+            key={opt.value}
+            style={[vs.chip, value === opt.value && vs.chipActive]}
+            onPress={() => !saving && onChange(opt.value)}
+          >
+            <Text style={[vs.chipLabel, value === opt.value && vs.chipLabelActive]}>{opt.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <Text style={vs.sub}>
+        {VISIBILITY_OPTIONS.find((o) => o.value === value)?.sub ?? ''}
+      </Text>
+    </View>
+  );
+}
+
 export function CrewMapSection({ tripId }: Props) {
   const { members, totalCount, featureEnabled, loading, error, refresh } = useTripCrewMap(tripId);
   const [liveShareOpen, setLiveShareOpen] = useState(false);
   const [ghostMode, setGhostMode] = useState(false);
   const [ghostLoading, setGhostLoading] = useState(false);
+  const [visibility, setVisibility] = useState<VisibilityLevel>('city_only');
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
 
   if (!featureEnabled) {
     return (
@@ -118,6 +160,16 @@ export function CrewMapSection({ tripId }: Props) {
       return;
     }
     setGhostMode(value);
+  }
+
+  async function handleVisibilityChange(v: VisibilityLevel) {
+    setVisibility(v);
+    setVisibilitySaving(true);
+    const result = await updateCrewPreferences(tripId, { defaultVisibility: v });
+    setVisibilitySaving(false);
+    if (!result.ok) {
+      Alert.alert('Error', result.error ?? 'Could not update visibility');
+    }
   }
 
   return (
@@ -142,6 +194,14 @@ export function CrewMapSection({ tripId }: Props) {
             />
           )}
         </View>
+
+        <View style={s.divider} />
+
+        <VisibilitySelector
+          value={visibility}
+          onChange={handleVisibilityChange}
+          saving={visibilitySaving}
+        />
 
         <View style={s.divider} />
 
@@ -226,6 +286,21 @@ const s = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingVertical: space.xl, gap: space.sm },
   emptyTitle: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, textAlign: 'center' },
+});
+
+const vs = StyleSheet.create({
+  wrap: { gap: 6 },
+  label: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
+  row: { gap: space.sm, paddingVertical: 4 },
+  chip: {
+    paddingHorizontal: space.md, paddingVertical: 6,
+    borderRadius: radius.pill, borderWidth: 1,
+    borderColor: color.haze, backgroundColor: color.paper,
+  },
+  chipActive: { borderColor: color.signal, backgroundColor: '#FFF5F5' },
+  chipLabel: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 12 },
+  chipLabelActive: { color: color.signal, fontWeight: '800' },
+  sub: { ...t.small, color: color.mute, fontSize: 11 },
 });
 
 const dm = StyleSheet.create({

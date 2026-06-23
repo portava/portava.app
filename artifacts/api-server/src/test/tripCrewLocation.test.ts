@@ -16,7 +16,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import tripCrewLocationRouter from "../routes/tripCrewLocation.js";
 import { buildCrewCard } from "../lib/tripCrewLocation.js";
-import { sweepExpiredLiveShares } from "../services/tripCrew/TripCrewLiveShareService.js";
+import { sweepExpiredLiveShares, revokeAccessForMember } from "../services/tripCrew/TripCrewLiveShareService.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -645,6 +645,104 @@ describe("Trip Crew Location — lib unit tests (buildCrewCard)", () => {
     });
     assert.equal(card.statusLabel, "arrived");
     assert.equal(card.planCheckInStatus, "arrived");
+  });
+
+});
+
+describe("Trip Crew Location — allowedMemberIds validation", () => {
+
+  it("28. Live-share start rejects non-member in allowedMemberIds → 400", async () => {
+    const NON_MEMBER_ID = "user-not-in-trip";
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: ACCEPTED_MEMBERS,
+      crewSessions: [],
+      crewEvents: [],
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, {
+      duration: "15m",
+      allowedMemberIds: [NON_MEMBER_ID],
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("29. Live-share start rejects pending-invite user in allowedMemberIds → 400", async () => {
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [...ACCEPTED_MEMBERS, ...PENDING_MEMBERS],
+      crewSessions: [],
+      crewEvents: [],
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, {
+      duration: "15m",
+      allowedMemberIds: [OTHER_USER],
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("30. Live-share start succeeds when all allowedMemberIds are accepted members", async () => {
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: ACCEPTED_MEMBERS,
+      crewSessions: [],
+      crewEvents: [],
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, {
+      duration: "15m",
+      allowedMemberIds: [MEMBER_ID],
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.ok, true);
+  });
+
+});
+
+describe("Trip Crew Location — removed member loses access", () => {
+
+  it("31. revokeAccessForMember removes user from allowed_member_ids", async () => {
+    const future = new Date(Date.now() + 900_000).toISOString();
+    const client = makeFakeClient({
+      crewSessions: [
+        {
+          id: "sess-to-revoke",
+          trip_id: TRIP_ID,
+          user_id: USER_ID,
+          status: "active",
+          expires_at: future,
+          allowed_member_ids: [MEMBER_ID, OTHER_USER],
+        },
+      ],
+      crewEvents: [],
+    });
+    // Revoke MEMBER_ID from the session
+    await revokeAccessForMember(client as any, TRIP_ID, MEMBER_ID);
+    // The fake client's update should have been called
+    const updatedSessions = client.__updated["trip_crew_location_sessions"] ?? [];
+    assert.ok(updatedSessions.length > 0, "update should have been called for the session");
+    const updated = updatedSessions[0];
+    assert.ok(
+      !((updated.allowed_member_ids ?? []).includes(MEMBER_ID)),
+      "MEMBER_ID should be removed from allowed_member_ids",
+    );
+  });
+
+  it("32. Removed member cannot start live share (403) after removal", async () => {
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [],
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, {
+      duration: "15m",
+      allowedMemberIds: [USER_ID],
+    }, OTHER_TOKEN);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "not_member");
   });
 
 });
