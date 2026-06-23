@@ -1,0 +1,513 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View, Text, FlatList, Image, Pressable, StyleSheet,
+  ScrollView, TextInput, ActivityIndicator,
+} from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useMyThreads } from '../hooks/useMessaging';
+import { useSession } from '../context/SessionContext';
+import { getIncomingMessageRequests } from '../services/messaging';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { color, space, type as t } from '../theme/tokens';
+import type { ThreadSummary } from '../services/messaging';
+
+type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
+
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'direct', label: 'Direct' },
+  { key: 'trips', label: 'Trips' },
+  { key: 'circles', label: 'Circles' },
+  { key: 'unread', label: 'Unread' },
+  { key: 'requests', label: 'Requests' },
+];
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  return `${Math.floor(d / 7)}w`;
+}
+
+function navigateToThread(item: ThreadSummary) {
+  const title = item.threadType !== 'direct'
+    ? (item.title ?? '')
+    : (item.otherMembers[0]?.name ?? '');
+  const params = new URLSearchParams({ title, threadType: item.threadType });
+  if (item.tripId) params.set('contextId', item.tripId);
+  else if (item.circleOwnerId) params.set('contextId', item.circleOwnerId);
+  if (item.threadType === 'direct' && item.otherMembers[0]?.id) {
+    params.set('otherUserId', item.otherMembers[0].id);
+  }
+  router.push(`/messages/${item.id}?${params.toString()}`);
+}
+
+const TYPE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
+  direct:  { bg: '#E6EEF8', text: '#2B5EA7', label: 'Direct' },
+  trip:    { bg: '#E0EFEC', text: '#0A3D4A', label: 'Trip' },
+  circle:  { bg: '#F2EBE0', text: '#7A4C20', label: 'Circle' },
+};
+
+function TypeBadge({ threadType }: { threadType: string }) {
+  const cfg = TYPE_BADGE[threadType];
+  if (!cfg) return null;
+  return (
+    <View style={[s.typeBadge, { backgroundColor: cfg.bg }]}>
+      <Text style={[s.typeBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
+    </View>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <View style={s.row}>
+      <View style={[s.avatar, { backgroundColor: color.haze }]} />
+      <View style={{ flex: 1, gap: 7 }}>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <View style={{ height: 13, width: '50%', backgroundColor: color.haze, borderRadius: 6 }} />
+          <View style={{ height: 13, width: 44, backgroundColor: color.haze, borderRadius: 6 }} />
+        </View>
+        <View style={{ height: 11, width: '78%', backgroundColor: color.haze, borderRadius: 6 }} />
+      </View>
+    </View>
+  );
+}
+
+function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
+  const other = item.otherMembers[0];
+  const ringState = useHighlightRingState(other?.id ?? null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const inner = other?.avatarUrl
+    ? <Image source={{ uri: other.avatarUrl }} style={s.avatar} />
+    : (
+      <View style={[s.avatar, s.avatarPlaceholder]}>
+        <Text style={s.avatarInitial}>{(other?.name?.[0] ?? '?').toUpperCase()}</Text>
+      </View>
+    );
+
+  if (!ringState?.hasActive) return inner;
+
+  return (
+    <>
+      <HighlightRing size={50} hasActive allViewed={ringState.allViewed} onPress={() => setViewerOpen(true)}>
+        {inner}
+      </HighlightRing>
+      <HighlightViewer
+        visible={viewerOpen}
+        highlights={ringState.highlights}
+        currentUserId={currentUserId ?? undefined}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
+function ThreadAvatarIcon({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
+  if (item.threadType === 'trip') {
+    return (
+      <View style={[s.avatar, s.groupAvatar, { backgroundColor: '#E0EFEC' }]}>
+        <Globe size={22} color={color.deep} />
+      </View>
+    );
+  }
+  if (item.threadType === 'circle') {
+    return (
+      <View style={[s.avatar, s.groupAvatar, { backgroundColor: '#F2EBE0' }]}>
+        <Users size={22} color="#7A4C20" />
+      </View>
+    );
+  }
+  return <DmThreadAvatar item={item} currentUserId={currentUserId} />;
+}
+
+function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | null }) {
+  const isGroup = item.threadType !== 'direct';
+  const displayName = isGroup
+    ? (item.title ?? (item.threadType === 'trip' ? 'Trip Chat' : 'Circle Chat'))
+    : (item.otherMembers[0]?.name ?? 'Unknown');
+
+  const lmp = item.lastMessagePreview;
+  const isMine = lmp?.senderId === userId;
+  const previewText = lmp ? (isMine ? lmp.body : (lmp.displayBody ?? lmp.body)) : '';
+  const lastAt = lmp?.createdAt;
+  const isMuted = !!item.mutedAt;
+  const unread = item.unreadCount ?? 0;
+  const isAi = item.isAiLastMessage ?? (lmp?.msgType === 'ai_recommendation');
+
+  return (
+    <Pressable
+      style={({ pressed }) => [s.row, pressed && s.rowPressed]}
+      onPress={() => navigateToThread(item)}
+    >
+      <ThreadAvatarIcon item={item} currentUserId={userId} />
+
+      <View style={{ flex: 1, gap: 3 }}>
+        <View style={s.nameRow}>
+          <View style={s.nameLeft}>
+            <Text style={[s.name, unread > 0 && s.nameBold]} numberOfLines={1}>{displayName}</Text>
+            {isMuted && <BellOff size={12} color={color.faint} style={{ marginLeft: 4 }} />}
+            <TypeBadge threadType={item.threadType} />
+          </View>
+          <View style={s.nameMeta}>
+            {unread > 0 && (
+              <View style={s.unreadBubble}>
+                <Text style={s.unreadText}>{unread > 99 ? '99+' : unread}</Text>
+              </View>
+            )}
+            {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
+          </View>
+        </View>
+
+        {previewText ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            {isAi && <Bot size={11} color={color.signal} />}
+            <Text
+              style={[s.preview, unread > 0 && s.previewBold]}
+              numberOfLines={1}
+            >
+              {previewText}
+            </Text>
+          </View>
+        ) : null}
+
+        {item.tripCity ? (
+          <View style={s.cityTag}>
+            <Text style={s.cityTagText}>{item.tripCity}</Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function EmptyState({ filter }: { filter: FilterKey }) {
+  const isFiltered = filter !== 'all';
+  return (
+    <View style={s.emptyWrap}>
+      <View style={s.emptyIcon}>
+        <Zap size={28} color={color.signal} />
+      </View>
+      <Text style={s.emptyTitle}>
+        {isFiltered ? `No ${filter} threads` : 'Your Telegraph is quiet.'}
+      </Text>
+      {!isFiltered && (
+        <Text style={s.emptyBody}>
+          Start a conversation, join a trip, or share a Discovery card.
+        </Text>
+      )}
+      {!isFiltered && (
+        <View style={s.emptyActions}>
+          <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
+            <Compass size={15} color={color.signal} />
+            <Text style={s.emptyBtnText}>Find people</Text>
+          </Pressable>
+          <Pressable style={s.emptyBtn} onPress={() => router.push('/(tabs)/discovery' as any)}>
+            <Globe size={15} color={color.signal} />
+            <Text style={s.emptyBtnText}>Explore Discovery</Text>
+          </Pressable>
+          <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
+            <MessageCirclePlus size={15} color={color.signal} />
+            <Text style={s.emptyBtnText}>Start Telegraph</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+interface Props {
+  topInset?: number;
+}
+
+export function TelegraphInboxScreen({ topInset = 0 }: Props) {
+  const insets = useSafeAreaInsets();
+  const { isAuthed, userId } = useSession();
+  const { data: threads, loading, error, reload } = useMyThreads();
+
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<FilterKey>('all');
+  const [requestCount, setRequestCount] = useState(0);
+
+  useFocusEffect(useCallback(() => { reload(); }, [reload]));
+
+  useEffect(() => {
+    if (!isAuthed) return;
+    getIncomingMessageRequests().then((res) => {
+      if (res.ok && res.data) setRequestCount(res.data.requests.length);
+    });
+  }, [isAuthed, threads]);
+
+  const filtered = threads.filter((th) => {
+    if (filter === 'direct' && th.threadType !== 'direct') return false;
+    if (filter === 'trips' && th.threadType !== 'trip') return false;
+    if (filter === 'circles' && th.threadType !== 'circle') return false;
+    if (filter === 'unread' && !(th.unreadCount && th.unreadCount > 0)) return false;
+    if (filter === 'requests') return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const name = th.threadType !== 'direct'
+        ? (th.title ?? '').toLowerCase()
+        : (th.otherMembers[0]?.name ?? '').toLowerCase();
+      const preview = (th.lastMessagePreview?.body ?? '').toLowerCase();
+      if (!name.includes(q) && !preview.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const pt = Math.max(insets.top, topInset);
+
+  return (
+    <View style={[s.screen, { paddingTop: pt }]}>
+      <View style={s.header}>
+        <View style={s.brandRow}>
+          <View style={s.brandIcon}>
+            <Zap size={14} color={color.onInk} fill={color.onInk} />
+          </View>
+          <Text style={s.brandName}>Telegraph</Text>
+        </View>
+      </View>
+
+      {!isAuthed ? (
+        <View style={s.center}>
+          <Text style={s.emptyBody}>Sign in to view your messages.</Text>
+        </View>
+      ) : (
+        <>
+          <View style={s.searchWrap}>
+            <Search size={16} color={color.faint} style={s.searchIcon} />
+            <TextInput
+              style={s.searchInput}
+              placeholder="Search Telegraph…"
+              placeholderTextColor={color.faint}
+              value={search}
+              onChangeText={setSearch}
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.chipsRow}
+            style={s.chipsScroll}
+          >
+            {FILTERS.map((f) => {
+              const active = filter === f.key;
+              const badge = f.key === 'requests' && requestCount > 0 ? requestCount : 0;
+              return (
+                <Pressable
+                  key={f.key}
+                  style={[s.chip, active && s.chipActive]}
+                  onPress={() => setFilter(f.key)}
+                >
+                  <Text style={[s.chipText, active && s.chipTextActive]}>{f.label}</Text>
+                  {badge > 0 && (
+                    <View style={s.chipBadge}>
+                      <Text style={s.chipBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {error ? (
+            <View style={s.center}><Text style={[s.emptyBody, { color: '#B33' }]}>{error}</Text></View>
+          ) : loading ? (
+            <View style={{ paddingTop: space.sm }}>
+              {[0, 1, 2, 3, 4, 5].map((i) => <SkeletonRow key={i} />)}
+            </View>
+          ) : filter === 'requests' ? (
+            <RequestsPane requestCount={requestCount} />
+          ) : filtered.length === 0 ? (
+            <EmptyState filter={filter} />
+          ) : (
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={{ paddingBottom: space.xxxl }}
+              renderItem={({ item }) => <ThreadRow item={item} userId={userId} />}
+              ItemSeparatorComponent={() => <View style={s.sep} />}
+            />
+          )}
+        </>
+      )}
+    </View>
+  );
+}
+
+function RequestsPane({ requestCount }: { requestCount: number }) {
+  if (requestCount === 0) {
+    return (
+      <View style={s.center}>
+        <Text style={s.emptyTitle}>No pending requests</Text>
+        <Text style={s.emptyBody}>Message requests from people you don't know yet will appear here.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={s.center}>
+      <Text style={s.emptyBody}>
+        You have {requestCount} pending message {requestCount === 1 ? 'request' : 'requests'}.
+      </Text>
+      <Text style={[s.emptyBody, { marginTop: 4 }]}>
+        Full request management is coming in the next update.
+      </Text>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: color.paper },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
+
+  header: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
+  },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  brandIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandName: { fontSize: 22, fontWeight: '800', color: color.ink, letterSpacing: -0.5 },
+
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: space.xl,
+    marginVertical: space.sm,
+    backgroundColor: color.haze,
+    borderRadius: 12,
+    paddingHorizontal: space.md,
+    height: 40,
+  },
+  searchIcon: { marginRight: space.sm },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    ...t.body,
+    color: color.ink,
+  },
+
+  chipsScroll: { flexGrow: 0, marginBottom: space.sm },
+  chipsRow: { paddingHorizontal: space.xl, gap: space.sm },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: color.haze,
+  },
+  chipActive: { backgroundColor: color.ink },
+  chipText: { ...t.small, color: color.mute, fontWeight: '500' },
+  chipTextActive: { color: color.onInk },
+  chipBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  chipBadgeText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.md,
+  },
+  rowPressed: { opacity: 0.6 },
+
+  avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: color.haze, flexShrink: 0 },
+  groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
+  avatarInitial: { ...t.bodyStrong, color: color.ink },
+
+  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  nameLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 5, flexShrink: 1 },
+  nameMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  name: { ...t.body, color: color.ink, flexShrink: 1 },
+  nameBold: { fontWeight: '700' },
+  time: { ...t.small, color: color.faint, fontSize: 11 },
+
+  typeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  typeBadgeText: { fontSize: 10, fontWeight: '600', letterSpacing: 0.2 },
+
+  unreadBubble: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  unreadText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+
+  preview: { ...t.small, color: color.mute, flex: 1 },
+  previewBold: { color: color.ink, fontWeight: '600' },
+
+  cityTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#E0EFEC',
+    marginTop: 1,
+  },
+  cityTagText: { fontSize: 10, color: color.deep, fontWeight: '500' },
+
+  sep: { height: 1, backgroundColor: color.haze, marginHorizontal: space.xl, opacity: 0.5 },
+
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#FEF0ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.sm,
+  },
+  emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
+  emptyBody: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+  emptyActions: { gap: space.sm, marginTop: space.sm, width: '100%' },
+  emptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  emptyBtnText: { ...t.body, color: color.ink },
+});

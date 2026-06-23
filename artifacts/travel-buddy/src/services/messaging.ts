@@ -83,7 +83,11 @@ export interface ThreadSummary {
     displayBody: string;
     senderId: string;
     createdAt: string;
+    msgType?: string;
   } | null;
+  unreadCount?: number;
+  tripCity?: string | null;
+  isAiLastMessage?: boolean;
 }
 
 export interface GroupChatResult {
