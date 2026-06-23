@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus } from 'lucide-react-native';
+import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, Share2, ThumbsDown } from 'lucide-react-native';
 import type { TelegraphActivityRecommendation } from '../types/models';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -34,9 +34,12 @@ interface Props {
   rec: TelegraphActivityRecommendation;
   onAddToTrip?: (rec: TelegraphActivityRecommendation) => void;
   onDismiss?: (recId: string) => void;
+  onSave?: (rec: TelegraphActivityRecommendation) => void;
+  onShare?: (rec: TelegraphActivityRecommendation) => void;
+  onNotInterested?: (rec: TelegraphActivityRecommendation) => void;
 }
 
-export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss }: Props) {
+export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSave, onShare, onNotInterested }: Props) {
   const accent = CATEGORY_COLOR[rec.category] ?? CATEGORY_COLOR.default;
 
   return (
@@ -88,12 +91,29 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss }: Pro
       </View>
 
       {/* Actions */}
-      {onAddToTrip && (
+      {(onAddToTrip || onSave || onShare || onNotInterested) && (
         <View style={styles.actions}>
-          <Pressable style={styles.addBtn} onPress={() => onAddToTrip(rec)}>
-            <CalendarPlus size={14} color={color.onInk} />
-            <Text style={styles.addBtnText}>Add to Trip</Text>
-          </Pressable>
+          {onAddToTrip && (
+            <Pressable style={styles.addBtn} onPress={() => onAddToTrip(rec)}>
+              <CalendarPlus size={13} color={color.onInk} />
+              <Text style={styles.addBtnText}>Add to Trip</Text>
+            </Pressable>
+          )}
+          {onSave && (
+            <Pressable style={styles.iconBtn} onPress={() => onSave(rec)} hitSlop={8}>
+              <Bookmark size={15} color={color.signal} />
+            </Pressable>
+          )}
+          {onShare && (
+            <Pressable style={styles.iconBtn} onPress={() => onShare(rec)} hitSlop={8}>
+              <Share2 size={15} color={color.mute} />
+            </Pressable>
+          )}
+          {onNotInterested && (
+            <Pressable style={styles.iconBtn} onPress={() => onNotInterested(rec)} hitSlop={8}>
+              <ThumbsDown size={15} color={color.mute} />
+            </Pressable>
+          )}
         </View>
       )}
     </View>
@@ -191,5 +211,14 @@ const styles = StyleSheet.create({
     color: color.onInk,
     fontWeight: '700',
     fontSize: 12,
+  },
+  iconBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

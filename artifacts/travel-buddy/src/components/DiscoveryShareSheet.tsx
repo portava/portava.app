@@ -26,7 +26,9 @@ import {
   Globe,
   Users,
   MessageCircle,
+  PlusCircle,
 } from 'lucide-react-native';
+import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { getMyThreads, sendMessage } from '../services/messaging';
 import type { ThreadSummary } from '../services/messaging';
@@ -196,6 +198,24 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
 
         {/* Thread list */}
         <Text style={s.sectionLabel}>CHOOSE A CHAT</Text>
+
+        {/* New Telegraph option — always shown at the top */}
+        <Pressable
+          style={s.newThreadRow}
+          onPress={() => {
+            onClose();
+            router.push('/(tabs)/messages' as any);
+          }}
+        >
+          <View style={s.newThreadIcon}>
+            <PlusCircle size={16} color={color.signal} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.newThreadLabel}>New Telegraph</Text>
+            <Text style={s.newThreadSub}>Start a new conversation</Text>
+          </View>
+        </Pressable>
+
         {loadingThreads ? (
           <View style={s.loadingRow}>
             <ActivityIndicator size="small" color={color.signal} />
@@ -203,7 +223,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
         ) : threads.length === 0 ? (
           <View style={s.loadingRow}>
             <MessageCircle size={24} color={color.faint} />
-            <Text style={s.emptyLabel}>No chats yet. Start a Telegraph conversation first.</Text>
+            <Text style={s.emptyLabel}>No existing chats yet.</Text>
           </View>
         ) : (
           <FlatList
@@ -304,6 +324,29 @@ const s = StyleSheet.create({
   threadSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
   checkBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
+
+  newThreadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    backgroundColor: color.signal + '07',
+    marginBottom: space.sm,
+  },
+  newThreadIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: color.signal + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newThreadLabel: { ...t.bodyStrong, color: color.signal, fontWeight: '700', fontSize: 14 },
+  newThreadSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
 
   sendBtn: {
     flexDirection: 'row',

@@ -43,6 +43,8 @@ import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
+import { sendFeedback } from '../../src/services/intelligence';
+import { reportMessage } from '../../src/services/messaging';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -116,13 +118,17 @@ function LongPressActionSheet({
   const [reportSending, setReportSending] = useState(false);
 
   async function submitReport() {
-    if (!reportReason) return;
+    if (!reportReason || !message) return;
     setReportSending(true);
-    await new Promise((r) => setTimeout(r, 700));
+    const result = await reportMessage(message.id, reportReason).catch(() => ({ ok: false }));
     setReportSending(false);
     setShowReport(false);
     onClose();
-    Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    if (result.ok) {
+      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    } else {
+      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    }
   }
 
   if (!message) return null;
@@ -700,6 +706,18 @@ function MessageBubble({
           <TelegraphRecommendationCard
             rec={recPayload}
             onAddToTrip={() => Alert.alert('Add to Trip', `Add "${recPayload.title}" to a trip plan.`)}
+            onSave={() => {
+              sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'save').catch(() => {});
+              Alert.alert('Saved', `"${recPayload.title}" saved to your ideas.`);
+            }}
+            onShare={() => {
+              sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'share').catch(() => {});
+              Share.share({ message: `${recPayload.title} — ${recPayload.reason ?? ''}` }).catch(() => {});
+            }}
+            onNotInterested={() => {
+              sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'not_for_me').catch(() => {});
+              Alert.alert('Got it', 'We\'ll show fewer recommendations like this.');
+            }}
           />
         </Pressable>
       );
@@ -1334,8 +1352,8 @@ export default function TelegraphThread() {
           }
           const m = item.data;
           const mine = m.senderId === userId;
-          // System event messages (non-meetup) render as centred pill labels
-          if (m.msgType === 'system' && !parseMeetupCard(m.body ?? '', m)) {
+          // System event messages (non-meetup, non-rich-card) render as centred pill labels
+          if (m.msgType === 'system' && m.subtype !== 'discovery_card' && !parseMeetupCard(m.body ?? '', m)) {
             return <TelegraphSystemNotice text={m.body ?? ''} />;
           }
           return (

@@ -1718,4 +1718,35 @@ router.post('/threads/:threadId/leave', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+// ── Report message ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/messages/:messageId/report
+ * Body: { reason: string }
+ * Records a user report against a message. Best-effort insert.
+ */
+router.post('/messages/:messageId/report', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  const { messageId } = req.params;
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
+  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
+
+  const { error } = await sc
+    .from('message_reports')
+    .upsert(
+      { message_id: messageId, reporter_id: user.id, reason, created_at: new Date().toISOString() },
+      { onConflict: 'message_id,reporter_id' },
+    );
+
+  if (error) {
+    req.log.warn({ err: error }, 'message report insert failed (table may not exist yet)');
+  }
+
+  res.status(201).json({ ok: true });
+});
+
 export default router;

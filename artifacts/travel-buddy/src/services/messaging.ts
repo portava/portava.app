@@ -425,6 +425,27 @@ export async function editMessage(
   return apiPatch(`/api/messages/${messageId}`, { body });
 }
 
+export async function reportMessage(
+  messageId: string,
+  reason: string,
+): Promise<MsgResult<{ ok: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/messages/${messageId}/report`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 export async function deleteMessage(
   messageId: string,
 ): Promise<MsgResult<{ id: string; deleted: boolean }>> {
