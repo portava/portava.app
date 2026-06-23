@@ -100,7 +100,7 @@ export function HighlightViewer({
   // Mark viewed when item shown — both local ring state and server-side
   useEffect(() => {
     if (!visible || !current) return;
-    markViewed(current.id);
+    markViewed(current.id, current.expiresAt);
     markHighlightViewed(current.id);
   }, [visible, current?.id]);
 
