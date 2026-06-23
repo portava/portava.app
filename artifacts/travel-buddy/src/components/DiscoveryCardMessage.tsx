@@ -14,6 +14,7 @@ import {
   Pressable,
   StyleSheet,
   Alert,
+  Image,
 } from 'react-native';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
@@ -83,6 +84,15 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
           </Text>
         </View>
       </View>
+
+      {/* Thumbnail */}
+      {payload.imageUrl ? (
+        <Image
+          source={{ uri: payload.imageUrl }}
+          style={card.thumbnail}
+          resizeMode="cover"
+        />
+      ) : null}
 
       {/* Title */}
       <Text style={[card.title, mine && card.titleMine]} numberOfLines={2}>
@@ -160,6 +170,12 @@ const card = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
+  thumbnail: {
+    width: '100%',
+    height: 110,
+    borderRadius: radius.sm,
+    backgroundColor: color.haze,
+  },
 
   header: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   compassBadge: { width: 18, height: 18, borderRadius: 5, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },

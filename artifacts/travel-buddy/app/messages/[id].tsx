@@ -37,7 +37,7 @@ import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
-import { deleteMessage, muteThread, leaveThread } from '../../src/services/messaging';
+import { deleteMessage, muteThread, leaveThread, reportThread } from '../../src/services/messaging';
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
@@ -636,6 +636,8 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   receiptState,
+  dismissedAiMsgIds,
+  onDismissAiCard,
 }: {
   item: Message;
   mine: boolean;
@@ -644,6 +646,8 @@ function MessageBubble({
   isGroupThread: boolean;
   onLongPress?: () => void;
   receiptState?: 'sent' | 'delivered' | 'read' | null;
+  dismissedAiMsgIds?: Set<string>;
+  onDismissAiCard?: (msgId: string) => void;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -699,6 +703,7 @@ function MessageBubble({
 
   // AI recommendation card — body is JSON with TelegraphActivityRecommendation shape
   if (item.msgType === 'ai_recommendation') {
+    if (dismissedAiMsgIds?.has(item.id)) return null;
     const recPayload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
     if (recPayload?.title) {
       return (
@@ -716,7 +721,7 @@ function MessageBubble({
             }}
             onNotInterested={() => {
               sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'not_for_me').catch(() => {});
-              Alert.alert('Got it', 'We\'ll show fewer recommendations like this.');
+              onDismissAiCard?.(item.id);
             }}
           />
         </Pressable>
@@ -910,6 +915,7 @@ export default function TelegraphThread() {
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
   const [threadIsMuted, setThreadIsMuted] = useState(false);
+  const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
@@ -1370,6 +1376,8 @@ export default function TelegraphThread() {
                   setActionMsgMine(mine);
                 }}
                 receiptState={m.id === lastOwnMsgId ? receiptState : null}
+                dismissedAiMsgIds={dismissedAiMsgIds}
+                onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
               />
             </View>
           );
@@ -1520,7 +1528,13 @@ export default function TelegraphThread() {
           await leaveThread(id ?? '');
           router.replace('/messages');
         } : undefined}
-        onDeleteForMe={() => Alert.alert('Coming Soon', 'Delete for me — coming in a future update.')}
+        onDeleteForMe={async () => {
+          await leaveThread(id ?? '');
+          router.replace('/messages');
+        }}
+        onReport={async (reason: string) => {
+          await reportThread(id ?? '', reason);
+        }}
       />
 
       {/* Long-press action sheet */}

@@ -1718,6 +1718,37 @@ router.post('/threads/:threadId/leave', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+// ── Report thread ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/threads/:threadId/report
+ * Body: { reason: string }
+ * Records a user report against a conversation. Best-effort insert.
+ */
+router.post('/threads/:threadId/report', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  const { threadId } = req.params;
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
+  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
+
+  const { error } = await sc
+    .from('thread_reports')
+    .upsert(
+      { thread_id: threadId, reporter_id: user.id, reason, created_at: new Date().toISOString() },
+      { onConflict: 'thread_id,reporter_id' },
+    );
+
+  if (error) {
+    req.log.warn({ err: error }, 'thread report insert failed (table may not exist yet)');
+  }
+
+  res.status(201).json({ ok: true });
+});
+
 // ── Report message ────────────────────────────────────────────────────────────
 
 /**

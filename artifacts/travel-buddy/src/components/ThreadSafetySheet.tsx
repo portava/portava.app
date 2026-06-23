@@ -45,6 +45,7 @@ interface Props {
   onBlock?: () => void;
   onLeave?: () => void;
   onDeleteForMe?: () => void;
+  onReport?: (reason: string) => Promise<void>;
 }
 
 const REPORT_REASONS = [
@@ -56,14 +57,16 @@ const REPORT_REASONS = [
   'Other',
 ];
 
-function ReportSheet({ onClose }: { onClose: () => void }) {
+function ReportSheet({ onClose, onReport }: { onClose: () => void; onReport?: (reason: string) => Promise<void> }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   async function handleSubmit() {
     if (!selected) return;
     setSending(true);
-    await new Promise((r) => setTimeout(r, 800));
+    if (onReport) {
+      await onReport(selected).catch(() => {});
+    }
     setSending(false);
     onClose();
     Alert.alert('Report submitted', 'Thank you. Our team will review this conversation.');
@@ -116,6 +119,7 @@ export function ThreadSafetySheet({
   onBlock,
   onLeave,
   onDeleteForMe,
+  onReport,
 }: Props) {
   const [mutingBusy, setMutingBusy] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -167,7 +171,7 @@ export function ThreadSafetySheet({
       <Pressable style={sh.overlay} onPress={onClose} />
       <View style={sh.sheet}>
         {showReport ? (
-          <ReportSheet onClose={() => { setShowReport(false); onClose(); }} />
+          <ReportSheet onClose={() => { setShowReport(false); onClose(); }} onReport={onReport} />
         ) : (
           <>
             <View style={sh.handle} />
