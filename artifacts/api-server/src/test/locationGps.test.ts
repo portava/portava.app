@@ -207,27 +207,47 @@ function makeLocationClient(opts: {
         insert: (row: any) => { stampStore.push({ table, row }); return builder; },
         upsert: (row: any, _opts?: any) => { stampStore.push({ table, row }); return builder; },
         update: (patch: any) => { stampStore.push({ table, patch }); return builder; },
+        delete: () => builder,
         eq: () => builder,
+        gt: () => builder,
+        is: () => builder,
+        in: () => builder,
+        order: () => builder,
+        limit: () => builder,
+        lt: () => builder,
         maybeSingle: async () => {
-          if (table === "trips") return { data: { owner_id: OWNER_ID }, error: null };
+          if (table === "trips")              return { data: { owner_id: OWNER_ID }, error: null };
           if (table === "user_location_state") return { data: locationState, error: null };
-          if (table === "plan_geofences") return { data: existingGeofence, error: null };
+          if (table === "plan_geofences")     return { data: existingGeofence, error: null };
+          if (table === "feature_flags")      return { data: { enabled: true }, error: null };
+          if (table === "location_snapshots") return { data: null, error: null };
           return { data: null, error: null };
         },
         single: async () => {
           if (table === "passport_stamps_gps") {
             const last = stampStore.filter((s) => s.table === "passport_stamps_gps").pop();
             return {
-              data: { id: "stamp-1", stamp_type: "city_visit", city: "Cebu City", country: "Philippines",
-                      country_code: "PH", unlocked_at: new Date().toISOString(),
-                      metadata: last?.row?.metadata ?? null },
+              data: {
+                id: "stamp-1", stamp_type: "city_visit", city: "Cebu City",
+                country: "Philippines", country_code: "PH",
+                unlocked_at: new Date().toISOString(),
+                metadata: last?.row?.metadata ?? null,
+              },
               error: null,
             };
           }
           return { data: null, error: null };
         },
-        in: () => builder,
-        then: (onF: any) => Promise.resolve({ data: null, error: null }).then(onF),
+        // location_trust_events + others use awaiting the builder directly (.then)
+        then: (onF: any) => {
+          let result: { data: any; error: null };
+          if (table === "location_trust_events") {
+            result = { data: [], error: null };  // no trust events → trusted
+          } else {
+            result = { data: null, error: null };
+          }
+          return Promise.resolve(result).then(onF);
+        },
       };
       return builder;
     },
@@ -314,46 +334,12 @@ describe("Discovery route — privacy (PublicDiscoveryPlace type)", () => {
 
 describe("Geofence route — insert path", () => {
   it("POST /api/trips/:tripId/geofence inserts when no existing row (no UNIQUE needed)", async () => {
-    const stampStore: any[] = [];
-    // feature_flags enabled is mocked by overriding the from() builder for feature_flags
-    const clientWithFlags = {
-      ...makeLocationClient({ stampStore }),
-      from(table: string) {
-        if (table === "feature_flags") {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({ data: { enabled: true }, error: null }),
-              }),
-            }),
-          };
-        }
-        return makeLocationClient({ stampStore }).from(table);
-      },
-    };
-    _setTestClient(clientWithFlags, true);
-
-    const { default: geofenceRouter } = await import("../routes/geofence.js");
-    const app = express();
-    app.use(express.json());
-    app.use("/api", geofenceRouter);
-    const server = http.createServer(app);
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    const port = (server.address() as any).port;
-
-    try {
-      const { status } = await req(port, "POST", `/api/trips/${TRIP_ID}/geofence`, {
+    await withServer({ existingGeofence: null }, async (port) => {
+      const { status, body } = await req(port, "POST", `/api/trips/${TRIP_ID}/geofence`, {
         lat: 10.3157, lng: 123.8854, checkInRadiusM: 200, visibility: "accepted_members", hostEnabled: true,
       });
-      // 201 on insert success; if feature flags table doesn't exist in test environment
-      // we accept 404 (feature_disabled) as the flag check can't reach the DB
-      assert.ok(
-        status === 201 || status === 404,
-        `Expected 201 or 404, got ${status}`,
-      );
-    } finally {
-      await new Promise<void>((r) => server.close(() => r()));
-    }
+      assert.equal(status, 201, `Expected 201 insert path, got ${status}: ${JSON.stringify(body)}`);
+    });
   });
 });
 

@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { reverseGeocode } from "../services/geocodingService";
+import { checkAndRecordSnapshot, getUserTrustLevel } from "../services/location/LocationSafetyService";
 
 const router = Router();
 
@@ -138,6 +139,13 @@ router.post("/me/location-state", async (req, res) => {
     return;
   }
 
+  // Anti-fake GPS: run safety check asynchronously for GPS fixes — non-blocking
+  if (source === "gps" && lat != null && lng != null) {
+    checkAndRecordSnapshot(sc, user.id, lat, lng).catch((err) => {
+      req.log.warn({ err }, "location-state: safety check failed (non-fatal)");
+    });
+  }
+
   res.status(200).json({ ok: true });
 });
 
@@ -219,35 +227,15 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
   }
 
   // Phase 6: trust-level gating.
-  // Cross-check the stamp's claimed city against the user's last known GPS fix
-  // from user_location_state. Mismatches (e.g. city spoofing) are flagged
-  // pending_review so the Passport can display an unverified badge.
+  // Consult location_trust_events via getUserTrustLevel to decide stamp trust.
+  // A single high-confidence event → suspicious → pending_review.
+  // Two+ medium events → review → pending_review.
+  // No recent events → trusted → gps_verified.
   let trustLevel: "gps_verified" | "manual" | "pending_review" = "manual";
 
-  if (source === "gps" && lat != null) {
-    const { data: locState } = await sc
-      .from("user_location_state")
-      .select("city, last_known_at, source")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (locState?.city && city) {
-      const normalise = (s: string) => s.toLowerCase().trim();
-      const cityMatch = normalise(locState.city) === normalise(city);
-      // Accept if the known GPS city matches, or if the last fix is recent (< 30 min)
-      const fixAge = locState.last_known_at
-        ? Date.now() - new Date(locState.last_known_at as string).getTime()
-        : Infinity;
-      const recentFix = fixAge < 30 * 60 * 1_000;
-
-      trustLevel = cityMatch && recentFix ? "gps_verified" : "pending_review";
-    } else if (locState?.city == null) {
-      // No location state on record — cannot verify, flag for review
-      trustLevel = "pending_review";
-    } else {
-      // We have coordinates but no saved state to cross-check
-      trustLevel = "gps_verified";
-    }
+  if (source === "gps") {
+    const userTrust = await getUserTrustLevel(sc, user.id);
+    trustLevel = userTrust === "trusted" ? "gps_verified" : "pending_review";
   }
 
   // Merge trustLevel into metadata so it is durably persisted with the stamp.

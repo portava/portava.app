@@ -138,11 +138,12 @@ function useLocationPrefs() {
     try {
       const token = await getToken();
       if (!token) throw new Error('not_authed');
-      await fetch(`${apiBase}/api/me/location-preferences`, {
+      const response = await fetch(`${apiBase}/api/me/location-preferences`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(patch),
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
     } catch {
       setPrefs(previous);
       Alert.alert('Save failed', 'Could not save preferences. Please try again.');
