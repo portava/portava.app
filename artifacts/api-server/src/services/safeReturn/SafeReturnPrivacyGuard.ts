@@ -135,8 +135,9 @@ export async function requireSafeReturnRecipient(
     return;
   }
 
-  // Caller must be the recipient_user_id or the sharer (for preview)
-  if (s.user_id !== auth.user.id && s.recipient_user_id !== auth.user.id) {
+  // Strict recipient-only check — the sharer accesses their own share data
+  // through the session endpoints, not this recipient-view endpoint.
+  if (s.recipient_user_id !== auth.user.id) {
     sendError(res, "forbidden", "You are not an authorized recipient of this share");
     return;
   }

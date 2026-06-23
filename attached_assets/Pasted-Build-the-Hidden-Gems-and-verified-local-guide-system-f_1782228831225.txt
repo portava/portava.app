@@ -1,0 +1,666 @@
+Build the Hidden Gems and verified local guide system for Travel Buddy.
+
+Build this on top of the shared Location Intelligence Layer, Discovery GPS, City Pulse GPS, Plans, Safe Return, Trip Crew, Compass AI Location Intelligence, Passport Stamps, and Airport / Layover Mode.
+
+Stay focused on Hidden Gems, verified places, local recommendations, and guide contribution flows. Do not expand into paid guide bookings, paid tours, marketplace payments, or full rewards monetization in this pass unless only creating safe backend seams.
+
+CORE PRINCIPLE
+
+Hidden Gems should help travelers discover authentic, useful, safer, and locally recommended places without exposing private user locations or sensitive places.
+
+Hidden Gems can include:
+- Food spots
+- Local bars
+- beach spots
+- cafés
+- shopping streets
+- photo spots
+- cultural places
+- viewpoints
+- markets
+- nightlife areas
+- chill zones
+- date-free social hangouts
+- airport-area gems
+- local tips
+- traveler-approved places
+
+Exact user GPS must never be public.
+
+Sensitive Hidden Gems should support blurred or delayed location reveal.
+
+Hidden Gems should be verified through a mix of:
+- GPS proximity verification
+- user submissions
+- local guide approval
+- community confirmation
+- admin review
+- Compass AI safety checks
+- Pulse activity
+- plan/check-in history
+
+HIDDEN GEM TYPES
+
+Create Hidden Gem categories:
+
+1. Food
+2. Nightlife
+3. Beach
+4. Culture
+5. Shopping
+6. Photo Spot
+7. Café / Work Spot
+8. Landmark
+9. Local Market
+10. Chill Zone
+11. Nature
+12. Group-friendly
+13. Solo-friendly
+14. Airport / Layover-friendly
+15. Rainy-day spot
+16. Budget-friendly
+17. Luxury-friendly
+18. Verified meetup spot
+
+Each Hidden Gem should have:
+- Name
+- Category
+- Country
+- City
+- Neighborhood
+- Approximate area
+- Optional exact place/venue
+- Safety notes
+- Best time to go
+- Vibe tags
+- Price range
+- Crowd level
+- Language notes
+- Photo tips
+- Group suitability
+- Solo suitability
+- Verification level
+- Sensitivity level
+- Visibility level
+
+VERIFICATION LEVELS
+
+Support verification levels:
+
+1. User-submitted
+2. GPS-visited
+3. Community confirmed
+4. Local guide verified
+5. Admin verified
+6. Compass recommended
+7. Traveler favorite
+
+Only higher-confidence gems should receive strong ranking.
+
+A gem can be useful even before admin verification, but it should be labeled honestly.
+
+SENSITIVITY LEVELS
+
+Support sensitivity levels:
+
+1. Public
+- Exact location can be shown.
+
+2. Approximate
+- Show neighborhood/area first.
+
+3. Reveal after save
+- User must save or join related plan before exact details show.
+
+4. Reveal after acceptance
+- Exact location only visible to accepted plan/trip members.
+
+5. Protected
+- Exact location hidden publicly to prevent overcrowding, abuse, or safety issues.
+
+Use sensitivity for:
+- small local spots
+- fragile nature spots
+- private-feeling locations
+- places that may be unsafe alone
+- locations reported for harassment/scams
+- places that should not be overrun
+
+LOCAL GUIDE SYSTEM
+
+Create a local guide role/contribution layer.
+
+Local guides can:
+- Submit Hidden Gems
+- Verify gems
+- Add safety notes
+- Add best-time-to-go notes
+- Suggest meetup-safe venues
+- Report outdated locations
+- Flag unsafe spots
+- Add local etiquette tips
+- Add “what to avoid” notes
+- Add transport advice
+
+Guide levels:
+- New Guide
+- Verified Guide
+- Trusted Local
+- City Expert
+- Global Guide
+
+Guide trust should be earned from:
+- accurate submissions
+- community saves
+- completed visits
+- positive feedback
+- admin approval
+- low report rate
+- useful Pulse contributions
+
+Do not turn this into paid guide booking yet.
+
+HIDDEN GEM DISCOVERY
+
+Wire Hidden Gems into Discovery.
+
+Discovery filters:
+- Near Me
+- In This City
+- Neighborhood
+- Trip City
+- Layover-safe
+- Food
+- Nightlife
+- Beach
+- Hidden Gems
+- Verified only
+- Solo-safe
+- Group-friendly
+- Budget
+- Luxury
+- Open now, if data exists
+- Best tonight
+- Best daytime
+- Good for photos
+- Good for meeting travelers
+
+Discovery ranking should use:
+- Distance or city context
+- User vibe/preferences
+- Time of day
+- Safety confidence
+- Verification level
+- Local guide confidence
+- Pulse activity
+- Passport visits
+- Saves
+- Plan/check-in history
+- Trip Crew proximity
+- Airport/layover safety when relevant
+
+CITY PULSE INTEGRATION
+
+Wire Hidden Gems into City Pulse.
+
+Pulse should show:
+- Trending gems
+- New gems
+- Local guide tips
+- Traveler reviews
+- Safety/caution notes
+- Best area tonight
+- Hidden Gem posts
+- Saved by travelers
+- Nearby gems
+- Trip city gems
+
+Users can post to Pulse from a Hidden Gem.
+
+Pulse location privacy rules:
+- Do not expose exact GPS from the user.
+- Gem location display follows gem sensitivity.
+- Sensitive gems show neighborhood/area only.
+
+COMPASS AI INTEGRATION
+
+Compass AI should recommend Hidden Gems using safe context.
+
+Examples:
+- “You’re near My Khe. There are 3 beach cafés that match your vibe.”
+- “This spot is popular with solo travelers and verified by local guides.”
+- “This gem is better during the day.”
+- “This is not layover-safe with your current time window.”
+- “Meet at this verified public café instead of a private location.”
+
+Compass must not:
+- reveal protected gem exact locations without permission
+- expose user location
+- recommend risky places as safe
+- ignore sensitivity level
+- recommend isolated spots for first-time meetups without warning
+
+PLAN INTEGRATION
+
+Users should be able to create a plan from a Hidden Gem.
+
+Plan actions:
+- Meet here
+- Add to trip
+- Invite Trip Crew
+- Share in Telegraph
+- Start Safe Return
+- Save to Passport
+- Add to itinerary
+
+For private/sensitive gems:
+- Exact location should follow reveal rules.
+- Plan card should show neighborhood/area only until accepted.
+- Check-in should use private GPS or QR backup.
+- Host can choose whether exact location reveals after acceptance.
+
+TELEGRAPH INTEGRATION
+
+Hidden Gems should be shareable into Telegraph.
+
+Examples:
+- “Want to check out this local food spot tonight?”
+- “Compass says this is group-friendly and nearby.”
+- “This gem is layover-safe from TPE.”
+- “Local guide tip: go before sunset.”
+
+Telegraph must not include hidden exact coordinates unless recipient is authorized.
+
+PASSPORT INTEGRATION
+
+Hidden Gems should create Passport memories/stamps.
+
+Examples:
+- Hidden Gem verified in Da Nang
+- Food explorer in Cebu
+- Nightlife gem in Makati
+- Photo spot saved in Tokyo
+- Local guide contribution in Hanoi
+
+Rules:
+- User can save a memory after visiting.
+- Hidden Gem stamps respect sensitivity.
+- Exact protected locations are not public.
+- Contribution events are recorded for future Trust/Perks.
+
+AIRPORT / LAYOVER INTEGRATION
+
+Hidden Gems should support airport/layover context.
+
+Add fields:
+- layover_safe
+- airport_distance_minutes
+- minimum_layover_minutes
+- return_buffer_warning
+- near_airport
+- inside_airport
+- good_for_short_stop
+
+Layover Mode can recommend only gems that fit the time window.
+
+SAFETY RULES
+
+Hidden Gems should have safety signals:
+- Solo-safe
+- Group recommended
+- Daytime only
+- Avoid late night
+- Verified public meetup spot
+- Rideshare recommended
+- Local scam warning
+- Crowded area
+- Isolated area
+- Sensitive location
+- Reported issue
+
+Safety notes should be calm and useful.
+
+Examples:
+- “Better during the day.”
+- “Go with a group after dark.”
+- “Use rideshare for late-night return.”
+- “Meet at the public entrance.”
+
+REPORTING AND MODERATION
+
+Users can report:
+- Wrong location
+- Unsafe area
+- Closed/outdated
+- Scam warning
+- Harassment issue
+- Fake gem
+- Overcrowding concern
+- Sensitive location
+- Inappropriate content
+
+Admin can:
+- Review reports
+- Verify gems
+- Mark gems sensitive
+- Hide gems
+- Merge duplicates
+- Edit categories
+- Approve local guides
+- Demote local guides
+- Mark area warnings
+- Remove abusive submissions
+
+DATA MODEL
+
+Create or update tables:
+
+hidden_gems:
+- id
+- created_by_user_id
+- name
+- description
+- category
+- country
+- city
+- neighborhood
+- approximate_area
+- place_id nullable
+- latitude nullable
+- longitude nullable
+- visibility_level
+- sensitivity_level
+- verification_level
+- safety_level
+- price_range nullable
+- vibe_tags
+- best_time_to_go nullable
+- solo_suitable
+- group_suitable
+- layover_safe
+- airport_id nullable
+- minimum_layover_minutes nullable
+- status
+- created_at
+- updated_at
+
+hidden_gem_verifications:
+- id
+- hidden_gem_id
+- verified_by_user_id nullable
+- verification_type
+- confidence_level
+- notes nullable
+- created_at
+
+hidden_gem_reports:
+- id
+- hidden_gem_id
+- reported_by_user_id
+- report_type
+- description nullable
+- status
+- reviewed_by_admin_id nullable
+- created_at
+- reviewed_at nullable
+
+hidden_gem_saves:
+- id
+- hidden_gem_id
+- user_id
+- created_at
+
+hidden_gem_visits:
+- id
+- hidden_gem_id
+- user_id
+- verification_source
+- verification_level
+- visited_at
+- created_at
+
+local_guide_profiles:
+- user_id
+- city
+- country
+- guide_level
+- verified_status
+- contribution_count
+- helpful_votes
+- report_rate
+- created_at
+- updated_at
+
+local_guide_contributions:
+- id
+- user_id
+- contribution_type
+- source_type
+- source_id
+- city
+- country
+- status
+- helpful_count
+- report_count
+- created_at
+
+SERVICES
+
+Create services:
+
+HiddenGemService:
+- create gem
+- edit gem
+- save gem
+- fetch gem
+- list gems
+- merge duplicates
+- update visibility/sensitivity
+- update verification
+
+HiddenGemDiscoveryService:
+- rank gems for Discovery
+- filter by city/neighborhood/trip/layover
+- apply user preferences
+- apply safety rules
+
+HiddenGemVerificationService:
+- verify via GPS/check-in/QR/community/local guide/admin
+- create verification events
+- prevent fake verification
+- flag suspicious verification
+
+HiddenGemPrivacyGuard:
+- strip exact coordinates when not allowed
+- respect sensitivity level
+- blur hotel/home/private stay locations
+- prevent hidden gem leaks through Compass/Telegraph/Pulse/Passport
+
+LocalGuideService:
+- create/update guide profile
+- record guide contributions
+- calculate guide level
+- flag abusive guides
+- support admin approval
+
+HiddenGemModerationService:
+- handle reports
+- mark sensitive
+- hide unsafe gems
+- merge duplicates
+- review fake submissions
+
+CompassHiddenGemService:
+- recommend gems using safe location context
+- explain why recommended
+- warn when risky
+- respect layover timing
+
+PassportHiddenGemService:
+- create suggested memory/stamp after verified visit
+- record contribution event
+
+API ENDPOINTS
+
+Add endpoints for:
+
+- Create Hidden Gem
+- Edit Hidden Gem
+- Get Hidden Gem
+- List Hidden Gems
+- Search Hidden Gems
+- Save Hidden Gem
+- Unsave Hidden Gem
+- Verify Hidden Gem visit
+- Report Hidden Gem
+- Get nearby Hidden Gems
+- Get trip-city Hidden Gems
+- Get layover-safe Hidden Gems
+- Share Hidden Gem to Telegraph
+- Create plan from Hidden Gem
+- Suggest Passport memory from Hidden Gem
+- Get local guide profile
+- Apply/become local guide
+- Submit local guide contribution
+- Admin verify/hide/merge gems
+- Admin review reports
+- Admin approve/demote local guides
+
+UI REQUIREMENTS
+
+Hidden Gems screen:
+- Featured gems
+- Near Me
+- In This City
+- Trip City
+- Layover-safe
+- Categories
+- Map/list toggle
+- Verification badges
+- Safety labels
+- Save button
+- Share button
+- Create plan button
+
+Hidden Gem detail:
+- Name
+- Category
+- City/neighborhood
+- Description
+- Photos, if available
+- Verification badge
+- Local guide tip
+- Safety notes
+- Best time to go
+- Price/vibe tags
+- Sensitivity label
+- Approximate or exact location based on permission
+- Actions:
+  - Save
+  - Add to trip
+  - Create plan
+  - Share in Telegraph
+  - Start Safe Return
+  - Add Passport memory
+  - Report
+
+Submit Hidden Gem flow:
+- Name
+- Category
+- City/neighborhood
+- Exact location optional
+- Description
+- Best time to go
+- Safety notes
+- Vibe tags
+- Photos optional
+- Sensitivity suggestion
+- Submit for verification
+
+Local Guide screen:
+- Guide profile
+- Contribution stats
+- Submitted gems
+- Verified gems
+- Helpful votes
+- City expertise
+- Apply for verification
+
+Admin Hidden Gems dashboard:
+- Pending gems
+- Reported gems
+- Sensitive gems
+- Duplicate gems
+- Local guide applications
+- Unsafe reports
+- Verification queue
+
+PRIVACY AND SECURITY RULES
+
+1. Exact user GPS is never public.
+2. Hidden Gem exact coordinates follow sensitivity rules.
+3. Protected gems do not reveal exact location publicly.
+4. Compass cannot leak protected gem coordinates.
+5. Telegraph cannot share hidden coordinates to unauthorized users.
+6. Passport cannot expose protected gem exact location.
+7. Pulse posts from gems follow gem sensitivity.
+8. Fake GPS verification creates review events.
+9. Local guide power can be revoked.
+10. Admin review should not expose unrelated private user location history.
+
+TESTS
+
+Add tests for:
+
+- User can submit Hidden Gem.
+- Hidden Gem can be saved.
+- Hidden Gem can be verified by GPS/check-in.
+- Protected gem hides exact coordinates publicly.
+- Compass does not leak protected gem coordinates.
+- Telegraph share respects visibility.
+- Passport stamp respects sensitivity.
+- Pulse post respects gem sensitivity.
+- Layover mode only recommends gems that fit time window.
+- Local guide can submit contribution.
+- Admin can approve/verify gem.
+- Admin can mark gem sensitive.
+- Duplicate gem detection works.
+- Fake GPS verification creates review event.
+- Reported gem enters moderation queue.
+- Public Discovery never exposes exact user GPS.
+- Private plan created from Hidden Gem hides exact location until accepted.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- hidden_gems_enabled
+- hidden_gem_verification_enabled
+- local_guides_enabled
+- hidden_gems_compass_enabled
+- hidden_gems_passport_enabled
+- hidden_gems_layover_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Hidden Gem service
+3. Hidden Gem discovery/ranking service
+4. Hidden Gem verification service
+5. Hidden Gem privacy guard
+6. Local Guide service
+7. Moderation service
+8. Compass Hidden Gem integration
+9. Passport Hidden Gem integration
+10. Telegraph Hidden Gem sharing
+11. Plan creation from Hidden Gem
+12. Layover-safe Hidden Gem support
+13. Hidden Gems UI
+14. Local Guide UI
+15. Admin moderation dashboard
+16. Tests
+17. Implementation report
+
+Do not break GPS, Discovery, Pulse, Plans, Safe Return, Trip Crew, Compass AI, Telegraph, Passport, Airport Mode, Trusted Circle, or existing Trips flows.
+
+Keep this pass focused on Hidden Gems and verified local guides.

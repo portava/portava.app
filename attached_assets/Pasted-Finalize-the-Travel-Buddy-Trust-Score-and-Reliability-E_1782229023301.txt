@@ -1,0 +1,693 @@
+Finalize the Travel Buddy Trust Score and Reliability Engine.
+
+Build this on top of Plans, GPS/geofenced check-ins, Safe Return, Trip Crew, Passport Stamps, Hidden Gems, Local Guides, Telegraph, Discovery, City Pulse, and Admin moderation.
+
+Stay focused on trust, reliability, safety scoring, contribution signals, abuse prevention, and user reputation. Do not expand into paid rewards, monetization, or Passport Perks marketplace in this pass unless only creating backend seams.
+
+CORE PRINCIPLE
+
+Trust Score must help users decide who is reliable, safe, respectful, and real without allowing bad users to hide behind easy positive actions.
+
+Trust Score should not be a simple points system.
+
+It should be weighted, category-based, confidence-based, decay-aware, and protected against gaming.
+
+A user who behaves badly should not be able to erase serious negative behavior by doing a few easy positive actions.
+
+TRUST SCORE STRUCTURE
+
+Create separate trust dimensions instead of one flat number.
+
+Core dimensions:
+
+1. Identity Trust
+- ID verification
+- profile completeness
+- phone/email verification
+- verified home country
+- account age
+- device/session consistency
+
+2. Attendance Reliability
+- joins plans and shows up
+- checks in successfully
+- cancels early when needed
+- avoids no-shows
+- does not repeatedly leave plans last minute
+
+3. Host Reliability
+- accurate locations
+- arrives on time
+- clear instructions
+- safe public meetup choices
+- positive attendee feedback
+- low complaint rate
+
+4. Social Respect
+- respectful messaging
+- low block/report rate
+- no harassment
+- no spam
+- no manipulation
+- no stalking behavior
+
+5. Location Confidence
+- consistent GPS
+- no impossible travel jumps
+- no fake GPS patterns
+- valid check-ins
+- city/IP consistency where available
+
+6. Safety Behavior
+- uses Safe Return appropriately
+- confirms safe
+- does not abuse emergency/safety reports
+- does not create unsafe plans
+- does not pressure others to share location
+
+7. Contribution Quality
+- useful Pulse posts
+- verified Hidden Gems
+- helpful local tips
+- good guide contributions
+- useful reviews
+- positive community feedback
+
+8. Trip Crew Reliability
+- communicates clearly
+- stays aligned with group plans
+- does not disappear without notice
+- respects crew privacy
+- does not misuse shared location
+
+9. Local Guide Trust
+- accurate Hidden Gems
+- low report rate
+- helpful votes
+- verified city knowledge
+- admin approval
+- community confirmation
+
+PUBLIC TRUST DISPLAY
+
+Do not show every internal detail publicly.
+
+Public profile should show:
+- Overall Trust Level
+- Verification badges
+- Reliability highlights
+- Recent positive categories
+- Plan attendance reliability
+- Host reliability if user hosts
+- Local Guide level if applicable
+
+Use levels instead of raw exact internals:
+
+- New Traveler
+- Building Trust
+- Reliable Traveler
+- Trusted Traveler
+- Highly Trusted
+- City Trusted / Local Guide, where applicable
+
+Also show warning states carefully:
+- Limited Trust
+- Under Review
+- Restricted from Hosting
+- Location Confidence Low
+
+Do not publicly shame users with detailed accusations.
+
+INTERNAL TRUST MODEL
+
+Create a weighted internal score.
+
+Overall Trust Score can be calculated from category scores:
+
+TrustScore =
+IdentityTrust * identityWeight
++ AttendanceReliability * attendanceWeight
++ HostReliability * hostWeight
++ SocialRespect * socialWeight
++ LocationConfidence * locationWeight
++ SafetyBehavior * safetyWeight
++ ContributionQuality * contributionWeight
++ TripCrewReliability * crewWeight
++ LocalGuideTrust * guideWeight
+
+But serious negative events must have separate penalties and caps.
+
+IMPORTANT:
+Positive actions should raise trust gradually.
+Negative serious actions should reduce trust faster.
+Some negative events should cap the maximum trust level until reviewed or enough time passes.
+
+TRUST CAPS
+
+Add trust caps so bad behavior cannot be hidden by easy positive actions.
+
+Examples:
+
+If user has unresolved harassment report:
+- Maximum public trust level = Building Trust or Under Review.
+
+If user repeatedly no-shows:
+- Attendance Reliability capped until consistent improvement.
+
+If user has fake GPS pattern:
+- Location Confidence capped.
+- Check-in-based rewards/stamps go to review.
+
+If user leaked private meetup location:
+- Hosting and private-plan access can be restricted.
+
+If user abuses safety reports:
+- Safety Behavior capped and admin review required.
+
+If user has multiple blocks/reports:
+- Social Respect capped.
+
+Caps should be reason-coded internally.
+
+DECAY AND RECOVERY
+
+Trust should allow recovery, but not instant recovery.
+
+Use decay rules:
+
+Positive actions:
+- Build gradually.
+- Recent actions matter more than old actions.
+- Repeated positive behavior over time restores category trust.
+
+Negative minor events:
+- Decay over time if no repeated issues.
+
+Negative serious events:
+- Do not decay quickly.
+- May require admin review.
+- May require successful probation period.
+- May keep a trust cap until resolved.
+
+Examples:
+- One late cancellation should not destroy trust.
+- Repeated no-shows should hurt.
+- Harassment, stalking, fake location, or safety abuse should be serious.
+
+EVENT SOURCES
+
+Trust engine should consume events from:
+
+Plans:
+- joined_plan
+- cancelled_early
+- cancelled_late
+- checked_in
+- no_show
+- arrived_late
+- host_arrived
+- host_no_show
+- attendee_feedback
+- host_feedback
+
+Safe Return:
+- safe_return_started
+- safe_return_completed
+- missed_check_in
+- false_alarm_reported
+- safety_abuse_reported
+
+Trip Crew:
+- crew_joined
+- crew_completed_activity
+- ghost_mode_enabled
+- live_share_started
+- privacy_violation_reported
+- removed_from_trip
+
+GPS / Location:
+- successful_geofence_checkin
+- suspicious_gps_jump
+- impossible_travel
+- fake_gps_detected
+- low_location_confidence
+- verified_city_presence
+
+Telegraph:
+- respectful_message_feedback
+- spam_report
+- harassment_report
+- block_event
+- translation_abuse_report
+
+Pulse:
+- helpful_post
+- misinformation_report
+- inappropriate_post_report
+- local_tip_upvoted
+- post_removed
+
+Hidden Gems:
+- gem_submitted
+- gem_verified
+- gem_reported_fake
+- gem_marked_sensitive
+- useful_gem_tip
+- unsafe_gem_report
+
+Local Guides:
+- guide_contribution_submitted
+- guide_contribution_approved
+- guide_contribution_reported
+- guide_helpful_vote
+- guide_demoted
+- guide_verified
+
+Passport:
+- verified_stamp
+- suspicious_stamp
+- contribution_event
+
+Admin:
+- warning_issued
+- restriction_added
+- restriction_removed
+- report_resolved
+- account_under_review
+- trust_override
+
+TRUST SCORE FORMULA REQUIREMENTS
+
+Implement a trust formula with:
+
+- Category weights
+- Event weights
+- Confidence modifiers
+- Time decay
+- Serious-event caps
+- Admin overrides
+- Review states
+- Anti-gaming limits
+- Duplicate-event prevention
+- Daily/weekly earning limits for easy positive actions
+- Stronger weighting for verified actions
+- Lower weighting for self-reported actions
+
+Suggested weighting concept:
+
+Positive verified actions:
+- Verified plan check-in: medium positive
+- Completed hosted plan with good feedback: strong positive
+- Safe Return completed: small positive safety signal
+- Verified Hidden Gem contribution: medium positive
+- Helpful local guide contribution: medium/strong positive
+- No reports over active period: gradual positive
+
+Negative actions:
+- No-show: medium negative
+- Repeated no-show: strong negative + attendance cap
+- Harassment report upheld: severe negative + social cap
+- Fake GPS confirmed: strong negative + location cap
+- Private location leak: severe negative + hosting/private-plan cap
+- Safety abuse confirmed: severe negative + safety cap
+- Scam/fraud behavior: severe negative + admin restriction
+
+ANTI-GAMING RULES
+
+Prevent users from farming trust.
+
+Rules:
+- Repeating the same easy action should have diminishing returns.
+- Multiple check-ins in same area/day should not create big gains.
+- Safe Return completion should not be farmable.
+- Pulse posts need helpfulness or verification to count strongly.
+- Hidden Gem submissions count more after verification.
+- Local Guide trust requires community/admin validation.
+- User cannot offset serious reports with low-value actions.
+- Suspicious GPS makes location-based positives pending review.
+- Self-created events should not overly boost trust without others attending.
+- Mutual friend rings repeatedly upvoting each other should be rate-limited/flagged.
+
+USER-FACING TRUST EXPLANATION
+
+Add a Trust explanation screen.
+
+Show:
+- Current level
+- What improves trust
+- What lowers trust
+- Category breakdown
+- Recent trust events, summarized
+- Restrictions, if any
+- How to recover
+- Appeal/report mistake button
+
+Use supportive wording.
+
+Examples:
+- “Your attendance reliability is strong.”
+- “Your location confidence is under review because of unusual check-ins.”
+- “Hosting is limited until recent reports are reviewed.”
+- “Keep attending plans and communicating early if you cancel.”
+
+Do not show sensitive reporter details.
+
+ADMIN TRUST DASHBOARD
+
+Admin should be able to:
+- View trust event history
+- View category scores
+- View trust caps
+- View restrictions
+- Review disputed reports
+- Confirm or dismiss negative events
+- Apply manual restriction
+- Remove restriction
+- Add admin note
+- Approve recovery
+- View suspected gaming rings
+- View repeated no-shows
+- View fake GPS patterns
+- View local guide abuse
+
+Admin actions must be logged.
+
+DATA MODEL
+
+Create or update tables:
+
+trust_profiles:
+- user_id
+- overall_score
+- public_level
+- identity_score
+- attendance_score
+- host_score
+- social_score
+- location_confidence_score
+- safety_score
+- contribution_score
+- trip_crew_score
+- local_guide_score
+- review_status
+- last_recalculated_at
+- created_at
+- updated_at
+
+trust_events:
+- id
+- user_id
+- event_type
+- source_type
+- source_id nullable
+- category
+- weight
+- confidence
+- severity
+- status
+- metadata
+- created_at
+- expires_at nullable
+
+trust_caps:
+- id
+- user_id
+- category
+- cap_level
+- reason_code
+- source_event_id nullable
+- status
+- starts_at
+- expires_at nullable
+- reviewed_by_admin_id nullable
+- created_at
+- updated_at
+
+trust_restrictions:
+- id
+- user_id
+- restriction_type
+- reason_code
+- source_event_id nullable
+- status
+- starts_at
+- expires_at nullable
+- created_by_admin_id nullable
+- removed_by_admin_id nullable
+- created_at
+- updated_at
+
+trust_reviews:
+- id
+- user_id
+- review_type
+- status
+- opened_by
+- assigned_admin_id nullable
+- source_event_id nullable
+- notes nullable
+- created_at
+- resolved_at nullable
+
+trust_settings:
+- id
+- key
+- value
+- description
+- updated_by_admin_id nullable
+- updated_at
+
+trust_admin_actions:
+- id
+- admin_user_id
+- target_user_id
+- action_type
+- reason
+- metadata
+- created_at
+
+SERVICES
+
+Create services:
+
+TrustEventService:
+- record trust event
+- dedupe events
+- validate source event
+- prevent gaming
+- handle pending/review events
+
+TrustScoreService:
+- calculate category scores
+- calculate overall score
+- apply weights
+- apply decay
+- apply caps
+- update public level
+
+TrustCapService:
+- create cap
+- enforce cap
+- expire cap
+- remove cap after review
+
+TrustRestrictionService:
+- apply restrictions
+- enforce restrictions
+- remove restrictions
+- expose safe restriction state to UI
+
+TrustRecoveryService:
+- calculate recovery progress
+- suggest recovery steps
+- track probation period
+
+TrustPrivacyGuard:
+- hide reporter identity
+- prevent public shaming
+- hide sensitive trust event details
+- show safe summaries only
+
+TrustAdminService:
+- review trust cases
+- confirm/dismiss events
+- apply overrides
+- log admin actions
+
+TrustGamingDetectionService:
+- detect repeated low-value farming
+- detect mutual upvote rings
+- detect suspicious check-in patterns
+- detect rapid trust farming
+
+API ENDPOINTS
+
+Add endpoints for:
+
+User:
+- Get my trust profile
+- Get public trust profile for another user
+- Get trust category breakdown
+- Get trust explanation
+- Get trust recovery suggestions
+- Appeal trust event/restriction
+
+System/internal:
+- Record trust event
+- Recalculate trust profile
+- Apply trust cap
+- Apply trust restriction
+- Resolve trust review
+
+Admin:
+- List trust reviews
+- Get user trust admin view
+- Confirm trust event
+- Dismiss trust event
+- Apply restriction
+- Remove restriction
+- Override trust cap
+- View gaming flags
+- Update trust settings
+
+UI REQUIREMENTS
+
+User Trust screen:
+- Overall level
+- Category breakdown
+- Verification badges
+- Reliability stats
+- Recent safe summaries
+- Recovery suggestions
+- Appeal button
+- Privacy explanation
+
+Public profile:
+- Trust level
+- Verification badges
+- Attendance reliability summary
+- Host reliability summary if applicable
+- Local Guide badge if applicable
+- No sensitive internal event details
+
+Plan/Trip UI:
+- Show trust requirement
+- Show user trust level
+- Show attendance reliability
+- Warn host if user has limited reliability
+- Do not publicly shame user
+
+Host controls:
+- Set minimum trust level
+- Require verified profile
+- Require attendance reliability
+- Require location confidence for check-in-heavy plans
+
+Discovery:
+- Allow filter by verified/reliable users
+- Boost trusted hosts/plans
+- Do not hide all new users unfairly
+- Provide “new traveler” onboarding path
+
+Admin Trust dashboard:
+- Trust review queue
+- User trust profile
+- Event timeline
+- Caps/restrictions
+- Report resolution
+- Gaming flags
+- Admin action log
+
+TRUST-BASED ACCESS RULES
+
+Add enforcement seams for:
+- Hosting restrictions
+- Joining private plans
+- Access to high-trust plans
+- Local Guide verification
+- Hidden Gem verification power
+- Trusted Circle abuse restrictions
+- Telegraph spam restrictions
+- Repeated no-show penalties
+
+Do not over-restrict new users.
+
+New users should have a path:
+- Verify identity
+- Complete profile
+- Join low-risk public plans
+- Build attendance reliability
+- Earn first stamps/contributions
+
+PRIVACY AND FAIRNESS RULES
+
+1. Do not show sensitive trust accusations publicly.
+2. Do not reveal reporter identity.
+3. Do not let one unverified report destroy trust.
+4. Serious confirmed events should matter strongly.
+5. Users must have a way to recover when appropriate.
+6. Users must have a way to appeal.
+7. New users must not be locked out of the app.
+8. Trust Score should not be based on protected personal attributes.
+9. Location confidence should measure signal reliability, not punish travel itself.
+10. Admin overrides must be logged.
+
+TESTS
+
+Add tests for:
+
+- Positive verified events increase relevant category.
+- Minor negative event reduces category modestly.
+- Serious confirmed event applies cap.
+- Positive easy actions cannot bypass serious cap.
+- Repeated no-shows cap attendance reliability.
+- Fake GPS confirmed caps location confidence.
+- Harassment report pending does not publicly shame user.
+- Upheld harassment report applies social cap/restriction.
+- Safe Return completion adds small safety signal.
+- Hidden Gem verified contribution adds contribution signal.
+- Local Guide approved contribution improves guide trust.
+- Suspicious GPS makes location-based positives pending review.
+- Trust event dedupe prevents farming.
+- Daily limit prevents easy action farming.
+- Admin can confirm/dismiss event.
+- Admin action is logged.
+- Public profile hides sensitive event details.
+- New user can still join low-risk plans.
+- Trust requirement blocks user only where configured.
+- Appeal creates trust review.
+- Decay/recovery improves score over time when no repeated issues.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- trust_engine_enabled
+- trust_public_levels_enabled
+- trust_caps_enabled
+- trust_restrictions_enabled
+- trust_admin_dashboard_enabled
+- trust_gaming_detection_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Trust event service
+3. Trust score calculation service
+4. Trust cap service
+5. Trust restriction service
+6. Trust recovery service
+7. Trust privacy guard
+8. Trust admin service
+9. Trust gaming detection service
+10. API endpoints
+11. User Trust screen
+12. Public trust display
+13. Plan/trip trust enforcement seams
+14. Admin trust dashboard
+15. Tests
+16. Implementation report
+
+Do not break Plans, Trips, GPS, Safe Return, Trip Crew, Telegraph, Discovery, Pulse, Passport, Hidden Gems, Local Guides, Airport Mode, or Admin flows.
+
+Keep this pass focused on Trust Score and Reliability Engine finalization.

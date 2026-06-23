@@ -43,13 +43,41 @@ async function fetchDisplayName(db: SupabaseClient, userId: string): Promise<str
   }
 }
 
-function areaLabel(session: SafeReturnSession): string {
-  // Only approximate — city/district, never coordinates
-  const parts: string[] = [];
-  if ((session as any).district) parts.push((session as any).district);
-  if ((session as any).city) parts.push((session as any).city);
-  if ((session as any).country) parts.push((session as any).country);
-  return parts.length > 0 ? parts.join(", ") : "an unknown area";
+/** Look up the user's last known city/country from user_location_state.
+ *  Falls back to "an unknown area" if the table has no record.
+ *  Never returns exact GPS. */
+async function fetchAreaLabel(db: SupabaseClient, userId: string): Promise<string> {
+  try {
+    const { data } = await db
+      .from("user_location_state")
+      .select("city, country")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const parts: string[] = [];
+    if ((data as any)?.city)    parts.push((data as any).city);
+    if ((data as any)?.country) parts.push((data as any).country);
+    return parts.length > 0 ? parts.join(", ") : "an unknown area";
+  } catch {
+    return "an unknown area";
+  }
+}
+
+/** Fetch the location name of a trip plan item (for notification context). */
+async function fetchPlanItemTitle(
+  db: SupabaseClient,
+  planItemId: string | null,
+): Promise<string | null> {
+  if (!planItemId) return null;
+  try {
+    const { data } = await db
+      .from("trip_plan_items")
+      .select("location_name")
+      .eq("id", planItemId)
+      .maybeSingle();
+    return (data as any)?.location_name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Notification senders ──────────────────────────────────────────────────────
@@ -105,11 +133,17 @@ export async function notifyTrustedCircle(
     return;
   }
 
-  const userName = await fetchDisplayName(db, session.userId);
-  const area = areaLabel(session);
+  const [userName, area, planTitle] = await Promise.all([
+    fetchDisplayName(db, session.userId),
+    fetchAreaLabel(db, session.userId),
+    fetchPlanItemTitle(db, session.planItemId),
+  ]);
   const missedTime = session.timerEndAt
     ? new Date(session.timerEndAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "a scheduled time";
+  const locationPhrase = planTitle
+    ? `around ${planTitle} in ${area}`
+    : `in ${area}`;
 
   const inAppContacts = contacts.filter(
     (c) => c.contactMethod === "in_app" && c.contactUserId,
@@ -121,7 +155,7 @@ export async function notifyTrustedCircle(
         const token = await fetchPushToken(db, c.contactUserId!);
         await sendPushNotification([token], {
           title: `${userName} missed their Safe Return check-in`,
-          body: `They were last in ${area} and expected back by ${missedTime}. They may need support.`,
+          body: `They were last ${locationPhrase} and expected back by ${missedTime}. They may need support.`,
           data: {
             type: "safe_return_tc_alert",
             sessionId: session.id,
@@ -160,8 +194,10 @@ export async function notifyHost(
     const hostId: string = (trip as any).owner_id;
     if (hostId === session.userId) return; // don't notify yourself
 
-    const userName = await fetchDisplayName(db, session.userId);
-    const area = areaLabel(session);
+    const [userName, area] = await Promise.all([
+      fetchDisplayName(db, session.userId),
+      fetchAreaLabel(db, session.userId),
+    ]);
     const hostToken = await fetchPushToken(db, hostId);
 
     await sendPushNotification([hostToken], {
@@ -197,8 +233,10 @@ export async function notifyTripCrew(
 
     if (!members || (members as any[]).length === 0) return;
 
-    const userName = await fetchDisplayName(db, session.userId);
-    const area = areaLabel(session);
+    const [userName, area] = await Promise.all([
+      fetchDisplayName(db, session.userId),
+      fetchAreaLabel(db, session.userId),
+    ]);
     const memberIds = (members as any[]).map((m) => m.user_id as string);
 
     const tokens = await Promise.all(memberIds.map((id) => fetchPushToken(db, id)));

@@ -16,6 +16,7 @@ import { PlanItemSheet } from './itinerary/PlanItemSheet';
 import { TripPlanSettingsSheet } from './TripPlanSettingsSheet';
 import { SafeReturnSetupSheet } from './safeReturn/SafeReturnSetupSheet';
 import { ActiveSafeReturnCard } from './safeReturn/ActiveSafeReturnCard';
+import { MissedCheckinPrompt } from './safeReturn/MissedCheckinPrompt';
 import { getSuggestion, getActiveSession } from '../services/safeReturn';
 
 // ── Category filter data ───────────────────────────────────────────────────────
@@ -261,6 +262,7 @@ export function TripPlanSection({
   const [safeReturnSetupItem, setSafeReturnSetupItem] = useState<TripPlanItem | null>(null);
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
+  const [showMissedPrompt, setShowMissedPrompt] = useState(false);
 
   // Persist view mode per-trip
   useEffect(() => {
@@ -389,11 +391,21 @@ export function TripPlanSection({
     [],
   );
 
-  // Load active Safe Return session on mount so the card can be shown
+  // Poll active Safe Return session every 60 s.
+  // Auto-show MissedCheckinPrompt when the backend flags the session as 'missed'.
   useEffect(() => {
-    getActiveSession()
-      .then((r) => setActiveSafeReturnSession(r.session))
-      .catch(() => {});
+    let cancelled = false;
+    async function pollSession() {
+      try {
+        const r = await getActiveSession();
+        if (cancelled) return;
+        setActiveSafeReturnSession(r.session ?? null);
+        if (r.session?.status === 'missed') setShowMissedPrompt(true);
+      } catch { /* advisory — silently ignore */ }
+    }
+    pollSession();
+    const iv = setInterval(pollSession, 60_000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, []);
 
   const handleItemPress = useCallback((item: TripPlanItem) => {
@@ -588,6 +600,24 @@ export function TripPlanSection({
           session={activeSafeReturnSession}
           onSessionEnded={() => setActiveSafeReturnSession(null)}
           onSessionUpdated={(s) => setActiveSafeReturnSession(s)}
+        />
+      )}
+
+      {/* Missed check-in prompt — shown automatically when the session
+          timer expires and the backend marks the session as 'missed'. */}
+      {activeSafeReturnSession && activeSafeReturnSession.status === 'missed' && (
+        <MissedCheckinPrompt
+          visible={showMissedPrompt}
+          session={activeSafeReturnSession}
+          onDismiss={() => setShowMissedPrompt(false)}
+          onSafe={() => {
+            setShowMissedPrompt(false);
+            setActiveSafeReturnSession(null);
+          }}
+          onExtended={(s) => {
+            setShowMissedPrompt(false);
+            setActiveSafeReturnSession(s);
+          }}
         />
       )}
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { router } from 'expo-router';
-import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass } from 'lucide-react-native';
+import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { openCircleChat } from '../src/services/messaging';
@@ -192,6 +192,17 @@ export default function Circle() {
         </Pressable>
       )}
 
+      {tab === 'circle' && following.length > 0 && (
+        <View style={styles.safeReturnHint}>
+          <Shield size={13} color={color.deep} />
+          <Text style={styles.safeReturnHintText}>
+            People you follow can be added as{' '}
+            <Text style={styles.safeReturnHintBold}>Trusted Contacts</Text>
+            {' '}in Safe Return — a personal check-in system that alerts your circle if you don't confirm you're safe on time.
+          </Text>
+        </View>
+      )}
+
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={color.signal} />
@@ -306,6 +317,15 @@ const styles = StyleSheet.create({
   avCard: { borderTopWidth: 1, borderTopColor: color.haze, paddingHorizontal: space.md, paddingBottom: space.md, gap: space.sm },
   avEditBtn: { alignSelf: 'flex-start' },
   avEditBtnText: { ...t.small, color: color.signal, fontWeight: '700' },
+  safeReturnHint: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
+    marginHorizontal: space.lg, marginTop: space.sm, marginBottom: 0,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    paddingHorizontal: space.md, paddingVertical: space.sm + 2,
+  },
+  safeReturnHintText: { ...t.small, color: color.mute, fontSize: 12, lineHeight: 18, flex: 1 },
+  safeReturnHintBold: { fontWeight: '700', color: color.ink },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze },

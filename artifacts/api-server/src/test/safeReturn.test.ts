@@ -13,6 +13,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import safeReturnRouter from "../routes/safeReturn.js";
+import adminRouter from "../routes/admin.js";
 import {
   shouldSuggest,
   getSuggestionReason,
@@ -197,6 +198,7 @@ before(() => {
     next();
   });
   app.use("/api", safeReturnRouter);
+  app.use("/api", adminRouter);
 
   server = http.createServer(app);
   server.listen(0);
@@ -748,5 +750,87 @@ describe("Input validation", () => {
     const r = await req("POST", `/api/me/safe-return/sessions/${SESSION_ID}/extend`, {});
     assert.equal(r.status, 400);
     assert.equal(r.body.error, "invalid_payload");
+  });
+});
+
+// ── 12. Admin event-log authorization ─────────────────────────────────────────
+
+describe("Admin event-log authorization", () => {
+  it("12a. non-admin gets 403 for /admin/safe-return/logs", async () => {
+    setClients(makeFakeClient({
+      featureFlags: {
+        safe_return_enabled: true,
+        safe_return_admin_logs_enabled: true,
+      },
+      profiles: [{ id: USER_ID, role: "member" }],
+      events: [],
+    }));
+    const r = await req("GET", "/api/admin/safe-return/logs");
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "forbidden");
+  });
+
+  it("12b. unauthenticated gets 401 for /admin/safe-return/logs", async () => {
+    setClients(makeFakeClient({
+      featureFlags: { safe_return_enabled: true, safe_return_admin_logs_enabled: true },
+      profiles: [],
+    }));
+    const r = await req("GET", "/api/admin/safe-return/logs", undefined, "invalid-tok");
+    assert.equal(r.status, 401);
+    assert.equal(r.body.error, "unauthenticated");
+  });
+
+  it("12c. admin + flag enabled returns event list", async () => {
+    setClients(makeFakeClient({
+      featureFlags: {
+        safe_return_enabled: true,
+        safe_return_admin_logs_enabled: true,
+      },
+      profiles: [{ id: USER_ID, role: "admin" }],
+      events: [
+        { id: "ev-1", session_id: SESSION_ID, user_id: USER_ID, event_type: "session_started", metadata: null, created_at: new Date().toISOString() },
+      ],
+    }));
+    const r = await req("GET", "/api/admin/safe-return/logs");
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.events));
+    assert.equal(r.body.events.length, 1);
+  });
+});
+
+// ── 13. Emergency help — no-auto-dial contract ─────────────────────────────────
+// EmergencyHelpSheet is a mobile-only component, tested at component level.
+// This backend-side test verifies that the trigger-missed API response contains
+// no telephone URIs or phone numbers — the server never initiates outbound calls.
+
+describe("Emergency help no-auto-dial contract", () => {
+  it("13a. trigger-missed response body contains no phone number or dialer URI", async () => {
+    const session = {
+      id: SESSION_ID, user_id: USER_ID, status: "active", escalation_level: 3,
+      timer_start_at: new Date(Date.now() - 3600_000).toISOString(),
+      timer_end_at: new Date(Date.now() - 1000).toISOString(),
+      trusted_circle_enabled: true, live_share_enabled: false,
+      notify_host_enabled: false, notify_trip_crew_enabled: false,
+      plan_item_id: null, trip_id: null, trigger_reason: null,
+      emergency_note: null, closed_at: null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      last_prompt_at: null, last_safe_confirmation_at: null,
+    };
+    setClients(makeFakeClient({
+      featureFlags: { safe_return_enabled: true },
+      sessions: [session],
+      contacts: [],
+      events: [],
+      profiles: [{ id: USER_ID, expo_push_token: null }],
+      locationState: [{ user_id: USER_ID, city: "Bangkok", country: "Thailand" }],
+    }));
+    const r = await req("POST", `/api/me/safe-return/sessions/${SESSION_ID}/trigger-missed`);
+    // Backend response must not include telephone URIs or phone numbers
+    const bodyStr = JSON.stringify(r.body);
+    assert.ok(!bodyStr.includes("tel:"), "Response must not include telephone URI");
+    assert.ok(!bodyStr.includes("phone"), "Response must not include phone number field");
+    assert.ok(!bodyStr.includes("dial"), "Response must not include dial instruction");
+    // Session is now missed — the prompt is shown to the user; they must tap to call
+    assert.equal(r.status, 200);
   });
 });

@@ -56,6 +56,7 @@ import {
 import {
   toPublicSession,
   toPublicContact,
+  requireSafeReturnRecipient,
 } from "../services/safeReturn/SafeReturnPrivacyGuard";
 
 const router = Router();
@@ -496,38 +497,45 @@ router.post("/me/safe-return/sessions/:id/live-share/stop", async (req, res) => 
 });
 
 // ── GET /api/safe-return/live-share/:shareId ──────────────────────────────────
-// Recipient view (requires the caller to be an authorized recipient)
+// Recipient view — requireSafeReturnRecipient middleware enforces strict
+// recipient-only access before the handler runs.
 
-router.get("/safe-return/live-share/:shareId", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { client, user } = auth;
+router.get(
+  "/safe-return/live-share/:shareId",
+  requireSafeReturnRecipient,
+  async (req, res) => {
+    const { db, callerUserId } = (req as any).safeReturnRecipient as {
+      db: NonNullable<ReturnType<typeof getServiceClient>>;
+      callerUserId: string;
+      shareId: string;
+      share: any;
+    };
 
-  const db = getServiceClient() ?? client;
+    if (!await isFlagEnabled(db, "safe_return_enabled")) {
+      sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return;
+    }
+    if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
+      sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
+    }
 
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return;
-  }
-  if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
-    sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
-  }
+    const { shareId } = (req as any).safeReturnRecipient as { shareId: string };
+    const result = await getRecipientView(db, shareId, callerUserId);
 
-  const result = await getRecipientView(db, req.params.shareId, user.id);
+    if ("error" in result) {
+      if (result.error === "not_found") { sendError(res, "not_found", "Live share not found"); return; }
+      if (result.error === "expired")   { sendError(res, "not_found", "Live share has expired"); return; }
+      if (result.error === "stopped")   { sendError(res, "not_found", "Live share has been stopped"); return; }
+      if (result.error === "forbidden") { sendError(res, "forbidden", "You are not authorized to view this share"); return; }
+    }
 
-  if ("error" in result) {
-    if (result.error === "not_found") { sendError(res, "not_found", "Live share not found"); return; }
-    if (result.error === "expired")   { sendError(res, "not_found", "Live share has expired"); return; }
-    if (result.error === "stopped")   { sendError(res, "not_found", "Live share has been stopped"); return; }
-    if (result.error === "forbidden") { sendError(res, "forbidden", "You are not authorized to view this share"); return; }
-  }
+    if ("view" in result) {
+      res.status(200).json({ ok: true, share: result.view });
+      return;
+    }
 
-  if ("view" in result) {
-    res.status(200).json({ ok: true, share: result.view });
-    return;
-  }
-
-  sendError(res, "not_found");
-});
+    sendError(res, "not_found");
+  },
+);
 
 // ── GET /api/me/safe-return/history ──────────────────────────────────────────
 

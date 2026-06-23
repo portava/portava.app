@@ -455,6 +455,23 @@ export async function findExpiredActiveSessions(
   }
 }
 
+/**
+ * Unified session closer — delegates to confirmSafe or cancelSession.
+ * Prefer calling confirmSafe / cancelSession directly when the intent is
+ * unambiguous; use closeSession when the call site receives mode from user
+ * input or a shared utility.
+ */
+export async function closeSession(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+  mode: "safe" | "cancel" = "safe",
+): Promise<SafeReturnSession | null> {
+  return mode === "cancel"
+    ? cancelSession(db, sessionId, userId)
+    : confirmSafe(db, sessionId, userId);
+}
+
 /** Mark a contact as notified. */
 export async function markContactNotified(
   db: SupabaseClient,
