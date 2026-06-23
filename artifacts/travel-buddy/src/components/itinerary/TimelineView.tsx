@@ -60,6 +60,18 @@ export function dayLabel(key: string, tripStartDate: string | null | undefined):
 
 export interface DayBucket { key: string; items: TripPlanItem[] }
 
+// Reconcile a proposed display order against the authoritative id set: keep the
+// proposed order for ids that still exist, drop ids no longer present, and append
+// any authoritative ids missing from the proposed order (e.g. items a teammate
+// added mid-drag). Used to honour remote add/remove without losing a local move.
+function reconcileMembership(proposed: string[], authoritative: string[]): string[] {
+  const authSet = new Set(authoritative);
+  const kept = proposed.filter((id) => authSet.has(id));
+  const keptSet = new Set(kept);
+  const added = authoritative.filter((id) => !keptSet.has(id));
+  return [...kept, ...added];
+}
+
 // ── Warning badge strip ───────────────────────────────────────────────────────
 
 const WARN_SHORT: Record<string, string> = {
@@ -262,20 +274,6 @@ function DraggableItemList({
   const [order, setOrder] = useState<string[]>(() => items.map((i) => i.id));
   const itemMap = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
 
-  // Sync order when items prop changes (add / remove)
-  const prevItemsRef = useRef(items);
-  if (prevItemsRef.current !== items) {
-    prevItemsRef.current = items;
-    const incoming = items.map((i) => i.id);
-    // keep existing order, append new, drop removed
-    const kept = order.filter((id) => incoming.includes(id));
-    const added = incoming.filter((id) => !kept.includes(id));
-    const synced = [...kept, ...added];
-    if (synced.join(',') !== order.join(',')) {
-      setOrder(synced);
-    }
-  }
-
   // Drag state (refs for gesture tracking, state for re-render triggers)
   const activeIdxRef = useRef(-1);
   const activeAnim = useRef(new Animated.Value(0)).current;
@@ -285,6 +283,38 @@ function DraggableItemList({
 
   const getEstimatedHeight = useCallback((id: string) => {
     return itemHeightsRef.current[id] ?? 100;
+  }, []);
+
+  // Sync local display order when the items prop changes (add / remove / remote reorder).
+  // While a drag is in progress we must NOT clobber the in-flight order: keep the
+  // current order and only append new / drop removed ids. When idle we adopt the
+  // canonical server order so reorders made by other members are reflected.
+  // Holds a canonical server order that arrived mid-drag; applied once the drag ends.
+  const pendingServerOrderRef = useRef<string[] | null>(null);
+  const prevItemsRef = useRef(items);
+  if (prevItemsRef.current !== items) {
+    prevItemsRef.current = items;
+    const incoming = items.map((i) => i.id);
+    const dragging = activeIdxRef.current >= 0;
+    if (dragging) {
+      // Don't disturb the in-flight gesture; remember the canonical order and
+      // reconcile to it when the drag is released/terminated.
+      pendingServerOrderRef.current = incoming;
+    } else {
+      pendingServerOrderRef.current = null;
+      if (incoming.join(',') !== order.join(',')) {
+        setOrder(incoming);
+      }
+    }
+  }
+
+  // Apply any order that arrived while a drag was active (called on drag end).
+  const applyPendingOrder = useCallback(() => {
+    const pending = pendingServerOrderRef.current;
+    pendingServerOrderRef.current = null;
+    if (pending) {
+      setOrder((cur) => (pending.join(',') !== cur.join(',') ? pending : cur));
+    }
   }, []);
 
   const commitReorder = useCallback(async (
@@ -306,10 +336,18 @@ function DraggableItemList({
         }),
       ),
     );
-    // Notify parent so the canonical list stays in sync
+    // Notify parent so the canonical list stays in sync. Guard against emitting
+    // unknown/partial items: only keep ids that resolve to a real item, and
+    // append any locally-known ids missing from newOrder rather than dropping them.
     onItemsChanged((prev) => {
-      const byId = Object.fromEntries(prev.map((i) => [i.id, i]));
-      return newOrder.map((id, idx) => ({ ...(byId[id] ?? itemMap[id]), sortOrder: (idx + 1) * 1000 }));
+      const byId = new Map(prev.map((i) => [i.id, i]));
+      const resolvable = newOrder.filter((id) => byId.has(id) || itemMap[id]);
+      const missing = prev.map((i) => i.id).filter((id) => !resolvable.includes(id));
+      const finalIds = [...resolvable, ...missing];
+      return finalIds.map((id, idx) => {
+        const base = byId.get(id) ?? itemMap[id];
+        return { ...base, sortOrder: (idx + 1) * 1000 };
+      });
     });
   }, [tripId, itemMap, onItemsChanged]);
 
@@ -359,14 +397,22 @@ function DraggableItemList({
             toValue: 0, duration: 120, useNativeDriver: true,
           }).start(() => forceUpdate((n) => n + 1));
           if (from !== to && from >= 0 && to >= 0) {
+            // Local reorder is the newer write (last-write-wins for position), but
+            // membership (remote add/remove arriving mid-drag) must still be
+            // honoured. Rebase the local move onto the latest canonical id set.
+            const pending = pendingServerOrderRef.current;
+            pendingServerOrderRef.current = null;
             setOrder((prev) => {
               const next = [...prev];
               const [moved] = next.splice(from, 1);
               next.splice(to, 0, moved);
-              commitReorder(prev, next);
-              return next;
+              const finalOrder = pending ? reconcileMembership(next, pending) : next;
+              commitReorder(prev, finalOrder);
+              return finalOrder;
             });
           } else {
+            // No local move — reconcile to any order that arrived during the drag.
+            applyPendingOrder();
             forceUpdate((n) => n + 1);
           }
         },
@@ -374,6 +420,7 @@ function DraggableItemList({
           activeIdxRef.current = -1;
           currentDragIdx.current = -1;
           activeAnim.setValue(0);
+          applyPendingOrder();
           forceUpdate((n) => n + 1);
         },
       }),

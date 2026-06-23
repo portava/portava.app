@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle,
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle, Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2 } from 'lucide-react-native';
+import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2, RefreshCw } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
-import { fetchTripPlan, fetchTripPlanMap } from '../services/tripPlan';
+import { fetchTripPlan, fetchTripPlanMap, type TripPlanResult } from '../services/tripPlan';
+import { usePlanSync } from '../hooks/usePlanSync';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { AddToPlanSheet } from './AddToPlanSheet';
 import { TimelineView, type DayBucket } from './itinerary/TimelineView';
@@ -185,6 +186,42 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
   );
 }
 
+// ── Background-sync merge ──────────────────────────────────────────────────────
+
+// Cheap per-item equality: `updatedAt` changes on any server-side field edit,
+// `sortOrder` covers reorders, and warnings are advisory and recomputed per fetch.
+function planItemEqual(a: TripPlanItem, b: TripPlanItem): boolean {
+  return (
+    a.id === b.id &&
+    a.updatedAt === b.updatedAt &&
+    a.sortOrder === b.sortOrder &&
+    a.dayDate === b.dayDate &&
+    (a.warnings?.join('|') ?? '') === (b.warnings?.join('|') ?? '')
+  );
+}
+
+/**
+ * Merge a freshly-fetched plan into the current local list. The server response
+ * is the source of truth for membership and order. Unchanged items keep their
+ * previous object reference so React can skip re-rendering those rows. Returns
+ * the same array reference when nothing changed so callers can no-op.
+ */
+function mergePlanItems(
+  prev: TripPlanItem[],
+  next: TripPlanItem[],
+): { merged: TripPlanItem[]; changed: boolean } {
+  const sameLength = prev.length === next.length;
+  if (sameLength && prev.every((p, i) => p.id === next[i].id && planItemEqual(p, next[i]))) {
+    return { merged: prev, changed: false };
+  }
+  const prevById = new Map(prev.map((p) => [p.id, p]));
+  const merged = next.map((n) => {
+    const existing = prevById.get(n.id);
+    return existing && planItemEqual(existing, n) ? existing : n;
+  });
+  return { merged, changed: true };
+}
+
 // ── Main section ──────────────────────────────────────────────────────────────
 
 export function TripPlanSection({
@@ -256,6 +293,40 @@ export function TripPlanSection({
   }, [tripId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // ── Background auto-sync ──────────────────────────────────────────────────────
+  // Keep a ref of the latest items so the poll callback merges against current
+  // state without needing to be re-created (which would restart the interval).
+  const itemsRef = useRef<TripPlanItem[]>(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+
+  // "Plan updated" toast — fades in when a remote change arrives, then auto-hides.
+  const updatedAnim = useRef(new Animated.Value(0)).current;
+  const updatedHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showUpdatedToast = useCallback(() => {
+    if (updatedHideTimer.current) clearTimeout(updatedHideTimer.current);
+    Animated.timing(updatedAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    updatedHideTimer.current = setTimeout(() => {
+      Animated.timing(updatedAnim, { toValue: 0, duration: 240, useNativeDriver: true }).start();
+    }, 2200);
+  }, [updatedAnim]);
+  useEffect(() => () => { if (updatedHideTimer.current) clearTimeout(updatedHideTimer.current); }, []);
+
+  const applyServerResult = useCallback((result: TripPlanResult) => {
+    setCanEdit(result.canEdit);
+    const { merged, changed } = mergePlanItems(itemsRef.current, result.items);
+    if (!changed) return;
+    itemsRef.current = merged;
+    setItems(merged);
+    setMapItems([]);        // invalidate map cache so it refetches fresh coords
+    showUpdatedToast();
+  }, [showUpdatedToast]);
+
+  usePlanSync(tripId, {
+    enabled: !accessDenied,
+    intervalMs: 10_000,
+    onResult: applyServerResult,
+  });
 
   // Auto-load map when entering map mode or when mapItems is cleared by a mutation
   useEffect(() => {
@@ -351,6 +422,23 @@ export function TripPlanSection({
 
   return (
     <View style={ps.wrap}>
+      {/* "Plan updated" toast — appears briefly when a teammate's change syncs in */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          ps.updatedToast,
+          {
+            opacity: updatedAnim,
+            transform: [{
+              translateY: updatedAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }),
+            }],
+          },
+        ]}
+      >
+        <RefreshCw size={11} color={color.onInk} />
+        <Text style={ps.updatedToastText}>Plan updated</Text>
+      </Animated.View>
+
       {/* Header */}
       <View style={ps.head}>
         <Text style={ps.title}>Trip Plan</Text>
@@ -529,6 +617,8 @@ const ps = StyleSheet.create({
   warnBanner:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, backgroundColor: '#FFFBEB', borderRadius: radius.md, borderWidth: 1, borderColor: '#F5D77B', paddingHorizontal: space.md, paddingVertical: 8 },
   warnBannerText: { ...t.small, color: '#8B5E00', fontWeight: '600' as const, flex: 1 },
   warnBannerLink: { ...t.small, color: '#F59E0B', fontWeight: '700' as const },
+  updatedToast:     { position: 'absolute', top: -4, alignSelf: 'center', zIndex: 50, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: color.deep, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  updatedToastText: { ...t.small, color: color.onInk, fontWeight: '700' },
   empty:      { padding: space.lg, alignItems: 'center', gap: 8, paddingVertical: 40 },
   emptyTitle: { ...t.title, fontSize: 18, color: color.ink },
   emptyBody:  { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 280, lineHeight: 22 },
