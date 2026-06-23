@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,6 +6,7 @@ import { Activity, Compass, Map, User, Plus, Plane, Bell, MessageCircle } from '
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
+import { getIncomingMessageRequests } from '../../src/services/messaging';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -14,7 +15,7 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
-function DesktopSidebar({ unreadNotifications, unreadMessages }: { unreadNotifications: number; unreadMessages: number }) {
+function DesktopSidebar({ unreadNotifications, unreadMessages, pendingRequests }: { unreadNotifications: number; unreadMessages: number; pendingRequests: number }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
@@ -49,9 +50,9 @@ function DesktopSidebar({ unreadNotifications, unreadMessages }: { unreadNotific
       <Pressable style={styles.notifBtn} onPress={() => router.push('/(tabs)/messages' as any)}>
         <MessageCircle size={18} color={color.mute} />
         <Text style={styles.navLabel}>Telegraph</Text>
-        {unreadMessages > 0 && (
+        {(unreadMessages + pendingRequests) > 0 && (
           <View style={styles.sidebarBadge}>
-            <Text style={styles.sidebarBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
+            <Text style={styles.sidebarBadgeText}>{(unreadMessages + pendingRequests) > 99 ? '99+' : String(unreadMessages + pendingRequests)}</Text>
           </View>
         )}
       </Pressable>
@@ -95,6 +96,19 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
+  const [pendingRequests, setPendingRequests] = useState(0);
+
+  useEffect(() => {
+    getIncomingMessageRequests().then((res) => {
+      if (res.ok && res.data) setPendingRequests(res.data.requests.length);
+    });
+    const timer = setInterval(() => {
+      getIncomingMessageRequests().then((res) => {
+        if (res.ok && res.data) setPendingRequests(res.data.requests.length);
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const tabs = (
     <Tabs
@@ -181,7 +195,7 @@ export default function TabLayout() {
   if (isDesktop) {
     return (
       <View style={styles.desktopShell}>
-        <DesktopSidebar unreadNotifications={unreadNotifications} unreadMessages={unreadMessages} />
+        <DesktopSidebar unreadNotifications={unreadNotifications} unreadMessages={unreadMessages} pendingRequests={pendingRequests} />
         <View style={styles.desktopContent}>{tabs}</View>
       </View>
     );

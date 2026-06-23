@@ -170,7 +170,12 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
 
         {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            {isAi && <Bot size={11} color={color.signal} />}
+            {isAi && (
+              <View style={s.aiBadge}>
+                <Bot size={9} color={color.onInk} />
+                <Text style={s.aiBadgeText}>AI</Text>
+              </View>
+            )}
             <Text
               style={[s.preview, unread > 0 && s.previewBold]}
               numberOfLines={1}
@@ -190,37 +195,39 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
   );
 }
 
+const FILTER_EMPTY: Record<FilterKey, string> = {
+  all:      'Your Telegraph is quiet.',
+  direct:   'No direct conversations yet.',
+  trips:    'No trip chats yet.',
+  circles:  'No circle chats yet.',
+  unread:   "You're all caught up.",
+  requests: 'No pending requests.',
+};
+
 function EmptyState({ filter }: { filter: FilterKey }) {
-  const isFiltered = filter !== 'all';
   return (
     <View style={s.emptyWrap}>
       <View style={s.emptyIcon}>
         <Zap size={28} color={color.signal} />
       </View>
-      <Text style={s.emptyTitle}>
-        {isFiltered ? `No ${filter} threads` : 'Your Telegraph is quiet.'}
+      <Text style={s.emptyTitle}>{FILTER_EMPTY[filter]}</Text>
+      <Text style={s.emptyBody}>
+        Start a conversation, join a trip, or share a Discovery card.
       </Text>
-      {!isFiltered && (
-        <Text style={s.emptyBody}>
-          Start a conversation, join a trip, or share a Discovery card.
-        </Text>
-      )}
-      {!isFiltered && (
-        <View style={s.emptyActions}>
-          <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
-            <Compass size={15} color={color.signal} />
-            <Text style={s.emptyBtnText}>Find people</Text>
-          </Pressable>
-          <Pressable style={s.emptyBtn} onPress={() => router.push('/(tabs)/discovery' as any)}>
-            <Globe size={15} color={color.signal} />
-            <Text style={s.emptyBtnText}>Explore Discovery</Text>
-          </Pressable>
-          <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
-            <MessageCirclePlus size={15} color={color.signal} />
-            <Text style={s.emptyBtnText}>Start Telegraph</Text>
-          </Pressable>
-        </View>
-      )}
+      <View style={s.emptyActions}>
+        <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
+          <Compass size={15} color={color.signal} />
+          <Text style={s.emptyBtnText}>Find people</Text>
+        </Pressable>
+        <Pressable style={s.emptyBtn} onPress={() => router.push('/(tabs)/discovery' as any)}>
+          <Globe size={15} color={color.signal} />
+          <Text style={s.emptyBtnText}>Explore Discovery</Text>
+        </Pressable>
+        <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
+          <MessageCirclePlus size={15} color={color.signal} />
+          <Text style={s.emptyBtnText}>Start Telegraph</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -472,6 +479,17 @@ const s = StyleSheet.create({
 
   preview: { ...t.small, color: color.mute, flex: 1 },
   previewBold: { color: color.ink, fontWeight: '600' },
+
+  aiBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: color.signal,
+  },
+  aiBadgeText: { fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.3 },
 
   cityTag: {
     alignSelf: 'flex-start',
