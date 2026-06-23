@@ -22,7 +22,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
-  Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle,
+  Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
+  RefreshCw,
 } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
@@ -38,6 +39,7 @@ import { deleteMessage } from '../../src/services/messaging';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from 'expo-clipboard';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -112,18 +114,20 @@ function LongPressActionSheet({
           <Text style={las.preview} numberOfLines={2}>{text}</Text>
         )}
         {([
-          ['reply',     'Reply',      Reply,    false],
-          ['copy',      'Copy text',  Copy,     false],
-          ['translate', 'Translate',  Languages,false],
-          ['report',    'Report',     Flag,     false],
-        ] as [string, string, React.ComponentType<{ size: number; color: string }>, boolean][]).map(([key, label, Icon, _]) => (
+          ['reply',     'Reply',         Reply,         ] ,
+          ['copy',      'Copy text',     Copy,          ] ,
+          ['translate', 'Translate',     Languages,     ] ,
+          ['save',      'Save message',  BookmarkPlus,  ] ,
+          ['report',    'Report',        Flag,          ] ,
+        ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
           <Pressable
             key={key}
             style={las.row}
-            onPress={() => {
+            onPress={async () => {
               onClose();
               if (key === 'copy') {
-                Share.share({ message: text }).catch(() => {});
+                await Clipboard.setStringAsync(text);
+                Alert.alert('Copied', 'Message copied to clipboard.');
               } else if (key === 'report') {
                 Alert.alert('Report message', 'Are you sure you want to report this message?', [
                   { text: 'Cancel', style: 'cancel' },
@@ -563,7 +567,6 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   isLastOwn,
-  sendFailed,
 }: {
   item: Message;
   mine: boolean;
@@ -572,7 +575,6 @@ function MessageBubble({
   isGroupThread: boolean;
   onLongPress?: () => void;
   isLastOwn?: boolean;
-  sendFailed?: boolean;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -684,17 +686,8 @@ function MessageBubble({
       {/* Read receipt — shown on the last own message only */}
       {mine && isLastOwn && (
         <View style={styles.receiptRow}>
-          {sendFailed ? (
-            <Pressable style={styles.receiptFailRow} onPress={onLongPress}>
-              <AlertCircle size={11} color='#EF4444' />
-              <Text style={styles.receiptFail}>Failed to send</Text>
-            </Pressable>
-          ) : (
-            <>
-              <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Sent</Text>
-            </>
-          )}
+          <CheckCheck size={11} color={color.signal} />
+          <Text style={styles.receiptSent}>Sent</Text>
         </View>
       )}
     </View>
@@ -994,11 +987,13 @@ export default function TelegraphThread() {
     const displayName = threadType === 'direct'
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
+    // Direct: show "City · Telegraph" when city is available, otherwise just "Telegraph"
+    const directSubtitle = dmProfile?.city ? `${dmProfile.city} · Telegraph` : 'Telegraph';
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'
         ? (memberCount !== null ? `${memberCount} members` : 'Trusted Circle')
-        : (dmProfile?.city ?? 'Telegraph');
+        : directSubtitle;
 
     return (
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
@@ -1034,7 +1029,12 @@ export default function TelegraphThread() {
         )}
 
         <View style={styles.headerMeta}>
-          <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
+            {threadType === 'direct' && dmProfile?.name && (
+              <CheckCircle size={13} color={color.signal} />
+            )}
+          </View>
           <View style={styles.headerTagRow}>
             {compact ? (
               <>
@@ -1050,10 +1050,13 @@ export default function TelegraphThread() {
         {/* Right-side action icons */}
         {!compact && (
           <View style={styles.headerActions}>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Search', 'Message search coming soon.')}>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
               <Info size={18} color={color.mute} />
             </Pressable>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Translation', 'Adjust translation preferences in Settings → Language.')}>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Search messages', 'Message search coming soon.')}>
+              <Search size={18} color={color.mute} />
+            </Pressable>
+            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Translation settings', 'Adjust translation preferences in Settings → Language.')}>
               <Languages size={18} color={color.mute} />
             </Pressable>
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}>
@@ -1163,7 +1166,6 @@ export default function TelegraphThread() {
                   setActionMsgMine(mine);
                 }}
                 isLastOwn={m.id === lastOwnMsgId}
-                sendFailed={m.id === lastOwnMsgId && sendFailed}
               />
             </View>
           );
@@ -1171,6 +1173,27 @@ export default function TelegraphThread() {
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
+
+      {/* Failed-send banner — sits above the composer, offers retry */}
+      {sendFailed && lastSentMessage && (
+        <View style={styles.failedBanner}>
+          <AlertCircle size={14} color="#EF4444" />
+          <Text style={styles.failedBannerText} numberOfLines={1}>
+            Failed to send: "{lastSentMessage}"
+          </Text>
+          <Pressable
+            style={styles.failedRetryBtn}
+            onPress={() => {
+              const text = lastSentMessage;
+              setSendFailed(false);
+              setInput(text);
+            }}
+          >
+            <RefreshCw size={12} color="#EF4444" />
+            <Text style={styles.failedRetryText}>Retry</Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* Telegraph suggestion tray — above the composer */}
       {id && (
@@ -1412,6 +1435,21 @@ const styles = StyleSheet.create({
 
   // Composer icon buttons (attach, meetup, discovery, ai)
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+
+  // Failed-send banner above the composer
+  failedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: space.lg,
+    paddingVertical: 7,
+    backgroundColor: '#FEF2F2',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#FECACA',
+  },
+  failedBannerText: { ...t.small, color: '#EF4444', flex: 1, fontSize: 11 },
+  failedRetryBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: '#FECACA' },
+  failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
 
   sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: color.signal },

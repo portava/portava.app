@@ -27,7 +27,8 @@ import {
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
-  Compass, Bot, Copy, Trash2, Flag, Reply, CheckCheck,
+  Compass, Bot, Copy, Trash2, Flag, Reply, CheckCheck, Search, BookmarkPlus,
+  AlertCircle, RefreshCw,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat';
@@ -37,6 +38,7 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import type { Message } from '../services/messaging';
 import { deleteMessage } from '../services/messaging';
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from 'expo-clipboard';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -81,10 +83,11 @@ function LongPressActionSheet({
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
-    ['reply', 'Reply', Reply],
-    ['copy', 'Copy text', Copy],
-    ['translate', 'Translate', Languages],
-    ['report', 'Report', Flag],
+    ['reply',     'Reply',         Reply        ],
+    ['copy',      'Copy text',     Copy         ],
+    ['translate', 'Translate',     Languages    ],
+    ['save',      'Save message',  BookmarkPlus ],
+    ['report',    'Report',        Flag         ],
   ];
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
@@ -98,10 +101,11 @@ function LongPressActionSheet({
           <Pressable
             key={key}
             style={las.row}
-            onPress={() => {
+            onPress={async () => {
               onClose();
               if (key === 'copy') {
-                Share.share({ message: text }).catch(() => {});
+                await Clipboard.setStringAsync(text);
+                Alert.alert('Copied', 'Message copied to clipboard.');
               } else if (key === 'report') {
                 Alert.alert('Report message', 'Are you sure you want to report this message?', [
                   { text: 'Cancel', style: 'cancel' },
@@ -228,6 +232,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const { state, thread, messages, sending, errorMessage, reload, send } = useGroupChat(type, id);
   const [input, setInput] = useState('');
   const [sendFailed, setSendFailed] = useState(false);
+  const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
   const listRef = useRef<FlatList>(null);
@@ -276,6 +281,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     const text = input.trim();
     if (!text || sending || isNoAccess) return;
     setInput('');
+    setLastSentText(text);
     setSendFailed(false);
     const res = await send(text);
     if (!res?.ok) setSendFailed(true);
@@ -305,14 +311,21 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         <Pressable
           hitSlop={8}
           style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Thread info', 'Thread info coming soon.')}
+          onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}
         >
           <Info size={18} color={color.mute} />
         </Pressable>
         <Pressable
           hitSlop={8}
           style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Translation', 'Adjust translation preferences in Settings → Language.')}
+          onPress={() => Alert.alert('Search messages', 'Message search coming soon.')}
+        >
+          <Search size={18} color={color.mute} />
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          style={styles.headerIconBtn}
+          onPress={() => Alert.alert('Translation settings', 'Adjust translation preferences in Settings → Language.')}
         >
           <Languages size={18} color={color.mute} />
         </Pressable>
@@ -440,6 +453,27 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
+
+      {/* Failed-send banner — sits above the composer, offers retry */}
+      {sendFailed && lastSentText && (
+        <View style={styles.failedBanner}>
+          <AlertCircle size={14} color="#EF4444" />
+          <Text style={styles.failedBannerText} numberOfLines={1}>
+            Failed to send: "{lastSentText}"
+          </Text>
+          <Pressable
+            style={styles.failedRetryBtn}
+            onPress={() => {
+              const text = lastSentText;
+              setSendFailed(false);
+              setInput(text);
+            }}
+          >
+            <RefreshCw size={12} color="#EF4444" />
+            <Text style={styles.failedRetryText}>Retry</Text>
+          </Pressable>
+        </View>
+      )}
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {isNoAccess ? (
@@ -620,4 +654,27 @@ const styles = StyleSheet.create({
 
   noAccessBar: { flex: 1, paddingVertical: space.md, alignItems: 'center' },
   noAccessText: { ...t.small, color: color.mute, textAlign: 'center' },
+
+  failedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: space.lg,
+    paddingVertical: 7,
+    backgroundColor: '#FEF2F2',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#FECACA',
+  },
+  failedBannerText: { ...t.small, color: '#EF4444', flex: 1, fontSize: 11 },
+  failedRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
 });
