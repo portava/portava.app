@@ -76,19 +76,17 @@ function DesktopSidebar({ unreadNotifications, unreadMessages }: { unreadNotific
   );
 }
 
-/** Center vermilion passport-stamp create button. */
-function StampButton() {
+/** Flat Post tab button — same size and alignment as all other nav items. */
+function PostTabButton() {
   return (
     <Pressable
       onPress={() => router.push('/create')}
-      style={styles.stampBtn}
+      style={({ pressed }) => [styles.postTabBtn, pressed && { opacity: 0.6 }]}
       accessibilityRole="button"
-      accessibilityLabel="Share a travel post"
+      accessibilityLabel="Create a post"
     >
-      <View style={styles.stampInner}>
-        <Text style={styles.stampGlyph}>✛</Text>
-        <Text style={styles.stampWord}>POST</Text>
-      </View>
+      <Plus size={22} color={color.signal} />
+      <Text style={[styles.label, styles.postTabLabel]}>Post</Text>
     </Pressable>
   );
 }
@@ -140,8 +138,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="create-tab"
         options={{
-          title: '',
-          tabBarButton: () => (isDesktop ? <View style={{ width: 0 }} /> : <StampButton />),
+          title: 'Post',
+          tabBarButton: () => (isDesktop ? <View style={{ width: 0 }} /> : <PostTabButton />),
         }}
         listeners={{ tabPress: (e) => { e.preventDefault(); router.push('/create'); } }}
       />
@@ -297,32 +295,21 @@ const styles = StyleSheet.create({
   },
   /* ── Mobile tab bar ── */
   bar: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: 'rgba(255, 255, 255, 0.30)',
     borderTopWidth: 1,
-    borderTopColor: color.haze,
+    borderTopColor: 'rgba(255, 255, 255, 0.18)',
     paddingTop: 6,
   },
   label: { ...t.stamp, fontFamily: 'Courier', marginTop: 2 },
-  stampBtn: {
-    top: -18,
-    alignSelf: 'center',
-    width: 62,
-    height: 62,
-    ...shadow.float,
-  },
-  stampInner: {
+  postTabBtn: {
     flex: 1,
-    borderRadius: 16,
-    backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ rotate: '-6deg' }],
-    borderWidth: 2,
-    borderColor: color.signalDim,
+    height: 58,
+    gap: 2,
   },
-  stampGlyph: { color: color.onInk, fontSize: 20, lineHeight: 22, fontWeight: '900' },
-  stampWord: {
-    color: color.onInk, fontFamily: 'Courier', fontSize: 9, fontWeight: '700', letterSpacing: 1,
+  postTabLabel: {
+    color: color.signal,
   },
   /* ── Tab badge ── */
   tabBadge: {
