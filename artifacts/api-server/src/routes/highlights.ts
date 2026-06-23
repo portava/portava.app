@@ -802,4 +802,183 @@ router.post("/highlights/:id/report", async (req, res) => {
   res.status(204).send();
 });
 
+/* ============================================================================
+ * GET /highlights/following-feed
+ * Returns users the current user follows who have active highlights,
+ * grouped per user with their full highlight objects.
+ * ============================================================================ */
+router.get("/highlights/following-feed", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // 1. Get followed user IDs
+  const { data: followRows } = await sc
+    .from("user_follows")
+    .select("following_id")
+    .eq("follower_id", user.id);
+
+  const followingIds = (followRows ?? []).map((r: any) => r.following_id as string);
+  if (followingIds.length === 0) {
+    res.status(200).json({ users: [] });
+    return;
+  }
+
+  // 2. Resolve blocked users (both directions) and filter them out
+  const [blockedByMe, blockingMe] = await Promise.all([
+    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
+    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+  ]);
+  const blockedIds = new Set<string>([
+    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
+    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+  ]);
+  const eligibleIds = followingIds.filter((id: string) => !blockedIds.has(id));
+  if (eligibleIds.length === 0) {
+    res.status(200).json({ users: [] });
+    return;
+  }
+
+  // 3. Fetch active (non-expired, non-deleted, non-private) highlights from followed users
+  const { data: rows, error } = await sc
+    .from("highlights")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, filter_id, filter_intensity, media_thumbnail_url, media_duration_seconds")
+    .in("owner_id", eligibleIds)
+    .is("deleted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .neq("visibility", "private")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load following highlights feed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const allHighlights = (rows ?? []) as any[];
+  if (allHighlights.length === 0) {
+    res.status(200).json({ users: [] });
+    return;
+  }
+
+  // 4. Resolve restricted visibility (circle_only / trip_only) in batch
+  const circleOwnerIds = [...new Set(
+    allHighlights.filter((h) => h.visibility === "circle_only").map((h) => h.owner_id as string),
+  )];
+  const tripOnlyOwnerIds = [...new Set(
+    allHighlights.filter((h) => h.visibility === "trip_only").map((h) => h.owner_id as string),
+  )];
+
+  const circleApprovedSet = new Set<string>();
+  const sharesTripSet = new Set<string>();
+
+  await Promise.all([
+    circleOwnerIds.length > 0
+      ? sc
+          .from("circle_memberships")
+          .select("user_id")
+          .eq("other_id", user.id)
+          .in("user_id", circleOwnerIds)
+          .then(({ data }) => {
+            for (const r of data ?? []) circleApprovedSet.add((r as any).user_id as string);
+          })
+      : Promise.resolve(),
+    tripOnlyOwnerIds.length > 0
+      ? sc
+          .from("trip_members")
+          .select("trip_id")
+          .eq("user_id", user.id)
+          .in("role", ["owner", "member"])
+          .then(async ({ data: viewerTrips }) => {
+            const vtIds = (viewerTrips ?? []).map((r: any) => r.trip_id as string);
+            if (vtIds.length === 0) return;
+            const { data: shared } = await sc
+              .from("trip_members")
+              .select("user_id")
+              .in("user_id", tripOnlyOwnerIds)
+              .in("trip_id", vtIds)
+              .in("role", ["owner", "member"]);
+            for (const r of shared ?? []) sharesTripSet.add((r as any).user_id as string);
+          })
+      : Promise.resolve(),
+  ]);
+
+  // 5. Permission filter
+  const visible = allHighlights.filter((h) => {
+    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
+    if (h.visibility === "circle_only") return circleApprovedSet.has(h.owner_id as string);
+    if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
+    return false;
+  });
+
+  if (visible.length === 0) {
+    res.status(200).json({ users: [] });
+    return;
+  }
+
+  // 6. Batch metrics + author profiles
+  const highlightIds = visible.map((h: any) => h.id as string);
+  const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+
+  const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
+    sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
+    sc.from("highlight_likes").select("highlight_id").in("highlight_id", highlightIds),
+    sc.from("highlight_views").select("highlight_id").eq("viewer_id", user.id).in("highlight_id", highlightIds),
+    sc.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", highlightIds),
+    sc.from("profiles").select("id, handle, name, avatar_url").in("id", ownerIds),
+  ]);
+
+  const viewCountMap: Record<string, number> = {};
+  const likeCountMap: Record<string, number> = {};
+  for (const r of viewRows2.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
+  for (const r of likeRows2.data ?? []) likeCountMap[(r as any).highlight_id] = (likeCountMap[(r as any).highlight_id] ?? 0) + 1;
+  const viewedSet = new Set<string>((viewedRows2.data ?? []).map((r: any) => r.highlight_id as string));
+  const likedSet = new Set<string>((likedRows2.data ?? []).map((r: any) => r.highlight_id as string));
+
+  const profileMap: Record<string, any> = {};
+  for (const p of profileRows.data ?? []) {
+    profileMap[(p as any).id] = {
+      userId: (p as any).id,
+      handle: (p as any).handle ?? null,
+      name: (p as any).name ?? null,
+      avatarUrl: (p as any).avatar_url ?? null,
+    };
+  }
+
+  // 7. Group by owner, preserving the order highlights came back
+  const grouped = new Map<string, { profile: any; highlights: any[] }>();
+  for (const h of visible) {
+    const ownerId = h.owner_id as string;
+    if (!grouped.has(ownerId)) {
+      grouped.set(ownerId, { profile: profileMap[ownerId] ?? null, highlights: [] });
+    }
+    const author = profileMap[ownerId]
+      ? { id: profileMap[ownerId].userId, handle: profileMap[ownerId].handle, name: profileMap[ownerId].name, avatarUrl: profileMap[ownerId].avatarUrl }
+      : null;
+    grouped.get(ownerId)!.highlights.push({
+      ...h,
+      author,
+      viewCount: viewCountMap[h.id] ?? 0,
+      likeCount: likeCountMap[h.id] ?? 0,
+      viewedByMe: viewedSet.has(h.id),
+      likedByMe: likedSet.has(h.id),
+    });
+  }
+
+  const users = [...grouped.values()]
+    .filter((g) => g.profile !== null)
+    .map((g) => ({
+      userId: g.profile.userId,
+      handle: g.profile.handle,
+      name: g.profile.name,
+      avatarUrl: g.profile.avatarUrl,
+      highlights: g.highlights,
+    }));
+
+  res.status(200).json({ users });
+});
+
 export default router;

@@ -19,6 +19,8 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
+import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -48,6 +50,7 @@ export default function DiscoveryHub() {
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
+  const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
 
   // Deep-link: ?category=food navigates to that tab on mount
   const params = useLocalSearchParams<{ category?: string }>();
@@ -152,6 +155,15 @@ export default function DiscoveryHub() {
           );
         })}
       </ScrollView>
+
+      {/* ── Following highlights strip ── */}
+      {isAuthed && (
+        <FollowingHighlightsStrip
+          users={highlightUsers}
+          sessionViewedIds={sessionViewedIds}
+          onMarkViewed={markSessionViewed}
+        />
+      )}
 
       {/* ── Active tab content ── */}
       <View style={{ flex: 1 }}>

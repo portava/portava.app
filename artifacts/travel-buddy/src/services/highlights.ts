@@ -334,6 +334,44 @@ export async function reportHighlight(highlightId: string, reason: string): Prom
   }
 }
 
+export interface HighlightFeedUser {
+  userId: string;
+  handle: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  highlights: Highlight[];
+}
+
+/**
+ * Fetch highlights from users the current user follows, grouped by user.
+ * Used by the Explore tab Highlights strip.
+ */
+export async function fetchFollowingHighlightsFeed(): Promise<HighlightResult<HighlightFeedUser[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/following-feed`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError<HighlightFeedUser[]>(res.status, await res.json().catch(() => ({})));
+    const body = await res.json();
+    return {
+      ok: true,
+      data: (body.users ?? []).map((u: any): HighlightFeedUser => ({
+        userId: u.userId,
+        handle: u.handle ?? null,
+        name: u.name ?? null,
+        avatarUrl: u.avatarUrl ?? null,
+        highlights: (u.highlights ?? []).map(mapHighlight),
+      })),
+    };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 /**
  * Batch-fetch active-highlight metadata for multiple users.
  * Returns a map: userId → { hasActive: boolean, allViewed: boolean, highlights: Highlight[] }
