@@ -84,7 +84,7 @@ function makeFakeClient(state: FakeState = {}) {
 
   function getRows(table: string): any[] {
     if (table === "feature_flags") {
-      return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled }));
+      return Object.entries(state.featureFlags ?? {}).map(([flag, enabled]) => ({ flag, enabled }));
     }
     if (table === "trips") return state.trips ?? [];
     if (table === "trip_members") return state.tripMembers ?? [];

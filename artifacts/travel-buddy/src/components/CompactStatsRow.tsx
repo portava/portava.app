@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { PassportPostcard } from '../types/models';
 import type { TripRow } from '../services/trips';
+import type { PassportStats } from '../services/passportStamps';
+import { getPassportStats } from '../services/passportStamps';
 import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
@@ -17,13 +19,25 @@ function fmt(n: number): string {
 }
 
 export function CompactStatsRow({ postcards, stamps, trips }: Props) {
-  const verifiedStamps = stamps;
-  const countries = new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
-  const cities = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
+  const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
+
+  useEffect(() => {
+    getPassportStats()
+      .then((res) => { if (res.ok) setLiveStats(res.data); })
+      .catch(() => {});
+  }, []);
+
+  // Prefer live stats from the new passport_stamps table.
+  // Fall back to postcard-derived counts if API is unavailable.
+  const countries = liveStats?.countries
+    ?? new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
+  const cities = liveStats?.cities
+    ?? new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
+  const totalStamps = liveStats?.totalStamps ?? stamps;
 
   const items = [
     { n: postcards.length, label: 'Postcards' },
-    { n: verifiedStamps, label: 'Stamps' },
+    { n: totalStamps, label: 'Stamps' },
     { n: countries, label: 'Countries' },
     { n: cities, label: 'Cities' },
     { n: trips.length, label: 'Trips' },

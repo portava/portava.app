@@ -11,6 +11,9 @@ import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { useHighlightRingState, invalidateHighlightCache } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { HighlightComposer } from '../../src/components/HighlightComposer';
+import { MemoriesTab } from '../../src/components/MemoriesTab';
+import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
+import type { PassportMemory } from '../../src/services/passportStamps';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
@@ -29,17 +32,18 @@ import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
-type Tab = 'postcards' | 'stamps' | 'trips' | 'map' | 'about';
+type Tab = 'postcards' | 'stamps' | 'memories' | 'trips' | 'map' | 'about';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'postcards', label: 'Postcards' },
   { key: 'stamps', label: 'Stamps' },
+  { key: 'memories', label: 'Memories' },
   { key: 'trips', label: 'Trips' },
   { key: 'map', label: 'Map' },
   { key: 'about', label: 'About' },
 ];
 
 export default function PassportScreen() {
-  const { profile, postcards, stamps, loading, error, reload } = usePassport();
+  const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<Tab>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -48,6 +52,16 @@ export default function PassportScreen() {
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const insets = useSafeAreaInsets();
+
+  // Suggestion modal — show the first pending suggestion automatically once per session
+  const [activeSuggestion, setActiveSuggestion] = useState<PassportMemory | null>(null);
+  const suggestionShownRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!suggestionShownRef.current && suggestions.length > 0) {
+      suggestionShownRef.current = true;
+      setActiveSuggestion(suggestions[0]);
+    }
+  }, [suggestions]);
 
   // Own highlight ring state — refreshKey forces an immediate cache-bust + re-fetch
   // after a new highlight is created so the ring activates without waiting for TTL.
@@ -163,6 +177,7 @@ export default function PassportScreen() {
           profile={fallbackProfile}
           postcards={[]}
           stamps={mock.stamps}
+          memories={[]}
           trips={[]}
           tab={tab}
           setTab={setTab}
@@ -200,12 +215,22 @@ export default function PassportScreen() {
     );
   }
 
+  const handleSuggestionAccepted = (id: string) => {
+    setActiveSuggestion(null);
+    reload();
+  };
+
+  const handleSuggestionDismissed = (id: string) => {
+    setActiveSuggestion(null);
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <PassportContent
         profile={profile}
         postcards={localPostcards}
         stamps={stamps}
+        memories={memories}
         trips={trips}
         tab={tab}
         setTab={setTab}
@@ -239,12 +264,19 @@ export default function PassportScreen() {
         onClose={() => setHighlightComposerOpen(false)}
         onSuccess={handleHighlightSuccess}
       />
+      <SuggestedMemoryModal
+        suggestion={activeSuggestion}
+        visible={activeSuggestion !== null}
+        onClose={() => setActiveSuggestion(null)}
+        onAccepted={handleSuggestionAccepted}
+        onDismissed={handleSuggestionDismissed}
+      />
     </View>
   );
 }
 
 function PassportContent({
-  profile, postcards, stamps, trips, tab, setTab,
+  profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
   settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
@@ -252,6 +284,7 @@ function PassportContent({
   profile: OwnProfile;
   postcards: PassportPostcard[];
   stamps: import('../../src/types/models').PassportStamp[];
+  memories: PassportMemory[];
   trips: TripRow[];
   tab: Tab;
   setTab: (t: Tab) => void;
@@ -360,6 +393,7 @@ function PassportContent({
             />
           )}
           {tab === 'stamps' && <StampsTab stamps={stamps} />}
+          {tab === 'memories' && <MemoriesTab memories={memories} onReload={reload} />}
           {tab === 'trips' && <TripsTab trips={trips} isOwner />}
           {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}
           {tab === 'about' && (

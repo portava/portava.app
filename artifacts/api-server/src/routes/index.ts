@@ -31,6 +31,7 @@ import highlightsRouter from "./highlights";
 import placesRouter from "./places";
 import pulseRouter from "./pulse";
 import adminRouter from "./admin";
+import passportStampsRouter from "./passportStamps";
 
 const router: IRouter = Router();
 
@@ -42,6 +43,7 @@ router.use(followsRouter);
 router.use(friendsRouter);
 router.use(profileRouter);
 router.use(passportRouter);
+router.use(passportStampsRouter);
 router.use(telegraphRouter);
 router.use(telegraphChatRouter);
 router.use(telegraphStreamRouter);

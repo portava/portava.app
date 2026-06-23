@@ -1,11 +1,14 @@
 /**
  * usePassport — loads the owner's full passport data.
- * Calls GET /api/me/profile + GET /api/me/passport/postcards + GET /api/me/stamps in parallel.
+ * Calls GET /api/me/profile + GET /api/me/passport/postcards + GET /api/me/stamps
+ * + GET /api/me/passport/memories + GET /api/me/passport/suggestions in parallel.
  * Falls back to mock data if backend is not configured.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models';
+import type { PassportMemory } from '../services/passportStamps';
 import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile';
+import { getMyPassportMemories, getMyPassportSuggestions } from '../services/passportStamps';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { mockPassport } from '../data/passport';
 
@@ -13,6 +16,8 @@ export interface PassportState {
   profile: OwnProfile | null;
   postcards: PassportPostcard[];
   stamps: PassportStamp[];
+  memories: PassportMemory[];
+  suggestions: PassportMemory[];
   loading: boolean;
   error: string | null;
   reload: () => void;
@@ -22,6 +27,8 @@ export function usePassport(): PassportState {
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [postcards, setPostcards] = useState<PassportPostcard[]>([]);
   const [stamps, setStamps] = useState<PassportStamp[]>([]);
+  const [memories, setMemories] = useState<PassportMemory[]>([]);
+  const [suggestions, setSuggestions] = useState<PassportMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -82,18 +89,28 @@ export function usePassport(): PassportState {
           setProfile(mockProfile);
           setPostcards([]);
           setStamps(mock.stamps ?? []);
+          setMemories([]);
+          setSuggestions([]);
           setLoading(false);
         }
       }, 0);
       return () => { alive = false; };
     }
 
-    Promise.all([getMyProfile(), getMyPassportPostcards(), getMyStamps()]).then(([pRes, pcRes, stRes]) => {
+    Promise.all([
+      getMyProfile(),
+      getMyPassportPostcards(),
+      getMyStamps(),
+      getMyPassportMemories(),
+      getMyPassportSuggestions(),
+    ]).then(([pRes, pcRes, stRes, memRes, sugRes]) => {
       if (!alive) return;
       if (pRes.ok && pRes.data) setProfile(pRes.data as OwnProfile);
       else setError(pRes.message ?? 'Could not load profile');
       setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
       setStamps(stRes.ok ? (stRes.data ?? []) : []);
+      setMemories(memRes.ok ? memRes.data : []);
+      setSuggestions(sugRes.ok ? sugRes.data : []);
       setLoading(false);
     }).catch(() => {
       if (!alive) return;
@@ -104,5 +121,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, loading, error, reload };
+  return { profile, postcards, stamps, memories, suggestions, loading, error, reload };
 }

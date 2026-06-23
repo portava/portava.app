@@ -525,6 +525,16 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
                 <Text style={sh.infoLabel}>🔖 Verified Stamps</Text>
                 <Text style={sh.infoText}>GPS-verified posts earn stamps when your current location matches the tagged place (within ~1 mile). Manual tags do not earn stamps.</Text>
               </View>
+              <View style={sh.infoBox}>
+                <Text style={sh.infoLabel}>🏅 Stamp &amp; Memory Visibility</Text>
+                <Text style={sh.infoText}>
+                  New city stamps are public by default. Safe Return stamps are always private.
+                  Memories you add manually default to private until you choose otherwise.
+                </Text>
+                <Text style={sh.infoText}>
+                  You can change the visibility of any individual stamp or memory from the Stamps and Memories tabs on your Passport.
+                </Text>
+              </View>
             </View>
           )}
 
