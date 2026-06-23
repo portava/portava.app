@@ -32,6 +32,7 @@ const PAGE_SIZE        = 20;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/** Internal shape — keeps lat/lng for distance computation only; never returned to clients. */
 export interface DiscoveryPlace {
   id: string;
   name: string;
@@ -39,7 +40,9 @@ export interface DiscoveryPlace {
   type: string | null;
   description: string | null;
   distanceKm: number | null;
+  /** @internal never expose in API responses */
   lat: number | null;
+  /** @internal never expose in API responses */
   lng: number | null;
   tags: string[];
   address: string | null;
@@ -48,6 +51,14 @@ export interface DiscoveryPlace {
   openingHours: string | null;
   rating: number | null;
   isOpenNow: boolean | null;
+}
+
+/** Public shape returned in all API responses — no exact coordinates. */
+export type PublicDiscoveryPlace = Omit<DiscoveryPlace, "lat" | "lng">;
+
+function toPublic(p: DiscoveryPlace): PublicDiscoveryPlace {
+  const { lat: _lat, lng: _lng, ...pub } = p;
+  return pub;
 }
 
 interface CacheEntry {
@@ -368,7 +379,7 @@ router.get("/discovery", async (req, res) => {
 
   if (cached && isFresh(cached)) {
     const filtered = applyFilters(cached.places);
-    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: true });
     return;
   }
@@ -388,11 +399,11 @@ router.get("/discovery", async (req, res) => {
     }
 
     const filtered = applyFilters(places);
-    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
-    res.json({ places: [], total: 0, destination, cached: false });
+    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false });
   }
 });
 

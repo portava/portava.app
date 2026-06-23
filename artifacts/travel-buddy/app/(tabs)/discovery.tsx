@@ -18,6 +18,7 @@ import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
+import { LocationChip } from '../../src/components/LocationChip';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
@@ -121,6 +122,15 @@ export default function DiscoveryHub() {
     setManualCity(city).catch(() => {});
   }, [setManualCity]);
 
+  // Derive LocationChip props from current location state (no coordinates exposed)
+  const locationChipProps = (() => {
+    if (!locationState.place.city) return null;
+    if (locationState.source === 'manual_city') {
+      return { variant: 'trip_city' as const, label: locationState.place.city };
+    }
+    return { variant: 'current_city' as const, label: locationState.place.city };
+  })();
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Header ── */}
@@ -128,6 +138,9 @@ export default function DiscoveryHub() {
         <View style={styles.headerLeft}>
           <Compass size={22} color={color.signal} />
           <Text style={styles.headerTitle}>Discover</Text>
+          {locationChipProps && (
+            <LocationChip {...locationChipProps} size="sm" muted />
+          )}
         </View>
         <DestinationBar destination={destination} onChangeDestination={setDestination} />
       </View>

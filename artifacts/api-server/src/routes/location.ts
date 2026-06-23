@@ -231,10 +231,37 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     if (isValidLat(rLat) && isValidLng(rLng)) { lat = rLat; lng = rLng; }
   }
 
-  // Phase 6 seam: trust-level check — only GPS-sourced stamps count.
-  // Manual city tags pass source="manual" and are allowed to persist for
-  // display but flagged so the Passport knows they are unverified.
-  const trustLevel: "gps_verified" | "manual" = source === "gps" && lat != null ? "gps_verified" : "manual";
+  // Phase 6: trust-level gating.
+  // Cross-check the stamp's claimed city against the user's last known GPS fix
+  // from user_location_state. Mismatches (e.g. city spoofing) are flagged
+  // pending_review so the Passport can display an unverified badge.
+  let trustLevel: "gps_verified" | "manual" | "pending_review" = "manual";
+
+  if (source === "gps" && lat != null) {
+    const { data: locState } = await sc
+      .from("user_location_state")
+      .select("city, last_known_at, source")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (locState?.city && city) {
+      const normalise = (s: string) => s.toLowerCase().trim();
+      const cityMatch = normalise(locState.city) === normalise(city);
+      // Accept if the known GPS city matches, or if the last fix is recent (< 30 min)
+      const fixAge = locState.last_known_at
+        ? Date.now() - new Date(locState.last_known_at as string).getTime()
+        : Infinity;
+      const recentFix = fixAge < 30 * 60 * 1_000;
+
+      trustLevel = cityMatch && recentFix ? "gps_verified" : "pending_review";
+    } else if (locState?.city == null) {
+      // No location state on record — cannot verify, flag for review
+      trustLevel = "pending_review";
+    } else {
+      // We have coordinates but no saved state to cross-check
+      trustLevel = "gps_verified";
+    }
+  }
 
   // Upsert — unique on (user_id, stamp_type, country_code, city)
   const { data: stamp, error } = await sc
