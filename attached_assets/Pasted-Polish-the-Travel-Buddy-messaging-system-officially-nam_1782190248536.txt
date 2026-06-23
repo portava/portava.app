@@ -1,0 +1,494 @@
+Polish the Travel Buddy messaging system, officially named Telegraph.
+
+Goal:
+Telegraph should feel like a modern travel-first messenger built around:
+- direct messages
+- trip group chats
+- trusted circle chats
+- activity recommendations
+- auto-translation
+- rich Discovery previews
+- safety controls
+- clean mobile UX
+
+Keep the name:
+Telegraph
+
+Do not rename it back to messages/chat.
+
+Core surfaces:
+1. Telegraph Inbox
+2. Direct message thread
+3. Trip group Telegraph
+4. Trusted Circle Telegraph
+5. Discovery share into Telegraph
+6. AI activity recommendations inside Telegraph
+7. Translation settings
+8. Safety/report/block controls
+
+1. Telegraph Inbox
+
+Update the inbox screen to show:
+
+- Search bar:
+  “Search Telegraph…”
+
+- Top filter chips:
+  - All
+  - Direct
+  - Trips
+  - Circles
+  - Unread
+  - Requests
+
+Thread row should include:
+- avatar or group image
+- thread title
+- thread type badge:
+  - Direct
+  - Trip
+  - Circle
+- latest message preview
+- translated preview if applicable
+- unread count
+- timestamp
+- mute indicator
+- verified badge if direct user is verified
+- trip/city tag if connected to a trip
+- AI suggestion badge if Compass AI posted a recommendation
+
+Empty state:
+“Your Telegraph is quiet. Start a conversation, join a trip, or share a Discovery card.”
+
+CTA:
+- “Find people”
+- “Explore Discovery”
+- “Start Telegraph”
+
+2. Thread UI polish
+
+Inside each Telegraph thread:
+
+Header should show:
+- title/name
+- avatar/group icon
+- verified badge if applicable
+- subtitle:
+  - Direct: city/language/last active
+  - Trip: trip city + member count
+  - Circle: trusted circle + member count
+- buttons:
+  - Info
+  - Search
+  - Translate settings
+  - Mute
+
+Message bubbles:
+- own messages aligned right
+- others aligned left
+- clean spacing
+- timestamp grouping
+- day divider:
+  - Today
+  - Yesterday
+  - Date
+- read receipt:
+  - Sent
+  - Delivered
+  - Read
+- failed send state with retry
+- long press actions:
+  - Reply
+  - Copy
+  - Translate
+  - Save
+  - Report
+  - Delete for me
+
+Composer:
+- text input placeholder:
+  “Write a Telegraph…”
+- attach button
+- Discovery card button
+- AI suggestion button
+- send button
+- optional quick replies
+
+3. Auto-translation
+
+Telegraph must support auto-translation between users based on default language.
+
+Example:
+- Sender default language: Spanish
+- Receiver default language: English
+- Sender writes Spanish
+- Receiver sees English translation
+- Sender can still view original
+
+Rules:
+- Each user has default_language from About Me/Profile.
+- Each message stores original text and source language.
+- Each recipient can receive translated display text based on their default_language.
+- If translation fails, show original with a small note:
+  “Translation unavailable.”
+- Let user tap:
+  “Show original”
+  “Show translation”
+- Group chats translate per recipient language.
+
+Data fields:
+Message:
+- id
+- threadId
+- senderId
+- originalText
+- sourceLanguage
+- createdAt
+- status
+
+MessageTranslation:
+- id
+- messageId
+- targetUserId
+- targetLanguage
+- translatedText
+- provider
+- status
+- createdAt
+
+Translation settings:
+- autoTranslateEnabled
+- showOriginalByDefault
+- preferredLanguage
+- allowTranslationInGroups
+
+UI copy:
+- “Translated from Spanish”
+- “Show original”
+- “Show translation”
+- “Auto-translate is on”
+
+Do not overwrite original messages with translated text.
+
+4. Telegraph AI recommendations
+
+Compass AI should be able to recommend activities inside Telegraph based on:
+- user About Me
+- travel style
+- interests
+- budget
+- availability
+- comfort level
+- current trip city
+- Discovery saved items
+- time of day
+- language preference
+
+AI recommendation examples:
+- “Andre likes nightlife and luxury experiences. Here are rooftop lounges nearby.”
+- “You both like food and late-night plans. Want to start a food crawl tonight?”
+- “This group is free tomorrow afternoon. Here are three beach activities.”
+
+AI messages should appear as rich recommendation cards, not plain text only.
+
+AI card should include:
+- title
+- category
+- city/location
+- time/date if relevant
+- match reason
+- buttons:
+  - Add to Plan
+  - Save
+  - Share
+  - Not interested
+
+AI rules:
+- AI cannot message users randomly too often.
+- AI recommendations must respect comfort level and privacy.
+- AI should not expose private profile fields.
+- AI should not reveal why another user was recommended using private data.
+- User can mute AI suggestions in a thread.
+
+5. Discovery share into Telegraph
+
+When user taps “Send to Telegraph” from Discovery:
+- open bottom sheet
+- choose:
+  - direct thread
+  - trip group
+  - circle thread
+  - create new Telegraph
+- send rich preview card
+
+Discovery preview card:
+- image or placeholder
+- title
+- category
+- city
+- time/date
+- price indicator
+- short description
+- buttons:
+  - View
+  - Add to Plan
+  - Save
+
+If recipients have different default languages:
+- translate the attached message/caption
+- keep the card title original unless translated title is available
+- never break the preview payload
+
+6. Trip group Telegraph
+
+Each trip should have a group Telegraph.
+
+Rules:
+- Trip owner and accepted trip members can access.
+- Invited but not accepted users cannot read messages.
+- Removed members cannot read future messages.
+- Removed members should no longer see the thread in active inbox.
+- Member sync should run when trip membership changes.
+
+Trip Telegraph header:
+- Trip title
+- City/country
+- Dates
+- member count
+- quick action:
+  - View Trip
+  - Add Plan
+  - Share Discovery
+
+7. Trusted Circle Telegraph
+
+Trusted circles should have circle Telegraph threads.
+
+Rules:
+- circle owner and accepted circle members can access.
+- removed members lose access.
+- circle privacy must be respected.
+- circle threads should show Circle badge.
+
+Circle Telegraph header:
+- Circle name
+- member count
+- quick action:
+  - View Circle
+  - Invite to Plan
+  - Share Discovery
+
+8. Message requests
+
+Add message requests for users who are not connected/trusted yet.
+
+Flow:
+- If user is not connected and not in same trip/circle, first message goes to Requests.
+- Receiver can:
+  - Accept
+  - Decline
+  - Block
+  - Report
+
+Until accepted:
+- sender cannot spam unlimited messages
+- receiver does not expose read receipts
+- receiver can preview safely
+- images/attachments can be blurred or blocked until accepted
+
+9. Safety controls
+
+Every thread should support:
+- Block user
+- Report user/message
+- Leave group if allowed
+- Mute thread
+- Delete thread for me
+- Hide AI suggestions
+- Restrict messages to verified users if user preference says so
+
+Safety rules:
+- blocked users cannot message each other
+- blocked users should not appear in People discovery for each other
+- reported messages keep evidence internally
+- exact live location is never shared automatically
+- profile privacy must be respected
+
+10. Attachments and rich content
+
+Support message content types:
+- text
+- Discovery card
+- Plan card
+- Trip card
+- image placeholder/stub
+- location/city card, not exact live location by default
+- AI recommendation card
+- system event message
+
+System messages:
+- “Andre joined the trip.”
+- “Maria left the Telegraph.”
+- “Plan added: Rooftop Lounge Tonight.”
+- “Compass AI suggested 3 activities.”
+
+11. Backend / Data model
+
+Confirm or add:
+
+message_threads:
+- id
+- thread_type
+  - direct
+  - trip
+  - circle
+- trip_id
+- circle_owner_id
+- title
+- created_at
+- updated_at
+- last_message_at
+
+message_thread_members:
+- thread_id
+- user_id
+- role
+  - owner
+  - member
+- joined_at
+- left_at
+- muted_at
+- last_read_at
+- translation_enabled
+- preferred_language
+
+messages:
+- id
+- thread_id
+- sender_id
+- content_type
+  - text
+  - discovery_card
+  - plan_card
+  - trip_card
+  - ai_recommendation
+  - system
+- original_text
+- source_language
+- payload_json
+- created_at
+- edited_at
+- deleted_at
+- delivery_status
+
+message_translations:
+- id
+- message_id
+- target_user_id
+- target_language
+- translated_text
+- provider
+- status
+- created_at
+
+message_requests:
+- id
+- requester_id
+- recipient_id
+- thread_id
+- status
+  - pending
+  - accepted
+  - declined
+  - blocked
+- created_at
+- updated_at
+
+message_reports:
+- id
+- reporter_id
+- message_id
+- thread_id
+- reason
+- details
+- status
+- created_at
+
+12. API routes / store actions
+
+Add or polish:
+- GET /api/me/threads
+- GET /api/threads/:threadId
+- POST /api/threads/direct
+- POST /api/threads/:threadId/messages
+- PATCH /api/threads/:threadId/read
+- PATCH /api/threads/:threadId/mute
+- POST /api/threads/:threadId/leave
+- POST /api/messages/:messageId/report
+- POST /api/messages/:messageId/translate
+- GET /api/message-requests
+- POST /api/message-requests/:id/accept
+- POST /api/message-requests/:id/decline
+- POST /api/users/:userId/block
+- POST /api/discovery/:itemId/share-to-telegraph
+- POST /api/telegraph/ai/recommend
+
+13. Mobile UX requirements
+
+- Inbox loads fast with skeleton rows.
+- Thread screen should not overflow horizontally.
+- Composer stays pinned above keyboard.
+- Filter chips are horizontally scrollable.
+- Rich cards fit mobile width.
+- Long messages wrap correctly.
+- Group headers collapse cleanly.
+- Empty states look intentional.
+- Failed-send state is obvious but not ugly.
+- Translation labels are small and clean.
+
+14. Privacy rules
+
+- Never show private About Me fields in messages.
+- Never show exact live location unless user explicitly shares it.
+- Only city/trip-level location by default.
+- Respect blocked users.
+- Respect profile visibility.
+- Respect trip/circle membership.
+- Respect user discovery/message preferences.
+- Translation should not leak messages to unauthorized users.
+
+15. Tests
+
+Add tests for:
+- thread inbox loads direct/trip/circle threads
+- removed trip member cannot read trip Telegraph
+- invited but unaccepted trip member cannot read trip Telegraph
+- circle removed member cannot read circle Telegraph
+- direct message creates request when users are not connected
+- accepted request opens normal thread
+- blocked user cannot send message
+- message send success state
+- message send failed retry state
+- auto-translation stores original and translated text
+- user can toggle show original/translation
+- group message translates per recipient
+- Discovery share creates rich preview payload
+- AI recommendation respects privacy and comfort level
+- unread count updates
+- last_read_at updates
+- mute hides notifications
+- report message creates report record
+- private fields are not exposed in thread payload
+- no exact location is sent by default
+- mobile layout does not overflow
+
+Acceptance criteria:
+- Messaging is branded as Telegraph everywhere.
+- Inbox has filters, search, badges, unread counts, and polished empty states.
+- Direct, trip, and circle threads all work.
+- Auto-translation works without overwriting originals.
+- Discovery cards can be shared into Telegraph.
+- Compass AI can recommend activities inside Telegraph.
+- Message requests, block, report, mute, and privacy rules exist.
+- Mobile UI is clean, modern, and does not overflow.
+- Existing trip/circle/member access rules are preserved.
