@@ -1,0 +1,451 @@
+Build the Safe Return system and temporary trusted-circle live sharing for Travel Buddy.
+
+Stay focused only on Safe Return. Do not expand into Passport rewards, airport mode, Compass AI rewards, Trust Score formulas, or broader GPS discovery in this pass.
+
+Build this on top of the shared Location Intelligence Layer and Plans GPS/geofence system.
+
+CORE PRINCIPLE
+
+Safe Return is private-by-default safety infrastructure.
+
+It helps users confirm they made it back safely after plans, nightlife, solo activities, first-time meetups, or travel activities in a new city.
+
+Exact GPS must never be public.
+
+Safe Return must not become always-on tracking.
+
+Trusted Circle alerts and live sharing must only happen if the user explicitly opted in.
+
+The app must not automatically call law enforcement.
+
+The app can present emergency options, but the user or trusted contact chooses what to do.
+
+SAFE RETURN TRIGGERS
+
+Safe Return should be suggested when:
+
+- Plan category is nightlife
+- Plan is late-night
+- User is attending solo
+- User is meeting someone for the first time
+- User is in a new city
+- User is far from their hotel/stay area, if known
+- Plan location has caution flags
+- User manually enables Safe Return
+
+Safe Return should also be manually available from:
+
+- Plan detail screen
+- Active plan screen
+- Trip Crew screen
+- Safety tab/settings
+- User profile safety shortcut if applicable
+
+SAFE RETURN ESCALATION LEVELS
+
+Create clear escalation levels:
+
+Level 0 — Reminder only
+- App reminds the user to confirm they are safe.
+- No trusted contacts are notified.
+
+Level 1 — Trusted Circle check-in
+- If user misses the check-in, selected trusted contacts receive an alert.
+- No exact location is shared unless separately enabled.
+
+Level 2 — Temporary live location share
+- If user misses the check-in and opted in, selected trusted contacts can view temporary live location.
+- Live sharing must expire automatically.
+
+Level 3 — Emergency help prompt
+- App shows emergency options:
+  - Call local emergency number
+  - Message Trusted Circle
+  - Share current location
+  - Open rideshare/maps
+  - Contact host
+  - Contact Trip Crew
+- The app must not automatically call police/law enforcement.
+
+SAFE RETURN SETUP FLOW
+
+Create a Safe Return setup screen.
+
+The setup screen should include:
+
+- Plan name/context
+- Why Safe Return is suggested
+- Timer options:
+  - 15 minutes
+  - 30 minutes
+  - 1 hour
+  - Until plan ends
+  - Until I confirm I’m safe
+- Escalation level selector
+- Trusted Circle contact selector
+- Toggle: notify Trusted Circle if I miss check-in
+- Toggle: share temporary live location if I miss check-in
+- Toggle: notify host or Trip Crew, optional
+- Emergency note/message field
+- Privacy explanation
+- Start Safe Return button
+
+Default settings:
+- Safe Return suggested, not forced.
+- Default escalation = Level 0 reminder only.
+- Trusted Circle alerts off unless user enables them.
+- Live sharing off unless user enables it.
+- Timer default can be 30 minutes or until plan ends depending on plan context.
+
+ACTIVE SAFE RETURN SCREEN
+
+Create an active Safe Return screen showing:
+
+- Timer countdown
+- Plan name
+- Current status
+- Escalation level
+- Who will be alerted
+- Whether live location will be shared
+- “I’m Safe” button
+- “Extend Timer” button
+- “Share Live Location Now” button
+- “Message Trusted Circle” button
+- “Emergency Help” button
+- Cancel Safe Return button
+
+MISSED CHECK-IN FLOW
+
+When the timer expires or the check-in is missed, show:
+
+“We couldn’t confirm you’re safe.”
+
+Options:
+
+- I’m Safe
+- Extend 15 minutes
+- Alert my Trusted Circle
+- Share live location
+- Emergency Help
+
+If the user selected Level 0:
+- Only notify the user.
+
+If the user selected Level 1:
+- Notify selected Trusted Circle contacts after missed check-in.
+
+If the user selected Level 2:
+- Notify selected Trusted Circle contacts and start temporary live sharing only if previously enabled.
+
+If the user selected Level 3:
+- Show emergency help prompt. Do not auto-call emergency services.
+
+TRUSTED CIRCLE ALERTS
+
+Trusted Circle contacts should receive a calm alert.
+
+Alert should include:
+
+- User display name
+- Plan title
+- Last Safe Return status
+- Last known approximate area
+- Missed check-in time
+- Optional emergency note
+- Live location link/view only if user enabled it
+- Buttons/actions:
+  - Message user
+  - Call user, if phone contact exists
+  - View shared location, if allowed
+  - Mark contacted/checking in, if applicable
+
+Do not include exact location unless live sharing was explicitly enabled.
+
+TEMPORARY LIVE LOCATION SHARING
+
+Implement temporary live sharing for Safe Return.
+
+Rules:
+
+- Must be opt-in.
+- Must have expiration.
+- Can be shared only with selected Trusted Circle contacts.
+- Can be stopped by user anytime.
+- Can be started manually by user anytime.
+- Can be started automatically after missed check-in only if user pre-approved it.
+- Never appears on public Pulse, Discovery, Passport, or public plan surfaces.
+- Show approximate area if exact sharing is not enabled.
+- Show expiration countdown to both user and trusted contact where applicable.
+
+Live sharing durations:
+
+- 15 minutes
+- 30 minutes
+- 1 hour
+- Until Safe Return closes
+
+SAFE RETURN DATA MODEL
+
+Create database migrations for:
+
+safe_return_sessions:
+- id
+- user_id
+- plan_id nullable
+- trip_id nullable
+- status
+- trigger_reason
+- escalation_level
+- timer_start_at
+- timer_end_at
+- last_prompt_at
+- last_safe_confirmation_at
+- trusted_circle_enabled
+- live_share_enabled
+- notify_host_enabled
+- notify_trip_crew_enabled
+- emergency_note
+- closed_at
+- created_at
+- updated_at
+
+safe_return_contacts:
+- id
+- session_id
+- contact_user_id nullable
+- contact_name nullable
+- contact_phone nullable
+- contact_email nullable
+- contact_method
+- can_receive_live_location
+- notified_at
+- acknowledged_at
+- created_at
+
+safe_return_events:
+- id
+- session_id
+- user_id
+- event_type
+- metadata
+- created_at
+
+safe_return_live_shares:
+- id
+- session_id
+- user_id
+- recipient_user_id nullable
+- recipient_contact_id nullable
+- status
+- started_at
+- expires_at
+- stopped_at
+- last_location_snapshot_id nullable
+- created_at
+- updated_at
+
+Suggested event types:
+- created
+- suggested
+- started
+- extended
+- user_confirmed_safe
+- missed_check_in
+- trusted_circle_notified
+- live_location_started
+- live_location_stopped
+- live_location_expired
+- emergency_prompt_opened
+- host_notified
+- trip_crew_notified
+- cancelled
+- expired
+- closed
+
+BACKEND SERVICES
+
+Create Safe Return services:
+
+SafeReturnService:
+- create session
+- start session
+- extend timer
+- confirm safe
+- cancel session
+- close session
+- get active session
+- list user history
+
+SafeReturnTriggerService:
+- determine whether Safe Return should be suggested
+- evaluate plan context
+- evaluate late-night/nightlife/solo/new-city/caution conditions
+
+SafeReturnNotificationService:
+- send user reminders
+- send missed check-in notification
+- notify Trusted Circle
+- notify host or Trip Crew only if enabled
+
+SafeReturnLiveShareService:
+- start temporary live share
+- stop live share
+- expire live share
+- resolve safe location view for recipients
+- ensure only authorized recipients can view
+
+SafeReturnPrivacyGuard:
+- prevent exact location exposure outside allowed recipients
+- prevent Safe Return data appearing on public Pulse/Discovery
+- prevent non-recipient access to live share
+- enforce expiration
+- blur hotel/home/sensitive locations
+
+API ENDPOINTS
+
+Add endpoints for:
+
+- Get Safe Return suggestion for a plan
+- Create Safe Return session
+- Start Safe Return session
+- Get active Safe Return session
+- Extend Safe Return timer
+- Confirm safe
+- Cancel Safe Return
+- Trigger missed-check-in handling
+- Start live share
+- Stop live share
+- Get recipient live-share view
+- List Safe Return history
+- Get Trusted Circle contacts for setup
+
+UI REQUIREMENTS
+
+Add Safe Return entry points:
+
+- Plan detail screen
+- Active plan screen
+- Plan check-in success screen
+- Trip Crew screen, if available
+- Safety settings screen
+- Emergency/help shortcut, if available
+
+Add UI components:
+
+- Safe Return setup modal/screen
+- Safe Return active card
+- Safe Return countdown timer
+- Missed check-in prompt
+- Trusted Circle selector
+- Live sharing status card
+- Emergency Help sheet
+- Safety history screen
+
+Safety history should be private to the user and show:
+
+- Completed Safe Returns
+- Missed check-ins
+- Alerts sent
+- Live sharing started/stopped
+- Emergency prompt opened
+
+NOTIFICATION WORDING
+
+Use calm, non-alarming language.
+
+Examples:
+
+- “Safe Return check-in: are you back okay?”
+- “Your Safe Return timer is ending soon.”
+- “Andre has not confirmed Safe Return after a plan. Please check in.”
+- “Live sharing is active for 30 minutes.”
+- “Safe Return completed.”
+
+Avoid language like:
+- “Emergency detected”
+- “Danger confirmed”
+- “Police notified”
+
+ADMIN SUPPORT
+
+Add basic admin support for:
+
+- View Safe Return incident logs
+- View missed check-ins
+- View trusted-circle notification events
+- View live-share start/stop/expiration events
+- Review abuse reports connected to Safe Return
+- Configure default Safe Return timer
+- Configure Safe Return suggestion rules
+
+Admin must not be able to casually browse live user location unless there is a proper safety/admin permission path.
+
+PRIVACY AND SECURITY RULES
+
+Add strict guards:
+
+1. Exact GPS is never public.
+2. Safe Return location is not shown on Pulse, Discovery, Passport, or public plan cards.
+3. Trusted Circle alerts require opt-in.
+4. Live sharing requires opt-in.
+5. Live sharing expires automatically.
+6. User can stop live sharing anytime.
+7. Missed check-in does not automatically call law enforcement.
+8. Non-selected contacts cannot view Safe Return location.
+9. Host and Trip Crew are not notified unless enabled.
+10. Safe Return history is private to the user.
+11. Sensitive locations are blurred unless exact live share is explicitly active for authorized contacts.
+12. Expired live-share links/views must stop working.
+
+TESTS
+
+Add tests for:
+
+- Safe Return suggestion appears for late-night plans.
+- Safe Return suggestion appears for nightlife plans.
+- Safe Return can be manually started.
+- Default escalation is Level 0 reminder only.
+- Trusted Circle alert is not sent unless enabled.
+- Live share is not started unless enabled.
+- Missed check-in triggers correct escalation behavior.
+- Confirming safe closes session.
+- Extending timer updates timer_end_at.
+- Cancelling session prevents escalation.
+- Live share expires automatically.
+- Expired live-share access is denied.
+- Non-recipient cannot access live share.
+- Exact GPS does not appear on public surfaces.
+- Host is not notified unless notify_host_enabled is true.
+- Trip Crew is not notified unless notify_trip_crew_enabled is true.
+- Safety history is visible only to the user.
+- Admin can view event logs but cannot casually access active live location without permission.
+- Emergency prompt opens without auto-calling law enforcement.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- safe_return_enabled
+- safe_return_live_share_enabled
+- safe_return_trusted_circle_alerts_enabled
+- safe_return_admin_logs_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Backend Safe Return services
+3. API endpoints
+4. Safe Return setup UI
+5. Active Safe Return UI
+6. Missed check-in flow
+7. Trusted Circle alert flow
+8. Temporary live sharing flow
+9. Private Safe Return history
+10. Basic admin logs/config
+11. Privacy guards
+12. Tests
+13. Implementation report
+
+Do not break existing Plans, GPS, Trusted Circle, Telegraph, Discovery, Pulse, or Passport flows.
+
+Keep this pass focused on Safe Return only.

@@ -88,6 +88,26 @@ const TOKEN_OTHER  = "tok_other";
 
 type FakeRow = Record<string, any>;
 
+/**
+ * Project a row to only the columns named in the select() call, exactly as a
+ * real DB would.  If the caller passes "*" (or no fields), the full row is
+ * returned.  This is what makes the regression test meaningful: if production
+ * code omits `sender_id` from `.select(...)`, the projected result won't have
+ * the field and `req_.sender_id` will be undefined — matching the original bug.
+ */
+function projectRow(row: FakeRow, selectArg: string): FakeRow {
+  const fields = selectArg.trim();
+  if (!fields || fields === "*") return { ...row };
+  const cols = fields.split(",").map((f) => f.trim()).filter(Boolean);
+  const out: FakeRow = {};
+  for (const col of cols) {
+    if (Object.prototype.hasOwnProperty.call(row, col)) {
+      out[col] = row[col];
+    }
+  }
+  return out;
+}
+
 function makeFakeClient(opts: {
   users?: Record<string, { id: string; email: string }>;
   threadMembers?: FakeRow[];
@@ -100,11 +120,12 @@ function makeFakeClient(opts: {
 
   function makeQuery(table: string) {
     let rows = [...(tableData[table] ?? [])];
+    let selectArg = "*";
     let isUpdate = false;
     let isMaybe = false;
 
     const q: any = {
-      select() { return q; },
+      select(fields = "*") { selectArg = fields; return q; },
       eq(col: string, val: any) {
         rows = rows.filter((r) => r[col] === val);
         return q;
@@ -121,8 +142,9 @@ function makeFakeClient(opts: {
       insert(_data: FakeRow | FakeRow[]) { return q; },
       then(resolve: (v: any) => void, _reject?: (e: any) => void) {
         if (isUpdate) return resolve({ data: null, error: null });
-        if (isMaybe)  return resolve({ data: rows[0] ?? null, error: null });
-        return resolve({ data: rows, error: null });
+        const projected = rows.map((r) => projectRow(r, selectArg));
+        if (isMaybe)  return resolve({ data: projected[0] ?? null, error: null });
+        return resolve({ data: projected, error: null });
       },
     };
     return q;
