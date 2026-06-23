@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
 } from 'react-native';
@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Users } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
 import { useFollow } from '../../src/hooks/useFollow';
-import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
+import { useHighlightRingState, viewedHighlightIds } from '../../src/hooks/useHighlightRingState';
 import { PassportHero } from '../../src/components/PassportHero';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
@@ -31,7 +31,23 @@ export default function PublicPassportScreen() {
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
+  const [sessionAllViewed, setSessionAllViewed] = useState(false);
   const [tab, setTab] = useState<Tab>('postcards');
+
+  // Reset session-viewed flag when navigating to a different user's profile.
+  useEffect(() => {
+    setSessionAllViewed(false);
+  }, [profile?.id]);
+
+  function handleViewerClose() {
+    setHighlightViewerOpen(false);
+    // If the viewer marked all active highlights as seen, mute the ring immediately
+    // without waiting for the 60-second cache TTL to expire.
+    const highlights = ringState?.highlights ?? [];
+    if (highlights.length > 0 && highlights.every((h) => viewedHighlightIds.has(h.id))) {
+      setSessionAllViewed(true);
+    }
+  }
   const insets = useSafeAreaInsets();
 
   const renderContent = () => {
@@ -90,7 +106,7 @@ export default function PublicPassportScreen() {
           followLoading={follow.loading || follow.toggling}
           onFollowPress={follow.toggle}
           hasHighlights={ringState?.hasActive}
-          allHighlightsViewed={ringState?.allViewed}
+          allHighlightsViewed={(ringState?.allViewed ?? false) || sessionAllViewed}
           onHighlightRingPress={ringState?.hasActive ? () => setHighlightViewerOpen(true) : undefined}
         />
 
@@ -169,7 +185,7 @@ export default function PublicPassportScreen() {
       <HighlightViewer
         visible={highlightViewerOpen}
         highlights={ringState?.highlights ?? []}
-        onClose={() => setHighlightViewerOpen(false)}
+        onClose={handleViewerClose}
       />
     </View>
   );
