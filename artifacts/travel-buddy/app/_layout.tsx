@@ -37,6 +37,8 @@ function PushSetup() {
       if (!data) return;
       if (data.screen === 'availability' && typeof data.tripId === 'string') {
         router.push({ pathname: '/trip/[id]', params: { id: data.tripId } } as any);
+      } else if (data.screen === 'meetup' && typeof data.meetupId === 'string') {
+        router.push(`/meetup/${data.meetupId}` as any);
       }
     });
     return () => sub.remove();

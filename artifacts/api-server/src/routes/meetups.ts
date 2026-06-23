@@ -21,6 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { sendPushNotification } from "../lib/push.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -759,6 +760,15 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
     (meetup as any).location_name as string | null,
   ).catch(() => {});
 
+  // Push-notify all Going/Maybe RSVPs (excluding the confirmer). Best-effort:
+  // a push failure must never fail the confirm-time response.
+  pushMeetupTimeConfirmed(
+    meetupId,
+    (meetup as any).title as string,
+    user.id,
+    startsAt,
+  ).catch((err) => req.log.warn({ err }, "confirm-time push dispatch"));
+
   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
 });
 
@@ -855,6 +865,74 @@ function toCamelMeetup(m: any) {
     createdAt:       m.created_at,
     updatedAt:       m.updated_at,
   };
+}
+
+// Push-notify every Going/Maybe RSVP (excluding the confirmer) that the meetup
+// time was locked in. Best-effort: never throws — all errors are logged by the
+// caller. Users without an expo_push_token are silently skipped by sendPushNotification.
+async function pushMeetupTimeConfirmed(
+  meetupId: string,
+  meetupTitle: string,
+  confirmerId: string,
+  startsAt: string,
+): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc) return;
+
+  // RSVPs to notify: Going + Maybe, excluding the confirmer themselves.
+  const { data: invites } = await sc
+    .from("meetup_invites")
+    .select("user_id, status")
+    .eq("meetup_id", meetupId)
+    .in("status", ["going", "maybe"]);
+
+  const recipientIds = Array.from(
+    new Set(
+      (invites ?? [])
+        .map((r: any) => r.user_id as string)
+        .filter((id) => id && id !== confirmerId),
+    ),
+  );
+  if (recipientIds.length === 0) return;
+
+  const [{ data: tokenRows }, { data: confirmerProfile }] = await Promise.all([
+    sc.from("profiles").select("id, expo_push_token").in("id", recipientIds),
+    sc.from("profiles").select("name, handle").eq("id", confirmerId).maybeSingle(),
+  ]);
+
+  const confirmerName =
+    (confirmerProfile as any)?.name ??
+    (confirmerProfile as any)?.handle ??
+    "The organizer";
+
+  const when = formatMeetupWhen(startsAt);
+
+  const pushTokens = (tokenRows ?? []).map(
+    (r: any) => r.expo_push_token as string | null,
+  );
+
+  await sendPushNotification(pushTokens, {
+    title: `${confirmerName} confirmed a meetup time`,
+    body: `${meetupTitle} — ${when}`,
+    data: { screen: "meetup", meetupId },
+  });
+}
+
+// Format a meetup starts_at (local naive ISO like "2026-06-25T18:00:00") into a
+// short human-readable "Thu, Jun 25 · 6:00 PM" label for the push body.
+function formatMeetupWhen(startsAt: string): string {
+  const d = new Date(startsAt);
+  if (Number.isNaN(d.getTime())) return startsAt;
+  const datePart = d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const timePart = d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${datePart} · ${timePart}`;
 }
 
 async function postCancelSystemMessage(
