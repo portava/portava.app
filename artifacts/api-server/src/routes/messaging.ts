@@ -418,9 +418,19 @@ router.get('/me/message-requests', async (req, res) => {
 
   const senderIds = [...new Set((data ?? []).map((r: any) => r.sender_id))];
   let profileMap: Record<string, any> = {};
+  let locationMap: Record<string, string | null> = {};
   if (senderIds.length > 0) {
-    const { data: profiles } = await sc.from('profiles').select(PROFILE_PUBLIC).in('id', senderIds);
+    const { data: profiles } = await sc
+      .from('profiles')
+      .select('id, handle, name, avatar_url, default_language')
+      .in('id', senderIds);
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+
+    const { data: locations } = await sc
+      .from('user_location_state')
+      .select('user_id, city')
+      .in('user_id', senderIds);
+    for (const l of locations ?? []) locationMap[(l as any).user_id] = (l as any).city ?? null;
   }
 
   const requests = (data ?? []).map((r: any) => {
@@ -430,7 +440,14 @@ router.get('/me/message-requests', async (req, res) => {
       previewText: r.preview_text ?? null,
       createdAt: r.created_at,
       sender: p
-        ? { id: p.id, handle: p.handle, name: p.name, avatarUrl: p.avatar_url ?? null }
+        ? {
+            id: p.id,
+            handle: p.handle,
+            name: p.name,
+            avatarUrl: p.avatar_url ?? null,
+            city: locationMap[p.id] ?? null,
+            language: p.default_language ?? null,
+          }
         : null,
     };
   });

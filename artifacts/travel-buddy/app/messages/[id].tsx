@@ -27,7 +27,7 @@ import {
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
   RefreshCw, Clock,
 } from 'lucide-react-native';
-import { useThreadMessages, useLanguageSettings, useMessagePermission, markThreadRead } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings, markThreadRead } from '../../src/hooks/useMessaging';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
@@ -940,17 +940,15 @@ export default function TelegraphThread() {
   const defaultShowOriginal = threadShowOriginal ?? langSettings?.show_original_messages ?? false;
   const isGroupThread = threadType === 'trip' || threadType === 'circle';
 
-  // Sender-side rate-limit: check if this DM is in "waiting for reply" state.
-  // Only relevant for direct threads with a known other user.
-  const { verdict: msgVerdict } = useMessagePermission(
-    threadType === 'direct' ? (otherUserId ?? null) : null,
-  );
-  // "Waiting for reply" = the recipient requires a message request AND the
-  // current user has already sent at least one message (request is in flight).
+  // Sender-side rate-limit: "Waiting for reply" means the current user has
+  // sent messages but the other person hasn't responded yet (their request is
+  // still pending acceptance). Derived purely from message history so it
+  // correctly clears as soon as the recipient sends their first reply.
   const isWaitingForReply =
     threadType === 'direct' &&
-    msgVerdict === 'requires_request' &&
-    messages.some((m) => m.senderId === userId);
+    messages.length > 0 &&
+    messages.some((m) => m.senderId === userId) &&
+    !messages.some((m) => m.senderId !== userId && m.senderId != null);
 
   const headerTitle = title && title.trim() ? title : 'Chat';
 

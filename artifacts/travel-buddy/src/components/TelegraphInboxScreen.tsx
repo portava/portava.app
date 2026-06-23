@@ -440,6 +440,14 @@ function RequestCard({
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
       </View>
 
+      {/* City / language metadata */}
+      {(sender?.city || sender?.language) ? (
+        <View style={rc.metaRow}>
+          {sender.city ? <Text style={rc.metaChip}>{sender.city}</Text> : null}
+          {sender.language ? <Text style={rc.metaChip}>{sender.language.toUpperCase()}</Text> : null}
+        </View>
+      ) : null}
+
       {/* Message preview */}
       {previewText ? (
         <Text style={rc.preview} numberOfLines={3}>{previewText}</Text>
@@ -507,6 +515,17 @@ const rc = StyleSheet.create({
   name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   time: { ...t.small, color: color.faint, fontSize: 11 },
+  metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  metaChip: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: color.deep,
+    backgroundColor: '#E0EFEC',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
   preview: { ...t.body, color: color.mute, lineHeight: 19, fontSize: 13 },
   previewEmpty: { ...t.small, color: color.faint, fontStyle: 'italic', fontSize: 12 },
   primaryRow: { flexDirection: 'row', gap: space.sm, marginTop: 2 },
@@ -562,9 +581,17 @@ function RequestsPane({
     );
   }
 
+  // Dedup by requestId in case the API returns duplicates
+  const seen = new Set<string>();
+  const uniqueRequests = requests.filter((r) => {
+    if (seen.has(r.requestId)) return false;
+    seen.add(r.requestId);
+    return true;
+  });
+
   return (
     <FlatList
-      data={requests}
+      data={uniqueRequests}
       keyExtractor={(item) => item.requestId}
       contentContainerStyle={{ paddingBottom: space.xxxl }}
       renderItem={({ item }) => (

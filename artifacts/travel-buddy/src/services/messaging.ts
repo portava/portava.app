@@ -56,6 +56,8 @@ export interface MessageRequest {
     handle: string;
     name: string;
     avatarUrl: string | null;
+    city: string | null;
+    language: string | null;
   } | null;
 }
 
