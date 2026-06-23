@@ -5,13 +5,14 @@
  * translate raw crew data into safe display labels.
  *
  * PRIVACY CONTRACT:
- *   - Exact lat/lng are NEVER included in crew map responses.
+ *   - Exact lat/lng are ONLY included when the viewer has an active live-share
+ *     grant from that member AND the member has not enabled hotel/home blur.
  *   - Ghost-mode members appear as status "location_hidden" with no area label.
  *   - Non-accepted members (pending, removed) must be rejected upstream; these
  *     helpers assume the caller has already verified membership.
- *   - Live share reveals at most "neighborhood" level; "exact" is not a
- *     valid visibility_level for trip crew (unlike Safe Return which has a
- *     separate live-share flow).
+ *   - Live share reveals at most "nearby" visibility (no higher level).
+ *   - Hotel/home blur: when hotel_blur_enabled=true in location_preferences,
+ *     exact coords are withheld even during active live-share.
  */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -40,13 +41,21 @@ export interface RawMemberLocation {
     shareArrivalStatus: boolean;
     shareSafeReturnStatus: boolean;
   } | null;
-  /** From user_location_state */
+  /** From user_location_state — city/district always; lat/lng only when live-share active */
   locationState: {
     city: string | null;
     district: string | null;
     country: string | null;
     updatedAt: string | null;
+    /** Exact coordinates — only populated when caller has active live-share access */
+    lat?: number | null;
+    lng?: number | null;
   } | null;
+  /**
+   * True when the member's location_preferences has hotel_blur_enabled=true.
+   * When set, exact coords are withheld even during live-share.
+   */
+  hotelBlurEnabled?: boolean;
   /** From plan_checkins for this trip */
   checkInStatus: string | null;
   /** True if user has an active safe_return_session */
@@ -67,6 +76,11 @@ export interface CrewMemberCard {
   statusLabel: CrewStatusLabel;
   /** Human-readable area label e.g. "IT Park, Cebu City" — null when hidden */
   areaLabel: string | null;
+  /**
+   * Exact coordinates — only present when viewer has active live-share access
+   * from this member and hotel/home blur is not enabled.
+   */
+  exactCoords?: { lat: number; lng: number } | null;
   planCheckInStatus: string | null;
   safeReturnActive: boolean;
   liveShareActive: boolean;
@@ -79,7 +93,13 @@ export interface CrewMemberCard {
 
 /**
  * Transforms raw member data into a privacy-safe CrewMemberCard.
- * Never returns exact coordinates; at most returns blurred area labels.
+ *
+ * Exact coordinates (exactCoords) are ONLY included when:
+ *   1. The viewer has an active live-share grant from this member (raw.liveShare != null), AND
+ *   2. The member has not enabled hotel/home blur (raw.hotelBlurEnabled != true), AND
+ *   3. raw.locationState.lat and .lng are populated (passed in by the service).
+ *
+ * In all other cases exactCoords is absent/null.
  */
 export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
   const base = {
@@ -98,22 +118,27 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
   // Ghost mode — member is invisible
   const ghostMode = raw.prefs?.ghostModeEnabled ?? false;
   if (ghostMode) {
-    return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null };
+    return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
   }
 
-  // Prefs default — if no prefs row, treat as hidden
+  // Prefs default — if no prefs row, treat as not_shared
   const visibility = raw.prefs?.defaultVisibility ?? "hidden";
   if (visibility === "hidden") {
-    return { ...base, statusLabel: "not_shared", areaLabel: null };
+    return { ...base, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
   }
 
   // Live share overrides default visibility
   if (raw.liveShare) {
     const areaLabel = resolveAreaLabel(raw.locationState, raw.liveShare.visibilityLevel);
+
+    // Include exact coords only when hotel blur is disabled and coords are available
+    const exactCoords = resolveExactCoords(raw);
+
     return {
       ...base,
       statusLabel: "live_sharing_active",
       areaLabel,
+      exactCoords,
       liveShareActive: true,
       liveShareExpiresAt: raw.liveShare.expiresAt,
       safeReturnActive: raw.hasSafeReturnActive && (raw.prefs?.shareSafeReturnStatus ?? false),
@@ -128,6 +153,7 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
       ...base,
       statusLabel: "safe_return_active",
       areaLabel,
+      exactCoords: null,
       safeReturnActive: true,
       planCheckInStatus: raw.prefs?.shareArrivalStatus ? (raw.checkInStatus ?? null) : null,
     };
@@ -137,17 +163,34 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
   const checkInStatus = raw.prefs?.shareArrivalStatus ? (raw.checkInStatus ?? null) : null;
   if (checkInStatus === "arrived" || checkInStatus === "late") {
     const areaLabel = resolveAreaLabel(raw.locationState, visibilityToLevel(visibility));
-    return { ...base, statusLabel: "arrived", areaLabel, planCheckInStatus: checkInStatus };
+    return { ...base, statusLabel: "arrived", areaLabel, exactCoords: null, planCheckInStatus: checkInStatus };
   }
 
   // Default visibility-level label
   const level = visibilityToLevel(visibility);
   const statusLabel = levelToStatusLabel(level);
   const areaLabel = resolveAreaLabel(raw.locationState, level);
-  return { ...base, statusLabel, areaLabel, planCheckInStatus: checkInStatus };
+  return { ...base, statusLabel, areaLabel, exactCoords: null, planCheckInStatus: checkInStatus };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Returns exact coords for a live-share card — only when:
+ *   - liveShare is active, AND
+ *   - hotel blur is NOT enabled, AND
+ *   - lat + lng are actually available in locationState.
+ */
+function resolveExactCoords(
+  raw: RawMemberLocation,
+): { lat: number; lng: number } | null {
+  if (!raw.liveShare) return null;
+  if (raw.hotelBlurEnabled) return null;
+  const lat = raw.locationState?.lat;
+  const lng = raw.locationState?.lng;
+  if (lat == null || lng == null) return null;
+  return { lat, lng };
+}
 
 type BlurLevel = "city_only" | "neighborhood" | "nearby";
 

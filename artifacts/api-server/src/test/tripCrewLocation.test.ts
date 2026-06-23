@@ -71,6 +71,7 @@ interface FakeState {
   profiles?: any[];
   crewPrefs?: any[];
   locationState?: any[];
+  locationPreferences?: any[];
   planCheckins?: any[];
   safeReturnSessions?: any[];
   crewSessions?: any[];
@@ -90,6 +91,7 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "profiles") return state.profiles ?? [];
     if (table === "trip_crew_location_preferences") return state.crewPrefs ?? [];
     if (table === "user_location_state") return state.locationState ?? [];
+    if (table === "location_preferences") return state.locationPreferences ?? [];
     if (table === "plan_checkins") return state.planCheckins ?? [];
     if (table === "safe_return_sessions") return state.safeReturnSessions ?? [];
     if (table === "trip_crew_location_sessions") return state.crewSessions ?? [];
@@ -645,6 +647,63 @@ describe("Trip Crew Location — lib unit tests (buildCrewCard)", () => {
     });
     assert.equal(card.statusLabel, "arrived");
     assert.equal(card.planCheckInStatus, "arrived");
+  });
+
+  it("33. Live-share + lat/lng + no hotel blur → exactCoords returned", () => {
+    const expiresAt = new Date(Date.now() + 900_000).toISOString();
+    const card = buildCrewCard({
+      userId: "u1",
+      name: "Grace",
+      handle: "grace",
+      avatarUrl: null,
+      prefs: { defaultVisibility: "nearby", ghostModeEnabled: false, shareArrivalStatus: false, shareSafeReturnStatus: false },
+      locationState: { city: "Cebu City", district: "IT Park", country: "PH", updatedAt: null, lat: 10.3157, lng: 123.8854 },
+      hotelBlurEnabled: false,
+      checkInStatus: null,
+      hasSafeReturnActive: false,
+      liveShare: { id: "share-coords", visibilityLevel: "nearby", expiresAt },
+    });
+    assert.equal(card.statusLabel, "live_sharing_active");
+    assert.ok(card.exactCoords, "exactCoords must be present during live-share");
+    assert.equal(card.exactCoords!.lat, 10.3157);
+    assert.equal(card.exactCoords!.lng, 123.8854);
+  });
+
+  it("34. Live-share + hotel blur enabled → exactCoords is null", () => {
+    const expiresAt = new Date(Date.now() + 900_000).toISOString();
+    const card = buildCrewCard({
+      userId: "u1",
+      name: "Hana",
+      handle: "hana",
+      avatarUrl: null,
+      prefs: { defaultVisibility: "nearby", ghostModeEnabled: false, shareArrivalStatus: false, shareSafeReturnStatus: false },
+      locationState: { city: "Cebu City", district: "IT Park", country: "PH", updatedAt: null, lat: 10.3157, lng: 123.8854 },
+      hotelBlurEnabled: true,
+      checkInStatus: null,
+      hasSafeReturnActive: false,
+      liveShare: { id: "share-blur", visibilityLevel: "nearby", expiresAt },
+    });
+    assert.equal(card.statusLabel, "live_sharing_active");
+    assert.equal(card.exactCoords, null, "hotel blur must suppress exact coords even during live-share");
+  });
+
+  it("35. No live-share → exactCoords is null even when lat/lng present", () => {
+    const card = buildCrewCard({
+      userId: "u1",
+      name: "Ivan",
+      handle: "ivan",
+      avatarUrl: null,
+      prefs: { defaultVisibility: "nearby", ghostModeEnabled: false, shareArrivalStatus: false, shareSafeReturnStatus: false },
+      locationState: { city: "Cebu City", district: "IT Park", country: "PH", updatedAt: null, lat: 10.3157, lng: 123.8854 },
+      hotelBlurEnabled: false,
+      checkInStatus: null,
+      hasSafeReturnActive: false,
+      liveShare: null,
+    });
+    assert.equal(card.exactCoords, null, "no live-share → coords must not leak");
+    // raw lat/lng must not appear as top-level properties
+    assert.ok(!("lat" in card));
+    assert.ok(!("lng" in card));
   });
 
 });

@@ -88,6 +88,22 @@ export function CrewMemberCard({ member }: Props) {
             <Text style={s.areaLabel} numberOfLines={1}>{member.areaLabel}</Text>
           </View>
         ) : null}
+        {/* Distinct arrival / check-in row */}
+        {member.planCheckInStatus ? (
+          <View style={s.areaRow}>
+            <CheckCircle2 size={11} color={color.success} />
+            <Text style={[s.areaLabel, { color: color.success }]}>
+              {member.planCheckInStatus === 'arrived' ? 'Arrived at plan' : member.planCheckInStatus}
+            </Text>
+          </View>
+        ) : null}
+        {/* Distinct Safe Return row */}
+        {member.safeReturnActive ? (
+          <View style={s.areaRow}>
+            <Shield size={11} color="#7A4DBF" />
+            <Text style={[s.areaLabel, { color: '#7A4DBF' }]}>Safe Return active</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Status badge */}

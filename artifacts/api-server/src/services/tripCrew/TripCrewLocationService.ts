@@ -4,13 +4,16 @@
  * Assembles the crew map for a trip by joining:
  *   - Accepted members list (trips + trip_members)
  *   - Per-user location preferences (trip_crew_location_preferences)
- *   - Current approximate location (user_location_state — city/district only)
+ *   - Current location (user_location_state — city/district always; lat/lng
+ *     only forwarded to buildCrewCard when viewer has active live-share)
+ *   - Location preferences (location_preferences — hotel_blur_enabled)
  *   - Plan check-in status (plan_checkins)
  *   - Safe Return active status (safe_return_sessions)
  *   - Active live-share sessions (trip_crew_location_sessions)
  *
- * Exact GPS coordinates are never read from user_location_state and never
- * returned in any response shape.
+ * buildCrewCard() enforces the privacy contract: exact coords are only
+ * included in cards where the viewer has an active live-share grant from
+ * that member AND hotel_blur_enabled is false.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../../lib/tripCrewLocation.js";
@@ -77,13 +80,25 @@ export async function getCrewMap(
     ((prefsRes.data as any[]) ?? []).map((p) => [p.user_id, p]),
   );
 
-  // 4. Load user_location_state (city/district only — no lat/lng selected)
+  // 4a. Load user_location_state — always city/district; lat/lng fetched for
+  //     privacy-guard to conditionally expose when live-share is active.
   const locationRes = await db
     .from("user_location_state")
-    .select("user_id, city, district, country, updated_at")
+    .select("user_id, city, district, country, updated_at, lat, lng")
     .in("user_id", allUserIds);
   const locationMap = new Map<string, any>(
     ((locationRes.data as any[]) ?? []).map((l) => [l.user_id, l]),
+  );
+
+  // 4b. Load location_preferences for hotel/home blur flag
+  const locPrefsRes = await db
+    .from("location_preferences")
+    .select("user_id, hotel_blur_enabled")
+    .in("user_id", allUserIds);
+  const hotelBlurSet = new Set<string>(
+    ((locPrefsRes.data as any[]) ?? [])
+      .filter((r) => r.hotel_blur_enabled === true)
+      .map((r) => r.user_id),
   );
 
   // 5. Load plan check-ins for this trip
@@ -128,6 +143,7 @@ export async function getCrewMap(
     const prefs = prefsMap.get(uid);
     const loc = locationMap.get(uid);
     const liveShare = liveShareMap.get(uid) ?? null;
+    const hotelBlur = hotelBlurSet.has(uid);
 
     const raw: RawMemberLocation = {
       userId: uid,
@@ -145,7 +161,11 @@ export async function getCrewMap(
         district: loc.district ?? null,
         country: loc.country ?? null,
         updatedAt: loc.updated_at ?? null,
+        // lat/lng are forwarded; buildCrewCard only uses them when live-share is active
+        lat: loc.lat ?? null,
+        lng: loc.lng ?? null,
       } : null,
+      hotelBlurEnabled: hotelBlur,
       checkInStatus: checkinMap.get(uid) ?? null,
       hasSafeReturnActive: activeSRSet.has(uid),
       liveShare: liveShare ? {
