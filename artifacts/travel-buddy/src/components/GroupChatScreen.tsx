@@ -27,8 +27,8 @@ import {
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
-  Compass, Bot, Copy, Trash2, Flag, Reply, CheckCheck, Search, BookmarkPlus,
-  AlertCircle, RefreshCw,
+  Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus,
+  AlertCircle, RefreshCw, CalendarClock,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat';
@@ -170,12 +170,12 @@ function GroupMessageBubble({
   item,
   mine,
   onLongPress,
-  isLastOwn,
+  receiptState,
 }: {
   item: Message;
   mine: boolean;
   onLongPress?: () => void;
-  isLastOwn?: boolean;
+  receiptState?: 'sent' | 'delivered' | 'read' | null;
 }) {
   if (item.deleted) {
     return (
@@ -209,10 +209,24 @@ function GroupMessageBubble({
           {item.editedAt ? '  ·  edited' : ''}
         </Text>
       </Pressable>
-      {mine && isLastOwn && (
+      {mine && receiptState && (
         <View style={styles.receiptRow}>
-          <CheckCheck size={11} color={color.signal} />
-          <Text style={styles.receiptSent}>Sent</Text>
+          {receiptState === 'read' ? (
+            <>
+              <CheckCheck size={11} color={color.signal} />
+              <Text style={styles.receiptSent}>Read</Text>
+            </>
+          ) : receiptState === 'delivered' ? (
+            <>
+              <CheckCheck size={11} color={color.mute} />
+              <Text style={[styles.receiptSent, { color: color.mute }]}>Delivered</Text>
+            </>
+          ) : (
+            <>
+              <Check size={11} color={color.signal} />
+              <Text style={styles.receiptSent}>Sent</Text>
+            </>
+          )}
         </View>
       )}
     </View>
@@ -271,6 +285,15 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     }
     return null;
   }, [messages, userId]);
+
+  // Compute receipt state: 'sent' while fresh, 'delivered' once confirmed (>3 s)
+  const receiptState = useMemo((): 'sent' | 'delivered' | 'read' | null => {
+    if (!lastOwnMsgId) return null;
+    const lastMsg = messages.find(m => m.id === lastOwnMsgId);
+    if (!lastMsg) return null;
+    const ageSecs = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+    return ageSecs > 3 ? 'delivered' : 'sent';
+  }, [lastOwnMsgId, messages]);
 
   const handleDeleteForMe = useCallback(async (msgId: string) => {
     await deleteMessage(msgId);
@@ -398,6 +421,33 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     >
       {Header}
 
+      {/* Quick-action bar — context-sensitive shortcuts */}
+      <View style={styles.quickBar}>
+        {type === 'trip' ? (
+          <>
+            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('View Trip', 'Trip overview — coming soon.')}>
+              <Globe size={12} color={color.signal} />
+              <Text style={styles.quickBtnText}>View Trip</Text>
+            </Pressable>
+            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Add Plan', 'Add a plan item — coming soon.')}>
+              <CalendarClock size={12} color={color.signal} />
+              <Text style={styles.quickBtnText}>Add Plan</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('View Circle', 'Circle overview — coming soon.')}>
+              <Users size={12} color={color.signal} />
+              <Text style={styles.quickBtnText}>View Circle</Text>
+            </Pressable>
+            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}>
+              <Compass size={12} color={color.signal} />
+              <Text style={styles.quickBtnText}>Share Discovery</Text>
+            </Pressable>
+          </>
+        )}
+      </View>
+
       <FlatList
         ref={listRef}
         data={listItems}
@@ -445,7 +495,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   setActionMsg(m);
                   setActionMsgMine(mine);
                 }}
-                isLastOwn={m.id === lastOwnMsgId && !sendFailed}
+                receiptState={m.id === lastOwnMsgId ? receiptState : null}
               />
             </View>
           );
@@ -654,6 +704,28 @@ const styles = StyleSheet.create({
 
   noAccessBar: { flex: 1, paddingVertical: space.md, alignItems: 'center' },
   noAccessText: { ...t.small, color: color.mute, textAlign: 'center' },
+
+  quickBar: {
+    flexDirection: 'row',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  quickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    backgroundColor: color.signal + '0D',
+  },
+  quickBtnText: { ...t.stamp, color: color.signal, fontSize: 11, fontWeight: '600' },
 
   failedBanner: {
     flexDirection: 'row',

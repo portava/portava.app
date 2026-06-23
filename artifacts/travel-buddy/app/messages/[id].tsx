@@ -566,7 +566,7 @@ function MessageBubble({
   defaultShowOriginal,
   isGroupThread,
   onLongPress,
-  isLastOwn,
+  receiptState,
 }: {
   item: Message;
   mine: boolean;
@@ -574,7 +574,7 @@ function MessageBubble({
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
   onLongPress?: () => void;
-  isLastOwn?: boolean;
+  receiptState?: 'sent' | 'delivered' | 'read' | null;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -684,10 +684,24 @@ function MessageBubble({
       </Pressable>
 
       {/* Read receipt — shown on the last own message only */}
-      {mine && isLastOwn && (
+      {mine && receiptState && (
         <View style={styles.receiptRow}>
-          <CheckCheck size={11} color={color.signal} />
-          <Text style={styles.receiptSent}>Sent</Text>
+          {receiptState === 'read' ? (
+            <>
+              <CheckCheck size={11} color={color.signal} />
+              <Text style={styles.receiptSent}>Read</Text>
+            </>
+          ) : receiptState === 'delivered' ? (
+            <>
+              <CheckCheck size={11} color={color.mute} />
+              <Text style={[styles.receiptSent, { color: color.mute }]}>Delivered</Text>
+            </>
+          ) : (
+            <>
+              <Check size={11} color={color.signal} />
+              <Text style={styles.receiptSent}>Sent</Text>
+            </>
+          )}
         </View>
       )}
     </View>
@@ -788,6 +802,8 @@ export default function TelegraphThread() {
   const [actionMsgMine, setActionMsgMine] = useState(false);
   // DM profile for richer header
   const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
+  // Other party's last_read_at for DM read receipts
+  const [dmOtherLastRead, setDmOtherLastRead] = useState<string | null>(null);
   // Member count for trip/circle threads
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -841,6 +857,20 @@ export default function TelegraphThread() {
         }
       });
   }, [threadType, otherUserId]);
+
+  // Fetch other party's last_read_at for DM read receipts
+  useEffect(() => {
+    if (threadType !== 'direct' || !id || !otherUserId) return;
+    supabase
+      .from('message_thread_members')
+      .select('last_read_at')
+      .eq('thread_id', id)
+      .eq('user_id', otherUserId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setDmOtherLastRead((data as any).last_read_at ?? null);
+      });
+  }, [threadType, id, otherUserId]);
 
   // Fetch member count for trip / circle threads
   useEffect(() => {
@@ -911,6 +941,20 @@ export default function TelegraphThread() {
     }
     return null;
   }, [messages, userId]);
+
+  // Compute receipt state for the last own message: 'sent' | 'delivered' | 'read'
+  const receiptState = useMemo((): 'sent' | 'delivered' | 'read' | null => {
+    if (!lastOwnMsgId) return null;
+    const lastMsg = messages.find(m => m.id === lastOwnMsgId);
+    if (!lastMsg) return null;
+    // DM: check if the other party has read past this message
+    if (threadType === 'direct' && dmOtherLastRead) {
+      if (new Date(dmOtherLastRead) >= new Date(lastMsg.createdAt)) return 'read';
+    }
+    // Delivered heuristic: message is older than 3 seconds (broadcast confirmed)
+    const ageSecs = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+    return ageSecs > 3 ? 'delivered' : 'sent';
+  }, [lastOwnMsgId, messages, threadType, dmOtherLastRead]);
 
   // Handle delete for me from the action sheet
   const handleDeleteForMe = useCallback(async (msgId: string) => {
@@ -987,8 +1031,8 @@ export default function TelegraphThread() {
     const displayName = threadType === 'direct'
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
-    // Direct: show "City · Telegraph" when city is available, otherwise just "Telegraph"
-    const directSubtitle = dmProfile?.city ? `${dmProfile.city} · Telegraph` : 'Telegraph';
+    // Direct: show "City · Last active" subtitle
+    const directSubtitle = dmProfile?.city ? `${dmProfile.city} · Active recently` : 'Active recently';
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'
@@ -1084,7 +1128,7 @@ export default function TelegraphThread() {
           </Pressable>
           <Pressable style={styles.quickBtn} onPress={handlePlanMeetupButton}>
             <CalendarClock size={12} color={color.signal} />
-            <Text style={styles.quickBtnText}>Plan Meetup</Text>
+            <Text style={styles.quickBtnText}>Add Plan</Text>
           </Pressable>
         </View>
       );
@@ -1098,7 +1142,7 @@ export default function TelegraphThread() {
           </Pressable>
           <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}>
             <Compass size={12} color={color.signal} />
-            <Text style={styles.quickBtnText}>Share Place</Text>
+            <Text style={styles.quickBtnText}>Share Discovery</Text>
           </Pressable>
         </View>
       );
@@ -1165,7 +1209,7 @@ export default function TelegraphThread() {
                   setActionMsg(m);
                   setActionMsgMine(mine);
                 }}
-                isLastOwn={m.id === lastOwnMsgId}
+                receiptState={m.id === lastOwnMsgId ? receiptState : null}
               />
             </View>
           );
