@@ -82,7 +82,7 @@ export async function buildDiscoveryContext(opts: {
         return buildCityContext(currentCity, currentCountry, "near_me", db);
       }
       const verified = currentCity
-        ? (await getVerifiedPlaces(db, currentCity)).map((p) => p.id)
+        ? (await getVerifiedPlaces(db, currentCity)).map((p) => p.osmId).filter((id): id is string => Boolean(id))
         : [];
       return {
         mode,
@@ -104,7 +104,7 @@ export async function buildDiscoveryContext(opts: {
       // Use next trip destination if available — fall back to current city
       const tripCity = await getNextTripCity(db, opts.userId);
       const city = tripCity ?? currentCity;
-      const verified = city ? (await getVerifiedPlaces(db, city)).map((p) => p.id) : [];
+      const verified = city ? (await getVerifiedPlaces(db, city)).map((p) => p.osmId).filter((id): id is string => Boolean(id)) : [];
       return {
         mode,
         targetCity: city,
@@ -126,7 +126,7 @@ export async function buildDiscoveryContext(opts: {
 
     case "safe_nearby": {
       const verified = currentCity
-        ? (await getVerifiedPlaces(db, currentCity)).map((p) => p.id)
+        ? (await getVerifiedPlaces(db, currentCity)).map((p) => p.osmId).filter((id): id is string => Boolean(id))
         : [];
       return {
         mode,
@@ -149,7 +149,7 @@ async function buildCityContext(
   db: SupabaseClient,
   overrides?: Partial<DiscoveryContext>,
 ): Promise<DiscoveryContext> {
-  const verified = city ? (await getVerifiedPlaces(db, city)).map((p) => p.id) : [];
+  const verified = city ? (await getVerifiedPlaces(db, city)).map((p) => p.osmId).filter((id): id is string => Boolean(id)) : [];
   return {
     mode,
     targetCity: city,

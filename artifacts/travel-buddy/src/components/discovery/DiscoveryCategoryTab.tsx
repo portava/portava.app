@@ -3,7 +3,7 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
+import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
 import { getDiscoveryPlaces } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import PlaceCard from './PlaceCard';
@@ -202,6 +202,7 @@ interface DiscoveryCategoryTabProps {
   onSelectPlace: (place: DiscoveryPlace) => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
   onPickDestination?: (city: string) => void;
+  contextMode?: DiscoveryContextMode | null;
 }
 
 export function DiscoveryCategoryTab({
@@ -210,6 +211,7 @@ export function DiscoveryCategoryTab({
   onSelectPlace,
   onAddToPlan,
   onPickDestination,
+  contextMode,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -239,7 +241,7 @@ export function DiscoveryCategoryTab({
     if (reset) setLoading(true);
     setError(null);
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage);
+    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode);
 
     setLoading(false);
     setRefreshing(false);

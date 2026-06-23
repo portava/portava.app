@@ -52,13 +52,14 @@ function recToPlace(rec: TelegraphRecommendation): DiscoveryPlace {
 interface ForYouTabProps {
   destination: string;
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
+  contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
 }
 
 type ForYouItem =
   | { kind: 'telegraph'; rec: TelegraphRecommendation; place: DiscoveryPlace }
   | { kind: 'osm'; place: DiscoveryPlace };
 
-export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -83,7 +84,7 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
     // Fire OSM and Telegraph simultaneously.
     // OSM is a simple geocode + database query (~1–2 s).
     // Telegraph is an AI call — capped at 10 s by AbortController in the service.
-    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null });
+    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode);
     const telPromise = isAuthed
       ? getForYouRecommendations({ destination, count: 5 })
       : null;

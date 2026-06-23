@@ -96,11 +96,19 @@ export async function getCommunityPlaces(
 
 // ── OSM places (existing) ─────────────────────────────────────────────────────
 
+export type DiscoveryContextMode =
+  | 'near_me'
+  | 'in_city'
+  | 'going_soon'
+  | 'around_crew'
+  | 'safe_nearby';
+
 export async function getDiscoveryPlaces(
   destination: string,
   category: DiscoveryCategory,
   filters: DiscoveryFilters,
   page = 1,
+  contextMode?: DiscoveryContextMode | null,
 ): Promise<{ ok: true; data: DiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -112,6 +120,7 @@ export async function getDiscoveryPlaces(
     page: String(page),
     ...(filters.openNow ? { openNow: '1' } : {}),
     ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
+    ...(contextMode ? { context: contextMode } : {}),
   });
 
   try {

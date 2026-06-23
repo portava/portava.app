@@ -392,14 +392,12 @@ function contextModeLabel(mode: string, city: string | null): string {
 }
 
 router.get("/discovery", async (req, res) => {
-  const destination = (req.query.destination as string | undefined)?.trim();
-  if (!destination) {
-    res.status(400).json({ error: "invalid_payload", message: "destination is required" });
-    return;
-  }
+  const destinationParam = (req.query.destination as string | undefined)?.trim() || undefined;
 
   // Optional auth — enrich with DiscoveryLocationContext when present.
-  // Never blocks unauthenticated callers; degrades gracefully.
+  // When authenticated + no destination param, we use discoveryCtx.targetCity as
+  // the effective destination so context-driven modes (near_me/going_soon) work
+  // without requiring the client to geocode first.
   let discoveryCtx: DiscoveryContext | null = null;
 
   const authHeader = req.headers.authorization;
@@ -431,6 +429,14 @@ router.get("/discovery", async (req, res) => {
         });
       }
     } catch { /* degrade — non-fatal */ }
+  }
+
+  // Resolve effective destination: explicit query param takes priority; fall back
+  // to DiscoveryContext.targetCity so context-driven modes work without client geocoding.
+  const destination = destinationParam ?? discoveryCtx?.targetCity ?? undefined;
+  if (!destination) {
+    res.status(400).json({ error: "invalid_payload", message: "destination is required" });
+    return;
   }
 
   // Context mode: near_me | in_city | going_soon | around_crew | safe_nearby

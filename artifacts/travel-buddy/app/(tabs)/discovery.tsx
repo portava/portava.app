@@ -8,7 +8,7 @@ import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
   Calendar, Waves, Navigation,
 } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryPlace } from '../../src/services/discovery';
+import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
@@ -44,6 +44,22 @@ const TABS: HubTab[] = [
 
 const VALID_CATEGORY_KEYS = TABS.map((t) => t.key);
 
+// ── Context modes ─────────────────────────────────────────────────────────────
+
+interface ContextModeItem {
+  key: DiscoveryContextMode;
+  label: string;
+  Icon: React.ComponentType<{ size: number; color: string }>;
+}
+
+const CONTEXT_MODES: ContextModeItem[] = [
+  { key: 'near_me',      label: 'Near Me',      Icon: Navigation },
+  { key: 'in_city',      label: 'In City',      Icon: MapPin     },
+  { key: 'going_soon',   label: 'Going Soon',   Icon: Calendar   },
+  { key: 'around_crew',  label: 'Around Crew',  Icon: Compass    },
+  { key: 'safe_nearby',  label: 'Safe Nearby',  Icon: Activity   },
+];
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function DiscoveryHub() {
@@ -67,6 +83,7 @@ export default function DiscoveryHub() {
   const [destination, setDestination] = useState(
     () => locationState.place.city ?? 'Paris'
   );
+  const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
 
@@ -145,6 +162,30 @@ export default function DiscoveryHub() {
         <DestinationBar destination={destination} onChangeDestination={setDestination} />
       </View>
 
+      {/* ── Context mode selector ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.modeBar}
+        contentContainerStyle={styles.modeBarContent}
+      >
+        {CONTEXT_MODES.map((m) => {
+          const active = m.key === contextMode;
+          return (
+            <Pressable
+              key={m.key}
+              style={[styles.modeChip, active && styles.modeChipActive]}
+              onPress={() => setContextMode(m.key)}
+            >
+              <m.Icon size={12} color={active ? color.signal : color.mute} />
+              <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>
+                {m.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
       {/* ── Tab bar ── */}
       <ScrollView
         horizontal
@@ -182,18 +223,20 @@ export default function DiscoveryHub() {
       <View style={{ flex: 1 }}>
         {activeTab === 'for_you' ? (
           <ForYouTab
-            key={destination}
+            key={`${destination}-${contextMode}`}
             destination={destination}
             onAddToPlan={handleAddToPlan}
+            contextMode={contextMode}
           />
         ) : (
           <DiscoveryCategoryTab
-            key={`${activeTab}-${destination}`}
+            key={`${activeTab}-${destination}-${contextMode}`}
             category={activeTab}
             destination={destination}
             onSelectPlace={handleSelectPlace}
             onAddToPlan={handleAddToPlanFromPlace}
             onPickDestination={handlePickDestination}
+            contextMode={contextMode}
           />
         )}
       </View>
@@ -275,5 +318,39 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: color.signal,
     fontWeight: '700',
+  },
+  modeBar: {
+    flexGrow: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  modeBarContent: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    gap: space.xs,
+  },
+  modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: color.haze,
+  },
+  modeChipActive: {
+    backgroundColor: color.signal + '14',
+    borderColor: color.signal + '50',
+  },
+  modeChipLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: color.mute,
+  },
+  modeChipLabelActive: {
+    color: color.signal,
   },
 });
