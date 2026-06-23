@@ -15,7 +15,7 @@ import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
 import { Users, CheckCircle, UserPlus, Clock, UserCheck, MessageCircle, X, MoreVertical, ShieldAlert } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
-import { getProfileByHandle } from '../../src/services/friends';
+import { getProfileByHandle, getProfileById } from '../../src/services/friends';
 import { useSession } from '../../src/context/SessionContext';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
@@ -274,7 +274,8 @@ export default function Profile() {
     if (!handle) return;
     setLoading(true);
     setLoadError(null);
-    const res = await getProfileByHandle(handle as string);
+    let res = await getProfileByHandle(handle as string);
+    if (!res.ok) res = await getProfileById(handle as string);
     if (res.ok && res.data) setProfile(res.data as PublicProfile);
     else setLoadError('Could not load this profile.');
     setLoading(false);
