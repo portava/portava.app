@@ -3,6 +3,21 @@
  * Hand-seeded. Every item carries source/status/verified. NOT verified truth.
  * UI must show soft labels ("Starter city notes", "Popular with travelers").
  * Replace later via real place data + attribution.
+ *
+ * USER IDs IN THIS FILE
+ * ---------------------
+ * `submittedBy.id` and `user.id` must be real `profiles.id` UUIDs (uuid v4) from
+ * Supabase once discovery is backed by a real API query.  Until then:
+ *
+ *   - Entries whose contributor IS in the cebu.ts seed world (u_1, u_2, u_3…)
+ *     keep their short seed ID — HighlightRing will fire but gracefully return
+ *     nothing for non-existent highlights.
+ *   - Entries whose contributor has NO matching seed profile omit `id` entirely
+ *     (undefined).  HighlightRing skips the fetch and renders a plain avatar.
+ *
+ * When the discovery screen is refactored to fetch from Supabase, replace every
+ * `id` value here with the real UUID returned by the API (profiles.id column).
+ * @dev-only seed data — do not ship to production without a real data source.
  */
 import type { Interest } from '../types/models';
 
@@ -69,8 +84,8 @@ const TRAVELER = (name: string, avatarUrl: string, id?: string) => ({ name, avat
 
 export const hiddenGems: DiscoveryItem[] = [
   { id: 'hg1', name: 'The Backspace Cafe', category: 'hidden_gem', neighborhood: 'Lahug, Cebu City', city: 'Cebu', blurb: 'Cozy cafe with great coffee and quiet vibes.', submittedBy: TRAVELER('Anna', 'https://i.pravatar.cc/120?img=5', 'u_1'), ...SEED },
-  { id: 'hg2', name: 'Sirao Garden', category: 'hidden_gem', neighborhood: 'Sirao, Cebu', city: 'Cebu', blurb: 'Flower garden with mountain views.', submittedBy: TRAVELER('Mark', 'https://i.pravatar.cc/120?img=12', 'dsc_usr_4f2a8b1c'), ...SEED },
-  { id: 'hg3', name: 'Sugbo Mercado', category: 'hidden_gem', neighborhood: 'IT Park, Cebu City', city: 'Cebu', blurb: 'Food market with local vendors and live music.', submittedBy: TRAVELER('Jessa', 'https://i.pravatar.cc/120?img=9', 'dsc_usr_7e3c9d0f'), ...SEED },
+  { id: 'hg2', name: 'Sirao Garden', category: 'hidden_gem', neighborhood: 'Sirao, Cebu', city: 'Cebu', blurb: 'Flower garden with mountain views.', submittedBy: TRAVELER('Mark', 'https://i.pravatar.cc/120?img=12'), ...SEED },
+  { id: 'hg3', name: 'Sugbo Mercado', category: 'hidden_gem', neighborhood: 'IT Park, Cebu City', city: 'Cebu', blurb: 'Food market with local vendors and live music.', submittedBy: TRAVELER('Jessa', 'https://i.pravatar.cc/120?img=9'), ...SEED },
   { id: 'hg4', name: 'Tamagas Falls', category: 'hidden_gem', neighborhood: 'Alegria, Cebu', city: 'Cebu', blurb: 'Hidden waterfall and natural lagoon.', submittedBy: TRAVELER('Carlo', 'https://i.pravatar.cc/120?img=15', 'u_3'), ...SEED },
   { id: 'hg5', name: 'Speakeasy Cebu', category: 'hidden_gem', neighborhood: 'Capitol Site', city: 'Cebu', blurb: 'Hidden bar with craft cocktails.', submittedBy: TRAVELER('Vince', 'https://i.pravatar.cc/120?img=33', 'u_2'), ...SEED },
 ];
@@ -109,9 +124,9 @@ export interface TravelerPick {
 }
 
 export const travelerPicks: TravelerPick[] = [
-  { id: 'tp1', user: TRAVELER('Leo', 'https://i.pravatar.cc/120?img=8', 'dsc_usr_2a7f3e91'), place: 'The Distillery Cebu', note: 'Great cocktails and vibes!', city: 'Cebu City', rating: 4.6, tag: 'Nightlife', timeAgo: '2h ago', source: 'traveler', status: 'provisional', verified: false },
-  { id: 'tp2', user: TRAVELER('Mia', 'https://i.pravatar.cc/120?img=20', 'dsc_usr_5b0c8d4a'), place: 'Casa Verde Cebu', note: 'Amazing Spanish food!', city: 'Cebu City', rating: 4.7, tag: 'Food', timeAgo: '5h ago', source: 'traveler', status: 'provisional', verified: false },
-  { id: 'tp3', user: TRAVELER('Josh', 'https://i.pravatar.cc/120?img=14', 'dsc_usr_9e1d6c2b'), place: 'Virgin Island', note: 'Crystal clear waters.', city: 'Bantayan', rating: 4.8, tag: 'Beach', timeAgo: '1d ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp1', user: TRAVELER('Leo', 'https://i.pravatar.cc/120?img=8'), place: 'The Distillery Cebu', note: 'Great cocktails and vibes!', city: 'Cebu City', rating: 4.6, tag: 'Nightlife', timeAgo: '2h ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp2', user: TRAVELER('Mia', 'https://i.pravatar.cc/120?img=20'), place: 'Casa Verde Cebu', note: 'Amazing Spanish food!', city: 'Cebu City', rating: 4.7, tag: 'Food', timeAgo: '5h ago', source: 'traveler', status: 'provisional', verified: false },
+  { id: 'tp3', user: TRAVELER('Josh', 'https://i.pravatar.cc/120?img=14'), place: 'Virgin Island', note: 'Crystal clear waters.', city: 'Bantayan', rating: 4.8, tag: 'Beach', timeAgo: '1d ago', source: 'traveler', status: 'provisional', verified: false },
 ];
 
 export interface SavedDiscoveryItem {
