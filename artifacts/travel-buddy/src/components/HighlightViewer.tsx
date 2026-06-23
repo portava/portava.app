@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
-import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2 } from 'lucide-react-native';
+import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -70,6 +70,10 @@ export function HighlightViewer({
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
+  // Mute state for video highlights. As component state it survives index
+  // changes, so the choice carries forward as highlights advance and persists
+  // for the session (not reset when the viewer reopens).
+  const [isMuted, setIsMuted] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRef = useRef<Video>(null);
   // goNextRef lets the stable handleVideoStatus callback call the latest goNext
@@ -192,6 +196,10 @@ export function HighlightViewer({
     );
   }
 
+  const toggleMute = useCallback(() => {
+    setIsMuted((m) => !m);
+  }, []);
+
   function goPrev() {
     if (index > 0) {
       const prev = index - 1;
@@ -270,7 +278,7 @@ export function HighlightViewer({
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}
             isLooping={false}
-            isMuted={false}
+            isMuted={isMuted}
             useNativeControls={false}
             onPlaybackStatusUpdate={handleVideoStatus}
           />
@@ -311,6 +319,17 @@ export function HighlightViewer({
             </View>
           )}
           <View style={{ flex: 1 }} />
+          {isVideo && (
+            <Pressable
+              onPress={toggleMute}
+              hitSlop={8}
+              style={[s.closeBtn, s.muteBtn]}
+              accessibilityRole="button"
+              accessibilityLabel={isMuted ? 'Unmute video' : 'Mute video'}
+            >
+              {isMuted ? <VolumeX size={20} color="#fff" /> : <Volume2 size={20} color="#fff" />}
+            </Pressable>
+          )}
           {isOwner && onAddHighlight && (
             <Pressable onPress={onAddHighlight} hitSlop={8} style={[s.closeBtn, s.addBtn]}>
               <Plus size={20} color="#fff" />
@@ -477,6 +496,7 @@ const s = StyleSheet.create({
   timeText: { color: '#fff', fontSize: 11, fontFamily: 'Courier', fontWeight: '700' },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,15,0.4)' },
   addBtn: { marginRight: 8 },
+  muteBtn: { marginRight: 8 },
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },
