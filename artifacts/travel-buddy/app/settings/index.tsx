@@ -2,13 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, Brain, Globe } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
-import { useSession } from '../src/context/SessionContext';
-import { color, space, type as t, radius, layout } from '../src/theme/tokens';
-import { updateTelegraphChatSettings } from '../src/services/telegraphChat';
-import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../src/services/intelligence';
-import { SUPPORTED_LANGUAGES } from './language-picker';
-import { useLanguagePreference } from '../src/context/LanguagePreferenceContext';
+import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { useSession } from '../../src/context/SessionContext';
+import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
+import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
+import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
+import { SUPPORTED_LANGUAGES } from '../language-picker';
+import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
@@ -125,6 +125,8 @@ export default function Settings() {
       router.push('/profile/edit');
     } else if (label === 'Notifications') {
       router.push('/notifications');
+    } else if (label === 'Location settings') {
+      router.push('/settings/location' as any);
     } else if (
       label === 'Hide current location' ||
       label === 'Hide upcoming trips' ||
@@ -151,7 +153,7 @@ export default function Settings() {
   const BASIC_GROUPS = [
     { h: 'Privacy', items: ['Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
     { h: 'Safety', items: ['Blocked accounts', 'Report history', 'Muted words'] },
-    { h: 'Account', items: ['Edit profile', 'Notifications', 'Log out'] },
+    { h: 'Account', items: ['Edit profile', 'Notifications', 'Location settings', 'Log out'] },
   ];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];

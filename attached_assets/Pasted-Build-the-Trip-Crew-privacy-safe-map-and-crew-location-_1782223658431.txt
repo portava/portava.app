@@ -1,0 +1,283 @@
+Build the Trip Crew privacy-safe map and crew location coordination system for Travel Buddy.
+
+Build this on top of the shared Location Intelligence Layer, Plans geofencing, and Safe Return system.
+
+Stay focused on Trip Crew coordination only. Do not expand into Passport rewards, airport mode, Compass AI, or broader Discovery in this pass.
+
+Core principle:
+Trip Crew location should help accepted members coordinate safely without exposing exact location by default.
+
+Exact GPS must never be public.
+Exact crew pins must never be shown by default.
+Crew members should see privacy-safe status, approximate area, arrival state, and optional temporary live share only when explicitly enabled.
+
+TRIP CREW MAP FEATURES
+
+Create a Trip Crew map or coordination screen showing:
+- Crew members
+- Plan locations
+- Accepted trip activities
+- Nearby/arrived/on-the-way statuses
+- Safe Return active status
+- Optional live sharing status
+- Approximate group areas
+- Venue or meetup markers where allowed
+
+Crew member status options:
+- Not shared
+- City only
+- Same neighborhood
+- Nearby
+- On the way
+- Arrived
+- Checked in
+- Safe Return active
+- Confirmed safe
+- Needs check-in
+- Live sharing active
+
+Do not show exact coordinates unless the user has enabled live sharing for that crew.
+
+LOCATION PRIVACY LEVELS
+
+Support crew location visibility levels:
+1. Hidden
+2. City only
+3. Neighborhood
+4. Nearby status
+5. Arrived/check-in status
+6. Temporary live share
+
+Default:
+- City/neighborhood or status only
+- No exact pin
+- No live sharing unless user opts in
+
+TEMPORARY LIVE SHARE
+
+Crew members can choose:
+- Share exact location for 15 minutes
+- Share exact location for 30 minutes
+- Share exact location for 1 hour
+- Share until plan ends
+- Stop sharing anytime
+
+Live sharing must expire automatically.
+
+Only accepted Trip Crew members selected by the user can view live sharing.
+
+Removed users lose access immediately.
+
+APPROXIMATE MAP DESIGN
+
+Use privacy-safe map visuals:
+- Area bubbles
+- Venue markers
+- Plan markers
+- “Nearby” rings
+- Group density indicators
+- Arrival status labels
+
+Avoid exact person pins unless live share is active.
+
+Examples:
+- “3 crew members near the venue”
+- “Andre is nearby”
+- “Maya arrived”
+- “2 crew members still on the way”
+- “Safe Return active for 1 member”
+
+PLAN + CHECK-IN INTEGRATION
+
+Connect Trip Crew map to Plans:
+- Show accepted plan meetup points only to accepted members.
+- Hide private exact locations from pending/rejected/removed users.
+- Show check-in status from plan geofencing.
+- Show host arrived status if allowed.
+- Show number of crew members checked in.
+- Let users open plan details from the crew map.
+
+SAFE RETURN INTEGRATION
+
+Connect Safe Return:
+- Show “Safe Return active” status only to allowed crew/trusted contacts.
+- Do not reveal Safe Return location unless user enabled live sharing.
+- Show “confirmed safe” when user completes Safe Return.
+- Show “needs check-in” only according to Safe Return privacy settings.
+- Do not notify full crew unless user enabled crew notification.
+
+GHOST MODE
+
+Add Ghost Mode support:
+- Hide user from crew map
+- Stop live sharing
+- Hide nearby status
+- Keep manual check-in available
+- Keep Safe Return available
+- Show user as “Location hidden”
+
+Ghost Mode should not remove the user from the trip or plan.
+
+BACKEND DATA MODEL
+
+Add or extend tables for:
+
+trip_crew_location_preferences:
+- user_id
+- trip_id
+- default_visibility
+- ghost_mode_enabled
+- share_arrival_status
+- share_safe_return_status
+- created_at
+- updated_at
+
+trip_crew_location_sessions:
+- id
+- trip_id
+- user_id
+- visibility_level
+- status
+- started_at
+- expires_at
+- stopped_at
+- last_location_snapshot_id nullable
+- created_at
+- updated_at
+
+trip_crew_location_events:
+- id
+- trip_id
+- user_id
+- event_type
+- metadata
+- created_at
+
+Suggested events:
+- visibility_changed
+- ghost_mode_enabled
+- ghost_mode_disabled
+- live_share_started
+- live_share_stopped
+- live_share_expired
+- arrived
+- nearby
+- checked_in
+- safe_return_active
+- safe_return_completed
+- removed_access_revoked
+
+BACKEND SERVICES
+
+Create services:
+- TripCrewLocationService
+- TripCrewMapService
+- TripCrewLiveShareService
+- TripCrewPrivacyGuard
+- TripCrewStatusResolver
+
+These services should:
+- Resolve safe crew status
+- Resolve approximate location labels
+- Enforce accepted-member access
+- Hide exact coordinates unless live share is active
+- Expire live shares
+- Revoke removed-user access
+- Blur hotel/home/sensitive locations
+- Merge plan check-in status with crew status
+- Merge Safe Return status only when allowed
+
+API ENDPOINTS
+
+Add endpoints for:
+- Get trip crew map
+- Get crew location preferences
+- Update crew location visibility
+- Enable Ghost Mode
+- Disable Ghost Mode
+- Start crew live share
+- Stop crew live share
+- Get active crew live shares
+- Resolve crew member safe status
+- Get trip crew location events
+
+UI REQUIREMENTS
+
+Trip Crew screen:
+- Add map/coordination tab
+- Show crew status cards
+- Show approximate map bubbles
+- Show accepted plan markers
+- Show check-in status
+- Show Safe Return status where allowed
+- Add “Share location temporarily” button
+- Add “Ghost Mode” toggle
+- Add “Location visibility” selector
+
+Crew member card should show:
+- Name
+- Status
+- Approximate area
+- Plan/check-in status
+- Safe Return status if allowed
+- Live share timer if active
+
+Privacy labels:
+- Location hidden
+- Approximate only
+- Live sharing active
+- Safe Return active
+- Arrived
+- Nearby
+
+ADMIN SUPPORT
+
+Admin should be able to:
+- Review crew location abuse reports
+- Review suspicious live-share access attempts
+- Review removed-user access revocation
+- Configure max live-share duration
+- Configure default crew visibility
+
+Admin should not casually browse crew live locations without a proper permission path.
+
+TESTS
+
+Add tests for:
+- Non-crew members cannot access trip crew map.
+- Pending users cannot see crew location.
+- Removed users lose access immediately.
+- Exact coordinates are hidden by default.
+- Approximate labels work without exposing coordinates.
+- Live sharing requires opt-in.
+- Live sharing expires automatically.
+- Ghost Mode hides user location/status.
+- Plan check-in status appears without exact pins.
+- Safe Return status appears only when allowed.
+- Hotel/home blur prevents sensitive location exposure.
+- Admin cannot casually browse active live locations.
+- Public Discovery/Pulse cannot access crew location.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+- trip_crew_map_enabled
+- trip_crew_live_share_enabled
+- trip_crew_ghost_mode_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Backend Trip Crew location services
+3. API endpoints
+4. Trip Crew map/coordination UI
+5. Ghost Mode
+6. Temporary crew live sharing
+7. Plan check-in integration
+8. Safe Return status integration
+9. Privacy guards
+10. Admin review foundation
+11. Tests
+12. Implementation report
+
+Do not break Trips, Plans, Safe Return, Telegraph, Discovery, Pulse, Passport, or Trusted Circle flows.

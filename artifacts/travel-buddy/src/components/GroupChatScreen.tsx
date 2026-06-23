@@ -30,7 +30,7 @@ import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
   Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus,
-  AlertCircle, RefreshCw, CalendarClock,
+  AlertCircle, RefreshCw, CalendarClock, Clock,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat';
@@ -178,6 +178,8 @@ function GroupMessageBubble({
   receiptState,
   autoTranslate,
   defaultShowOriginal,
+  deliveryStatus,
+  onRetry,
 }: {
   item: Message;
   mine: boolean;
@@ -185,6 +187,8 @@ function GroupMessageBubble({
   receiptState?: 'sent' | 'delivered' | 'read' | null;
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
+  onRetry?: () => void;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -258,7 +262,22 @@ function GroupMessageBubble({
           <Text style={styles.transUnavailable}>Translation unavailable.</Text>
         )}
       </Pressable>
-      {mine && receiptState && (
+      {/* Delivery status — sending / failed (tap-to-retry) */}
+      {mine && deliveryStatus === 'sending' && (
+        <View style={styles.deliveryRow}>
+          <Clock size={11} color={color.mute} />
+          <Text style={styles.deliverySending}>Sending…</Text>
+        </View>
+      )}
+      {mine && deliveryStatus === 'failed' && (
+        <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
+          <AlertCircle size={11} color="#EF4444" />
+          <Text style={styles.deliveryFailed}>Tap to retry</Text>
+        </Pressable>
+      )}
+
+      {/* Read receipt — shown on the last confirmed own message only */}
+      {mine && receiptState && !deliveryStatus && (
         <View style={styles.receiptRow}>
           {receiptState === 'read' ? (
             <>
@@ -292,7 +311,7 @@ interface Props {
 export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send } = useGroupChat(type, id);
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
   const [input, setInput] = useState('');
   const [sendFailed, setSendFailed] = useState(false);
   const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
@@ -392,6 +411,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   async function handleSend() {
     const text = input.trim();
     if (!text || sending || isNoAccess) return;
+    notifyTyping(false);
     setInput('');
     setLastSentText(text);
     setSendFailed(false);
@@ -611,6 +631,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 receiptState={m.id === lastOwnMsgId ? receiptState : null}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
+                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
+                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
               />
             </View>
           );
@@ -618,6 +640,17 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
+
+      {/* Typing indicator */}
+      {typingUserIds.length > 0 && (
+        <View style={styles.typingRow}>
+          <Text style={styles.typingText}>
+            {typingUserIds.length === 1
+              ? 'Someone is typing…'
+              : `${typingUserIds.length} people are typing…`}
+          </Text>
+        </View>
+      )}
 
       {/* Failed-send banner — sits above the composer, offers retry */}
       {sendFailed && lastSentText && (
@@ -673,7 +706,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               placeholder="Write a Telegraph…"
               placeholderTextColor={color.faint}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0); }}
+              onBlur={() => notifyTyping(false)}
               onSubmitEditing={handleSend}
               returnKeyType="send"
               editable={!sending}
@@ -819,6 +853,13 @@ const styles = StyleSheet.create({
 
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+
+  deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  deliverySending: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
+  deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
+
+  typingRow: { paddingHorizontal: space.lg, paddingVertical: 5, backgroundColor: color.paper },
+  typingText: { ...t.small, color: color.mute, fontSize: 11, fontStyle: 'italic' },
 
   translationRow: {
     flexDirection: 'row',

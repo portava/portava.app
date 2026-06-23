@@ -642,6 +642,8 @@ function MessageBubble({
   receiptState,
   dismissedAiMsgIds,
   onDismissAiCard,
+  deliveryStatus,
+  onRetry,
 }: {
   item: Message;
   mine: boolean;
@@ -652,6 +654,8 @@ function MessageBubble({
   receiptState?: 'sent' | 'delivered' | 'read' | null;
   dismissedAiMsgIds?: Set<string>;
   onDismissAiCard?: (msgId: string) => void;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
+  onRetry?: () => void;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -802,8 +806,22 @@ function MessageBubble({
         )}
       </Pressable>
 
-      {/* Read receipt — shown on the last own message only */}
-      {mine && receiptState && (
+      {/* Delivery status — sending / failed (tap-to-retry) */}
+      {mine && deliveryStatus === 'sending' && (
+        <View style={styles.deliveryRow}>
+          <Clock size={11} color={color.mute} />
+          <Text style={styles.deliverySending}>Sending…</Text>
+        </View>
+      )}
+      {mine && deliveryStatus === 'failed' && (
+        <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
+          <AlertCircle size={11} color="#EF4444" />
+          <Text style={styles.deliveryFailed}>Tap to retry</Text>
+        </Pressable>
+      )}
+
+      {/* Read receipt — shown on the last confirmed own message only */}
+      {mine && receiptState && !deliveryStatus && (
         <View style={styles.receiptRow}>
           {receiptState === 'read' ? (
             <>
@@ -906,7 +924,7 @@ export default function TelegraphThread() {
   const { id, title, threadType, contextId, otherUserId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { messages, loading, error, sending, send, reload } = useThreadMessages(id ?? null);
+  const { messages, loading, error, sending, send, reload, typingUserIds, notifyTyping, retrySend } = useThreadMessages(id ?? null);
   const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
@@ -1139,6 +1157,7 @@ export default function TelegraphThread() {
   async function handleSend() {
     const text = input.trim();
     if (!text || sending) return;
+    notifyTyping(false);
     setInput('');
     setLastSentMessage(text);
     setSendFailed(false);
@@ -1384,6 +1403,8 @@ export default function TelegraphThread() {
                 receiptState={m.id === lastOwnMsgId ? receiptState : null}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
+                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
+                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
               />
             </View>
           );
@@ -1391,6 +1412,17 @@ export default function TelegraphThread() {
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
+
+      {/* Typing indicator */}
+      {typingUserIds.length > 0 && (
+        <View style={styles.typingRow}>
+          <Text style={styles.typingText}>
+            {typingUserIds.length === 1 && dmProfile?.name
+              ? `${dmProfile.name} is typing…`
+              : 'Someone is typing…'}
+          </Text>
+        </View>
+      )}
 
       {/* Waiting-for-reply banner — shown when the user's first message is pending acceptance */}
       {isWaitingForReply && (
@@ -1463,7 +1495,8 @@ export default function TelegraphThread() {
           placeholder={isWaitingForReply ? 'Waiting for reply…' : 'Write a Telegraph…'}
           placeholderTextColor={color.faint}
           value={input}
-          onChangeText={setInput}
+          onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0); }}
+          onBlur={() => notifyTyping(false)}
           onSubmitEditing={handleSend}
           returnKeyType="send"
           editable={!sending && !isWaitingForReply}
@@ -1722,6 +1755,17 @@ const styles = StyleSheet.create({
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
   receiptFailRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   receiptFail: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier' },
+
+  deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  deliverySending: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
+  deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
+
+  typingRow: {
+    paddingHorizontal: space.lg,
+    paddingVertical: 5,
+    backgroundColor: color.paper,
+  },
+  typingText: { ...t.small, color: color.mute, fontSize: 11, fontStyle: 'italic' },
 
   // Composer icon buttons (attach, meetup, discovery, ai)
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
