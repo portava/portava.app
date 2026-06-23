@@ -477,9 +477,8 @@ router.get("/admin/safe-return/logs", async (req, res) => {
 /**
  * GET /admin/safe-return/config
  * Returns current Safe Return feature flag states.
- * Gated by safe_return_admin_logs_enabled (same as logs).
- * The migration seeds this flag as enabled=true so it is always accessible
- * from a fresh install without a bootstrapping deadlock.
+ * Gated by safe_return_admin_logs_enabled (seeded TRUE in migration 0040
+ * so fresh installs can always reach config without a bootstrap deadlock).
  */
 router.get("/admin/safe-return/config", async (req, res) => {
   const admin = await requireAdmin(req, res);

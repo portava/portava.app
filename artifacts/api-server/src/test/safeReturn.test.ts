@@ -794,20 +794,18 @@ describe("Admin event-log authorization", () => {
     assert.equal(r.body.error, "feature_disabled");
   });
 
-  it("12d. admin config returns feature_disabled when flag is off (seeded true by migration 0037)", async () => {
-    // Both config and logs are gated by safe_return_admin_logs_enabled.
-    // In production the migration seeds this flag as enabled=true, so there
-    // is no bootstrapping deadlock — only admins who explicitly disable it
-    // will see this feature_disabled response.
+  it("12d. fresh-install admin reaches config (flag seeded TRUE in migration 0040)", async () => {
+    // Migration 0040 seeds safe_return_admin_logs_enabled=TRUE so that on a
+    // fresh install an admin can always read and write config flags without
+    // a bootstrap deadlock. This test simulates that fresh state.
     setClients(makeFakeClient({
-      featureFlags: { safe_return_enabled: false, safe_return_admin_logs_enabled: false },
+      featureFlags: { safe_return_enabled: false, safe_return_admin_logs_enabled: true },
       profiles: [{ id: USER_ID, role: "admin" }],
       events: [],
     }));
     const r = await req("GET", "/api/admin/safe-return/config");
-    // feature_disabled → HTTP 404
-    assert.equal(r.status, 404);
-    assert.equal(r.body.error, "feature_disabled");
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.config));
   });
 
   it("12e. admin + flag enabled returns event list", async () => {

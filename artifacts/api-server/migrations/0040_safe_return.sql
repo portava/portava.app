@@ -143,5 +143,5 @@ INSERT INTO feature_flags (key, enabled, description) VALUES
   ('safe_return_enabled',                    FALSE, 'Safe Return: master switch — timed check-ins and escalation'),
   ('safe_return_live_share_enabled',         FALSE, 'Safe Return: opt-in temporary live location sharing'),
   ('safe_return_trusted_circle_alerts_enabled', FALSE, 'Safe Return: opt-in Trusted Circle notifications'),
-  ('safe_return_admin_logs_enabled',         FALSE, 'Safe Return: admin event log and config endpoints')
+  ('safe_return_admin_logs_enabled',         TRUE,  'Safe Return: admin event log and config endpoints')
 ON CONFLICT (key) DO NOTHING;
