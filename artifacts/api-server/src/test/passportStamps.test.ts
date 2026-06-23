@@ -120,7 +120,7 @@ function makeFakeClient(state: FakeState, userId: string) {
 
     function rows(): any[] {
       const tableData: Record<string, any[]> = {
-        feature_flags: Object.entries(state.featureFlags ?? {}).map(([flag, enabled]) => ({ flag, enabled })),
+        feature_flags: Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled })),
         passport_stamps: state.stamps ?? [],
         passport_memories: state.memories ?? [],
         passport_contribution_events: state.contributions ?? [],

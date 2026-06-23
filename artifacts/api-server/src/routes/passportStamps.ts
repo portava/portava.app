@@ -55,7 +55,7 @@ async function isFlagEnabled(flag: string): Promise<boolean> {
     const { data } = await sc
       .from("feature_flags")
       .select("enabled")
-      .eq("flag", flag)
+      .eq("key", flag)
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {

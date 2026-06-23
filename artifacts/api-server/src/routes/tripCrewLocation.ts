@@ -43,7 +43,7 @@ async function isFlagEnabled(
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("flag", flag)
+      .eq("key", flag)
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {

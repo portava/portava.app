@@ -30,7 +30,7 @@ export function isVisible(
   if (callerCtx === "owner") return true;
   if (visibility === "public") return true;
   if (visibility === "circle_only") return callerCtx === "circle";
-  if (visibility === "trip_crew") return callerCtx === "circle" || callerCtx === "trip_crew";
+  if (visibility === "trip_crew") return callerCtx === "trip_crew";
   return false; // private
 }
 

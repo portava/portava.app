@@ -116,13 +116,15 @@ export async function updateStampVisibility(
   userId: string,
   visibility: VisibilityTier,
 ): Promise<boolean> {
-  const { error } = await db
+  const { data, error } = await db
     .from("passport_stamps")
     .update({ visibility, updated_at: new Date().toISOString() })
     .eq("id", stampId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .select("id");
 
-  return !error;
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

@@ -129,14 +129,16 @@ export async function acceptSuggestedMemory(
   if (patch.description !== undefined) update.description = patch.description;
   if (patch.photoUrl !== undefined) update.photo_url = patch.photoUrl;
 
-  const { error } = await db
+  const { data, error } = await db
     .from("passport_memories")
     .update(update)
     .eq("id", memoryId)
     .eq("user_id", userId)
-    .eq("status", "suggested");
+    .eq("status", "suggested")
+    .select("id");
 
-  return !error;
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**
@@ -147,14 +149,16 @@ export async function dismissSuggestedMemory(
   memoryId: string,
   userId: string,
 ): Promise<boolean> {
-  const { error } = await db
+  const { data, error } = await db
     .from("passport_memories")
     .update({ status: "dismissed", updated_at: new Date().toISOString() })
     .eq("id", memoryId)
     .eq("user_id", userId)
-    .eq("status", "suggested");
+    .eq("status", "suggested")
+    .select("id");
 
-  return !error;
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**
@@ -174,14 +178,16 @@ export async function updateMemory(
 
   if (Object.keys(update).length === 1) return false;
 
-  const { error } = await db
+  const { data, error } = await db
     .from("passport_memories")
     .update(update)
     .eq("id", memoryId)
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .select("id");
 
-  return !error;
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

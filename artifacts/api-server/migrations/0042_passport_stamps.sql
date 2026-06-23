@@ -165,9 +165,9 @@ CREATE POLICY passport_visibility_preferences_service ON passport_visibility_pre
 
 -- ── Feature flags ─────────────────────────────────────────────────────────────
 
-INSERT INTO feature_flags (flag, enabled, description) VALUES
+INSERT INTO feature_flags (key, enabled, description) VALUES
   ('passport_stamps_enabled',              false, 'Enable passport stamp creation and display'),
   ('passport_memories_enabled',            false, 'Enable passport memories (suggestions, accept, dismiss)'),
   ('passport_map_enabled',                 false, 'Enable city-level stamp map on passport'),
   ('passport_contribution_events_enabled', false, 'Enable recording of contribution events')
-ON CONFLICT (flag) DO NOTHING;
+ON CONFLICT (key) DO NOTHING;
