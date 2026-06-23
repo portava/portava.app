@@ -1,0 +1,301 @@
+Upgrade and finalize the GPS system across the entire Travel Buddy platform as a shared privacy-first Location Intelligence Layer.
+
+Do not build GPS separately inside each feature. Create one reusable location foundation that powers Discovery, City Pulse, Plans, Trip Crew, Passport, Compass AI, Safety, and Admin.
+
+Core requirement:
+Exact GPS must never be public. Public-facing surfaces should only show city, neighborhood, venue tag, approximate distance, or “nearby.” Exact coordinates may only be used for private features like check-ins, Safe Return, temporary trusted-circle sharing, and accepted plan attendance.
+
+PHASE 1 — LOCATION FOUNDATION
+
+Build the shared GPS/location backend and frontend foundation.
+
+Create location modes:
+1. Off
+2. City-level only
+3. Nearby mode
+4. Live during activity
+5. Trusted Circle live share
+
+Add user-facing location privacy controls:
+- Allow user to choose their default location mode.
+- Allow user to pause location sharing.
+- Allow user to switch between exact, nearby, city-only, or off depending on feature.
+- Explain clearly what each mode does.
+- Default public sharing to city/neighborhood only.
+- Never default to public exact location.
+
+Create the backend location services:
+- Location Intelligence Engine
+- Location Permission Service
+- Geo Resolver
+- Geo Zone Service
+- Location Session Service
+- Location Safety Service
+- Discovery Location Context
+- Compass Location Context
+
+Create or update database tables:
+- user_location_preferences
+- location_snapshots
+- location_sessions
+- geo_zones
+- place_profiles
+- plan_geofences
+- pulse_geo_tags
+- location_trust_events
+- passport_stamps
+
+Data retention/privacy:
+- location_snapshots should be temporary and short-retention.
+- location_sessions should only store what is needed for active sharing, check-ins, and safety.
+- Do not permanently store exact coordinate history unless explicitly needed for safety/audit.
+- Passport stamps should store verified city/neighborhood presence, not full route history.
+
+Geo resolver:
+- Convert exact GPS into country, city, neighborhood, timezone, and approximate area.
+- Support future trip cities even when the user is not physically there.
+- Support browsing a city like Da Nang, Cebu, Tokyo, Makati, etc. before arrival.
+
+Privacy blur:
+- Add hotel/home/sensitive-location blur logic.
+- Do not expose a user’s hotel or home area publicly.
+- If a user posts near a hotel or private stay, default the visible location to neighborhood or city.
+
+Anti-fake GPS:
+- Add detection for impossible travel speed.
+- Detect suspicious location jumps.
+- Compare approximate GPS city with IP city when available.
+- Add mock/emulator GPS signal checks where possible.
+- Do not auto-ban users.
+- Create location_trust_events for review and reduce location confidence when suspicious.
+
+PHASE 2 — DISCOVERY + CITY PULSE GPS
+
+Wire the Location Intelligence Layer into Discovery.
+
+Discovery should support:
+- Near Me
+- In This City
+- Going Soon
+- Around My Crew
+- Safe Nearby
+
+Discovery ranking should use:
+- Distance
+- Current city
+- Future trip destination
+- User vibe/preferences
+- Availability
+- Trust compatibility
+- Language compatibility
+- Safety confidence
+- Popularity/trending activity
+- Verified places and verified plans
+
+Discovery should include:
+- Nearby plans
+- Nearby people when privacy allows
+- Nearby places
+- Hidden gems
+- Hotels/areas
+- Food
+- Nightlife
+- Landmarks/photo spots
+- Group activities
+
+Do not show exact user pins publicly. For people discovery, show approximate labels like:
+- Nearby
+- In your area
+- Same neighborhood
+- Within X miles/km
+- In this city
+
+Wire GPS into City Pulse.
+
+City Pulse should support tabs/filters:
+- City Pulse
+- Nearby Pulse
+- Neighborhood Pulse
+- Trip Pulse
+- Crew Pulse
+
+Pulse post location visibility options:
+- City only
+- Neighborhood
+- Venue tagged
+- Exact hidden
+- No location
+
+Default Pulse location should be city/neighborhood, not exact coordinates.
+
+Pulse should allow users to browse:
+- Their current city
+- Nearby posts/plans
+- Specific neighborhoods
+- Future trip cities
+- Posts from their trip crew or trusted circle
+
+Pulse should never expose exact user GPS publicly.
+
+PHASE 3 PREP — PLANS / EVENTS GEOFENCING
+
+Prepare backend and UI seams for plans/events without overbuilding if not ready.
+
+Plans should support:
+- Hidden exact meetup location until accepted
+- Check-in radius
+- Arrival status
+- Host-controlled location visibility
+- Private event protection
+- Geofence-based check-in
+- No-show detection
+- Late arrival status
+
+Default check-in radius should be configurable by admin, around 150 meters by default.
+
+Accepted users can see the exact meetup spot only if the plan settings allow it.
+
+Public users should only see city/neighborhood or approximate area.
+
+PHASE 4 PREP — SAFETY / SAFE RETURN
+
+Prepare GPS support for:
+- Safe Return check-ins
+- Temporary live sharing
+- Trusted Circle alerts
+- Live sharing timer: 15 min, 30 min, 1 hour, until plan ends
+- “I made it back safely” flow
+- Safety nudges after nightlife, solo events, or late-night plans
+
+Safety GPS must be separate from social discovery GPS.
+
+PHASE 5 PREP — COMPASS AI LOCATION CONTEXT
+
+Prepare Compass AI to use safe location context.
+
+Compass AI can use:
+- Current city
+- Neighborhood
+- Approximate location
+- Nearby verified places
+- User preferences
+- Upcoming trip location
+- Availability
+- Crew location context, if allowed
+
+Compass AI must not reveal:
+- Exact coordinates
+- Hotel/home location
+- Private live-share details
+- Another user’s private location
+
+Compass AI should recommend:
+- Nearby activities
+- Safer options
+- Best areas
+- Meet-up midpoint
+- Routes
+- Events matching user vibe
+- Trip city recommendations before arrival
+
+PHASE 6 PREP — PASSPORT / TRUST / REWARDS
+
+Prepare verified location support for:
+- Passport stamps
+- City stamps
+- Neighborhood stamps
+- Hidden gem verification
+- Contribution score
+- Trust confidence
+- Location-based rewards
+
+Suspicious GPS should create a review event, not an automatic punishment.
+
+ADMIN GEO CONTROLS
+
+Add admin controls for:
+- Default check-in radius
+- Create/edit geo zones
+- Create/edit neighborhoods
+- Verify venues/places
+- Mark featured areas
+- Mark warning/blocked areas
+- Review suspicious GPS activity
+- Review fake GPS flags
+- Review location abuse reports
+- Configure Pulse radius
+- Configure Discovery radius
+
+Admin should be able to define official city/neighborhood zones that Discovery and Pulse can reuse.
+
+UI REQUIREMENTS
+
+Add a clear location settings screen:
+- Current location mode
+- Explanation of each mode
+- Pause sharing button
+- Manage trusted-circle live sharing
+- Manage Pulse location visibility default
+- Manage Discovery location visibility
+- Manage Safe Return permissions
+
+Add location chips across the app:
+- Current city
+- Current neighborhood
+- Near me
+- Trip city
+- Approximate distance
+- Location hidden
+- Exact location private
+
+Use consistent wording across the platform.
+
+IMPORTANT PRODUCT RULES
+
+1. Exact GPS is never public.
+2. Public posts show city/neighborhood by default.
+3. Users can browse future trip cities without being there.
+4. Private plan meetup spots can stay hidden until accepted.
+5. Live location is temporary and opt-in.
+6. Safe Return is separate from social discovery.
+7. Compass AI can use location but cannot expose private coordinates.
+8. GPS can improve trust, but suspicious GPS cannot auto-ban users.
+9. Users can turn GPS off and still use city-level discovery.
+10. Hotels, homes, and sensitive places must be blurred.
+
+IMPLEMENTATION SAFETY
+
+Do not break existing Discovery, Pulse, Plans, Passport, or Compass AI flows.
+
+Use feature flags if needed:
+- gps_v2_enabled
+- pulse_geo_enabled
+- discovery_geo_enabled
+- plan_geofence_enabled
+- safe_return_geo_enabled
+- compass_location_context_enabled
+
+Add tests for:
+- Exact GPS never appears on public Pulse.
+- Nearby Discovery works without exposing exact coordinates.
+- City-only mode still allows city discovery.
+- Off mode disables live location.
+- Accepted plan user can access exact location only when allowed.
+- Non-accepted plan user cannot access exact meetup coordinates.
+- Location snapshots expire or follow short retention.
+- Suspicious GPS creates location_trust_event.
+- Compass AI receives safe location context only.
+- Hotel/home blur prevents public exact exposure.
+
+Deliverables:
+1. Database migrations
+2. Shared backend location services
+3. Location settings UI
+4. Discovery GPS integration
+5. Pulse GPS integration
+6. Admin geo controls foundation
+7. Privacy and safety guards
+8. Tests
+9. Short implementation report explaining what changed, what is protected, and what is ready for the next phase
+
+Start with Phase 1 and Phase 2 fully. Add safe backend/UI seams for Phase 3 through Phase 6, but do not force unfinished features into the user experience unless they are stable.

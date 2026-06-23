@@ -9,7 +9,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
 } from 'react-native';
-import { Sparkles, Info } from 'lucide-react-native';
+import { Sparkles, Info, Share2 } from 'lucide-react-native';
+import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
+import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
 import type { TelegraphRecommendation } from '../../services/telegraphRecommend';
 import { getForYouRecommendations } from '../../services/telegraphRecommend';
 import type { DiscoveryPlace } from '../../services/discovery';
@@ -63,6 +65,7 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource]     = useState<'telegraph' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
+  const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
   const community = useCommunityDiscovery(destination ?? null);
 
@@ -182,6 +185,15 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
                 address:  item.place.address,
               })}
             />
+
+            {/* Send to Telegraph */}
+            <Pressable
+              style={styles.shareRow}
+              onPress={() => setShareItem(item)}
+            >
+              <Share2 size={12} color={color.mute} />
+              <Text style={styles.shareLabel}>Send to Telegraph</Text>
+            </Pressable>
           </View>
         ))}
 
@@ -220,8 +232,36 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
           onAddToPlan({ id: p.id, name: p.name, category: p.category, address: p.address });
         }}
       />
+
+      {/* Discovery share sheet */}
+      <DiscoveryShareSheet
+        visible={shareItem !== null}
+        item={shareItem ? buildSharePayload(shareItem) : null}
+        onClose={() => setShareItem(null)}
+      />
     </>
   );
+}
+
+function buildSharePayload(item: ForYouItem): DiscoverySharePayload {
+  if (item.kind === 'telegraph') {
+    return {
+      sourceId: item.rec.id,
+      sourceType: 'for_you',
+      title: item.rec.title,
+      category: item.rec.category ?? 'for_you',
+      city: item.rec.locationContext ?? '',
+      blurb: item.rec.reason,
+    };
+  }
+  return {
+    sourceId: item.place.id,
+    sourceType: 'place',
+    title: item.place.name,
+    category: item.place.category ?? 'place',
+    city: item.place.address ?? '',
+    blurb: item.place.description ?? undefined,
+  };
 }
 
 const styles = StyleSheet.create({
@@ -268,6 +308,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     flex: 1,
     lineHeight: 15,
+  },
+  shareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.lg,
+    paddingVertical: 7,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+    marginTop: -StyleSheet.hairlineWidth,
+  },
+  shareLabel: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
   },
   empty: {
     alignItems: 'center',

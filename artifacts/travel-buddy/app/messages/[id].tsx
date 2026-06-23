@@ -37,7 +37,10 @@ import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
-import { deleteMessage } from '../../src/services/messaging';
+import { deleteMessage, muteThread, leaveThread } from '../../src/services/messaging';
+import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
+import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
+import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
@@ -95,6 +98,8 @@ const dd = StyleSheet.create({
 
 // ── Long-press action sheet ───────────────────────────────────────────────────
 
+const REPORT_MSG_REASONS = ['Spam', 'Harassment', 'Inappropriate content', 'Misinformation', 'Other'];
+
 function LongPressActionSheet({
   message,
   mine,
@@ -106,6 +111,20 @@ function LongPressActionSheet({
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
 }) {
+  const [showReport, setShowReport] = useState(false);
+  const [reportReason, setReportReason] = useState<string | null>(null);
+  const [reportSending, setReportSending] = useState(false);
+
+  async function submitReport() {
+    if (!reportReason) return;
+    setReportSending(true);
+    await new Promise((r) => setTimeout(r, 700));
+    setReportSending(false);
+    setShowReport(false);
+    onClose();
+    Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+  }
+
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   return (
@@ -113,52 +132,81 @@ function LongPressActionSheet({
       <Pressable style={las.overlay} onPress={onClose} />
       <View style={las.sheet}>
         <View style={las.handle} />
-        {text.length > 0 && (
-          <Text style={las.preview} numberOfLines={2}>{text}</Text>
-        )}
-        {([
-          ['reply',     'Reply',         Reply,         ] ,
-          ['copy',      'Copy text',     Copy,          ] ,
-          ['translate', 'Translate',     Languages,     ] ,
-          ['save',      'Save message',  BookmarkPlus,  ] ,
-          ['report',    'Report',        Flag,          ] ,
-        ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
-          <Pressable
-            key={key}
-            style={las.row}
-            onPress={async () => {
-              onClose();
-              if (key === 'copy') {
-                await Clipboard.setStringAsync(text);
-                Alert.alert('Copied', 'Message copied to clipboard.');
-              } else if (key === 'report') {
-                Alert.alert('Report message', 'Are you sure you want to report this message?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Report', style: 'destructive', onPress: () => {} },
-                ]);
-              } else {
-                Alert.alert(label, 'This feature is coming soon.');
-              }
-            }}
-          >
-            <Icon size={18} color={color.ink} />
-            <Text style={las.rowLabel}>{label}</Text>
-          </Pressable>
-        ))}
-        {mine && (
-          <Pressable
-            style={las.row}
-            onPress={() => {
-              onClose();
-              Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
-              ]);
-            }}
-          >
-            <Trash2 size={18} color='#EF4444' />
-            <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
-          </Pressable>
+        {showReport ? (
+          <>
+            <Text style={las.reportTitle}>Report this message</Text>
+            <Text style={las.reportSub}>What's wrong with this message?</Text>
+            {REPORT_MSG_REASONS.map((reason) => (
+              <Pressable
+                key={reason}
+                style={[las.reasonOption, reportReason === reason && las.reasonSelected]}
+                onPress={() => setReportReason(reason)}
+              >
+                <Text style={[las.reasonText, reportReason === reason && las.reasonTextSelected]}>{reason}</Text>
+                {reportReason === reason && <Text style={las.reasonCheck}>✓</Text>}
+              </Pressable>
+            ))}
+            <Pressable
+              style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
+              onPress={submitReport}
+              disabled={!reportReason || reportSending}
+            >
+              {reportSending
+                ? <ActivityIndicator size="small" color={color.onInk} />
+                : <Text style={las.reportBtnLabel}>Submit Report</Text>}
+            </Pressable>
+            <Pressable style={las.backBtn} onPress={() => setShowReport(false)}>
+              <Text style={las.backLabel}>Back</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            {text.length > 0 && (
+              <Text style={las.preview} numberOfLines={2}>{text}</Text>
+            )}
+            {([
+              ['reply',     'Reply',         Reply        ],
+              ['copy',      'Copy text',     Copy         ],
+              ['translate', 'Translate',     Languages    ],
+              ['save',      'Save message',  BookmarkPlus ],
+              ['report',    'Report',        Flag         ],
+            ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
+              <Pressable
+                key={key}
+                style={las.row}
+                onPress={async () => {
+                  if (key === 'copy') {
+                    onClose();
+                    await Clipboard.setStringAsync(text);
+                    Alert.alert('Copied', 'Message copied to clipboard.');
+                  } else if (key === 'report') {
+                    setShowReport(true);
+                  } else {
+                    onClose();
+                    Alert.alert(label, 'This feature is coming soon.');
+                  }
+                }}
+              >
+                <Icon size={18} color={color.ink} />
+                <Text style={las.rowLabel}>{label}</Text>
+              </Pressable>
+            ))}
+            {mine && (
+              <Pressable
+                style={las.row}
+                onPress={() => {
+                  onClose();
+                  Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
+                  ]);
+                }}
+              >
+                <Trash2 size={18} color="#EF4444" />
+                <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
+              </Pressable>
+            )}
+          </>
         )}
       </View>
     </Modal>
@@ -171,6 +219,18 @@ const las = StyleSheet.create({
   preview: { ...t.small, color: color.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze },
   rowLabel: { ...t.body, color: color.ink },
+  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
+  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginBottom: 6 },
+  reasonSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
+  reasonText: { ...t.body, color: color.ink },
+  reasonTextSelected: { color: color.signal, fontWeight: '700' },
+  reasonCheck: { fontSize: 14, color: color.signal, fontWeight: '700' },
+  reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
+  reportBtnDisabled: { opacity: 0.45 },
+  reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  backBtn: { paddingVertical: 10, alignItems: 'center' },
+  backLabel: { ...t.body, color: color.mute },
 });
 
 /** Format a single time-poll slot as "Fri Jun 27 · 7:00 PM" (exact) or "Fri Jun 27 · Evening" (block) */
@@ -622,6 +682,30 @@ function MessageBubble({
     );
   }
 
+  // Discovery card
+  if (item.msgType === 'system' && item.subtype === 'discovery_card') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} />
+      </Pressable>
+    );
+  }
+
+  // AI recommendation card — body is JSON with TelegraphActivityRecommendation shape
+  if (item.msgType === 'ai_recommendation') {
+    const recPayload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
+    if (recPayload?.title) {
+      return (
+        <Pressable onLongPress={onLongPress} delayLongPress={300}>
+          <TelegraphRecommendationCard
+            rec={recPayload}
+            onAddToTrip={() => Alert.alert('Add to Trip', `Add "${recPayload.title}" to a trip plan.`)}
+          />
+        </Pressable>
+      );
+    }
+  }
+
   let bodyToShow: string;
   if (mine || !autoTranslate || showOriginal) {
     bodyToShow = item.originalBody ?? item.body ?? '';
@@ -805,6 +889,9 @@ export default function TelegraphThread() {
   const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
+  const [showSafetySheet, setShowSafetySheet] = useState(false);
+  const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
+  const [threadIsMuted, setThreadIsMuted] = useState(false);
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
@@ -859,6 +946,21 @@ export default function TelegraphThread() {
   async function saveThreadTranslationPrefs(at: boolean, so: boolean) {
     if (!id) return;
     await AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }));
+  }
+
+  // Load per-thread hide-AI-suggestions pref from AsyncStorage
+  useEffect(() => {
+    if (!id) return;
+    AsyncStorage.getItem(`thread_ai_hidden:${id}`)
+      .then((v) => { if (v === '1') setHideAiSuggestions(true); })
+      .catch(() => {});
+  }, [id]);
+
+  async function toggleHideAiSuggestions() {
+    if (!id) return;
+    const next = !hideAiSuggestions;
+    setHideAiSuggestions(next);
+    await AsyncStorage.setItem(`thread_ai_hidden:${id}`, next ? '1' : '0').catch(() => {});
   }
 
   // Resolve display name once (for the planned-by label in meetup cards)
@@ -1148,11 +1250,9 @@ export default function TelegraphThread() {
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}>
               <VolumeX size={18} color={color.mute} />
             </Pressable>
-            {threadType === 'direct' && otherUserId ? (
-              <Pressable style={styles.headerIconBtn} onPress={handleBlockPress} hitSlop={8}>
-                <MoreVertical size={18} color={color.mute} />
-              </Pressable>
-            ) : null}
+            <Pressable style={styles.headerIconBtn} onPress={() => setShowSafetySheet(true)} hitSlop={8}>
+              <MoreVertical size={18} color={color.mute} />
+            </Pressable>
           </View>
         )}
       </View>
@@ -1292,7 +1392,7 @@ export default function TelegraphThread() {
       )}
 
       {/* Telegraph suggestion tray — above the composer */}
-      {id && (
+      {id && !hideAiSuggestions && (
         <TelegraphSuggestionTray
           threadId={id}
           lastSentMessage={lastSentMessage}
@@ -1376,6 +1476,34 @@ export default function TelegraphThread() {
           }}
         />
       )}
+
+      {/* Thread safety / overflow controls */}
+      <ThreadSafetySheet
+        visible={showSafetySheet}
+        onClose={() => setShowSafetySheet(false)}
+        threadType={(threadType as 'direct' | 'trip' | 'circle') ?? 'direct'}
+        otherUserId={otherUserId}
+        isMuted={threadIsMuted}
+        onToggleMute={async () => {
+          const next = !threadIsMuted;
+          await muteThread(id ?? '', next);
+          setThreadIsMuted(next);
+        }}
+        hideAiSuggestions={hideAiSuggestions}
+        onToggleHideAi={toggleHideAiSuggestions}
+        onBlock={threadType === 'direct' && otherUserId ? async () => {
+          setShowSafetySheet(false);
+          setBlockingUser(true);
+          await blockUser(otherUserId);
+          setBlockingUser(false);
+          router.replace('/messages');
+        } : undefined}
+        onLeave={threadType !== 'direct' ? async () => {
+          await leaveThread(id ?? '');
+          router.replace('/messages');
+        } : undefined}
+        onDeleteForMe={() => Alert.alert('Coming Soon', 'Delete for me — coming in a future update.')}
+      />
 
       {/* Long-press action sheet */}
       <LongPressActionSheet

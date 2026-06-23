@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
-  Gem, MapPin, Bookmark, Plus, Star, Info, Sparkles, ChevronRight,
+  Gem, MapPin, Bookmark, Plus, Star, Info, Sparkles, ChevronRight, Share2,
 } from 'lucide-react-native';
+import { DiscoveryShareSheet } from './DiscoveryShareSheet';
+import type { DiscoverySharePayload } from './DiscoveryShareSheet';
 import type { DiscoveryItem } from '../data/discovery';
 import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
@@ -61,35 +63,58 @@ function Prov({ text = 'Starter city note — provisional' }: { text?: string })
 /* ── Hidden Gems ── */
 export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
   const planPicker = usePlanPicker();
+  const [shareVisible, setShareVisible] = useState(false);
+  const sharePayload: DiscoverySharePayload = {
+    sourceId: gem.id,
+    sourceType: 'hidden_gem',
+    title: gem.name,
+    category: gem.category ?? 'Hidden Gem',
+    city: gem.city ?? gem.neighborhood ?? '',
+    blurb: gem.blurb,
+  };
   return (
-    <View style={g.card}>
-      <View style={g.media}>
-        <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
-        <Pressable style={g.saveIcon} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving gems is coming in a future update.')}><Bookmark size={15} color={color.onInk} /></Pressable>
-      </View>
-      <View style={g.body}>
-        <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
-        <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
-        <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
-        {gem.submittedBy ? (
-          <View style={g.byRow}>
-            <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
+    <>
+      <View style={g.card}>
+        <View style={g.media}>
+          <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
+          <Pressable style={g.saveIcon} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving gems is coming in a future update.')}><Bookmark size={15} color={color.onInk} /></Pressable>
+        </View>
+        <View style={g.body}>
+          <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
+          <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
+          <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
+          {gem.submittedBy ? (
+            <View style={g.byRow}>
+              <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
+              <Pressable
+                hitSlop={layout.hitSlop}
+                onPress={gem.submittedBy.id ? () => router.push(`/profile/${gem.submittedBy!.id}` as any) : undefined}
+              >
+                <Text style={g.by}>By {gem.submittedBy.name}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <View style={g.btnRow}>
+            <Pressable style={({ pressed }) => [g.addBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
+              <Text style={g.addText}>Add to Plan</Text>
+            </Pressable>
             <Pressable
+              style={({ pressed }) => [g.shareBtn, pressed && { opacity: layout.pressedOpacity }]}
               hitSlop={layout.hitSlop}
-              onPress={gem.submittedBy.id ? () => router.push(`/profile/${gem.submittedBy!.id}` as any) : undefined}
+              onPress={() => setShareVisible(true)}
             >
-              <Text style={g.by}>By {gem.submittedBy.name}</Text>
+              <Share2 size={13} color={color.mute} />
             </Pressable>
           </View>
-        ) : null}
-        <View style={g.btnRow}>
-          <Pressable style={({ pressed }) => [g.addBtn, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
-            <Text style={g.addText}>Add to Plan</Text>
-          </Pressable>
         </View>
       </View>
-    </View>
+      <DiscoveryShareSheet
+        visible={shareVisible}
+        item={sharePayload}
+        onClose={() => setShareVisible(false)}
+      />
+    </>
   );
 }
 
@@ -256,9 +281,10 @@ const g = StyleSheet.create({
   byRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   byAvatar: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.haze },
   by: { ...t.small, color: color.mute, fontSize: 11 },
-  btnRow: { marginTop: space.sm },
-  addBtn: { borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
+  btnRow: { marginTop: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  addBtn: { flex: 1, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
+  shareBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
 });
 
 const nb = StyleSheet.create({

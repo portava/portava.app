@@ -1653,4 +1653,69 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   }
 });
 
+// ── Mute / unmute thread ──────────────────────────────────────────────────────
+
+/**
+ * PATCH /api/threads/:threadId/mute
+ * Body: { muted: boolean }
+ * Toggles muted_at on message_thread_members for the caller.
+ */
+router.patch('/threads/:threadId/mute', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  const { threadId } = req.params;
+  const muted = req.body?.muted === true;
+  const now = new Date().toISOString();
+
+  const { data: member } = await sc
+    .from('message_thread_members')
+    .select('id')
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .is('left_at', null)
+    .maybeSingle();
+
+  if (!member) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+
+  const { error } = await sc
+    .from('message_thread_members')
+    .update({ muted_at: muted ? now : null })
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id);
+
+  if (error) { req.log.error({ err: error }, 'mute thread failed'); sendError(res, 'db_error', error.message); return; }
+
+  res.status(200).json({ ok: true, muted });
+});
+
+// ── Leave thread ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/threads/:threadId/leave
+ * Sets left_at for the current user in message_thread_members.
+ */
+router.post('/threads/:threadId/leave', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  const { threadId } = req.params;
+  const now = new Date().toISOString();
+
+  const { error } = await sc
+    .from('message_thread_members')
+    .update({ left_at: now })
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .is('left_at', null);
+
+  if (error) { req.log.error({ err: error }, 'leave thread failed'); sendError(res, 'db_error', error.message); return; }
+
+  res.status(200).json({ ok: true });
+});
+
 export default router;

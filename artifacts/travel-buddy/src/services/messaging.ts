@@ -382,6 +382,36 @@ export async function sendMessage(
   return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
 }
 
+export async function muteThread(
+  threadId: string,
+  muted: boolean,
+): Promise<MsgResult<{ ok: boolean; muted: boolean }>> {
+  return apiPatch(`/api/threads/${threadId}/mute`, { muted });
+}
+
+export async function leaveThread(
+  threadId: string,
+): Promise<MsgResult<{ ok: boolean }>> {
+  return apiPost(`/api/threads/${threadId}/leave`);
+}
+
+export async function sendDiscoveryCard(
+  threadId: string,
+  payload: {
+    sourceId: string;
+    sourceType: string;
+    title: string;
+    category: string;
+    city: string;
+    blurb?: string;
+    imageUrl?: string;
+    priceLevel?: string;
+    caption?: string;
+  },
+): Promise<MsgResult<Message>> {
+  return sendMessage(threadId, JSON.stringify(payload), { msgType: 'system', subtype: 'discovery_card' });
+}
+
 export async function retryTranslation(
   messageId: string,
 ): Promise<MsgResult<{ status: string; messageId: string }>> {
