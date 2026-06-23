@@ -14,6 +14,9 @@ import { TimelineView, type DayBucket } from './itinerary/TimelineView';
 import { ItineraryMapView } from './itinerary/MapView';
 import { PlanItemSheet } from './itinerary/PlanItemSheet';
 import { TripPlanSettingsSheet } from './TripPlanSettingsSheet';
+import { SafeReturnSetupSheet } from './safeReturn/SafeReturnSetupSheet';
+import { ActiveSafeReturnCard } from './safeReturn/ActiveSafeReturnCard';
+import { getSuggestion, getActiveSession } from '../services/safeReturn';
 
 // ── Category filter data ───────────────────────────────────────────────────────
 
@@ -255,6 +258,9 @@ export function TripPlanSection({
   const [showWarningsOnly, setShowWarningsOnly] = useState(false);
   const [detailItem, setDetailItem] = useState<TripPlanItem | null>(null);
   const [detailStartInEditMode, setDetailStartInEditMode] = useState(false);
+  const [safeReturnSetupItem, setSafeReturnSetupItem] = useState<TripPlanItem | null>(null);
+  const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
+  const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
 
   // Persist view mode per-trip
   useEffect(() => {
@@ -383,9 +389,24 @@ export function TripPlanSection({
     [],
   );
 
+  // Load active Safe Return session on mount so the card can be shown
+  useEffect(() => {
+    getActiveSession()
+      .then((r) => setActiveSafeReturnSession(r.session))
+      .catch(() => {});
+  }, []);
+
   const handleItemPress = useCallback((item: TripPlanItem) => {
     setDetailStartInEditMode(false);
     setDetailItem(item);
+    // Check Safe Return suggestion in the background (best-effort)
+    getSuggestion(item.id)
+      .then((result) => {
+        if (result?.suggest) {
+          setSafeReturnSetupItem(item);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleEditPress = useCallback((item: TripPlanItem) => {
@@ -561,6 +582,15 @@ export function TripPlanSection({
         />
       )}
 
+      {/* Active Safe Return session card */}
+      {activeSafeReturnSession && (
+        <ActiveSafeReturnCard
+          session={activeSafeReturnSession}
+          onSessionEnded={() => setActiveSafeReturnSession(null)}
+          onSessionUpdated={(s) => setActiveSafeReturnSession(s)}
+        />
+      )}
+
       {/* Item detail sheet */}
       <PlanItemSheet
         item={detailItem}
@@ -569,7 +599,14 @@ export function TripPlanSection({
         isOwner={isOwner}
         canEdit={canEdit}
         startInEditMode={detailStartInEditMode}
-        onClose={() => { setDetailItem(null); setDetailStartInEditMode(false); }}
+        onClose={() => {
+          setDetailItem(null);
+          setDetailStartInEditMode(false);
+          // Show Safe Return setup if the API suggested it for this item
+          if (safeReturnSetupItem) {
+            setSafeReturnSetupOpen(true);
+          }
+        }}
         onUpdated={(updated) => {
           setItems((prev) => prev.map((i) => i.id === updated.id ? updated : i));
           setMapItems([]);  // invalidate map cache
@@ -581,6 +618,22 @@ export function TripPlanSection({
           setMapItems([]);  // invalidate map cache
           setDetailItem(null);
           setDetailStartInEditMode(false);
+        }}
+      />
+
+      {/* Safe Return setup — shown after plan item sheet closes when suggested */}
+      <SafeReturnSetupSheet
+        visible={safeReturnSetupOpen}
+        planItemId={safeReturnSetupItem?.id}
+        tripId={tripId}
+        onClose={() => { setSafeReturnSetupOpen(false); setSafeReturnSetupItem(null); }}
+        onStarted={() => {
+          setSafeReturnSetupOpen(false);
+          setSafeReturnSetupItem(null);
+          // Refresh active session to show the new card
+          getActiveSession()
+            .then((r) => setActiveSafeReturnSession(r.session))
+            .catch(() => {});
         }}
       />
 

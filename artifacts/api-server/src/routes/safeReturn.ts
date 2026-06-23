@@ -305,7 +305,7 @@ router.post("/me/safe-return/sessions/:id/cancel", async (req, res) => {
 });
 
 // ── POST /api/me/safe-return/sessions/:id/trigger-missed ─────────────────────
-// Internal/cron endpoint — marks a session as missed and escalates based on level.
+// Marks a session as missed and escalates. Timer must have already expired.
 
 router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -321,6 +321,12 @@ router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
   const existing = await getSessionById(db, req.params.id, user.id);
   if (!existing || existing.status !== "active") {
     sendError(res, "not_found", "Active session not found");
+    return;
+  }
+
+  // Timer must have already expired — reject premature triggers
+  if (existing.timerEndAt && new Date(existing.timerEndAt) > new Date()) {
+    sendError(res, "forbidden", "Timer has not yet expired");
     return;
   }
 
@@ -379,23 +385,37 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
   }
 
   const schema = z.object({
-    recipientUserId:    z.string().uuid().optional().nullable(),
-    recipientContactId: z.string().uuid().optional().nullable(),
+    recipientContactId: z.string().uuid(),
     durationMinutes:    z.number().int().min(5).max(240).optional().default(60),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "recipientContactId (uuid) is required");
     return;
+  }
+
+  // Verify the contact belongs to this session and has live-location permission
+  const { data: contact } = await db
+    .from("safe_return_contacts")
+    .select("id, contact_user_id, can_receive_live_location")
+    .eq("id", parsed.data.recipientContactId)
+    .eq("session_id", session.id)
+    .maybeSingle();
+
+  if (!contact) {
+    sendError(res, "not_found", "Contact not found on this session"); return;
+  }
+  if (!(contact as any).can_receive_live_location) {
+    sendError(res, "forbidden", "This contact has not been granted live location access"); return;
   }
 
   const share = await startShare(
     db,
     session.id,
     user.id,
-    parsed.data.recipientUserId ?? null,
-    parsed.data.recipientContactId ?? null,
+    (contact as any).contact_user_id ?? null,
+    (contact as any).id,
     parsed.data.durationMinutes,
   );
 
