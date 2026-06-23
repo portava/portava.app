@@ -38,8 +38,10 @@ import { useSession } from '../context/SessionContext';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet';
+import { TripMembersSheet } from './TripMembersSheet';
 import type { Message } from '../services/messaging';
 import { deleteMessage } from '../services/messaging';
+import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 
@@ -300,6 +302,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [defaultShowOriginal, setDefaultShowOriginal] = useState(false);
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
+  const [showMembersSheet, setShowMembersSheet] = useState(false);
+  const [memberPreview, setMemberPreview] = useState<FriendUser[]>([]);
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const displayTitle = thread?.title ?? title ?? (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
@@ -328,6 +333,21 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   async function saveTranslationPrefs(at: boolean, so: boolean) {
     await AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }));
   }
+
+  // Load a small member preview (count + avatar stack) for the header chip.
+  // Re-runs after the sheet closes so a fresh invite is reflected immediately.
+  useEffect(() => {
+    if (state !== 'active' || showMembersSheet) return;
+    let cancelled = false;
+    (async () => {
+      const res = type === 'trip' ? await getTripMembers(id) : await getCircleMembers(id);
+      if (cancelled || !res.ok || !res.data) return;
+      // Backend excludes the caller, so add 1 for the current user.
+      setMemberPreview(res.data.members.slice(0, 3));
+      setMemberCount(res.data.members.length + 1);
+    })();
+    return () => { cancelled = true; };
+  }, [type, id, state, showMembersSheet]);
 
   // Build list items with day separators
   type ListItem =
@@ -390,15 +410,39 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           ? <Globe size={14} color={color.onInk} />
           : <Users size={14} color={color.onInk} />}
       </View>
-      <View style={styles.headerMeta}>
+      <Pressable style={styles.headerMeta} onPress={() => setShowMembersSheet(true)} hitSlop={6}>
         <Text style={styles.headerName} numberOfLines={1}>{displayTitle}</Text>
-        {memberLabel ? (
-          <View style={styles.headerTagRow}>
-            <Users size={9} color={color.mute} />
-            <Text style={styles.headerTag}>{memberLabel}</Text>
-          </View>
-        ) : null}
-      </View>
+        <View style={styles.headerTagRow}>
+          {memberPreview.length > 0 && (
+            <View style={styles.avatarStack}>
+              {memberPreview.map((m, i) => (
+                m.avatarUrl ? (
+                  <Image
+                    key={m.id}
+                    source={{ uri: m.avatarUrl }}
+                    style={[styles.stackAvatar, i > 0 && styles.stackAvatarOverlap]}
+                  />
+                ) : (
+                  <View
+                    key={m.id}
+                    style={[styles.stackAvatar, styles.stackAvatarFallback, i > 0 && styles.stackAvatarOverlap]}
+                  >
+                    <Text style={styles.stackAvatarInitial}>
+                      {(m.name?.[0] ?? m.handle?.[0] ?? '?').toUpperCase()}
+                    </Text>
+                  </View>
+                )
+              ))}
+            </View>
+          )}
+          {memberCount === null && <Users size={9} color={color.signal} />}
+          <Text style={styles.headerMembersChip}>
+            {memberCount !== null
+              ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}`
+              : (memberLabel ?? 'Members')}
+          </Text>
+        </View>
+      </Pressable>
       <View style={styles.headerActions}>
         <Pressable
           hitSlop={8}
@@ -675,6 +719,15 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         }}
         onClose={() => setShowTranslationSheet(false)}
       />
+
+      {/* Members list + invite */}
+      {showMembersSheet && (
+        <TripMembersSheet
+          type={type}
+          id={id}
+          onDismiss={() => setShowMembersSheet(false)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -707,6 +760,12 @@ const styles = StyleSheet.create({
   headerName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
   headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
+  headerMembersChip: { ...t.stamp, fontFamily: 'Courier', color: color.signal, fontSize: 10, letterSpacing: 0.4 },
+  avatarStack: { flexDirection: 'row', alignItems: 'center', marginRight: 2 },
+  stackAvatar: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: color.paperRaised },
+  stackAvatarOverlap: { marginLeft: -6 },
+  stackAvatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: color.ink },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
   headerIconBtn: { padding: 5 },
 

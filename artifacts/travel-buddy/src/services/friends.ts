@@ -134,7 +134,7 @@ export async function getMyFriends(): Promise<FriendResult<{ friends: FriendRow[
   return apiGet('/api/me/friends');
 }
 
-export async function getTripMembers(tripId: string): Promise<FriendResult<{ members: FriendUser[] }>> {
+export async function getTripMembers(tripId: string): Promise<FriendResult<{ members: FriendUser[]; invited?: FriendUser[] }>> {
   return apiGet(`/api/trips/${encodeURIComponent(tripId)}/members`);
 }
 

@@ -1,0 +1,308 @@
+Build Telegraph Realtime Backend + Delivery v1 for Travel Buddy.
+
+Goal:
+Make Telegraph feel like a real messaging system by adding realtime message delivery, unread counts, delivery states, typing/presence, translation jobs, and strict trip/circle access enforcement.
+
+Do not rename Telegraph back to messages or chat.
+
+Core requirements:
+- Direct Telegraph threads
+- Trip group Telegraph threads
+- Trusted Circle Telegraph threads
+- Message requests
+- Auto-translation
+- Discovery card sharing
+- AI recommendation cards
+- Realtime inbox updates
+- Realtime thread updates
+- Reliable unread counts
+- Safety and privacy gates
+
+1. Realtime transport
+
+Use the app’s current realtime/backend stack if one exists.
+If no realtime stack exists yet, create a service boundary that can support:
+- Supabase Realtime
+- WebSocket server
+- Server-sent events fallback
+- polling fallback
+
+Do not hard-code realtime logic directly into UI screens.
+
+Create:
+- telegraphRealtimeService
+- telegraphThreadStore
+- telegraphMessageStore
+
+Realtime events:
+- thread.created
+- thread.updated
+- message.created
+- message.updated
+- message.deleted_for_me
+- message.failed
+- message.translated
+- member.joined
+- member.left
+- member.removed
+- typing.started
+- typing.stopped
+- read.updated
+- request.created
+- request.accepted
+- request.declined
+- user.blocked
+
+2. Inbox realtime behavior
+
+The Telegraph inbox should update when:
+- new message arrives
+- thread title/avatar changes
+- unread count changes
+- message request arrives
+- trip/circle member access changes
+- user is removed from a thread
+- AI recommendation is posted
+
+Thread order:
+- sort by last_message_at descending
+- pinned/muted behavior can come later
+- muted threads still update but do not notify
+
+Unread logic:
+- unread count based on messages newer than member.last_read_at
+- exclude messages sent by current user
+- exclude deleted messages
+- exclude threads where member.left_at is not null
+- requests should show in Requests filter until accepted
+
+3. Thread realtime behavior
+
+Inside a Telegraph thread:
+- new messages appear without refresh
+- composer stays pinned
+- failed sends can retry
+- sent/delivered/read status updates
+- translated text appears when ready
+- typing indicator appears briefly
+- day dividers stay correct
+- removed member loses access immediately
+
+Delivery states:
+- sending
+- sent
+- delivered
+- read
+- failed
+
+Rules:
+- A message can be optimistic locally while sending.
+- If server rejects it, show failed with retry.
+- Do not duplicate optimistic messages after server confirmation.
+- Do not show unauthorized messages.
+
+4. Access enforcement
+
+Backend is the source of truth.
+
+Direct threads:
+- only active members can read/send
+- blocked users cannot send to each other
+- request threads may limit sending until accepted
+
+Trip Telegraph:
+- only accepted trip members can read/send
+- invited but unaccepted users cannot read
+- removed/left members cannot read future messages
+- when trip membership changes, sync thread members
+
+Circle Telegraph:
+- only accepted circle members can read/send
+- removed/left members cannot read future messages
+- when circle membership changes, sync thread members
+
+Important:
+Access checks must happen server-side, not only in UI.
+
+5. Message requests
+
+If users are not connected/trusted and not in a shared accepted trip/circle:
+- first direct message creates a message request
+- recipient can accept, decline, block, or report
+- sender cannot spam multiple requests
+- read receipts are hidden until accepted
+
+Request statuses:
+- pending
+- accepted
+- declined
+- blocked
+
+6. Auto-translation job system
+
+When a message is created:
+- store originalText
+- detect/source language if not provided
+- find target recipients
+- compare each recipient preferred/default language
+- create translation jobs only where needed
+- store translated text per recipient/language
+- emit message.translated event when done
+
+Do not overwrite original message.
+
+Translation failure:
+- store status failed
+- show original
+- show small label: “Translation unavailable”
+
+Data:
+message_translations:
+- id
+- messageId
+- targetUserId
+- targetLanguage
+- translatedText
+- provider
+- status
+- createdAt
+- errorMessage
+
+7. Discovery and AI card payloads
+
+Support rich message payloads.
+
+Content types:
+- text
+- discovery_card
+- plan_card
+- trip_card
+- ai_recommendation
+- system
+
+Rules:
+- card payload must be sanitized
+- card payload must not expose private fields
+- card title/image/category/city can be public
+- exact live location is never included unless explicitly shared
+- AI recommendation cards must respect comfort level and profile privacy
+
+8. Notifications placeholder
+
+Add notification event hooks, even if push is not fully live yet.
+
+Notification triggers:
+- new direct message
+- new trip Telegraph message
+- new circle Telegraph message
+- new message request
+- AI recommendation posted
+- Discovery card shared
+- user mentioned later
+
+Muted thread:
+- no push notification
+- inbox still updates
+
+9. Backend routes
+
+Polish/confirm:
+
+GET /api/me/threads
+- returns only active visible threads
+- includes unreadCount
+- includes latestMessagePreview
+- includes translatedPreview if available
+- includes threadType badge info
+
+GET /api/threads/:threadId
+- validates membership
+- returns thread details and members
+
+GET /api/threads/:threadId/messages
+- validates membership
+- paginated
+- returns translations for current user
+
+POST /api/threads/direct
+- creates/fetches direct thread
+- creates request if needed
+
+POST /api/threads/:threadId/messages
+- validates send permission
+- creates message
+- queues translations
+- emits realtime event
+
+PATCH /api/threads/:threadId/read
+- updates last_read_at
+
+PATCH /api/threads/:threadId/mute
+- updates muted_at
+
+POST /api/threads/:threadId/leave
+- sets left_at
+
+POST /api/message-requests/:id/accept
+POST /api/message-requests/:id/decline
+POST /api/users/:userId/block
+POST /api/messages/:messageId/report
+POST /api/discovery/:itemId/share-to-telegraph
+POST /api/telegraph/ai/recommend
+
+10. Data integrity
+
+Add constraints/indexes:
+- thread members unique by thread_id + user_id
+- direct thread uniqueness between two users
+- messages indexed by thread_id + created_at
+- translations indexed by message_id + target_user_id
+- message requests unique pending requester/recipient pair
+- thread last_message_at updated when messages are created
+
+11. Mobile state management
+
+Update mobile store/state so:
+- inbox can refresh and receive realtime updates
+- thread can paginate older messages
+- optimistic send works
+- failed send retry works
+- unread counts update after read
+- translation toggle is local per user/thread
+- message request accept/decline updates inbox immediately
+
+12. Tests
+
+Add tests for:
+- inbox returns direct/trip/circle threads
+- unread count excludes current user messages
+- last_read_at updates unread count
+- realtime event emitted after message create
+- optimistic message reconciles with server message
+- failed send shows retry state
+- removed trip member cannot read messages
+- invited unaccepted trip member cannot read messages
+- removed circle member cannot read messages
+- blocked user cannot send
+- message request created for non-connected direct message
+- duplicate message requests are blocked
+- accepted request enables normal messaging
+- translation job created per recipient language
+- original message remains unchanged after translation
+- translation failure falls back to original
+- Discovery card share sanitizes payload
+- AI recommendation card respects privacy
+- muted thread suppresses notification event
+- no exact live location is included by default
+
+Acceptance criteria:
+- Telegraph inbox updates with new messages and unread counts.
+- Threads update without manual refresh.
+- Message delivery states work.
+- Message requests work.
+- Auto-translation stores original + per-recipient translation.
+- Trip and Circle access rules are enforced server-side.
+- Discovery and AI cards can be sent as rich Telegraph messages.
+- Removed members lose access.
+- Block/report/mute rules work.
+- Mobile UI does not overflow and handles failed sends cleanly.

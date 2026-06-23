@@ -90,32 +90,47 @@ router.get("/trips/:tripId/members", async (req, res) => {
 
   const { data: rows, error: rowsErr } = await sc
     .from("trip_members")
-    .select("user_id")
+    .select("user_id, role")
     .eq("trip_id", tripId)
-    .in("role", ["owner", "member"]);
+    .in("role", ["owner", "member", "invited"]);
 
   if (rowsErr) { sendError(res, "db_error", rowsErr.message); return; }
 
   const memberIds = (rows ?? [])
+    .filter((r: any) => r.role === "owner" || r.role === "member")
     .map((r: any) => r.user_id as string)
     .filter((id) => id !== user.id);
 
-  if (memberIds.length === 0) { res.status(200).json({ members: [] }); return; }
+  const invitedIds = (rows ?? [])
+    .filter((r: any) => r.role === "invited")
+    .map((r: any) => r.user_id as string)
+    .filter((id) => id !== user.id);
+
+  const allIds = [...memberIds, ...invitedIds];
+  if (allIds.length === 0) { res.status(200).json({ members: [], invited: [] }); return; }
 
   const { data: profiles, error: profErr } = await sc
     .from("profiles")
     .select("id, handle, name, avatar_url")
-    .in("id", memberIds);
+    .in("id", allIds);
 
   if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
+  const profileMap: Record<string, any> = {};
+  for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+  const toUser = (id: string) => {
+    const p = profileMap[id];
+    return {
+      id,
+      handle: (p?.handle as string) ?? "",
+      name: (p?.name as string) ?? "",
+      avatarUrl: (p?.avatar_url as string | null) ?? null,
+    };
+  };
+
   res.status(200).json({
-    members: (profiles ?? []).map((p: any) => ({
-      id: p.id as string,
-      handle: p.handle as string,
-      name: p.name as string,
-      avatarUrl: (p.avatar_url as string | null) ?? null,
-    })),
+    members: memberIds.map(toUser),
+    invited: invitedIds.map(toUser),
   });
 });
 

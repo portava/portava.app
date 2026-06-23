@@ -1,0 +1,169 @@
+Upgrade Plans with GPS geofencing, hidden meetup locations, privacy-safe arrival status, and check-in logic.
+
+Build this on top of the shared Location Intelligence Layer.
+
+Core rules:
+- Exact meetup locations can be hidden until a user is accepted.
+- Public users only see city, neighborhood, venue teaser, or approximate area.
+- Accepted users can see exact meetup location only if the host settings allow it.
+- Check-ins use exact GPS privately, but public UI only shows “arrived” or “checked in.”
+- Never show attendee exact pins publicly.
+- GPS improves reliability/trust signals, but suspicious GPS should create review events, not automatic punishment.
+
+PLAN LOCATION SETTINGS
+
+Add plan location visibility options:
+1. City only
+2. Neighborhood
+3. Venue tagged
+4. Exact location after acceptance
+5. Exact location always private until host reveals
+
+Host should choose:
+- Public preview location
+- Accepted-member location visibility
+- Check-in required or optional
+- Check-in radius
+- Whether arrival status is visible to attendees
+- Whether late/no-show affects reliability
+
+Default:
+- Public preview = neighborhood or city
+- Exact location hidden until accepted
+- Check-in radius = admin default, around 150 meters
+- Arrival status visible as text, not map pin
+
+GEOFENCED CHECK-IN
+
+Create plan_geofences support:
+- plan_id
+- center coordinates, private
+- radius_meters
+- active_start_time
+- active_end_time
+- check_in_required
+- created_by_host/admin
+- visibility rules
+
+Check-in logic:
+- User must be accepted into the plan.
+- User must be within check-in radius.
+- User must check in during valid window.
+- Store check-in result, not public coordinates.
+- If outside radius, show friendly message.
+- If GPS suspicious, create location_trust_event and allow fallback/manual review depending on host/admin settings.
+
+ARRIVAL STATUS
+
+Add privacy-safe attendee statuses:
+- Not checked in
+- On the way
+- Nearby
+- Arrived
+- Late
+- No-show
+- Left
+
+Do not expose exact coordinates.
+
+Host view:
+- Total accepted
+- Checked in
+- Nearby
+- Late
+- No-show
+- Optional manual override
+
+Attendee view:
+- Who arrived, if plan allows
+- How many people are there
+- Host arrived status
+- Meetup instructions after acceptance
+
+PRIVATE PLAN PROTECTION
+
+For private/invite-only plans:
+- Exact location must not be visible until accepted.
+- Pending users cannot access exact coordinates.
+- Rejected/removed users lose access immediately.
+- Screenshots/API responses must not leak coordinates.
+- Plan cards should show only city/neighborhood/approximate area.
+
+TRUST + RELIABILITY
+
+Add plan attendance events:
+- accepted_but_no_show
+- checked_in_successfully
+- late_check_in
+- suspicious_check_in
+- host_manual_override
+- left_early
+
+Use these for future Trust Score / reliability, but do not auto-punish yet.
+
+UI REQUIREMENTS
+
+Plan create/edit screen:
+- Location field
+- Public location preview selector
+- Exact location visibility selector
+- Check-in toggle
+- Check-in radius selector
+- Arrival visibility toggle
+- Safe Return prompt toggle, if available
+
+Plan detail screen:
+Before acceptance:
+- City/neighborhood only
+- “Exact meetup revealed after acceptance” label where applicable
+
+After acceptance:
+- Show exact meetup details only if allowed
+- Show check-in button
+- Show distance/nearby label without exposing coordinates
+- Show arrival status text
+
+Host dashboard:
+- Attendance list
+- Check-in statuses
+- Manual override
+- Late/no-show indicators
+- Geofence settings
+
+ADMIN SUPPORT
+
+Admin controls:
+- Default check-in radius
+- Minimum/maximum check-in radius
+- Review suspicious check-ins
+- Override geofence
+- View location_trust_events
+- Configure whether no-shows affect reliability
+
+TESTS
+
+Add tests for:
+- Non-accepted users cannot see exact plan coordinates.
+- Accepted users can only see exact location when plan settings allow it.
+- Removed users lose access to exact location.
+- Check-in succeeds within radius.
+- Check-in fails outside radius.
+- Check-in stores status without exposing public coordinates.
+- Suspicious GPS creates location_trust_event.
+- Public plan cards never include exact coordinates.
+- Host can see arrival statuses without seeing attendee exact pins.
+- Admin radius defaults apply correctly.
+- No-show event is created after check-in window closes.
+
+Deliverables:
+1. Database migrations for plan_geofences and attendance/check-in events.
+2. Backend services for geofence validation and arrival status.
+3. Updated plan create/edit UI.
+4. Updated plan detail UI.
+5. Host attendance dashboard.
+6. Admin controls foundation.
+7. Tests.
+8. Implementation report.
+
+Do not break existing plan creation, joining, or invite flows.
+Use feature flag plan_geofence_enabled if needed.
