@@ -46,6 +46,56 @@ export interface DiscoveryResult {
   cached: boolean;
 }
 
+// ── Community discovery ────────────────────────────────────────────────────────
+
+export interface CommunityPlaceItem {
+  id: string;
+  city: string;
+  name: string;
+  placeType: 'hidden_gem' | 'traveler_pick';
+  category: string;
+  neighborhood: string | null;
+  blurb: string | null;
+  imageUrl: string | null;
+  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  savedCount: number;
+  tag: string | null;
+  note: string | null;
+  rating: number | null;
+  source: string;
+  status: string;
+  verified: boolean;
+  createdAt: string;
+}
+
+export interface CommunityDiscoveryResult {
+  items: CommunityPlaceItem[];
+  city: string;
+  total: number;
+}
+
+export async function getCommunityPlaces(
+  city: string,
+  type: 'hidden_gem' | 'traveler_pick' | 'all' = 'all',
+  limit = 20,
+): Promise<{ ok: true; data: CommunityDiscoveryResult } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const params = new URLSearchParams({ city, type, limit: String(limit) });
+
+  try {
+    const res = await fetch(`${base}/api/discovery/community?${params}`);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = (await res.json()) as CommunityDiscoveryResult;
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+// ── OSM places (existing) ─────────────────────────────────────────────────────
+
 export async function getDiscoveryPlaces(
   destination: string,
   category: DiscoveryCategory,

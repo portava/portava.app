@@ -19,6 +19,8 @@ import PlaceCard from './PlaceCard';
 import { PlaceDetailSheet } from './PlaceDetailSheet';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
+import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
+import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall2';
 
 // ── Convert a Telegraph recommendation to DiscoveryPlace shape ────────────────
 
@@ -61,6 +63,8 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource]     = useState<'telegraph' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
+
+  const community = useCommunityDiscovery(destination ?? null);
 
   // Monotonically-increasing counter so stale async callbacks from an old
   // load() call can detect they've been superseded and bail out safely.
@@ -192,6 +196,18 @@ export function ForYouTab({ destination, onAddToPlan }: ForYouTabProps) {
             </Text>
           </View>
         )}
+
+        {/* ── Community sections: traveler-submitted from Supabase ── */}
+        {community.gems.length > 0 && (
+          <View style={styles.communitySection}>
+            <HiddenGemsSection gems={community.gems} />
+          </View>
+        )}
+        {community.picks.length > 0 && (
+          <View style={styles.communitySection}>
+            <TravelerPicksSection picks={community.picks} />
+          </View>
+        )}
       </ScrollView>
 
       {/* Full-parity detail sheet (same as OSM tabs) */}
@@ -212,6 +228,9 @@ const styles = StyleSheet.create({
   list: {
     paddingTop: space.md,
     paddingBottom: space.xxxl,
+  },
+  communitySection: {
+    marginTop: space.xl,
   },
   sourceRow: {
     flexDirection: 'row',

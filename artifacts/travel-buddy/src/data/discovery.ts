@@ -1,23 +1,17 @@
 /**
- * PROVISIONAL discovery seed for Cebu (Pass 1).
- * Hand-seeded. Every item carries source/status/verified. NOT verified truth.
- * UI must show soft labels ("Starter city notes", "Popular with travelers").
- * Replace later via real place data + attribution.
+ * @deprecated Discovery data is now served from Supabase via
+ * GET /api/discovery/community (discovery_places table, migration 0029).
  *
- * USER IDs IN THIS FILE
- * ---------------------
- * `submittedBy.id` and `user.id` must be real `profiles.id` UUIDs (uuid v4) from
- * Supabase once discovery is backed by a real API query.  Until then:
+ * This file is kept as a LOCAL DEV FALLBACK only. The active data path is:
+ *   useCommunityDiscovery(city) → getCommunityPlaces() → /api/discovery/community
  *
- *   - Entries whose contributor IS in the cebu.ts seed world (u_1, u_2, u_3…)
- *     keep their short seed ID — HighlightRing will fire but gracefully return
- *     nothing for non-existent highlights.
- *   - Entries whose contributor has NO matching seed profile omit `id` entirely
- *     (undefined).  HighlightRing skips the fetch and renders a plain avatar.
+ * The types (DiscoveryItem, NeighborhoodVibe, TravelerPick, SavedDiscoveryItem)
+ * are still used by DiscoveryWall2 component props — do not remove type exports.
+ * The seed data arrays (hiddenGems, travelerPicks, etc.) are no longer imported
+ * by any active screen; they remain here for reference only.
  *
- * When the discovery screen is refactored to fetch from Supabase, replace every
- * `id` value here with the real UUID returned by the API (profiles.id column).
- * @dev-only seed data — do not ship to production without a real data source.
+ * When production data is populated in discovery_places, this file can be fully
+ * retired.
  */
 import type { Interest } from '../types/models';
 

@@ -18,6 +18,8 @@
  */
 
 import { Router } from "express";
+import { getServiceClient, isServiceClientReady } from "../lib/supabase";
+import { sendError } from "../lib/http";
 
 const router = Router();
 
@@ -362,6 +364,129 @@ router.get("/discovery", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     res.json({ places: [], total: 0, destination, cached: false });
+  }
+});
+
+// ── Community discovery route ──────────────────────────────────────────────────
+//
+// GET /api/discovery/community?city=Cebu[&type=hidden_gem|traveler_pick|all][&limit=20]
+//
+// Queries the `discovery_places` table and joins `profiles` to resolve
+// submitted_by → { id, name, avatarUrl } so HighlightRing can fire on real UUIDs.
+// No auth required — all community places are publicly readable.
+
+export interface CommunityDiscoveryItem {
+  id: string;
+  city: string;
+  name: string;
+  placeType: "hidden_gem" | "traveler_pick";
+  category: string;
+  neighborhood: string | null;
+  blurb: string | null;
+  imageUrl: string | null;
+  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  savedCount: number;
+  tag: string | null;
+  note: string | null;
+  rating: number | null;
+  source: string;
+  status: string;
+  verified: boolean;
+  createdAt: string;
+}
+
+const VALID_PLACE_TYPES = new Set(["hidden_gem", "traveler_pick", "all"]);
+
+router.get("/discovery/community", async (req, res) => {
+  const city = (req.query.city as string | undefined)?.trim();
+  if (!city) {
+    sendError(res, "invalid_payload", "city is required");
+    return;
+  }
+
+  if (!isServiceClientReady) {
+    res.json({ items: [], city, total: 0 });
+    return;
+  }
+
+  const rawType  = req.query.type as string | undefined;
+  const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
+  const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
+
+  try {
+    const sc = getServiceClient()!;
+
+    let query = sc
+      .from("discovery_places")
+      .select(`
+        id,
+        city,
+        name,
+        place_type,
+        category,
+        neighborhood,
+        blurb,
+        image_url,
+        submitted_by,
+        saved_count,
+        tag,
+        note,
+        rating,
+        source,
+        status,
+        verified,
+        created_at,
+        profiles:submitted_by ( id, display_name, name, avatar_url )
+      `)
+      .ilike("city", city.trim())
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (typeFilter !== "all") {
+      query = query.eq("place_type", typeFilter);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      req.log.error({ err: error }, "discovery/community query failed");
+      res.json({ items: [], city, total: 0 });
+      return;
+    }
+
+    const items: CommunityDiscoveryItem[] = (data ?? []).map((row: any) => {
+      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      return {
+        id:           row.id,
+        city:         row.city,
+        name:         row.name,
+        placeType:    (row.place_type ?? "hidden_gem") as "hidden_gem" | "traveler_pick",
+        category:     row.category ?? "hidden_gem",
+        neighborhood: row.neighborhood ?? null,
+        blurb:        row.blurb ?? null,
+        imageUrl:     row.image_url ?? null,
+        submittedBy:  profile
+          ? {
+              id:        profile.id as string,
+              name:      (profile.display_name ?? profile.name ?? "Traveler") as string,
+              avatarUrl: (profile.avatar_url ?? null) as string | null,
+            }
+          : null,
+        savedCount: (row.saved_count as number) ?? 0,
+        tag:       row.tag ?? null,
+        note:      row.note ?? null,
+        rating:    row.rating != null ? parseFloat(row.rating) : null,
+        source:    row.source ?? "traveler",
+        status:    row.status ?? "provisional",
+        verified:  Boolean(row.verified),
+        createdAt: row.created_at as string,
+      };
+    });
+
+    res.json({ items, city, total: items.length });
+  } catch (err) {
+    req.log.error({ err }, "discovery/community route failed");
+    res.json({ items: [], city, total: 0 });
   }
 });
 
