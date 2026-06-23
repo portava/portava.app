@@ -1,0 +1,623 @@
+Build the Travel Buddy Notifications and Real-Time Activity Center.
+
+Build this on top of Trips, Plans, GPS/location, Discovery, City Pulse, Telegraph, Safe Return, Trip Crew, Compass AI, Passport Stamps, Hidden Gems, Local Guides, Airport/Layover Mode, Trust Score, and Admin moderation.
+
+Stay focused on notifications, alerts, reminders, activity center, real-time updates, user preferences, and delivery rules.
+
+Do not expand into unrelated new features in this pass.
+
+CORE PRINCIPLE
+
+Travel Buddy needs one unified notification and activity system that handles all user-facing alerts consistently.
+
+Notifications should be useful, timely, privacy-safe, and not spammy.
+
+Every major feature should send events through one shared notification pipeline instead of creating separate one-off notification logic.
+
+NOTIFICATION TYPES
+
+Support these notification categories:
+
+1. Plans
+- Plan invite received
+- Join request sent
+- Join request approved
+- Join request denied
+- Plan updated
+- Plan cancelled
+- Plan starting soon
+- Check-in available
+- Check-in successful
+- Host arrived
+- Meetup location revealed
+- Plan reminder
+- Late/no-show notice
+
+2. Trips
+- Trip invite received
+- Trip crew member joined
+- Trip plan added
+- Trip update
+- Trip Crew status update
+- Trip starts soon
+- Trip ended
+- Removed from trip
+
+3. Telegraph
+- New message
+- Message translated
+- Activity recommended in chat
+- Invite sent through Telegraph
+- Mention/reply
+- Group chat update
+
+4. Safe Return
+- Safe Return suggested
+- Safe Return timer started
+- Timer ending soon
+- Confirm safe prompt
+- Missed check-in
+- Trusted Circle alert
+- Live share started
+- Live share ending soon
+- Live share expired
+- Safe Return completed
+
+5. GPS / Location
+- Location permission needed
+- Location mode changed
+- Nearby plan available
+- Close enough to check in
+- Ghost Mode enabled
+- Ghost Mode disabled
+- Suspicious GPS needs review
+- Location sharing expired
+
+6. Trip Crew Map
+- Crew member arrived
+- Crew member nearby
+- Crew member started live share
+- Crew member stopped live share
+- Crew member confirmed safe
+- Crew member needs check-in, only if allowed
+
+7. Compass AI
+- Nearby recommendation
+- Safe meetup suggestion
+- Better area suggestion
+- Safe Return recommendation
+- Layover warning
+- Trip city recommendation
+- Telegraph activity suggestion
+
+8. City Pulse
+- Post liked/commented/replied
+- Pulse post trending
+- Nearby Pulse activity
+- Neighborhood update
+- Trip city Pulse update
+- Report resolved
+
+9. Passport
+- New stamp earned
+- Suggested memory
+- Memory saved
+- Hidden Gem memory available
+- Safe Traveler memory available
+- Visibility reminder
+
+10. Hidden Gems / Local Guides
+- Hidden Gem approved
+- Hidden Gem reported
+- Hidden Gem verified
+- Local guide contribution approved
+- Local guide application update
+- Nearby saved gem reminder
+- Layover-safe gem nearby
+
+11. Trust / Reliability
+- Trust level changed
+- Reliability improved
+- Restriction applied
+- Restriction removed
+- Review opened
+- Review resolved
+- Appeal update
+- Recovery suggestion
+
+12. Airport / Layover Mode
+- Return deadline reminder
+- Boarding buffer reminder
+- Layover recommendation ready
+- Not enough time warning
+- Airport Pulse update
+- Safe Return suggested for layover
+
+13. Admin / Moderation
+- Report received
+- Report resolved
+- User warning
+- Admin decision
+- Content removed
+- Verification update
+
+NOTIFICATION CHANNELS
+
+Support channels:
+
+- In-app activity center
+- Push notification
+- Email, optional and preference-based
+- SMS, only for safety/trusted-circle cases if supported and user opted in
+- Telegraph system message
+- Badge/count updates
+- Real-time banner/toast
+
+Every notification should have:
+- category
+- priority
+- target user
+- source type
+- source id
+- title
+- body
+- action URL/deeplink
+- privacy level
+- delivery channel
+- read/unread status
+- created_at
+- expires_at nullable
+
+PRIORITY LEVELS
+
+Create priority levels:
+
+1. Low
+- Passive updates
+- Passport memory suggestion
+- City Pulse digest
+
+2. Normal
+- Messages
+- Plan updates
+- Trip updates
+
+3. Important
+- Plan approved
+- Meetup location revealed
+- Check-in available
+- Return deadline reminder
+
+4. Urgent
+- Safe Return missed check-in
+- Trusted Circle alert
+- Live share active
+- Emergency help prompt
+
+5. Admin / Security
+- Account restriction
+- Trust review
+- Safety report result
+- Location privacy warning
+
+Urgent safety notifications should not be mixed into casual feeds without clear labeling.
+
+ACTIVITY CENTER UI
+
+Create a unified Activity Center screen.
+
+Tabs or filters:
+
+- All
+- Plans
+- Trips
+- Telegraph
+- Safety
+- Compass
+- Pulse
+- Passport
+- Hidden Gems
+- Trust
+- Admin / Account
+
+Activity cards should show:
+- Icon/category
+- Title
+- Short body
+- Time
+- Read/unread state
+- Priority
+- Related action button
+- Optional preview
+- Privacy-safe context
+
+Examples:
+- “Your plan request was approved.”
+- “Safe Return check-in: are you back okay?”
+- “Compass found 3 layover-safe options near TPE.”
+- “You earned a Da Nang City Stamp.”
+- “Maya sent you a Telegraph message.”
+- “Your Trust review was resolved.”
+
+ACTIVITY CENTER ACTIONS
+
+Notifications should deep-link into the correct screen.
+
+Examples:
+- Plan approval → plan detail
+- Check-in available → plan check-in screen
+- Safe Return prompt → active Safe Return screen
+- Telegraph message → Telegraph thread
+- Passport stamp → Passport stamp detail
+- Hidden Gem approved → Hidden Gem detail
+- Trust review → Trust explanation screen
+- Airport return reminder → Layover session
+- Trip Crew update → Trip Crew map
+
+NOTIFICATION PREFERENCES
+
+Create user notification settings.
+
+Users should be able to control:
+
+Global:
+- Push notifications on/off
+- Email notifications on/off
+- Safety notifications
+- Marketing/promotional off by default unless explicitly added later
+
+By category:
+- Plans
+- Trips
+- Telegraph
+- Safe Return
+- Trip Crew
+- Compass recommendations
+- City Pulse
+- Passport memories
+- Hidden Gems
+- Trust/reliability
+- Airport/Layover
+- Admin/account alerts
+
+By behavior:
+- Quiet hours
+- Travel mode override
+- Safety override
+- Nearby recommendation frequency
+- Digest frequency
+- Message previews on/off
+- Location-sensitive notification previews on/off
+
+Safety notifications should remain available even if casual notifications are muted, but users must understand the setting.
+
+REAL-TIME DELIVERY
+
+Add real-time updates for:
+
+- Telegraph messages
+- Plan status changes
+- Trip Crew status
+- Safe Return status
+- Live sharing status
+- Check-in status
+- Plan invite/approval
+- Admin/account warnings
+- Trust review resolution
+
+Use existing realtime stack if available. Do not create a duplicate realtime system if one already exists.
+
+If realtime is unavailable:
+- Use polling fallback
+- Clearly centralize refresh logic
+- Avoid each screen polling independently
+
+NOTIFICATION PRIVACY RULES
+
+1. Do not reveal exact GPS in notification previews.
+2. Do not reveal hotel/home/private stay location.
+3. Do not reveal private plan location to pending users.
+4. Do not reveal Safe Return details to unauthorized users.
+5. Do not expose live-share location in push preview.
+6. Telegraph previews must respect privacy settings.
+7. Trust notifications must not reveal reporter identity.
+8. Admin/security alerts should be private to the user.
+9. Removed users must not receive private trip/plan updates.
+10. Ghost Mode must suppress location/status-based notifications to others.
+
+Examples:
+
+Bad:
+- “Andre is at 123 Main Street.”
+- “Maya is at her hotel.”
+- “Private plan location: exact address.”
+
+Good:
+- “Andre shared live location with you.”
+- “A crew member arrived near the venue.”
+- “Your meetup location is now available in the app.”
+
+NOTIFICATION DIGESTS
+
+Add optional digests:
+
+- Daily travel digest
+- Trip digest
+- City Pulse digest
+- Passport/memory digest
+- Hidden Gems digest
+- Compass recommendations digest
+
+Digest should be preference-based.
+
+Do not send safety-critical notifications only in digest form.
+
+BACKEND DATA MODEL
+
+Create or update tables:
+
+notifications:
+- id
+- user_id
+- category
+- priority
+- source_type
+- source_id nullable
+- title
+- body
+- action_url nullable
+- deeplink nullable
+- channel
+- status
+- privacy_level
+- metadata
+- read_at nullable
+- dismissed_at nullable
+- expires_at nullable
+- created_at
+- updated_at
+
+notification_preferences:
+- user_id
+- push_enabled
+- email_enabled
+- sms_enabled
+- quiet_hours_enabled
+- quiet_hours_start nullable
+- quiet_hours_end nullable
+- timezone nullable
+- message_previews_enabled
+- location_sensitive_previews_enabled
+- safety_override_enabled
+- created_at
+- updated_at
+
+notification_category_preferences:
+- user_id
+- category
+- in_app_enabled
+- push_enabled
+- email_enabled
+- sms_enabled
+- digest_enabled
+- frequency
+- created_at
+- updated_at
+
+notification_delivery_attempts:
+- id
+- notification_id
+- channel
+- status
+- provider
+- error_message nullable
+- attempted_at
+
+notification_devices:
+- id
+- user_id
+- device_token
+- platform
+- status
+- last_seen_at
+- created_at
+- updated_at
+
+activity_events:
+- id
+- user_id
+- event_type
+- source_type
+- source_id nullable
+- category
+- priority
+- metadata
+- created_at
+
+SERVICES
+
+Create services:
+
+NotificationService:
+- create notification
+- list notifications
+- mark read
+- mark all read
+- dismiss notification
+- expire old notifications
+
+NotificationPreferenceService:
+- get/update preferences
+- enforce category settings
+- enforce quiet hours
+- enforce safety override rules
+
+NotificationRouter:
+- decide delivery channels
+- route to in-app, push, email, SMS, Telegraph system message
+- avoid duplicate delivery
+
+NotificationPrivacyGuard:
+- sanitize titles/bodies
+- strip exact location
+- strip private data
+- enforce Ghost Mode
+- enforce removed-user access
+- enforce Safe Return/live-share permissions
+
+NotificationDigestService:
+- build digest
+- send digest
+- skip safety-critical items from digest-only delivery
+
+RealtimeActivityService:
+- broadcast notification/activity updates
+- sync unread counts
+- support fallback polling if needed
+
+NotificationTemplateService:
+- reusable templates for plan, trip, safety, trust, Compass, Passport, Hidden Gems
+
+NotificationDeduplicationService:
+- prevent duplicate spam
+- coalesce repeated similar events
+- throttle nearby recommendations
+- rate-limit Compass suggestions
+
+API ENDPOINTS
+
+Add endpoints for:
+
+User:
+- Get notifications
+- Get unread count
+- Mark notification read
+- Mark all read
+- Dismiss notification
+- Get notification preferences
+- Update notification preferences
+- Register device token
+- Remove device token
+
+Internal/system:
+- Create notification
+- Create activity event
+- Send notification
+- Send digest
+- Broadcast realtime update
+- Expire old notifications
+
+Admin:
+- View notification templates
+- Send account/admin notice
+- Review failed delivery attempts
+- Configure notification defaults
+- Configure digest defaults
+
+UI REQUIREMENTS
+
+Add:
+
+1. Activity Center screen
+- Tabs/categories
+- Unread badges
+- Filter by category
+- Mark all read
+- Dismiss
+- Deep-link actions
+
+2. Notification bell
+- Badge count
+- Recent dropdown/preview
+- Link to Activity Center
+
+3. Notification settings screen
+- Global toggles
+- Category toggles
+- Quiet hours
+- Message preview settings
+- Location-sensitive preview settings
+- Digest settings
+- Safety notification explanation
+
+4. Real-time banners/toasts
+- For immediate events
+- Respect priority
+- Do not leak private data
+
+5. Safety notification UI
+- Distinct but calm
+- Safe Return prompts
+- Trusted Circle alerts
+- Live-share status
+
+ADMIN SUPPORT
+
+Admin should be able to:
+- Configure templates
+- Send account notices
+- View failed delivery attempts
+- Review notification abuse reports
+- Configure default settings
+- Configure throttling/rate limits
+- Audit safety notification delivery
+
+Admin should not use notifications to expose private live location or sensitive user details.
+
+TESTS
+
+Add tests for:
+
+- Notification created for plan approval.
+- Notification created for Telegraph message.
+- Safe Return missed check-in creates urgent notification.
+- Trusted Circle alert respects opt-in.
+- Push preview does not expose exact GPS.
+- Pending user does not receive private plan location.
+- Removed trip member stops receiving private updates.
+- Ghost Mode suppresses location status notifications to others.
+- Trust notification hides reporter identity.
+- Live-share notification does not include exact coordinates in preview.
+- Quiet hours suppress non-urgent push.
+- Safety override allows urgent Safe Return notification.
+- Category preferences are respected.
+- Duplicate notifications are coalesced.
+- Activity Center lists unread notifications.
+- Mark read updates unread count.
+- Deep-link routes to correct screen.
+- Expired notifications are hidden.
+- Admin notice logs delivery.
+- Failed delivery attempt is recorded.
+
+FEATURE FLAGS
+
+Use feature flags if needed:
+
+- notifications_enabled
+- activity_center_enabled
+- push_notifications_enabled
+- notification_digests_enabled
+- realtime_activity_enabled
+- safety_notifications_enabled
+
+DELIVERABLES
+
+1. Database migrations
+2. Notification service
+3. Notification preference service
+4. Notification router
+5. Notification privacy guard
+6. Realtime activity service
+7. Digest service
+8. Notification templates
+9. API endpoints
+10. Activity Center UI
+11. Notification bell/badges
+12. Notification settings UI
+13. Admin notification controls
+14. Tests
+15. Implementation report
+
+Do not break Trips, Plans, GPS, Safe Return, Trip Crew, Telegraph, Discovery, Pulse, Passport, Hidden Gems, Local Guides, Airport Mode, Trust Score, Admin, or existing onboarding flows.
+
+Keep this pass focused on unified notifications and the Activity Center.

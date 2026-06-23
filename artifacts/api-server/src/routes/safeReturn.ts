@@ -121,7 +121,8 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
 
   const { planItemId } = req.params;
 
-  // Fetch plan item
+  // Fetch plan item via user-scoped client (RLS filters non-member rows).
+  // Belt-and-suspenders: we also explicitly verify trip membership below.
   const { data: item } = await client
     .from("trip_plan_items")
     .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id")
@@ -131,6 +132,21 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   if (!item) {
     sendError(res, "not_found", "Plan item not found");
     return;
+  }
+
+  // Explicit membership check — ensure caller is a member or owner of the trip.
+  const tripId = (item as any).trip_id as string | null;
+  if (tripId) {
+    const { data: membership } = await client
+      .from("trip_members")
+      .select("user_id")
+      .eq("trip_id", tripId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) {
+      sendError(res, "forbidden", "You are not a member of this trip");
+      return;
+    }
   }
 
   // Fetch user location context (best-effort)

@@ -17,6 +17,7 @@ interface Props {
   onClose: () => void;
   onMessageTrustedCircle?: () => void;
   onContactHost?: () => void;
+  onContactTripCrew?: () => void;
 }
 
 const EMERGENCY_OPTIONS = [
@@ -60,9 +61,17 @@ const EMERGENCY_OPTIONS = [
     color: '#8B6914',
     bg: '#FBF5E6',
   },
+  {
+    id: 'contact_crew',
+    icon: Users,
+    label: 'Contact trip crew',
+    sub: 'Reach out to your fellow travellers.',
+    color: '#1A6B5C',
+    bg: '#E4F2EF',
+  },
 ];
 
-export function EmergencyHelpSheet({ visible, onClose, onMessageTrustedCircle, onContactHost }: Props) {
+export function EmergencyHelpSheet({ visible, onClose, onMessageTrustedCircle, onContactHost, onContactTripCrew }: Props) {
   function handleOption(id: string) {
     switch (id) {
       case 'call_emergency':
@@ -80,6 +89,9 @@ export function EmergencyHelpSheet({ visible, onClose, onMessageTrustedCircle, o
         break;
       case 'contact_host':
         onContactHost?.();
+        break;
+      case 'contact_crew':
+        onContactTripCrew?.();
         break;
     }
   }

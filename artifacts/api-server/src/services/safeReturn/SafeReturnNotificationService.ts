@@ -15,6 +15,29 @@ import type { SafeReturnSession, SafeReturnContact } from "./SafeReturnService";
 
 const logger = rootLogger.child({ service: "SafeReturnNotificationService" });
 
+// ── Event persistence ─────────────────────────────────────────────────────────
+// Advisory-only — never throws; notification failure doesn't block alert flow.
+
+async function logNotificationEvent(
+  db: SupabaseClient,
+  session: SafeReturnSession,
+  eventType: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await db
+      .from("safe_return_events")
+      .insert({
+        session_id: session.id,
+        user_id: session.userId,
+        event_type: eventType,
+        metadata,
+      });
+  } catch (err) {
+    logger.warn({ err, sessionId: session.id, eventType }, "SafeReturnNotification: event write failed");
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchPushToken(db: SupabaseClient, userId: string): Promise<string | null> {
@@ -168,6 +191,10 @@ export async function notifyTrustedCircle(
       }
     }),
   );
+
+  await logNotificationEvent(db, session, "trusted_circle_notified", {
+    contactCount: inAppContacts.length,
+  });
 }
 
 /**
@@ -206,6 +233,7 @@ export async function notifyHost(
       data: { type: "safe_return_host_alert", sessionId: session.id },
     });
     logger.info({ sessionId: session.id, hostId }, "notifyHost: sent");
+    await logNotificationEvent(db, session, "host_notified", { hostId });
   } catch (err) {
     logger.warn({ err }, "notifyHost: threw");
   }
@@ -247,6 +275,7 @@ export async function notifyTripCrew(
       data: { type: "safe_return_crew_alert", sessionId: session.id },
     });
     logger.info({ sessionId: session.id, crewCount: memberIds.length }, "notifyTripCrew: sent");
+    await logNotificationEvent(db, session, "crew_notified", { crewCount: memberIds.length });
   } catch (err) {
     logger.warn({ err }, "notifyTripCrew: threw");
   }

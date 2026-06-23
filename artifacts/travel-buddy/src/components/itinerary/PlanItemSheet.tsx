@@ -4,7 +4,7 @@ import {
   KeyboardAvoidingView, Platform, Alert, StyleSheet,
 } from 'react-native';
 import {
-  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown,
+  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
@@ -238,10 +238,13 @@ export interface PlanItemSheetProps {
   onClose: () => void;
   onUpdated: (updated: TripPlanItem) => void;
   onRemoved: (id: string) => void;
+  /** Called when the user taps "Set up Safe Return" from this plan item detail view. */
+  onSetupSafeReturn?: (item: TripPlanItem) => void;
 }
 
 export function PlanItemSheet({
-  item, tripId, currentUserId, isOwner, canEdit = true, startInEditMode, onClose, onUpdated, onRemoved,
+  item, tripId, currentUserId, isOwner, canEdit = true, startInEditMode,
+  onClose, onUpdated, onRemoved, onSetupSafeReturn,
 }: PlanItemSheetProps) {
   const [editing, setEditing] = useState(false);
 
@@ -411,6 +414,17 @@ export function PlanItemSheet({
                     </View>
                   </View>
                 )}
+
+                {/* Safe Return entry point — visible when a callback is wired */}
+                {onSetupSafeReturn && (
+                  <Pressable
+                    style={sh.safeReturnBtn}
+                    onPress={() => { onClose(); onSetupSafeReturn(item); }}
+                  >
+                    <Shield size={14} color={color.deep} />
+                    <Text style={sh.safeReturnBtnText}>Set up Safe Return for this activity</Text>
+                  </Pressable>
+                )}
               </>
             )}
           </ScrollView>
@@ -454,6 +468,13 @@ const sh = StyleSheet.create({
   statusRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   statusChip:    { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   statusChipText:{ ...t.small, fontWeight: '600', fontSize: 11 },
+  safeReturnBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderColor: color.deep + '40',
+    backgroundColor: '#EAF2F4', borderRadius: radius.md,
+    paddingHorizontal: space.md, paddingVertical: 10, marginTop: 4,
+  },
+  safeReturnBtnText: { ...t.small, color: color.deep, fontWeight: '600', fontSize: 12, flex: 1 },
 });
 
 const ef = StyleSheet.create({

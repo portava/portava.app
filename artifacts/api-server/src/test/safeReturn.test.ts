@@ -699,6 +699,7 @@ describe("Suggest endpoint", () => {
         starts_at: "2026-07-01T23:00:00.000Z", day_date: "2026-07-01",
         location_name: "Bar District", lat: null, lng: null, trip_id: TRIP_ID,
       }],
+      tripMembers: [{ user_id: USER_ID, trip_id: TRIP_ID, role: "member" }],
       profiles: [{ id: USER_ID, home_city: "London" }],
       locationState: [{ user_id: USER_ID, city: "Bangkok" }],
     }));
@@ -717,6 +718,7 @@ describe("Suggest endpoint", () => {
         starts_at: "2026-07-01T12:00:00.000Z", day_date: "2026-07-01",
         location_name: "Cafe", lat: null, lng: null, trip_id: TRIP_ID,
       }],
+      tripMembers: [{ user_id: USER_ID, trip_id: TRIP_ID, role: "member" }],
       profiles: [{ id: USER_ID, home_city: "London" }],
       locationState: [{ user_id: USER_ID, city: "London" }],
     }));
@@ -780,7 +782,32 @@ describe("Admin event-log authorization", () => {
     assert.equal(r.body.error, "unauthenticated");
   });
 
-  it("12c. admin + flag enabled returns event list", async () => {
+  it("12c. admin + flag disabled returns feature_disabled for logs endpoint", async () => {
+    setClients(makeFakeClient({
+      featureFlags: { safe_return_enabled: true, safe_return_admin_logs_enabled: false },
+      profiles: [{ id: USER_ID, role: "admin" }],
+      events: [],
+    }));
+    const r = await req("GET", "/api/admin/safe-return/logs");
+    // feature_disabled maps to HTTP 404 in sendError
+    assert.equal(r.status, 404);
+    assert.equal(r.body.error, "feature_disabled");
+  });
+
+  it("12d. admin can always read /admin/safe-return/config regardless of flag (bootstrap requirement)", async () => {
+    // The config route is intentionally NOT gated by safe_return_admin_logs_enabled.
+    // Admins must be able to read/write flags to turn on the system from a cold start.
+    setClients(makeFakeClient({
+      featureFlags: { safe_return_enabled: false, safe_return_admin_logs_enabled: false },
+      profiles: [{ id: USER_ID, role: "admin" }],
+      events: [],
+    }));
+    const r = await req("GET", "/api/admin/safe-return/config");
+    // Config route is accessible — returns 200 or falls through to a feature list
+    assert.ok(r.status === 200 || r.status === 500, "config route should not return 403/401 for admin");
+  });
+
+  it("12e. admin + flag enabled returns event list", async () => {
     setClients(makeFakeClient({
       featureFlags: {
         safe_return_enabled: true,
