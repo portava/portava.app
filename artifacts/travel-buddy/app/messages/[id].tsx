@@ -34,6 +34,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
 import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
+import { RsvpBar } from '../../src/components/RsvpBar';
 import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
@@ -499,9 +500,6 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
           ? fmtDateTime(fetchedStartsAt)
           : dateOnlyFallback)
     : pendingWhen;
-  const rsvpLabel = counts
-    ? `${counts.going} going${counts.maybe > 0 ? ` · ${counts.maybe} maybe` : ''}`
-    : null;
   const showRsvpButtons = isAuthed && !isCancelled;
 
   return (
@@ -555,10 +553,14 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
           </Text>
         </View>
       ) : null}
-      {rsvpLabel ? (
-        <View style={mc.metaRow}>
-          <Text style={mc.meta}>👋 {rsvpLabel}</Text>
-        </View>
+      {counts ? (
+        <RsvpBar
+          style={mc.rsvpBar}
+          going={counts.going}
+          maybe={counts.maybe}
+          pending={counts.pending}
+          total={counts.going + counts.maybe + counts.pending}
+        />
       ) : null}
 
       {showRsvpButtons ? (
@@ -611,6 +613,7 @@ const mc = StyleSheet.create({
   title: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   titleMine: { color: color.ink },
   metaRow: { flexDirection: 'row', alignItems: 'center' },
+  rsvpBar: { marginTop: 2 },
   meta: { ...t.small, color: color.mute, fontSize: 11 },
   metaConfirmed: { color: color.success, fontWeight: '600' },
   plannedBy: { ...t.small, color: color.faint, fontSize: 10, fontStyle: 'italic' },

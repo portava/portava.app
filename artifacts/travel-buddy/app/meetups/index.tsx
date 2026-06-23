@@ -13,10 +13,11 @@ import {
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, CalendarClock, MapPin, Users, Plus, CalendarX,
+  ArrowLeft, CalendarClock, MapPin, Plus, CalendarX,
 } from 'lucide-react-native';
 import { getMyMeetups, type MeetupListItem, type MeetupStatus, type RsvpStatus } from '../../src/services/meetups';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
+import { RsvpBar } from '../../src/components/RsvpBar';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
@@ -97,15 +98,15 @@ function MeetupRow({ meetup }: { meetup: MeetupListItem }) {
           ) : null}
         </View>
 
-        {/* Attendees + my RSVP */}
+        {/* RSVP progress + my RSVP */}
         <View style={styles.footRow}>
-          <View style={styles.metaRow}>
-            <Users size={13} color={color.faint} />
-            <Text style={styles.metaFaint}>
-              {meetup.counts.going} going · {meetup.counts.maybe} maybe
-              {totalAttendees > 0 ? ` · ${totalAttendees} invited` : ''}
-            </Text>
-          </View>
+          <RsvpBar
+            style={styles.rsvpBar}
+            going={meetup.counts.going}
+            maybe={meetup.counts.maybe}
+            pending={meetup.counts.pending}
+            total={totalAttendees}
+          />
           {meetup.isCreator ? (
             <View style={[styles.badge, { backgroundColor: '#E0F2FE' }]}>
               <Text style={[styles.badgeText, { color: '#0369A1' }]}>Host</Text>
@@ -429,9 +430,7 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.faint,
   },
-  metaFaint: {
-    ...t.small,
-    color: color.faint,
+  rsvpBar: {
     flex: 1,
   },
   footRow: {
