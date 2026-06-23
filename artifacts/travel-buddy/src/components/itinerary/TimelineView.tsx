@@ -345,7 +345,10 @@ function DraggableItemList({
               newSlot = k;
             }
           }
-          currentDragIdx.current = newSlot;
+          if (newSlot !== currentDragIdx.current) {
+            currentDragIdx.current = newSlot;
+            forceUpdate((n) => n + 1);
+          }
         },
         onPanResponderRelease: () => {
           const from = activeIdxRef.current;
@@ -378,12 +381,52 @@ function DraggableItemList({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order, canEdit]);
 
+  // Build the visual render list.
+  // While dragging to a different slot we:
+  //   • Show the dragged card lifted (translateY) and dimmed at its origin slot
+  //   • Insert a dashed placeholder at the current target slot so users can see the drop position
+  //   • Other items naturally shift to make room for the placeholder
+  const activeIdx = activeIdxRef.current;
+  const targetIdx = currentDragIdx.current;
+  const isDragging = activeIdx >= 0 && activeIdx < order.length;
+  const showPlaceholder = isDragging && targetIdx !== activeIdx && targetIdx >= 0;
+
+  type RenderEntry =
+    | { kind: 'item'; id: string; slotIdx: number }
+    | { kind: 'placeholder'; height: number };
+
+  const renderEntries: RenderEntry[] = [];
+  if (!showPlaceholder) {
+    order.forEach((id, slotIdx) => renderEntries.push({ kind: 'item', id, slotIdx }));
+  } else {
+    const draggedHeight = getEstimatedHeight(order[activeIdx]);
+    const placeholderBeforeDragged = targetIdx < activeIdx;
+    order.forEach((id, slotIdx) => {
+      // Insert placeholder before this item when target is above the dragged slot
+      if (slotIdx === targetIdx && placeholderBeforeDragged) {
+        renderEntries.push({ kind: 'placeholder', height: draggedHeight });
+      }
+      renderEntries.push({ kind: 'item', id, slotIdx });
+      // Insert placeholder after this item when target is below the dragged slot
+      if (slotIdx === targetIdx && !placeholderBeforeDragged) {
+        renderEntries.push({ kind: 'placeholder', height: draggedHeight });
+      }
+    });
+  }
+
   return (
     <>
-      {order.map((id, slotIdx) => {
+      {renderEntries.map((entry) => {
+        if (entry.kind === 'placeholder') {
+          return (
+            <View key="__drag_placeholder__" style={[dl.placeholder, { height: entry.height }]} />
+          );
+        }
+
+        const { id, slotIdx } = entry;
         const item = itemMap[id];
         if (!item) return null;
-        const isActive = activeIdxRef.current === slotIdx;
+        const isActive = activeIdx === slotIdx;
         const pr = panResponders[slotIdx];
         const card = (
           <PlanItemCard
@@ -406,7 +449,10 @@ function DraggableItemList({
         return (
           <Animated.View
             key={id}
-            style={isActive ? { transform: [{ translateY: activeAnim }], zIndex: 10 } : undefined}
+            style={isActive
+              ? { transform: [{ translateY: activeAnim }], zIndex: 10, opacity: showPlaceholder ? 0.55 : 0.85 }
+              : undefined
+            }
             onLayout={(e) => {
               itemHeightsRef.current[id] = e.nativeEvent.layout.height;
             }}
@@ -618,6 +664,17 @@ const dg = StyleSheet.create({
   line:             { flex: 1, height: 1, backgroundColor: color.haze },
   count:            { ...t.small, color: color.faint },
   emptyDay:         { ...t.small, color: color.faint, paddingLeft: 18, paddingBottom: 4 },
+});
+
+const dl = StyleSheet.create({
+  placeholder: {
+    marginBottom: 8,
+    borderRadius: radius.lg,
+    borderWidth: 2,
+    borderColor: color.deep,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(30, 90, 120, 0.06)',
+  },
 });
 
 const tv = StyleSheet.create({
