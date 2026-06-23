@@ -9,8 +9,10 @@
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
+import { getServiceClient } from "../lib/supabase.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
+import { createStamp } from "../services/passport/PassportStampService.js";
 
 const router = Router();
 
@@ -282,6 +284,31 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     req.log.error({ err: error }, "passport-stamps-gps: upsert failed");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  // Fire-and-forget: also award a city stamp in the new passport_stamps table
+  // (gated by passport_stamps_enabled feature flag; city stamps always GPS-verified)
+  if (stampType === "city_visit" && city && trustLevel === "gps_verified") {
+    void (async () => {
+      try {
+        const sc = getServiceClient();
+        if (!sc) return;
+        const { data: flagRow } = await sc
+          .from("feature_flags")
+          .select("enabled")
+          .eq("key", "passport_stamps_enabled")
+          .maybeSingle();
+        if (!(flagRow as any)?.enabled) return;
+        await createStamp(sc, {
+          userId: user.id,
+          stampType: "city",
+          country: country ?? null,
+          city,
+          verificationLevel: "gps",
+          sourceType: "gps_pipeline",
+        });
+      } catch {}
+    })();
   }
 
   res.status(201).json({ ok: true, stamp: { ...stamp, trustLevel } });

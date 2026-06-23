@@ -16,6 +16,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { calculateDistanceMeters } from "../lib/locationVerify.js";
 import { checkAndRecordSnapshot } from "../services/location/LocationSafetyService.js";
+import { createStamp } from "../services/passport/PassportStampService.js";
 
 const router = Router();
 
@@ -535,6 +536,27 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
     eventType,
     metadata:  { distanceBucket: distanceM <= 100 ? "same_venue" : "inside_radius" },
   });
+
+  // Fire-and-forget: award a plan check-in stamp behind feature flag
+  void (async () => {
+    try {
+      const sc = getServiceClient();
+      if (!sc) return;
+      const { data: flagRow } = await sc
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "passport_stamps_enabled")
+        .maybeSingle();
+      if (!(flagRow as any)?.enabled) return;
+      await createStamp(sc, {
+        userId: user.id,
+        stampType: "plan",
+        tripId,
+        verificationLevel: "checkin",
+        sourceType: "geofence_checkin",
+      });
+    } catch {}
+  })();
 
   res.status(200).json({
     ok: true,

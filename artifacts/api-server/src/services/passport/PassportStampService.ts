@@ -69,15 +69,24 @@ export async function createStamp(
     input.visibility ??
     (stampType === "safe_return" ? "private" : "public");
 
-  // Check for existing stamp (dedup check)
-  const { data: existing } = await db
+  // Check for existing stamp — mirrors COALESCE(country,'') / COALESCE(city,'') unique index
+  // Use .is(col, null) for null values; .eq(col, val) for non-null values.
+  let dedupQuery = db
     .from("passport_stamps")
     .select("id")
     .eq("user_id", userId)
-    .eq("stamp_type", stampType)
-    .eq("country", country ?? "")
-    .eq("city", city ?? "")
-    .maybeSingle();
+    .eq("stamp_type", stampType);
+  if (country != null && country !== "") {
+    dedupQuery = dedupQuery.eq("country", country) as typeof dedupQuery;
+  } else {
+    dedupQuery = dedupQuery.is("country", null) as typeof dedupQuery;
+  }
+  if (city != null && city !== "") {
+    dedupQuery = dedupQuery.eq("city", city) as typeof dedupQuery;
+  } else {
+    dedupQuery = dedupQuery.is("city", null) as typeof dedupQuery;
+  }
+  const { data: existing } = await dedupQuery.maybeSingle();
 
   if (existing) {
     return { id: (existing as any).id, isNew: false };

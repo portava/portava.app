@@ -546,7 +546,78 @@ router.patch("/me/passport/visibility-preferences", async (req, res) => {
   });
 });
 
-// ── Public passport stamps (for public passport view) ─────────────────────────
+// ── Public passport endpoints (for public / other-user passport views) ────────
+
+/**
+ * GET /users/:username/passport/memories
+ * Returns active, public memories for another user's passport.
+ * Circle/trip-crew callers get their respective visibility tiers when authenticated.
+ */
+router.get("/users/:username/passport/memories", async (req, res) => {
+  if (!await isFlagEnabled("passport_memories_enabled")) {
+    res.json({ memories: [] });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.json({ memories: [] }); return; }
+
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
+  const { data: profile } = await sc
+    .from("profiles")
+    .select("id, passport_visibility")
+    .eq("username", username)
+    .maybeSingle();
+
+  if (!profile || (profile as any).passport_visibility === "private") {
+    res.json({ memories: [] });
+    return;
+  }
+
+  // Determine caller context
+  let callerCtx: import("../services/passport/PassportPrivacyGuard.js").CallerContext = "public";
+
+  // Attempt to identify caller from Authorization header
+  const authHeader = req.headers.authorization ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (token) {
+    const { data: authData } = await sc.auth.getUser(token);
+    const callerId = authData?.user?.id;
+    if (callerId && callerId !== (profile as any).id) {
+      // Check circle membership
+      const { data: circleRow } = await sc
+        .from("friend_connections")
+        .select("id")
+        .eq("user_a_id", callerId)
+        .eq("user_b_id", (profile as any).id)
+        .eq("status", "connected")
+        .maybeSingle();
+      if (circleRow) callerCtx = "circle";
+    }
+  }
+
+  const rows = await import("../services/passport/PassportMemoryService.js").then(
+    (m) => m.loadMemories(sc, (profile as any).id),
+  );
+
+  const { filterMemories } = await import("../services/passport/PassportPrivacyGuard.js");
+  const visible = filterMemories(rows, callerCtx);
+
+  const memories = visible.map((m: any) => ({
+    id: m.id,
+    title: m.title,
+    description: m.description,
+    country: m.country,
+    city: m.city,
+    neighborhood: m.neighborhood,
+    category: m.category,
+    visibility: m.visibility,
+    photoUrl: m.photo_url,
+    earnedAt: m.earned_at,
+  }));
+
+  res.json({ memories });
+});
 
 /**
  * GET /users/:username/passport/stamps

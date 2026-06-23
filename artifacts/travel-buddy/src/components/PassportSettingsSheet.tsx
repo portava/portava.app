@@ -126,6 +126,14 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   const [availabilityTags, setAvailabilityTags] = useState<string[]>(profile.availabilityTags ?? []);
   const [planningStyle, setPlanningStyle] = useState<string | null>(profile.planningStyle ?? null);
 
+  // Visibility preferences (passport section)
+  const [defaultStampVis, setDefaultStampVis] = useState<string>('public');
+  const [defaultMemoryVis, setDefaultMemoryVis] = useState<string>('private');
+  const [showCityMap, setShowCityMap] = useState(true);
+  const [showPlanStamps, setShowPlanStamps] = useState(true);
+  const [visPrefsLoading, setVisPrefsLoading] = useState(false);
+  const [visPrefsLoaded, setVisPrefsLoaded] = useState(false);
+
   // Collapsible preference sections (all open by default)
   const [openSections, setOpenSections] = useState<Set<string>>(
     new Set(['interests', 'languages', 'travelStyle', 'tripPrefs', 'availability'])
@@ -177,8 +185,36 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       setComfortLevel(profile.comfortLevel ?? null);
       setAvailabilityTags(profile.availabilityTags ?? []);
       setPlanningStyle(profile.planningStyle ?? null);
+      setVisPrefsLoaded(false);
     }
   }, [visible, profile]);
+
+  // Fetch visibility prefs when passport section becomes active
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  useEffect(() => {
+    if (section !== 'passport' || visPrefsLoaded) return;
+    setVisPrefsLoading(true);
+    import('../lib/supabase').then(async ({ supabase }) => {
+      try {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        const token = refreshed?.session?.access_token
+          ?? (await supabase.auth.getSession()).data.session?.access_token;
+        if (!token) return;
+        const res = await fetch(`${apiBase}/api/me/passport/visibility-preferences`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          setDefaultStampVis(json.defaultStampVisibility ?? 'public');
+          setDefaultMemoryVis(json.defaultMemoryVisibility ?? 'private');
+          setShowCityMap(json.showCityMap ?? true);
+          setShowPlanStamps(json.showPlanStamps ?? true);
+          setVisPrefsLoaded(true);
+        }
+      } catch {}
+      setVisPrefsLoading(false);
+    });
+  }, [section, visPrefsLoaded, apiBase]);
 
   // Debounced username check
   const onUsernameChange = useCallback((val: string) => {
@@ -218,6 +254,13 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       setAvatarUri(result.assets[0].uri);
     }
   };
+
+  const VIS_OPTIONS = [
+    { key: 'public', label: 'Public' },
+    { key: 'circle_only', label: 'Circle only' },
+    { key: 'trip_crew', label: 'Trip crew' },
+    { key: 'private', label: 'Private' },
+  ];
 
   const handleSave = async () => {
     setSaving(true);
@@ -262,11 +305,35 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
     }
 
     const res = await updateMyProfile(patch as any);
-    setSaving(false);
     if (!res.ok || !res.data) {
+      setSaving(false);
       setSaveError(res.message ?? 'Save failed');
       return;
     }
+
+    // Save visibility prefs if the passport section was loaded
+    if (visPrefsLoaded) {
+      try {
+        const { supabase } = await import('../lib/supabase');
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        const token = refreshed?.session?.access_token
+          ?? (await supabase.auth.getSession()).data.session?.access_token;
+        if (token) {
+          await fetch(`${apiBase}/api/me/passport/visibility-preferences`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              defaultStampVisibility: defaultStampVis,
+              defaultMemoryVisibility: defaultMemoryVis,
+              showCityMap,
+              showPlanStamps,
+            }),
+          });
+        }
+      } catch {}
+    }
+
+    setSaving(false);
     setSaved(true);
     onSaved(res.data);
     setTimeout(() => { setSaved(false); onClose(); }, 1200);
@@ -389,6 +456,62 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
                 <View style={sh.infoBox}>
                   <Text style={sh.infoText}>🔒 Your Passport is private. Only you can see it.</Text>
                 </View>
+              )}
+
+              {visPrefsLoading && (
+                <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color={color.mute} />
+                </View>
+              )}
+
+              {!visPrefsLoading && (
+                <>
+                  <View style={sh.prefSectionHeader}>
+                    <Text style={sh.prefSectionTitle}>Default Stamp Visibility</Text>
+                    <Text style={sh.prefSectionSub}>Stamps you earn default to this visibility (city stamps are always public).</Text>
+                  </View>
+                  <ChipGrid
+                    options={VIS_OPTIONS}
+                    selected={[defaultStampVis]}
+                    onToggle={(key) => setDefaultStampVis(key)}
+                  />
+
+                  <View style={[sh.prefSectionHeader, { marginTop: space.md }]}>
+                    <Text style={sh.prefSectionTitle}>Default Memory Visibility</Text>
+                    <Text style={sh.prefSectionSub}>Memories you add manually default to this visibility.</Text>
+                  </View>
+                  <ChipGrid
+                    options={VIS_OPTIONS}
+                    selected={[defaultMemoryVis]}
+                    onToggle={(key) => setDefaultMemoryVis(key)}
+                  />
+
+                  <View style={[sh.switchRow, { marginTop: space.md }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={sh.switchLabel}>Show City Map</Text>
+                      <Text style={sh.switchSub}>Display a world map of cities you've visited</Text>
+                    </View>
+                    <Switch
+                      value={showCityMap}
+                      onValueChange={setShowCityMap}
+                      trackColor={{ true: color.signal, false: color.haze }}
+                      thumbColor={color.paper}
+                    />
+                  </View>
+
+                  <View style={sh.switchRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={sh.switchLabel}>Show Plan Stamps</Text>
+                      <Text style={sh.switchSub}>Show stamps earned from trip check-ins on your Passport</Text>
+                    </View>
+                    <Switch
+                      value={showPlanStamps}
+                      onValueChange={setShowPlanStamps}
+                      trackColor={{ true: color.signal, false: color.haze }}
+                      thumbColor={color.paper}
+                    />
+                  </View>
+                </>
               )}
             </View>
           )}
