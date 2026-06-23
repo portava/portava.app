@@ -166,7 +166,21 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="messages"
-        options={{ href: null, title: 'Telegraph' }}
+        options={{
+          title: 'Telegraph',
+          tabBarIcon: ({ color: c }) => (
+            <View>
+              <MessageCircle size={22} color={c} />
+              {(unreadMessages + pendingRequests) > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {(unreadMessages + pendingRequests) > 99 ? '99+' : String(unreadMessages + pendingRequests)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
+        }}
         listeners={{ focus: refreshUnread }}
       />
       <Tabs.Screen

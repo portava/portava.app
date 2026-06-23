@@ -959,7 +959,7 @@ router.get('/me/threads', async (req, res) => {
 
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
-    .select('thread_id, muted_at, archived_at, left_at')
+    .select('thread_id, muted_at, archived_at, left_at, last_read_at')
     .eq('user_id', user.id)
     .is('left_at', null);
 
@@ -987,7 +987,7 @@ router.get('/me/threads', async (req, res) => {
 
     sc
       .from('messages')
-      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language')
+      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type')
       .in('thread_id', threadIds)
       .is('deleted_at', null)
       .order('created_at', { ascending: false }),
@@ -1039,14 +1039,49 @@ router.get('/me/threads', async (req, res) => {
   const membershipMap: Record<string, any> = {};
   for (const m of memberships ?? []) membershipMap[(m as any).thread_id] = m;
 
+  // Group all messages by thread for unread counts.
+  const msgsByThread: Record<string, any[]> = {};
+  for (const m of (lastMsgRes.data ?? []) as any[]) {
+    if (!msgsByThread[m.thread_id]) msgsByThread[m.thread_id] = [];
+    msgsByThread[m.thread_id].push(m);
+  }
+
+  // Fetch trip cities for trip-type threads.
+  const tripIds = (threadsRes.data ?? [])
+    .filter((t: any) => t.thread_type === 'trip' && t.trip_id)
+    .map((t: any) => t.trip_id as string);
+
+  const tripCityMap: Record<string, string | null> = {};
+  if (tripIds.length > 0) {
+    const { data: tripRows } = await sc
+      .from('trips')
+      .select('id, destination_city')
+      .in('id', tripIds);
+    for (const tr of tripRows ?? []) {
+      tripCityMap[(tr as any).id] = (tr as any).destination_city ?? null;
+    }
+  }
+
   const threads = (threadsRes.data ?? []).map((t: any) => {
     const lm = lastMsgByThread[t.id];
     const mem = membershipMap[t.id] ?? {};
+    const lastReadAt: string | null = mem.last_read_at ?? null;
+
+    // Unread count: messages newer than last_read_at not sent by the user.
+    const threadMsgs = msgsByThread[t.id] ?? [];
+    let unreadCount = 0;
+    if (lastReadAt) {
+      const lastReadTs = new Date(lastReadAt).getTime();
+      unreadCount = threadMsgs.filter(
+        (m) => m.sender_id !== user.id && new Date(m.created_at).getTime() > lastReadTs
+      ).length;
+    } else {
+      unreadCount = threadMsgs.filter((m) => m.sender_id !== user.id).length;
+    }
 
     let lastMessagePreview: any = null;
     if (lm) {
-      // Build display body for preview.
-      let displayBody = lm.body.slice(0, 80);
+      let displayBody = lm.body?.slice(0, 80) ?? '';
       if (lm.sender_id !== user.id) {
         const tRow = translationsByMsgId[lm.id];
         if (tRow?.status === 'translated' && tRow.translated_body) {
@@ -1054,12 +1089,16 @@ router.get('/me/threads', async (req, res) => {
         }
       }
       lastMessagePreview = {
-        body: lm.body.slice(0, 80),
+        body: lm.body?.slice(0, 80) ?? '',
         displayBody,
         senderId: lm.sender_id,
         createdAt: lm.created_at,
+        msgType: lm.msg_type ?? 'text',
       };
     }
+
+    const isAiLastMessage = lm?.msg_type === 'ai_recommendation';
+    const tripCity = t.thread_type === 'trip' && t.trip_id ? (tripCityMap[t.trip_id] ?? null) : null;
 
     return {
       id: t.id,
@@ -1074,6 +1113,9 @@ router.get('/me/threads', async (req, res) => {
       archivedAt: mem.archived_at ?? null,
       otherMembers: membersByThread[t.id] ?? [],
       lastMessagePreview,
+      unreadCount,
+      tripCity,
+      isAiLastMessage,
     };
   });
 

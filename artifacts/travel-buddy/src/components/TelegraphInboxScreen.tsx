@@ -265,8 +265,9 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
       const name = th.threadType !== 'direct'
         ? (th.title ?? '').toLowerCase()
         : (th.otherMembers[0]?.name ?? '').toLowerCase();
-      const preview = (th.lastMessagePreview?.body ?? '').toLowerCase();
-      if (!name.includes(q) && !preview.includes(q)) return false;
+      const body = (th.lastMessagePreview?.body ?? '').toLowerCase();
+      const displayBody = (th.lastMessagePreview?.displayBody ?? '').toLowerCase();
+      if (!name.includes(q) && !body.includes(q) && !displayBody.includes(q)) return false;
     }
     return true;
   });
