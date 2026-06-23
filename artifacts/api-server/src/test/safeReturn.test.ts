@@ -794,17 +794,20 @@ describe("Admin event-log authorization", () => {
     assert.equal(r.body.error, "feature_disabled");
   });
 
-  it("12d. admin can always read /admin/safe-return/config regardless of flag (bootstrap requirement)", async () => {
-    // The config route is intentionally NOT gated by safe_return_admin_logs_enabled.
-    // Admins must be able to read/write flags to turn on the system from a cold start.
+  it("12d. admin config returns feature_disabled when flag is off (seeded true by migration 0037)", async () => {
+    // Both config and logs are gated by safe_return_admin_logs_enabled.
+    // In production the migration seeds this flag as enabled=true, so there
+    // is no bootstrapping deadlock — only admins who explicitly disable it
+    // will see this feature_disabled response.
     setClients(makeFakeClient({
       featureFlags: { safe_return_enabled: false, safe_return_admin_logs_enabled: false },
       profiles: [{ id: USER_ID, role: "admin" }],
       events: [],
     }));
     const r = await req("GET", "/api/admin/safe-return/config");
-    // Config route is accessible — returns 200 or falls through to a feature list
-    assert.ok(r.status === 200 || r.status === 500, "config route should not return 403/401 for admin");
+    // feature_disabled → HTTP 404
+    assert.equal(r.status, 404);
+    assert.equal(r.body.error, "feature_disabled");
   });
 
   it("12e. admin + flag enabled returns event list", async () => {

@@ -585,7 +585,10 @@ router.get("/me/safe-return/history", async (req, res) => {
         }
         const agg = eventsBySession[sid]!;
         const t = ev.event_type as string;
-        if (t === "alert_sent")          agg.alertsSent++;
+        // Count all alert-family events as "alertsSent" — trusted circle,
+        // host, and crew notifications are the actual alert event types;
+        // "alert_sent" is kept as an alias for any legacy rows.
+        if (t === "alert_sent" || t === "trusted_circle_notified" || t === "host_notified" || t === "crew_notified") agg.alertsSent++;
         if (t === "check_in_missed")     agg.missedCount++;
         if (t === "live_share_started")  agg.liveShareStarted++;
         if (t === "live_share_stopped" || t === "live_share_expired") agg.liveShareStopped++;

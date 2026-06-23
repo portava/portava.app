@@ -649,6 +649,10 @@ export function TripPlanSection({
           setDetailItem(null);
           setDetailStartInEditMode(false);
         }}
+        onSetupSafeReturn={(item) => {
+          setSafeReturnSetupItem(item);
+          setSafeReturnSetupOpen(true);
+        }}
       />
 
       {/* Safe Return setup — shown after plan item sheet closes when suggested */}

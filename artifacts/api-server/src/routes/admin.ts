@@ -477,13 +477,19 @@ router.get("/admin/safe-return/logs", async (req, res) => {
 /**
  * GET /admin/safe-return/config
  * Returns current Safe Return feature flag states.
- * Not gated by safe_return_admin_logs_enabled — admins must be able to read
- * and write flags even when the system starts from the default-false state.
+ * Gated by safe_return_admin_logs_enabled (same as logs).
+ * The migration seeds this flag as enabled=true so it is always accessible
+ * from a fresh install without a bootstrapping deadlock.
  */
 router.get("/admin/safe-return/config", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
+
+  if (!await isSafeReturnAdminEnabled(sc)) {
+    sendError(res, "feature_disabled", "Safe Return admin is not enabled");
+    return;
+  }
 
   const flags = [
     "safe_return_enabled",
@@ -505,12 +511,17 @@ router.get("/admin/safe-return/config", async (req, res) => {
  * PATCH /admin/safe-return/config
  * Update one or more Safe Return feature flags.
  * Body: { flags: { safe_return_enabled?: boolean, ... } }
- * Not gated by safe_return_admin_logs_enabled — bootstrapping requires this.
+ * Gated by safe_return_admin_logs_enabled (seeded true in migration 0037).
  */
 router.patch("/admin/safe-return/config", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
+
+  if (!await isSafeReturnAdminEnabled(sc)) {
+    sendError(res, "feature_disabled", "Safe Return admin is not enabled");
+    return;
+  }
 
   const allowedFlags = new Set([
     "safe_return_enabled",
