@@ -20,6 +20,9 @@
 import { Router } from "express";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { sendError } from "../lib/http";
+import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
+import { loadPreferences } from "../services/location/LocationPermissionService";
+import type { DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
 
 const router = Router();
 
@@ -334,16 +337,56 @@ router.get("/discovery", async (req, res) => {
     return;
   }
 
+  // Optional auth — enrich with DiscoveryLocationContext when present.
+  // Never blocks unauthenticated callers; degrades gracefully.
+  let discoveryCtxLabel: string | null = null;
+  let contextRadiusKm: number | null = null;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && isServiceClientReady) {
+    try {
+      const token = authHeader.slice(7).trim();
+      const sc = getServiceClient()!;
+      const { data: authData } = await sc.auth.getUser(token);
+      if (authData?.user) {
+        const rawMode = (req.query.context as string | undefined) ?? "";
+        const mode: DiscoveryContextMode = VALID_CONTEXT_MODES.includes(rawMode)
+          ? (rawMode as DiscoveryContextMode)
+          : "in_city";
+
+        const [prefs, locState] = await Promise.all([
+          loadPreferences(sc, authData.user.id),
+          sc.from("user_location_state")
+            .select("city, country, lat, lng")
+            .eq("user_id", authData.user.id)
+            .maybeSingle(),
+        ]);
+
+        const currentCity    = (locState.data as any)?.city ?? null;
+        const currentCountry = (locState.data as any)?.country ?? null;
+
+        const ctx = await buildDiscoveryContext({
+          db: sc, userId: authData.user.id, prefs, mode,
+          currentCity, currentCountry,
+        });
+        discoveryCtxLabel = ctx.label;
+        contextRadiusKm   = ctx.radiusKm;
+      }
+    } catch { /* degrade — non-fatal */ }
+  }
+
   // Context mode: near_me | in_city | going_soon | around_crew | safe_nearby
   const contextMode = VALID_CONTEXT_MODES.includes(req.query.context as string)
     ? (req.query.context as string)
     : null;
 
-  // Adjust radius based on context mode
-  const defaultRadius = contextMode === "near_me" ? 5
+  // Adjust radius based on context mode (DiscoveryContext overrides when available)
+  const defaultRadius = contextRadiusKm ?? (
+    contextMode === "near_me" ? 5
     : contextMode === "safe_nearby" ? 3
     : contextMode === "going_soon" ? 15
-    : 10;
+    : 10
+  );
 
   const category  = VALID_CATEGORIES.includes(req.query.category as string)
     ? (req.query.category as string)
@@ -375,7 +418,8 @@ router.get("/discovery", async (req, res) => {
   }
 
   const cityLabel = destination.split(",")[0]?.trim() ?? null;
-  const ctxLabel  = contextMode ? contextModeLabel(contextMode, cityLabel) : null;
+  // discoveryCtxLabel (from DiscoveryLocationContext) takes precedence over generic label
+  const ctxLabel  = discoveryCtxLabel ?? (contextMode ? contextModeLabel(contextMode, cityLabel) : null);
 
   if (cached && isFresh(cached)) {
     const filtered = applyFilters(cached.places);

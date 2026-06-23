@@ -10,7 +10,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { reverseGeocode } from "../services/geocodingService";
-import { checkAndRecordSnapshot, getUserTrustLevel } from "../services/location/LocationSafetyService";
+import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 
 const router = Router();
 
@@ -139,10 +139,18 @@ router.post("/me/location-state", async (req, res) => {
     return;
   }
 
-  // Anti-fake GPS: run safety check asynchronously for GPS fixes — non-blocking
+  // Anti-fake GPS: run safety checks asynchronously for GPS fixes — non-blocking
   if (source === "gps" && lat != null && lng != null) {
     checkAndRecordSnapshot(sc, user.id, lat, lng).catch((err) => {
       req.log.warn({ err }, "location-state: safety check failed (non-fatal)");
+    });
+  }
+
+  // IP–city mismatch: run asynchronously when a city is present — non-blocking
+  if (city) {
+    const requestIp = req.ip ?? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+    checkIpCityMismatch(sc, user.id, city, requestIp).catch((err) => {
+      req.log.warn({ err }, "location-state: IP mismatch check failed (non-fatal)");
     });
   }
 

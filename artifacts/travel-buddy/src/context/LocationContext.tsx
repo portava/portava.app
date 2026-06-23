@@ -11,6 +11,8 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { useActiveLocation } from '../hooks/useActiveLocation';
 import type { ActiveLocationState, UseActiveLocationResult } from '../hooks/useActiveLocation';
+import { useLocationPreferences } from '../hooks/useLocationPreferences';
+import type { LocationPreferences } from '../hooks/useLocationPreferences';
 import { useSession } from './SessionContext';
 
 // ── Context shape ─────────────────────────────────────────────────────────────
@@ -22,6 +24,12 @@ interface LocationContextValue extends UseActiveLocationResult {
   dismissPermissionPrompt: () => void;
   openCityPicker: () => void;
   closeCityPicker: () => void;
+  /** User's location-privacy preferences, loaded from /api/me/location-preferences */
+  locationPrefs: LocationPreferences;
+  /** True while preferences are loading on first mount */
+  locationPrefsLoading: boolean;
+  /** Reload preferences (e.g. after the settings screen saves changes) */
+  refreshLocationPrefs: () => Promise<void>;
 }
 
 const LocationContext = createContext<LocationContextValue | null>(null);
@@ -34,6 +42,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const { isAuthed } = useSession();
   const locationHook = useActiveLocation();
   const { locationState, requestLocation, setManualCity } = locationHook;
+  const { prefs: locationPrefs, isLoading: locationPrefsLoading, refresh: refreshLocationPrefs } = useLocationPreferences();
 
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false);
   const [showCityPicker, setShowCityPicker] = useState(false);
@@ -84,6 +93,9 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         dismissPermissionPrompt,
         openCityPicker,
         closeCityPicker,
+        locationPrefs,
+        locationPrefsLoading,
+        refreshLocationPrefs,
       }}
     >
       {children}
@@ -100,4 +112,4 @@ export function useLocationContext(): LocationContextValue {
 }
 
 // Re-export types so consumers don't need to import from the hook directly
-export type { ActiveLocationState, LocationContextValue };
+export type { ActiveLocationState, LocationContextValue, LocationPreferences };

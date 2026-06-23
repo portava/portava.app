@@ -155,6 +155,64 @@ export async function getUserTrustLevel(
   }
 }
 
+/**
+ * IP–city mismatch detection.
+ *
+ * Queries ip-api.com (free, no auth) to resolve the request IP to a city.
+ * If the city doesn't match the user-reported city, writes a medium-confidence
+ * ip_city_mismatch trust event. Falls back gracefully on network error or when
+ * the IP is private/unresolvable (loopback, RFC 1918, IPv6 localhost).
+ *
+ * Call fire-and-forget from the location-state write path.
+ */
+export async function checkIpCityMismatch(
+  db: SupabaseClient,
+  userId: string,
+  reportedCity: string,
+  requestIp: string | undefined,
+): Promise<void> {
+  if (!requestIp) return;
+
+  // Skip private / loopback addresses — can't geolocate them
+  const skip = ["127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
+                "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+                "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+                "192.168.", "::1", "localhost"];
+  if (skip.some((prefix) => requestIp.startsWith(prefix))) return;
+
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 3_000);
+    let ipCity: string | null = null;
+
+    try {
+      const response = await fetch(
+        `https://ip-api.com/json/${encodeURIComponent(requestIp)}?fields=status,city`,
+        { signal: ctrl.signal },
+      );
+      if (response.ok) {
+        const data = (await response.json()) as { status: string; city?: string };
+        if (data.status === "success" && data.city) ipCity = data.city;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!ipCity) return;
+
+    const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalise(ipCity) === normalise(reportedCity)) return;
+
+    await writeTrustEvent(db, userId, "ip_city_mismatch", "medium", {
+      reportedCity,
+      ipCity,
+      requestIp: requestIp.slice(0, 8) + "...", // partial IP only — no full IP in DB
+    });
+  } catch {
+    // Non-fatal — IP lookup failures are common (network, rate limits)
+  }
+}
+
 /** Purge expired snapshots (call from cleanup job). */
 export async function purgeExpiredSnapshots(db: SupabaseClient): Promise<number> {
   try {

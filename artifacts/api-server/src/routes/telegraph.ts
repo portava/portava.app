@@ -14,6 +14,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { openai } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
+import { buildCompassContext } from "../services/location/CompassLocationContext";
 
 const router = Router();
 
@@ -85,14 +86,34 @@ Rules:
     } catch { /* degrade gracefully */ }
   }
 
+  // CompassLocationContext — enrich prompt with city-level location context.
+  // Gated: only inject when user has location data; falls back gracefully.
+  let compassCtx: Awaited<ReturnType<typeof buildCompassContext>> | null = null;
+  try {
+    compassCtx = await buildCompassContext(auth.client, auth.user.id);
+  } catch { /* non-fatal */ }
+
+  const locationLines: string[] = [];
+  if (compassCtx?.currentCity) {
+    locationLines.push(`- Current city: ${compassCtx.currentCity}${compassCtx.currentCountry ? `, ${compassCtx.currentCountry}` : ""}`);
+  }
+  if (compassCtx?.upcomingTripCity) {
+    locationLines.push(`- Upcoming trip: ${compassCtx.upcomingTripCity}${compassCtx.upcomingTripCountry ? `, ${compassCtx.upcomingTripCountry}` : ""}`);
+  }
+  if (compassCtx?.nearbyVerifiedPlaces?.length) {
+    const names = compassCtx.nearbyVerifiedPlaces.slice(0, 3).map((p) => p.name).join(", ");
+    locationLines.push(`- Nearby verified places: ${names}`);
+  }
+
   const userPrompt = `Generate ${count} activity recommendations.
 
 Traveler context:
-- Destination: ${destination ?? "current location"}
+- Destination: ${destination ?? compassCtx?.currentCity ?? "current location"}
 - Interests: ${interests?.join(", ") ?? "general travel"}
 - Travel style: ${travelStyle ?? "explorer"}
 - Preferred language: ${defaultLanguage ?? "en"}
 ${tripDates ? `- Trip: ${tripDates.start} → ${tripDates.end}` : ""}
+${locationLines.length > 0 ? `\nLocation context (city-level only, no exact coords):\n${locationLines.join("\n")}` : ""}
 ${weatherBrief ? `- Weather forecast: ${weatherBrief}` : ""}
 ${conversationContext ? `- Chat context: "${conversationContext}"` : ""}
 ${recipientName ? `- Chatting with: ${recipientName}` : ""}
