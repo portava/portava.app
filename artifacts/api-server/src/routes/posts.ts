@@ -13,6 +13,7 @@ import {
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
 import { getServiceClient } from "../lib/supabase";
+import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
 
 const router = Router();
 
@@ -217,6 +218,26 @@ router.post("/posts", async (req, res) => {
           }, req.log);
         }
       }
+    }
+  }
+
+  // Pulse GPS tag — write fire-and-forget after the post is committed.
+  // Enforces privacy rules: off mode → no_location; hotel blur → neighborhood cap.
+  // Never blocks the response; a failure must not corrupt the post.
+  {
+    const sc = getServiceClient();
+    if (sc) {
+      writePulseGeoTag(sc, {
+        postId:              (data as any).id,
+        userId:              user.id,
+        userGpsLat:          userGpsLat   ?? null,
+        userGpsLng:          userGpsLng   ?? null,
+        locationCity:        locationCity ?? null,
+        locationCountry:     locationCountry ?? null,
+        venueName:           locationName ?? null,
+      }).catch((err) => {
+        req.log.warn({ err }, "pulse_geo_tag write failed (non-fatal)");
+      });
     }
   }
 
