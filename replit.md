@@ -65,6 +65,12 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0026_highlights.sql` | Creates `highlights`, `highlight_views`, `highlight_likes`, `highlight_replies`, `highlight_reports` tables with RLS; visibility enum (public/travelers_nearby/circle_only/trip_only/private); 24h default expiry, soft-delete, view/like/reply/report engagement | 2026-06-22 |
 | `0028_highlights_last_viewed.sql` | Adds `highlights_last_viewed_at timestamptz` to `profiles`; updated by `POST /api/me/highlights/mark-viewed`; used by `GET /api/me/unread-counts` to compute `newHighlights` badge count | pending |
 | `0029_discovery_places.sql` | Creates `discovery_places` table (id, city, name, place_type, category, neighborhood, blurb, image_url, submitted_by→profiles, saved_count, tag, note, rating, source, status, verified, created_at); RLS (public read, auth insert/update/delete own); indexes on city, place_type, created_at; used by `GET /api/discovery/community` | pending |
+| `0032_location_preferences.sql` | Creates `location_preferences` table (user_id PK→profiles, location_mode enum, sharing_paused, pulse/discovery visibility enums, safe_return_enabled, trusted_circle_share, hotel_blur_enabled, updated_at); RLS (users manage own row) | pending |
+| `0033_location_sessions.sql` | Creates `location_sessions` table (id, user_id, session_type enum, started_at, ended_at, resolved_city/country, trip_id, plan_item_id, metadata); RLS (users manage own rows, service-role all) | pending |
+| `0034_geo_zones.sql` | Creates `geo_zones` table (id, name, zone_type enum, center_lat/lng, radius_meters, polygon_geojson, country_code, city, created_by→profiles, is_system, metadata); RLS (public read, auth create own, service-role all) | pending |
+| `0035_plan_geofences.sql` | Creates `plan_geofences` table (id, trip_id→trips, plan_item_id→trip_plan_items, zone_id→geo_zones, trigger_type enum, notify_members bool, message_template, last_triggered_at); RLS (trip members read/manage) | pending |
+| `0036_pulse_geo_tags.sql` | Creates `pulse_geo_tags` table (id, post_id→posts, geo_zone_id→geo_zones, tag_type enum, display_label, confidence_score, source enum, created_at); RLS (public read); used by Pulse location context display | pending |
+| `0037_feature_flags.sql` | Creates `feature_flags` table (flag text PK, enabled bool, description, updated_at); seed rows for location intelligence phases 1–6; service-role manages flags | pending |
 
 ## Gotchas
 

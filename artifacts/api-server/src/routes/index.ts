@@ -22,6 +22,9 @@ import telegraphFeedbackRouter from "./telegraphFeedback";
 import discoveryRouter from "./discovery";
 import blocksRouter from "./blocks";
 import locationRouter from "./location";
+import locationPreferencesRouter from "./locationPreferences";
+import geofenceRouter from "./geofence";
+import safeReturnRouter from "./safeReturn";
 import highlightsRouter from "./highlights";
 import placesRouter from "./places";
 
@@ -50,6 +53,9 @@ router.use(dailyBriefRouter);
 router.use(discoveryRouter);
 router.use(blocksRouter);
 router.use(locationRouter);
+router.use(locationPreferencesRouter);
+router.use(geofenceRouter);
+router.use(safeReturnRouter);
 router.use(highlightsRouter);
 router.use(placesRouter);
 

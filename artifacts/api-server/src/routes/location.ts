@@ -231,6 +231,11 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     if (isValidLat(rLat) && isValidLng(rLng)) { lat = rLat; lng = rLng; }
   }
 
+  // Phase 6 seam: trust-level check — only GPS-sourced stamps count.
+  // Manual city tags pass source="manual" and are allowed to persist for
+  // display but flagged so the Passport knows they are unverified.
+  const trustLevel: "gps_verified" | "manual" = source === "gps" && lat != null ? "gps_verified" : "manual";
+
   // Upsert — unique on (user_id, stamp_type, country_code, city)
   const { data: stamp, error } = await sc
     .from("passport_stamps_gps")
@@ -260,7 +265,7 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     return;
   }
 
-  res.status(201).json({ ok: true, stamp });
+  res.status(201).json({ ok: true, stamp: { ...stamp, trustLevel } });
 });
 
 export default router;

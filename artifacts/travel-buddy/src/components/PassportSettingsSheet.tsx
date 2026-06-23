@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { X, Camera, Check, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
 import type { OwnProfile } from '../types/models';
 import { updateMyProfile, checkUsername, uploadAvatar } from '../services/profile';
 import { color, space, radius, type as t } from '../theme/tokens';
@@ -513,6 +514,13 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
                 <Text style={sh.infoLabel}>📍 Location Privacy</Text>
                 <Text style={sh.infoText}>Your exact GPS is never stored or shown publicly. Only city-level location appears on your Passport.</Text>
               </View>
+              <Pressable
+                style={sh.linkRow}
+                onPress={() => { onClose(); setTimeout(() => router.push('/settings/location' as any), 300); }}
+              >
+                <Text style={sh.linkRowLabel}>Location Settings</Text>
+                <Text style={sh.linkRowChevron}>›</Text>
+              </Pressable>
               <View style={sh.infoBox}>
                 <Text style={sh.infoLabel}>🔖 Verified Stamps</Text>
                 <Text style={sh.infoText}>GPS-verified posts earn stamps when your current location matches the tagged place (within ~1 mile). Manual tags do not earn stamps.</Text>
@@ -656,6 +664,18 @@ const sh = StyleSheet.create({
   switchLabel: { ...t.bodyStrong, color: color.ink },
   switchSub: { ...t.small, color: color.mute, marginTop: 2 },
 
+  linkRow: {
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    marginBottom: space.xs,
+  },
+  linkRowLabel: { ...t.body, color: color.signal },
+  linkRowChevron: { ...t.bodyStrong, color: color.signal, fontSize: 20 },
   infoBox: {
     backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.xs,

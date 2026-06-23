@@ -300,6 +300,21 @@ async function queryOverpass(
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 const VALID_CATEGORIES = ["for_you", "places", "food", "nightlife", "activities", "events", "beaches", "transport"];
+const VALID_CONTEXT_MODES = ["near_me", "in_city", "going_soon", "around_crew", "safe_nearby"];
+
+/**
+ * Context mode labels returned to the client. Never includes exact coords.
+ */
+function contextModeLabel(mode: string, city: string | null): string {
+  switch (mode) {
+    case "near_me":      return "Near me";
+    case "in_city":      return city ? `In ${city}` : "In this city";
+    case "going_soon":   return city ? `Going to ${city}` : "Going soon";
+    case "around_crew":  return "Around my crew";
+    case "safe_nearby":  return "Safe nearby";
+    default:             return city ? `In ${city}` : "Discovery";
+  }
+}
 
 router.get("/discovery", async (req, res) => {
   const destination = (req.query.destination as string | undefined)?.trim();
@@ -308,10 +323,21 @@ router.get("/discovery", async (req, res) => {
     return;
   }
 
+  // Context mode: near_me | in_city | going_soon | around_crew | safe_nearby
+  const contextMode = VALID_CONTEXT_MODES.includes(req.query.context as string)
+    ? (req.query.context as string)
+    : null;
+
+  // Adjust radius based on context mode
+  const defaultRadius = contextMode === "near_me" ? 5
+    : contextMode === "safe_nearby" ? 3
+    : contextMode === "going_soon" ? 15
+    : 10;
+
   const category  = VALID_CATEGORIES.includes(req.query.category as string)
     ? (req.query.category as string)
     : "for_you";
-  const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || 10));
+  const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || defaultRadius));
   const page      = Math.max(1, parseInt(req.query.page as string) || 1);
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
@@ -337,17 +363,20 @@ router.get("/discovery", async (req, res) => {
     return list;
   }
 
+  const cityLabel = destination.split(",")[0]?.trim() ?? null;
+  const ctxLabel  = contextMode ? contextModeLabel(contextMode, cityLabel) : null;
+
   if (cached && isFresh(cached)) {
     const filtered = applyFilters(cached.places);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    res.json({ places: slice, total: filtered.length, destination, cached: true });
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: true });
     return;
   }
 
   try {
     const coords = await geocode(destination);
     if (!coords) {
-      res.json({ places: [], total: 0, destination, cached: false });
+      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false });
       return;
     }
 
@@ -360,7 +389,7 @@ router.get("/discovery", async (req, res) => {
 
     const filtered = applyFilters(places);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    res.json({ places: slice, total: filtered.length, destination, cached: false });
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     res.json({ places: [], total: 0, destination, cached: false });
