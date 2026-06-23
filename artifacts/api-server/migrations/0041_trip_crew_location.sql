@@ -35,7 +35,7 @@ CREATE POLICY "crew_prefs_members_read" ON trip_crew_location_preferences
       SELECT 1 FROM trip_members
       WHERE trip_members.trip_id = trip_crew_location_preferences.trip_id
         AND trip_members.user_id = auth.uid()
-        AND trip_members.status = 'accepted'
+        AND trip_members.role IN ('owner', 'member')
     )
   );
 
@@ -107,7 +107,7 @@ CREATE POLICY "crew_events_members_read" ON trip_crew_location_events
       SELECT 1 FROM trip_members
       WHERE trip_members.trip_id = trip_crew_location_events.trip_id
         AND trip_members.user_id = auth.uid()
-        AND trip_members.status = 'accepted'
+        AND trip_members.role IN ('owner', 'member')
     )
   );
 

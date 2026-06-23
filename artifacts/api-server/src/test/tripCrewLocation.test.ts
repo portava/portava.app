@@ -209,9 +209,9 @@ const BASE_FLAGS = {
 /** USER_ID is the trip owner */
 const OWNER_TRIP = [{ id: TRIP_ID, owner_id: USER_ID }];
 /** MEMBER_ID is an accepted member */
-const ACCEPTED_MEMBERS = [{ trip_id: TRIP_ID, user_id: MEMBER_ID, status: "accepted" }];
+const ACCEPTED_MEMBERS = [{ trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member" }];
 /** OTHER_USER has a pending invite (not accepted) */
-const PENDING_MEMBERS  = [{ trip_id: TRIP_ID, user_id: OTHER_USER, status: "pending" }];
+const PENDING_MEMBERS  = [{ trip_id: TRIP_ID, user_id: OTHER_USER, role: "invited" }];
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 

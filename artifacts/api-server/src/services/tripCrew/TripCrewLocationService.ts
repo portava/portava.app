@@ -42,7 +42,7 @@ export async function getCrewMap(
     db.from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
-      .eq("status", "accepted"),
+      .in("role", ["owner", "member"]),
   ]);
 
   const ownerId: string | null = (ownerRes.data as any)?.owner_id ?? null;
@@ -110,7 +110,7 @@ export async function getCrewMap(
   const now = new Date().toISOString();
   const liveShareRes = await db
     .from("trip_crew_location_sessions")
-    .select("id, user_id, visibility_level, expires_at")
+    .select("id, user_id, visibility_level, expires_at, allowed_member_ids")
     .eq("trip_id", tripId)
     .eq("status", "active")
     .gt("expires_at", now);

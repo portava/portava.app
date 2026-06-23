@@ -74,10 +74,10 @@ async function getMemberRole(
 
     const { data: member } = await db
       .from("trip_members")
-      .select("user_id")
+      .select("role")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
-      .eq("status", "accepted")
+      .in("role", ["owner", "member"])
       .maybeSingle();
     return member ? "member" : null;
   } catch {

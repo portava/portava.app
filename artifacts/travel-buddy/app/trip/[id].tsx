@@ -6,6 +6,7 @@ import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, Mess
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
+  TripCrewSection,
 } from '../../src/components/TripPage2';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
@@ -192,6 +193,9 @@ export default function TripDetail() {
         <CompassTripBrief />
         <TripStamps stamps={tripStamps} />
         <TripMapPlaceholder />
+        {live && trip.id ? (
+          <TripCrewSection tripId={trip.id} />
+        ) : null}
         <TripSafety />
         <TripPostsSection posts={tripPosts} />
       </ScrollView>

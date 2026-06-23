@@ -453,6 +453,10 @@ router.post("/trips/:tripId/remove-member", async (req, res) => {
   // Immediately revoke chat access by syncing — sets left_at for the removed member.
   const { syncTripChatMembers } = await import("../lib/chatSync.js");
   syncTripChatMembers(tripId, sc).catch(() => {});
+
+  // Immediately revoke any active crew live-share sessions for the removed member.
+  const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
+  revokeAccessForMember(sc, tripId, memberId).catch(() => {});
 });
 
 export default router;
