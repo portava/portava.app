@@ -8,13 +8,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
-  AppState, type AppStateStatus, Image,
+  AppState, type AppStateStatus, Image, Modal, Linking, Animated,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Check, ThumbsUp, ThumbsDown,
-  Minus, Plus, Trophy, Pencil, X, CheckCircle2,
+  Minus, Plus, Trophy, Pencil, X, CheckCircle2, CalendarDays,
 } from 'lucide-react-native';
 import {
   getMeetup, rsvpMeetup, voteTimeOption, confirmTime,
@@ -25,6 +25,7 @@ import { DatePickerField } from '../../src/components/DateTimePickerField';
 import { useSession } from '../../src/context/SessionContext';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { addMeetupToCalendar } from '../../src/services/calendar';
 
 const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
@@ -199,6 +200,28 @@ export default function MeetupScreen() {
   const [error, setError] = useState<string | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
 
+  // Calendar
+  const [calendarAdded, setCalendarAdded] = useState(false);
+  const [calendarActioning, setCalendarActioning] = useState(false);
+  const [showCalendarDenied, setShowCalendarDenied] = useState(false);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showToast() {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    Animated.sequence([
+      Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }
+
+  // Reset calendar-added flag when navigating to a different meetup
+  useEffect(() => {
+    setCalendarAdded(false);
+    toastOpacity.setValue(0);
+  }, [id]);
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
@@ -359,6 +382,21 @@ export default function MeetupScreen() {
         },
       },
     ]);
+  }
+
+  async function handleAddToCalendar() {
+    if (!meetup || calendarActioning || calendarAdded) return;
+    setCalendarActioning(true);
+    const result = await addMeetupToCalendar(meetup);
+    setCalendarActioning(false);
+    if (result.ok) {
+      setCalendarAdded(true);
+      showToast();
+    } else if (result.reason === 'denied') {
+      setShowCalendarDenied(true);
+    } else {
+      Alert.alert('Calendar error', result.message ?? 'Could not add event to calendar.');
+    }
   }
 
   function handleAddToTrip() {
@@ -756,6 +794,26 @@ export default function MeetupScreen() {
           </Pressable>
         )}
 
+        {/* Add to Calendar — confirmed meetups with a known start time */}
+        {meetup.status === 'confirmed' && !!meetup.startsAt && Platform.OS !== 'web' && (
+          <Pressable
+            style={[s.calBtn, calendarAdded && s.calBtnAdded]}
+            onPress={handleAddToCalendar}
+            disabled={calendarAdded || calendarActioning}
+          >
+            {calendarActioning ? (
+              <ActivityIndicator size="small" color={calendarAdded ? color.onInk : color.signal} />
+            ) : calendarAdded ? (
+              <Check size={16} color={color.onInk} />
+            ) : (
+              <CalendarDays size={16} color={color.signal} />
+            )}
+            <Text style={[s.calBtnText, calendarAdded && s.calBtnTextAdded]}>
+              {calendarAdded ? 'Added ✓' : 'Add to Calendar'}
+            </Text>
+          </Pressable>
+        )}
+
         {/* View trip */}
         {meetup.tripId && (
           <Pressable style={s.linkBtn} onPress={() => router.push(`/trip/${meetup.tripId}` as any)}>
@@ -764,6 +822,41 @@ export default function MeetupScreen() {
         )}
 
       </ScrollView>
+
+      {/* Success toast */}
+      <Animated.View style={[s.toast, { opacity: toastOpacity }]} pointerEvents="none">
+        <Check size={14} color="#fff" />
+        <Text style={s.toastText}>Added to your calendar</Text>
+      </Animated.View>
+
+      {/* Permission-denied bottom sheet */}
+      <Modal
+        visible={showCalendarDenied}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCalendarDenied(false)}
+      >
+        <Pressable style={s.modalBackdrop} onPress={() => setShowCalendarDenied(false)} />
+        <View style={[s.modalSheet, { paddingBottom: insets.bottom + space.md }]}>
+          <View style={s.modalHandle} />
+          <CalendarDays size={32} color={color.signal} style={{ alignSelf: 'center', marginBottom: space.sm }} />
+          <Text style={s.modalTitle}>Calendar Access Required</Text>
+          <Text style={s.modalBody}>
+            Travel Buddy needs calendar permission to add this meetup.
+            Open your device Settings and enable Calendar access for Travel Buddy.
+          </Text>
+          <Pressable
+            style={s.modalSettingsBtn}
+            onPress={() => { setShowCalendarDenied(false); Linking.openSettings(); }}
+          >
+            <Text style={s.modalSettingsBtnText}>Open Settings</Text>
+          </Pressable>
+          <Pressable style={s.modalDismissBtn} onPress={() => setShowCalendarDenied(false)}>
+            <Text style={s.modalDismissText}>Not now</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -843,4 +936,22 @@ const s = StyleSheet.create({
   addPlanBtnText: { ...t.bodyStrong, color: color.onInk },
   linkBtn: { alignItems: 'center', paddingVertical: space.sm },
   linkBtnText: { ...t.bodyStrong, color: color.signal },
+
+  calBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.signal, paddingVertical: space.md },
+  calBtnAdded: { backgroundColor: color.signal, borderColor: color.signal },
+  calBtnText: { ...t.bodyStrong, color: color.signal },
+  calBtnTextAdded: { color: color.onInk },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  modalSheet: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.xl, gap: space.md, ...shadow.card },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.sm },
+  modalTitle: { ...t.title, color: color.ink, fontWeight: '700', textAlign: 'center', fontSize: 18 },
+  modalBody: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+  modalSettingsBtn: { backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center' },
+  modalSettingsBtnText: { ...t.bodyStrong, color: color.onInk },
+  modalDismissBtn: { alignItems: 'center', paddingVertical: space.sm },
+  modalDismissText: { ...t.body, color: color.mute },
+
+  toast: { position: 'absolute', bottom: 80, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#16A34A', paddingHorizontal: space.lg, paddingVertical: space.sm + 2, borderRadius: radius.pill, ...shadow.card },
+  toastText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
 });

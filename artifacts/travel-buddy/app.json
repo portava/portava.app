@@ -19,10 +19,15 @@
         "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
       ],
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["travelbuddy"]
+        "LSApplicationQueriesSchemes": ["travelbuddy"],
+        "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan."
       }
     },
     "android": {
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
