@@ -8,6 +8,7 @@ import { getDiscoveryPlaces } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import PlaceCard from './PlaceCard';
 import { PlaceSkeletonList } from './PlaceSkeleton';
+import { DiscoveryMapView } from './DiscoveryMapView';
 
 // ── Radius chips ──────────────────────────────────────────────────────────────
 
@@ -203,6 +204,7 @@ interface DiscoveryCategoryTabProps {
   onAddToPlan: (place: DiscoveryPlace) => void;
   onPickDestination?: (city: string) => void;
   contextMode?: DiscoveryContextMode | null;
+  viewMode?: 'list' | 'map';
 }
 
 export function DiscoveryCategoryTab({
@@ -212,6 +214,7 @@ export function DiscoveryCategoryTab({
   onAddToPlan,
   onPickDestination,
   contextMode,
+  viewMode = 'list',
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -309,6 +312,8 @@ export function DiscoveryCategoryTab({
             Try increasing the search radius or adjust the filters.
           </Text>
         </View>
+      ) : viewMode === 'map' ? (
+        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />
       ) : (
         <FlatList
           data={places}

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet,
+  View, Text, Pressable, ScrollView, StyleSheet, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
@@ -86,6 +86,7 @@ export default function DiscoveryHub() {
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
 
   // Keep destination in sync when location city changes (GPS capture / manual set).
   useEffect(() => {
@@ -112,6 +113,16 @@ export default function DiscoveryHub() {
       setActiveTab(params.category as DiscoveryCategory);
     }
   }, [params.category]);
+
+  // Reset to list view when the user switches tabs
+  const handleTabChange = (key: DiscoveryCategory) => {
+    setActiveTab(key);
+    setViewMode('list');
+  };
+
+  // Map toggle is shown only on native (Platform.OS !== 'web') and only for
+  // category tabs that use DiscoveryCategoryTab (not for_you which is ForYouTab)
+  const showMapToggle = Platform.OS !== 'web' && activeTab !== 'for_you';
 
   const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
     setDetailVisible(false);
@@ -186,29 +197,53 @@ export default function DiscoveryHub() {
         })}
       </ScrollView>
 
-      {/* ── Tab bar ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabBar}
-        contentContainerStyle={styles.tabBarContent}
-      >
-        {TABS.map((tab) => {
-          const active = tab.key === activeTab;
-          return (
+      {/* ── Tab bar + list/map toggle ── */}
+      <View style={styles.tabRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBar}
+          contentContainerStyle={styles.tabBarContent}
+        >
+          {TABS.map((tab) => {
+            const active = tab.key === activeTab;
+            return (
+              <Pressable
+                key={tab.key}
+                style={[styles.tab, active && styles.tabActive]}
+                onPress={() => handleTabChange(tab.key)}
+              >
+                <tab.Icon size={16} color={active ? color.signal : color.mute} />
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {showMapToggle && (
+          <View style={styles.viewToggle}>
             <Pressable
-              key={tab.key}
-              style={[styles.tab, active && styles.tabActive]}
-              onPress={() => setActiveTab(tab.key)}
+              style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
+              onPress={() => setViewMode('list')}
             >
-              <tab.Icon size={16} color={active ? color.signal : color.mute} />
-              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
-                {tab.label}
+              <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>
+                List
               </Text>
             </Pressable>
-          );
-        })}
-      </ScrollView>
+            <Pressable
+              style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]}
+              onPress={() => setViewMode('map')}
+            >
+              <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
+              <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>
+                Map
+              </Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
 
       {/* ── Following highlights strip ── */}
       {isAuthed && (
@@ -237,6 +272,7 @@ export default function DiscoveryHub() {
             onAddToPlan={handleAddToPlanFromPlace}
             onPickDestination={handlePickDestination}
             contextMode={contextMode}
+            viewMode={viewMode}
           />
         )}
       </View>
@@ -285,15 +321,48 @@ const styles = StyleSheet.create({
     color: color.ink,
     fontSize: 20,
   },
-  tabBar: {
+  tabRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
-    flexGrow: 0,
+  },
+  tabBar: {
+    flexGrow: 1,
+    flexShrink: 1,
   },
   tabBarContent: {
     paddingHorizontal: space.md,
     gap: space.xs,
     paddingVertical: space.sm,
+  },
+  viewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.sm,
+    borderLeftWidth: 1,
+    borderLeftColor: color.haze,
+  },
+  toggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+  },
+  toggleBtnActive: {
+    backgroundColor: color.signal + '14',
+  },
+  toggleBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: color.mute,
+  },
+  toggleBtnTextActive: {
+    color: color.signal,
   },
   tab: {
     flexDirection: 'row',

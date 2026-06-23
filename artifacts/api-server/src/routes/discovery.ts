@@ -35,7 +35,7 @@ const PAGE_SIZE        = 20;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** Internal shape — keeps lat/lng for distance computation only; never returned to clients. */
+/** Shape used internally and returned in all API responses. */
 export interface DiscoveryPlace {
   id: string;
   name: string;
@@ -43,9 +43,9 @@ export interface DiscoveryPlace {
   type: string | null;
   description: string | null;
   distanceKm: number | null;
-  /** @internal never expose in API responses */
+  /** OSM venue latitude — public data, safe to expose */
   lat: number | null;
-  /** @internal never expose in API responses */
+  /** OSM venue longitude — public data, safe to expose */
   lng: number | null;
   tags: string[];
   address: string | null;
@@ -56,12 +56,11 @@ export interface DiscoveryPlace {
   isOpenNow: boolean | null;
 }
 
-/** Public shape returned in all API responses — no exact coordinates. */
-export type PublicDiscoveryPlace = Omit<DiscoveryPlace, "lat" | "lng">;
+/** Public shape returned in all API responses. */
+export type PublicDiscoveryPlace = DiscoveryPlace;
 
 function toPublic(p: DiscoveryPlace): PublicDiscoveryPlace {
-  const { lat: _lat, lng: _lng, ...pub } = p;
-  return pub;
+  return p;
 }
 
 interface CacheEntry {
