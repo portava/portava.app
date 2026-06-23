@@ -32,7 +32,7 @@ export interface DiscoveryItem {
   city: string;
   blurb: string;            // "why it's special" / short note
   imageUrl?: string;
-  submittedBy?: { name: string; avatarUrl: string; id?: string };
+  submittedBy?: { name: string; avatarUrl: string; id?: string; handle?: string };
   savedCount?: number;
   source: DiscoverySource;
   status: DiscoveryStatus;
@@ -80,14 +80,14 @@ export const DISCOVERY_CATEGORIES = [
 
 /* ── Pass 2 seed: gems, neighborhoods, traveler picks, saved ── */
 
-const TRAVELER = (name: string, avatarUrl: string, id?: string) => ({ name, avatarUrl, id });
+const TRAVELER = (name: string, avatarUrl: string, id?: string, handle?: string) => ({ name, avatarUrl, id, handle });
 
 export const hiddenGems: DiscoveryItem[] = [
-  { id: 'hg1', name: 'The Backspace Cafe', category: 'hidden_gem', neighborhood: 'Lahug, Cebu City', city: 'Cebu', blurb: 'Cozy cafe with great coffee and quiet vibes.', submittedBy: TRAVELER('Anna', 'https://i.pravatar.cc/120?img=5', 'u_1'), ...SEED },
+  { id: 'hg1', name: 'The Backspace Cafe', category: 'hidden_gem', neighborhood: 'Lahug, Cebu City', city: 'Cebu', blurb: 'Cozy cafe with great coffee and quiet vibes.', submittedBy: TRAVELER('Anna', 'https://i.pravatar.cc/120?img=5', 'u_1', 'maya.roams'), ...SEED },
   { id: 'hg2', name: 'Sirao Garden', category: 'hidden_gem', neighborhood: 'Sirao, Cebu', city: 'Cebu', blurb: 'Flower garden with mountain views.', submittedBy: TRAVELER('Mark', 'https://i.pravatar.cc/120?img=12'), ...SEED },
   { id: 'hg3', name: 'Sugbo Mercado', category: 'hidden_gem', neighborhood: 'IT Park, Cebu City', city: 'Cebu', blurb: 'Food market with local vendors and live music.', submittedBy: TRAVELER('Jessa', 'https://i.pravatar.cc/120?img=9'), ...SEED },
-  { id: 'hg4', name: 'Tamagas Falls', category: 'hidden_gem', neighborhood: 'Alegria, Cebu', city: 'Cebu', blurb: 'Hidden waterfall and natural lagoon.', submittedBy: TRAVELER('Carlo', 'https://i.pravatar.cc/120?img=15', 'u_3'), ...SEED },
-  { id: 'hg5', name: 'Speakeasy Cebu', category: 'hidden_gem', neighborhood: 'Capitol Site', city: 'Cebu', blurb: 'Hidden bar with craft cocktails.', submittedBy: TRAVELER('Vince', 'https://i.pravatar.cc/120?img=33', 'u_2'), ...SEED },
+  { id: 'hg4', name: 'Tamagas Falls', category: 'hidden_gem', neighborhood: 'Alegria, Cebu', city: 'Cebu', blurb: 'Hidden waterfall and natural lagoon.', submittedBy: TRAVELER('Carlo', 'https://i.pravatar.cc/120?img=15', 'u_3', 'kojo.eats'), ...SEED },
+  { id: 'hg5', name: 'Speakeasy Cebu', category: 'hidden_gem', neighborhood: 'Capitol Site', city: 'Cebu', blurb: 'Hidden bar with craft cocktails.', submittedBy: TRAVELER('Vince', 'https://i.pravatar.cc/120?img=33', 'u_2', 'thekochs'), ...SEED },
 ];
 
 export interface NeighborhoodVibe {
@@ -111,7 +111,7 @@ export const neighborhoods: NeighborhoodVibe[] = [
 
 export interface TravelerPick {
   id: string;
-  user: { name: string; avatarUrl: string; id?: string };
+  user: { name: string; avatarUrl: string; id?: string; handle?: string };
   place: string;
   note: string;
   city: string;

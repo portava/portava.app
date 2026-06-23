@@ -14,9 +14,14 @@ import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 /** Shared avatar with optional HighlightRing for Discovery user avatars. */
-function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; avatarUrl: string; size: number }) {
+function DiscoveryUserAvatar({ userId, handle, avatarUrl, size }: { userId?: string; handle?: string; avatarUrl: string; size: number }) {
   const ringState = useHighlightRingState(userId ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const onPress = ringState?.hasActive
+    ? () => setViewerOpen(true)
+    : handle
+    ? () => router.push(`/profile/${handle}` as any)
+    : undefined;
   return (
     <>
       <HighlightRing
@@ -25,7 +30,7 @@ function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; ava
         size={size}
         ringWidth={1.5}
         gap={1.5}
-        onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+        onPress={onPress}
       >
         <Image
           source={{ uri: avatarUrl }}
@@ -68,7 +73,7 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
         <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
         {gem.submittedBy ? (
           <View style={g.byRow}>
-            <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
+            <DiscoveryUserAvatar userId={gem.submittedBy.id} handle={gem.submittedBy.handle} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
             <Text style={g.by}>By {gem.submittedBy.name}</Text>
           </View>
         ) : null}
@@ -129,7 +134,7 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
   return (
     <View style={tp.card}>
       <View style={tp.head}>
-        <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} />
+        <DiscoveryUserAvatar userId={pick.user.id} handle={pick.user.handle} avatarUrl={pick.user.avatarUrl} size={32} />
         <View style={{ flex: 1 }}>
           <Text style={tp.user}>{pick.user.name}</Text>
           <Text style={tp.time}>{pick.timeAgo}</Text>
