@@ -28,9 +28,10 @@ import {
   RefreshCw, Clock,
 } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
+import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { TelegraphSuggestionTray } from '../../src/components/TelegraphSuggestionTray';
+import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
 import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { supabase } from '../../src/lib/supabase';
@@ -922,6 +923,8 @@ export default function TelegraphThread() {
   // Per-thread translation overrides (null = fall back to global langSettings)
   const [threadAutoTranslate, setThreadAutoTranslate] = useState<boolean | null>(null);
   const [threadShowOriginal, setThreadShowOriginal] = useState<boolean | null>(null);
+  // Fetch trip end date so TelegraphSuggestionTray can expire cached suggestions
+  const { data: tripData } = useTrip(threadType === 'trip' ? contextId : undefined);
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   // DM profile for richer header
   const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
@@ -1422,6 +1425,7 @@ export default function TelegraphThread() {
         <TelegraphSuggestionTray
           threadId={id}
           lastSentMessage={lastSentMessage}
+          tripEndDate={tripData?.endDate}
           onAddToPlan={handleAddToPlan}
           onCreateMeetup={handleCreateMeetup}
           onViewPlace={handleViewPlace}
@@ -1525,10 +1529,12 @@ export default function TelegraphThread() {
           router.replace('/messages');
         } : undefined}
         onLeave={threadType !== 'direct' ? async () => {
+          await clearTelegraphSuggestionsCache(id ?? '');
           await leaveThread(id ?? '');
           router.replace('/messages');
         } : undefined}
         onDeleteForMe={async () => {
+          await clearTelegraphSuggestionsCache(id ?? '');
           await leaveThread(id ?? '');
           router.replace('/messages');
         }}
