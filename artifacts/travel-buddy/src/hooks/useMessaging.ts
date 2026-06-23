@@ -37,6 +37,7 @@ import {
   telegraphRealtime,
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService';
+import { useSession } from '../context/SessionContext';
 
 // When realtime is connected we lean on pushed events and poll only as a slow
 // safety net. When realtime is unavailable the service reports 'polling' and
@@ -207,6 +208,7 @@ export function useMyThreads() {
 // ── Thread chat (with message polling) ────────────────────────────────────────
 
 export function useThreadMessages(threadId: string | null) {
+  const { userId } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -334,7 +336,7 @@ export function useThreadMessages(threadId: string | null) {
         id: clientId,
         clientId,
         threadId,
-        senderId: '',
+        senderId: userId ?? '',
         senderHandle: null,
         senderName: null,
         senderAvatarUrl: null,

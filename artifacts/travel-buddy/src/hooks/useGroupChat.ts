@@ -19,6 +19,7 @@ import {
   type GroupThread,
   type Message,
 } from '../services/messaging';
+import { useSession } from '../context/SessionContext';
 import {
   telegraphRealtime,
   type TelegraphEvent,
@@ -57,6 +58,7 @@ export function useGroupChat(
   type: 'trip' | 'circle',
   id: string | null | undefined,
 ): GroupChatData {
+  const { userId } = useSession();
   const [state, setState] = useState<GroupChatState>('loading');
   const [thread, setThread] = useState<GroupThread | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -183,7 +185,7 @@ export function useGroupChat(
       id: clientId,
       clientId,
       threadId: thread.id,
-      senderId: '',
+      senderId: userId ?? '',
       body: body.trim(),
       originalBody: body.trim(),
       displayBody: body.trim(),

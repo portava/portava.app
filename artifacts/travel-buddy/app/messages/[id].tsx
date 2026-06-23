@@ -806,11 +806,17 @@ function MessageBubble({
         )}
       </Pressable>
 
-      {/* Delivery status — sending / failed (tap-to-retry) */}
+      {/* Delivery status — sending / sent / failed (tap-to-retry) */}
       {mine && deliveryStatus === 'sending' && (
         <View style={styles.deliveryRow}>
           <Clock size={11} color={color.mute} />
           <Text style={styles.deliverySending}>Sending…</Text>
+        </View>
+      )}
+      {mine && deliveryStatus === 'sent' && !receiptState && (
+        <View style={styles.deliveryRow}>
+          <Check size={11} color={color.signal} />
+          <Text style={styles.deliverySent}>Sent</Text>
         </View>
       )}
       {mine && deliveryStatus === 'failed' && (
@@ -821,7 +827,7 @@ function MessageBubble({
       )}
 
       {/* Read receipt — shown on the last confirmed own message only */}
-      {mine && receiptState && !deliveryStatus && (
+      {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
           {receiptState === 'read' ? (
             <>
@@ -1758,6 +1764,7 @@ const styles = StyleSheet.create({
 
   deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   deliverySending: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
+  deliverySent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
   deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
 
   typingRow: {
