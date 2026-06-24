@@ -102,8 +102,8 @@ CREATE POLICY "tags_service_all" ON tags FOR ALL TO service_role USING (true);
 CREATE POLICY "hashtag_usage_public_read"   ON hashtag_usage FOR SELECT USING (true);
 CREATE POLICY "hashtag_usage_service_write" ON hashtag_usage FOR ALL TO service_role USING (true);
 
--- user_hashtag_follows: users manage their own rows; public read
-CREATE POLICY "hashtag_follows_read_all" ON user_hashtag_follows FOR SELECT USING (true);
+-- user_hashtag_follows: users manage own rows; service role has full access
+CREATE POLICY "hashtag_follows_own_sel"  ON user_hashtag_follows FOR SELECT USING (user_id = auth.uid());
 CREATE POLICY "hashtag_follows_own_ins"  ON user_hashtag_follows FOR INSERT WITH CHECK (user_id = auth.uid());
 CREATE POLICY "hashtag_follows_own_del"  ON user_hashtag_follows FOR DELETE USING (user_id = auth.uid());
 CREATE POLICY "hashtag_follows_service"  ON user_hashtag_follows FOR ALL TO service_role USING (true);

@@ -56,6 +56,17 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
       or(expr: string) {
         const parts = expr.split(',').map((p) => p.trim());
         filters.push((r) => parts.some((p) => {
+          // handle ilike with wildcards: col.ilike.pat%  or  col.ilike.%pat%
+          const ilikeM = p.match(/^(\w+)\.ilike\.(.+)$/);
+          if (ilikeM) {
+            const [, col, pat] = ilikeM;
+            const val = String(r[col] ?? '').toLowerCase();
+            const norm = pat.toLowerCase();
+            if (norm.startsWith('%') && norm.endsWith('%')) return val.includes(norm.slice(1, -1));
+            if (norm.startsWith('%')) return val.endsWith(norm.slice(1));
+            if (norm.endsWith('%')) return val.startsWith(norm.slice(0, -1));
+            return val === norm;
+          }
           const m = p.match(/(\w+)\.(eq|neq)\.(.+)/);
           if (!m) return false;
           const [, col, op, val] = m;

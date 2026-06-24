@@ -67,6 +67,12 @@ router.get('/tags/suggestions', async (req, res) => {
 
   const limit = Math.min(Number(req.query.limit ?? 10), 20);
 
+  // surface: 'post' | 'comment' | 'message' — controls whether entity suggestions
+  // (trips, circles, places) are included or only user @mentions are returned.
+  // Defaults to 'post' so entity context is available unless caller says otherwise.
+  const surface = typeof req.query.surface === 'string' ? req.query.surface : 'post';
+  const includeEntities = surface !== 'message'; // messages only support @user mentions
+
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
@@ -82,11 +88,11 @@ router.get('/tags/suggestions', async (req, res) => {
     else blockedSet.add(b.blocker_id);
   }
 
-  // ── User candidates ──────────────────────────────────────────────────────────
+  // ── User candidates: match on handle prefix OR name substring ────────────────
   const { data: rows, error } = await sc
     .from('profiles')
     .select('id, handle, name, avatar_url, tag_permission')
-    .ilike('handle', `${q}%`)
+    .or(`handle.ilike.${q}%,name.ilike.%${q}%`)
     .neq('id', user.id)
     .order('handle', { ascending: true })
     .limit(limit * 5);
@@ -172,70 +178,72 @@ router.get('/tags/suggestions', async (req, res) => {
     .sort((a, b) => a.relationshipRank - b.relationshipRank || a.handle.localeCompare(b.handle))
     .slice(0, PER_TYPE_CAP);
 
-  // ── Entity suggestions: trips, circles, discovery places ────────────────────
+  // ── Entity suggestions: trips, circles, places, events (post/comment only) ──
+  // surface='message' → only @user mentions are meaningful; skip entity lookup
   const entitySuggestions: any[] = [];
+  if (includeEntities) {
+    // Trips the caller is a member of
+    try {
+      const { data: memberRows } = await sc
+        .from('trip_members')
+        .select('trip_id, trips(id, name, destination, status)')
+        .eq('user_id', user.id)
+        .limit(100);
+      for (const r of (memberRows ?? []) as any[]) {
+        const t = r.trips;
+        if (t && (t.name ?? '').toLowerCase().includes(q)) {
+          entitySuggestions.push({
+            id: t.id, type: 'trip',
+            name: t.name, destination: t.destination ?? null,
+          });
+        }
+      }
+    } catch { /* trip_members may not exist on all deployments */ }
 
-  // Trips the caller is a member of
-  try {
-    const { data: memberRows } = await sc
-      .from('trip_members')
-      .select('trip_id, trips(id, name, destination, status)')
-      .eq('user_id', user.id)
-      .limit(100);
-    for (const r of (memberRows ?? []) as any[]) {
-      const t = r.trips;
-      if (t && (t.name ?? '').toLowerCase().includes(q)) {
+    // Circles owned by the caller
+    try {
+      const { data: circleRows } = await sc
+        .from('circles')
+        .select('id, name')
+        .eq('owner_id', user.id)
+        .ilike('name', `%${q}%`)
+        .limit(20);
+      for (const c of (circleRows ?? []) as any[]) {
+        entitySuggestions.push({ id: c.id, type: 'circle', name: c.name });
+      }
+    } catch { /* circles may not exist on all deployments */ }
+
+    // Discovery places matching query
+    try {
+      const { data: placeRows } = await sc
+        .from('discovery_places')
+        .select('id, name, city, place_type')
+        .ilike('name', `%${q}%`)
+        .eq('status', 'approved')
+        .limit(10);
+      for (const p of (placeRows ?? []) as any[]) {
         entitySuggestions.push({
-          id: t.id, type: 'trip',
-          name: t.name, destination: t.destination ?? null,
+          id: p.id, type: 'place',
+          name: p.name, city: p.city ?? null, placeType: p.place_type ?? null,
         });
       }
-    }
-  } catch { /* trip_members may not exist on all deployments */ }
+    } catch { /* discovery_places may not exist on all deployments */ }
 
-  // Circles owned by the caller
-  try {
-    const { data: circleRows } = await sc
-      .from('circles')
-      .select('id, name')
-      .eq('owner_id', user.id)
-      .ilike('name', `%${q}%`)
-      .limit(20);
-    for (const c of (circleRows ?? []) as any[]) {
-      entitySuggestions.push({ id: c.id, type: 'circle', name: c.name });
-    }
-  } catch { /* circles may not exist on all deployments */ }
-
-  // Discovery places matching query
-  try {
-    const { data: placeRows } = await sc
-      .from('discovery_places')
-      .select('id, name, city, place_type')
-      .ilike('name', `%${q}%`)
-      .eq('status', 'approved')
-      .limit(10);
-    for (const p of (placeRows ?? []) as any[]) {
-      entitySuggestions.push({
-        id: p.id, type: 'place',
-        name: p.name, city: p.city ?? null, placeType: p.place_type ?? null,
-      });
-    }
-  } catch { /* discovery_places may not exist on all deployments */ }
-
-  // Events matching query
-  try {
-    const { data: eventRows } = await sc
-      .from('events')
-      .select('id, name, location, start_at')
-      .ilike('name', `%${q}%`)
-      .limit(10);
-    for (const e of (eventRows ?? []) as any[]) {
-      entitySuggestions.push({
-        id: e.id, type: 'event',
-        name: e.name, location: e.location ?? null, startAt: e.start_at ?? null,
-      });
-    }
-  } catch { /* events table may not exist on all deployments */ }
+    // Events matching query
+    try {
+      const { data: eventRows } = await sc
+        .from('events')
+        .select('id, name, location, start_at')
+        .ilike('name', `%${q}%`)
+        .limit(10);
+      for (const e of (eventRows ?? []) as any[]) {
+        entitySuggestions.push({
+          id: e.id, type: 'event',
+          name: e.name, location: e.location ?? null, startAt: e.start_at ?? null,
+        });
+      }
+    } catch { /* events table may not exist on all deployments */ }
+  }
 
   // Cap each entity type at PER_TYPE_CAP before merging
   const typeCounts: Record<string, number> = {};

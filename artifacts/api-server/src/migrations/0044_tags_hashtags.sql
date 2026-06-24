@@ -99,9 +99,10 @@ CREATE INDEX IF NOT EXISTS user_hashtag_follows_hashtag_idx ON user_hashtag_foll
 
 ALTER TABLE user_hashtag_follows ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY uhf_select ON user_hashtag_follows FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY uhf_insert ON user_hashtag_follows FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY uhf_delete ON user_hashtag_follows FOR DELETE USING (user_id = auth.uid());
+CREATE POLICY uhf_select  ON user_hashtag_follows FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY uhf_insert  ON user_hashtag_follows FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY uhf_delete  ON user_hashtag_follows FOR DELETE USING (user_id = auth.uid());
+CREATE POLICY uhf_service ON user_hashtag_follows FOR ALL TO service_role USING (true);
 
 -- ── increment_hashtag_usage_count() ──────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION increment_hashtag_usage_count(p_hashtag_id UUID)

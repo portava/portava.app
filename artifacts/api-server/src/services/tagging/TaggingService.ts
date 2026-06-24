@@ -124,7 +124,7 @@ async function filterByContentVisibility(
 
     const { data: post } = await db
       .from('posts')
-      .select('visibility, author_id')
+      .select('visibility, author_id, trip_id')
       .eq('id', postId)
       .maybeSingle();
 

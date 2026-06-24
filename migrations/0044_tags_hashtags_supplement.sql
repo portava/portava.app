@@ -4,6 +4,13 @@
 --   • hashtags.normalized_name — slug with all non-alphanumeric chars removed (admin PATCH)
 --   • upsert_hashtag_usage_and_increment — atomic insert+increment (race-safe usage_count)
 
+-- ── user_hashtag_follows: fix overly-broad public-read SELECT policy ──────────────
+-- 0043 accidentally used USING (true), exposing all rows. Drop it and replace with
+-- own-row-only access; service role already covered by the FOR ALL policy.
+DROP POLICY IF EXISTS "hashtag_follows_read_all" ON user_hashtag_follows;
+CREATE POLICY IF NOT EXISTS "hashtag_follows_own_sel" ON user_hashtag_follows
+  FOR SELECT USING (user_id = auth.uid());
+
 -- ── tags: add tagged_at (mirrors created_at; code uses this column for rate-limit) ──
 ALTER TABLE tags ADD COLUMN IF NOT EXISTS tagged_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
