@@ -4,7 +4,6 @@ import {
   Text,
   Image,
   FlatList,
-  TextInput,
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
@@ -48,6 +47,9 @@ import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
 import { reportMessage } from '../../src/services/messaging';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
+import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
+import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
+import type { AnyMentionSuggestion } from '../../src/services/tagging';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 
@@ -935,6 +937,10 @@ export default function TelegraphThread() {
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
   const [sendFailed, setSendFailed] = useState(false);
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
@@ -1473,6 +1479,14 @@ export default function TelegraphThread() {
         />
       )}
 
+      {/* Mention suggestions — above compose bar */}
+      <MentionSuggestionList
+        suggestions={mentionSuggestions}
+        loading={mentionLoading}
+        visible={mentionVisible}
+        onSelect={(s) => mentionRef.current?.insertTag(s)}
+      />
+
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Attachment stub */}
         <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Attach', 'File attachments coming soon.')} hitSlop={6}>
@@ -1496,7 +1510,8 @@ export default function TelegraphThread() {
           <Bot size={18} color={color.mute} />
         </Pressable>
 
-        <TextInput
+        <MentionInput
+          ref={mentionRef}
           style={[styles.inputField, isWaitingForReply && { opacity: 0.45 }]}
           placeholder={isWaitingForReply ? 'Waiting for reply…' : 'Write a Telegraph…'}
           placeholderTextColor={color.faint}
@@ -1507,6 +1522,12 @@ export default function TelegraphThread() {
           returnKeyType="send"
           editable={!sending && !isWaitingForReply}
           multiline
+          surface="message"
+          onSuggestionsChange={(items, isLoading, trigger) => {
+            setMentionSuggestions(items);
+            setMentionLoading(isLoading);
+            setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+          }}
         />
         <Pressable
           style={[styles.sendBtn, (input.trim() && !sending && !isWaitingForReply) ? styles.sendBtnActive : styles.sendBtnDisabled]}

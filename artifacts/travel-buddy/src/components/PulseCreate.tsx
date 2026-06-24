@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
   Image, ActivityIndicator, Switch, Platform, KeyboardAvoidingView,
 } from 'react-native';
+import { MentionInput, type MentionInputHandle } from './MentionInput';
+import { MentionSuggestionList } from './MentionSuggestionList';
+import type { AnyMentionSuggestion, TagSpan } from '../services/tagging';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -154,6 +157,11 @@ export function UnifiedPostComposer({
   const [selectedType, setSelectedType] = useState<PostTypeId | null>(null);
   const [text, setText] = useState('');
   const [placeName, setPlaceName] = useState('');
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
+  const [postTags, setPostTags] = useState<TagSpan[]>([]);
   const [media, setMedia] = useState<PickedMedia | null>(null);
   const [vis, setVis] = useState<PostVisibility>('public');
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
@@ -408,7 +416,14 @@ export function UnifiedPostComposer({
                      selectedType === 'share_postcard' ? 'Caption (optional)' :
                      'What\'s on your mind?'}
                   </Text>
-                  <TextInput
+                  <MentionSuggestionList
+                    suggestions={mentionSuggestions}
+                    loading={mentionLoading}
+                    visible={mentionVisible}
+                    onSelect={(s) => mentionRef.current?.insertTag(s)}
+                  />
+                  <MentionInput
+                    ref={mentionRef}
                     style={[uc.input, uc.multiline]}
                     placeholder={
                       selectedType === 'ask_question' ? 'What do you want to know?' :
@@ -423,6 +438,13 @@ export function UnifiedPostComposer({
                     onChangeText={setText}
                     editable={!submitting}
                     textAlignVertical="top"
+                    surface="post"
+                    onTagsChange={setPostTags}
+                    onSuggestionsChange={(items, isLoading, trigger) => {
+                      setMentionSuggestions(items);
+                      setMentionLoading(isLoading);
+                      setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+                    }}
                   />
                 </View>
 

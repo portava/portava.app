@@ -13,7 +13,6 @@ import {
   Modal,
   Pressable,
   FlatList,
-  TextInput,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -24,6 +23,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, SendHorizonal, Trash2 } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
+import { MentionInput, type MentionInputHandle } from './MentionInput';
+import { MentionSuggestionList } from './MentionSuggestionList';
+import type { AnyMentionSuggestion } from '../services/tagging';
 import {
   listComments,
   addComment,
@@ -124,7 +126,10 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -217,10 +222,18 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             />
           )}
 
+          {/* Mention suggestions — above input row */}
+          <MentionSuggestionList
+            suggestions={mentionSuggestions}
+            loading={mentionLoading}
+            visible={mentionVisible}
+            onSelect={(s) => mentionRef.current?.insertTag(s)}
+          />
+
           {/* Input row */}
           <View style={s.inputRow}>
-            <TextInput
-              ref={inputRef}
+            <MentionInput
+              ref={mentionRef}
               style={s.input}
               value={text}
               onChangeText={setText}
@@ -230,6 +243,12 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
               maxLength={1000}
               returnKeyType="default"
               blurOnSubmit={false}
+              surface="comment"
+              onSuggestionsChange={(items, isLoading, trigger) => {
+                setMentionSuggestions(items);
+                setMentionLoading(isLoading);
+                setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+              }}
             />
             <Pressable
               style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}

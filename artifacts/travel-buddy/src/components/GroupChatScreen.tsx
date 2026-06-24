@@ -13,7 +13,6 @@ import {
   View,
   Text,
   FlatList,
-  TextInput,
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
@@ -25,6 +24,9 @@ import {
   Share,
   Switch,
 } from 'react-native';
+import { MentionInput, type MentionInputHandle } from './MentionInput';
+import { MentionSuggestionList } from './MentionSuggestionList';
+import type { AnyMentionSuggestion } from '../services/tagging';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
@@ -321,6 +323,10 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [input, setInput] = useState('');
   const [sendFailed, setSendFailed] = useState(false);
   const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
   // Per-thread translation settings (AsyncStorage-persisted)
@@ -679,6 +685,14 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         </View>
       )}
 
+      {/* Mention suggestions — rendered above compose bar */}
+      <MentionSuggestionList
+        suggestions={mentionSuggestions}
+        loading={mentionLoading}
+        visible={mentionVisible}
+        onSelect={(s) => mentionRef.current?.insertTag(s)}
+      />
+
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {isNoAccess ? (
           <View style={styles.noAccessBar}>
@@ -707,7 +721,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             >
               <Bot size={18} color={color.mute} />
             </Pressable>
-            <TextInput
+            <MentionInput
+              ref={mentionRef}
               style={styles.inputField}
               placeholder="Write a Telegraph…"
               placeholderTextColor={color.faint}
@@ -718,6 +733,12 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               returnKeyType="send"
               editable={!sending}
               multiline
+              surface="message"
+              onSuggestionsChange={(items, isLoading, trigger) => {
+                setMentionSuggestions(items);
+                setMentionLoading(isLoading);
+                setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+              }}
             />
             <Pressable
               style={[
