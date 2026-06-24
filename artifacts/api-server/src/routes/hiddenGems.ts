@@ -1,0 +1,904 @@
+/**
+ * Hidden Gems routes
+ *
+ * POST   /api/hidden-gems              — submit a new gem
+ * GET    /api/hidden-gems              — list/filter/rank
+ * GET    /api/hidden-gems/saved        — caller's saved gems
+ * GET    /api/hidden-gems/layover-safe — layover-safe gems filtered by time window
+ * GET    /api/hidden-gems/trip-city/:tripId — gems for a trip's destination city
+ * GET    /api/hidden-gems/:id          — single gem detail
+ * PATCH  /api/hidden-gems/:id          — owner/guide edit
+ * POST   /api/hidden-gems/:id/save     — save a gem
+ * DELETE /api/hidden-gems/:id/save     — unsave a gem
+ * POST   /api/hidden-gems/:id/verify-visit  — GPS check-in
+ * POST   /api/hidden-gems/:id/report   — report a gem
+ * POST   /api/hidden-gems/:id/telegraph — share to Telegraph
+ * POST   /api/hidden-gems/:id/plan     — add to trip plan
+ *
+ * Admin (requires is_admin role on profile):
+ * GET    /api/admin/hidden-gems/pending          — pending queue
+ * GET    /api/admin/hidden-gems/reported         — reported gems
+ * GET    /api/admin/hidden-gems/guide-applications — guide applications
+ * POST   /api/admin/hidden-gems/:id/verify       — admin verify/hide gem
+ * POST   /api/admin/hidden-gems/:id/sensitive    — mark sensitive
+ * POST   /api/admin/hidden-gems/:id/merge        — merge duplicate
+ * POST   /api/admin/local-guides/:userId/status  — approve/demote guide
+ *
+ * Privacy: HiddenGemPrivacyGuard is called on every response before serialising.
+ *          Protected gems: exact coords NEVER returned.
+ *          LLM calls (Compass): protected gems excluded entirely.
+ */
+import { Router } from "express";
+import { z } from "zod";
+import { requireUser, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import {
+  submitGem,
+  getGem,
+  listGems,
+  updateGem,
+  saveGem,
+  unsaveGem,
+  listSavedGems,
+} from "../services/hiddenGems/HiddenGemService.js";
+import {
+  applyGemPrivacy,
+  applyGemPrivacyBatch,
+} from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
+import {
+  recordGpsCheckin,
+  recordGuideVerification,
+  recordAdminVerification,
+} from "../services/hiddenGems/HiddenGemVerificationService.js";
+import {
+  reportGem,
+  markSensitive,
+  hideGem,
+  mergeDuplicate,
+  getPendingQueue,
+  getReportedGems,
+  getGuideApplications,
+} from "../services/hiddenGems/HiddenGemModerationService.js";
+import {
+  applyForGuide,
+  getGuideProfile,
+  recordContribution,
+  setGuideStatus,
+} from "../services/hiddenGems/LocalGuideService.js";
+
+const router = Router();
+
+// ── Feature flag helper ───────────────────────────────────────────────────────
+
+async function isFlagEnabled(db: any, flag: string): Promise<boolean> {
+  try {
+    const { data } = await db
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", flag)
+      .maybeSingle();
+    return !!(data as any)?.enabled;
+  } catch {
+    return false;
+  }
+}
+
+// ── Admin guard ────────────────────────────────────────────────────────────────
+
+async function requireAdmin(sc: any, userId: string): Promise<boolean> {
+  const { data } = await sc
+    .from("profiles")
+    .select("is_admin")
+    .eq("id", userId)
+    .maybeSingle();
+  return !!(data as any)?.is_admin;
+}
+
+// ── Validation schemas ─────────────────────────────────────────────────────────
+
+const VALID_CATEGORIES = [
+  "food", "drink", "nature", "culture", "adventure", "nightlife",
+  "wellness", "local_secret", "market", "viewpoint", "transport", "other",
+] as const;
+
+const VALID_SENSITIVITY = [
+  "public", "approximate", "reveal_after_save",
+  "reveal_after_acceptance", "protected",
+] as const;
+
+const VALID_REPORT_REASONS = [
+  "inaccurate", "unsafe", "outdated", "duplicate", "spam", "offensive", "other",
+] as const;
+
+const submitSchema = z.object({
+  name: z.string().min(1).max(200),
+  category: z.enum(VALID_CATEGORIES),
+  city: z.string().min(1).max(100),
+  country: z.string().max(100).optional().nullable(),
+  neighborhood: z.string().max(100).optional().nullable(),
+  description: z.string().max(2000).optional().nullable(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  approxLatitude: z.number().min(-90).max(90).optional().nullable(),
+  approxLongitude: z.number().min(-180).max(180).optional().nullable(),
+  vibeTags: z.array(z.string().max(50)).max(10).optional(),
+  priceRange: z.enum(["free", "$", "$$", "$$$", "$$$$"]).optional().nullable(),
+  safetyNotes: z.string().max(1000).optional().nullable(),
+  bestTimeToGo: z.string().max(300).optional().nullable(),
+  layoverSafe: z.boolean().optional(),
+  minimumLayoverMinutes: z.number().int().min(0).max(1440).optional().nullable(),
+  sensitivityLevel: z.enum(VALID_SENSITIVITY).optional(),
+});
+
+const updateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).optional().nullable(),
+  safetyNotes: z.string().max(1000).optional().nullable(),
+  bestTimeToGo: z.string().max(300).optional().nullable(),
+  localEtiquette: z.string().max(500).optional().nullable(),
+  vibeTags: z.array(z.string().max(50)).max(10).optional(),
+  priceRange: z.enum(["free", "$", "$$", "$$$", "$$$$"]).optional().nullable(),
+  sensitivityLevel: z.enum(VALID_SENSITIVITY).optional(),
+  layoverSafe: z.boolean().optional(),
+  minimumLayoverMinutes: z.number().int().min(0).max(1440).optional().nullable(),
+});
+
+const reportSchema = z.object({
+  reason: z.enum(VALID_REPORT_REASONS),
+  notes: z.string().max(500).optional(),
+});
+
+const checkinSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  tripId: z.string().uuid().optional().nullable(),
+});
+
+// ── Helper: resolve caller ID from bearer token (optional auth) ───────────────
+
+async function resolveCallerId(req: any, sc: any): Promise<string | null> {
+  const authHeader = req.headers.authorization ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return null;
+  try {
+    const { data } = await sc.auth.getUser(token);
+    return (data?.user?.id as string) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── POST /api/hidden-gems — submit a new gem ───────────────────────────────────
+
+router.post("/hidden-gems", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = submitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    const gem = await submitGem(sc, { ...parsed.data, submittedBy: user.id });
+    const safe = await applyGemPrivacy(gem, sc, user.id);
+    res.status(201).json({ ok: true, gem: safe });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems — list/filter ────────────────────────────────────────
+
+router.get("/hidden-gems", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const callerId = await resolveCallerId(req, sc);
+  const callerTripId = (req.query.tripId as string) || null;
+
+  const opts: any = {
+    limit: Math.min(parseInt(req.query.limit as string) || 40, 100),
+  };
+  if (req.query.city) opts.city = req.query.city as string;
+  if (req.query.neighborhood) opts.neighborhood = req.query.neighborhood as string;
+  if (req.query.category) opts.category = req.query.category as string;
+  if (req.query.layoverSafe === "1") {
+    opts.layoverSafe = true;
+    if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string);
+  }
+  if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
+
+  try {
+    const gems = await listGems(sc, opts);
+    const safe = await applyGemPrivacyBatch(gems, sc, callerId, callerTripId);
+    res.json({ gems: safe, total: safe.length });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems/saved — caller's saved gems ─────────────────────────
+
+router.get("/hidden-gems/saved", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  try {
+    const gems = await listSavedGems(sc, user.id);
+    const safe = await applyGemPrivacyBatch(gems, sc, user.id);
+    res.json({ gems: safe, total: safe.length });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems/layover-safe — time-window filtered ─────────────────
+
+router.get("/hidden-gems/layover-safe", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+  if (!await isFlagEnabled(sc, "hidden_gems_layover_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const availableMinutes = parseInt(req.query.availableMinutes as string);
+  if (!Number.isFinite(availableMinutes) || availableMinutes < 1) {
+    sendError(res, "invalid_payload", "availableMinutes must be a positive integer");
+    return;
+  }
+
+  const callerId = await resolveCallerId(req, sc);
+  const city = req.query.city as string | undefined;
+
+  try {
+    const gems = await listGems(sc, {
+      city,
+      layoverSafe: true,
+      minLayoverMinutes: availableMinutes,
+    });
+    const safe = await applyGemPrivacyBatch(gems, sc, callerId);
+    res.json({ gems: safe, total: safe.length, availableMinutes });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems/trip-city/:tripId — gems for a trip's city ───────────
+
+router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const tripId = req.params.tripId;
+
+  // Load trip destination
+  const { data: trip } = await client
+    .from("trips")
+    .select("id, destination")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (!trip) {
+    sendError(res, "not_found", "Trip not found");
+    return;
+  }
+
+  const city = (trip as any).destination?.split(",")[0]?.trim();
+  if (!city) {
+    res.json({ gems: [], total: 0 });
+    return;
+  }
+
+  try {
+    const gems = await listGems(sc, { city, limit: 30 });
+    const safe = await applyGemPrivacyBatch(gems, sc, user.id, tripId);
+    res.json({ gems: safe, total: safe.length, city });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems/:id — detail ─────────────────────────────────────────
+
+router.get("/hidden-gems/:id", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const callerId = await resolveCallerId(req, sc);
+  const callerTripId = (req.query.tripId as string) || null;
+
+  try {
+    const gem = await getGem(sc, req.params.id);
+    if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
+    if ((gem as any).status === "hidden" && (gem as any).submitted_by !== callerId) {
+      sendError(res, "not_found", "Gem not found");
+      return;
+    }
+
+    const safe = await applyGemPrivacy(gem, sc, callerId, callerTripId);
+
+    // Attach guide profile if gem has guide_verified_by
+    let guideProfile: any = null;
+    if ((gem as any).guide_verified_by) {
+      guideProfile = await getGuideProfile(sc, (gem as any).guide_verified_by);
+    }
+
+    // Attach saved state for authenticated callers
+    let savedByMe = false;
+    if (callerId) {
+      const { data: saveRow } = await sc
+        .from("hidden_gem_saves")
+        .select("gem_id")
+        .eq("gem_id", req.params.id)
+        .eq("user_id", callerId)
+        .maybeSingle();
+      savedByMe = !!saveRow;
+    }
+
+    res.json({ gem: safe, guideProfile, savedByMe });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── PATCH /api/hidden-gems/:id — owner/guide edit ─────────────────────────────
+
+router.patch("/hidden-gems/:id", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = updateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    // Strip null values — updateGem accepts undefined but not null
+    const patch = Object.fromEntries(
+      Object.entries(parsed.data).filter(([, v]) => v !== null),
+    ) as Parameters<typeof updateGem>[3];
+    const updated = await updateGem(sc, req.params.id, user.id, patch);
+    const safe = await applyGemPrivacy(updated, sc, user.id);
+
+    // If guide, record contribution
+    const guide = await getGuideProfile(sc, user.id);
+    if (guide && (guide as any).status === "active") {
+      const ct = parsed.data.safetyNotes ? "safety_notes"
+        : parsed.data.bestTimeToGo ? "best_time"
+        : parsed.data.localEtiquette ? "etiquette"
+        : "gem_submitted";
+      await recordContribution(sc, user.id, req.params.id, ct).catch(() => {});
+    }
+
+    res.json({ ok: true, gem: safe });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/save ────────────────────────────────────────────
+
+router.post("/hidden-gems/:id/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  try {
+    const result = await saveGem(sc, req.params.id, user.id);
+    res.json({ ok: true, alreadySaved: result.alreadySaved });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── DELETE /api/hidden-gems/:id/save ─────────────────────────────────────────
+
+router.delete("/hidden-gems/:id/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  try {
+    const result = await unsaveGem(sc, req.params.id, user.id);
+    res.json({ ok: true, removed: result.removed });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/verify-visit — GPS check-in ─────────────────────
+
+router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+  if (!await isFlagEnabled(sc, "hidden_gem_verification_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = checkinSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const { latitude, longitude, tripId } = parsed.data;
+
+  try {
+    const result = await recordGpsCheckin(sc, req.params.id, user.id, latitude, longitude);
+
+    if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
+    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
+
+    // Fire-and-forget: Passport stamp + suggested memory after verified visit
+    if (result.ok && !result.isSuspicious) {
+      void (async () => {
+        try {
+          const { data: passportFlag } = await sc
+            .from("feature_flags").select("enabled").eq("key", "hidden_gems_passport_enabled").maybeSingle();
+          if (!(passportFlag as any)?.enabled) return;
+
+          const { createStamp } = await import("../services/passport/PassportStampService.js");
+          const { createSuggestedMemory } = await import("../services/passport/PassportMemoryService.js");
+
+          // Load gem for city/country context (we need it for the stamp)
+          const gem = await getGem(sc, req.params.id);
+          if (!gem) return;
+
+          const stampResult = await createStamp(sc, {
+            userId: user.id,
+            stampType: "city",
+            country: (gem as any).country ?? null,
+            city: (gem as any).city ?? null,
+            tripId: tripId ?? null,
+            verificationLevel: "checkin",
+            sourceType: "hidden_gem_visit",
+          });
+
+          if (stampResult?.isNew) {
+            const { data: memFlag } = await sc
+              .from("feature_flags").select("enabled").eq("key", "passport_memories_enabled").maybeSingle();
+            if ((memFlag as any)?.enabled) {
+              await createSuggestedMemory(sc, {
+                userId: user.id,
+                title: `Hidden Gem: ${(gem as any).name}`,
+                country: (gem as any).country ?? null,
+                city: (gem as any).city ?? null,
+                neighborhood: (gem as any).neighborhood ?? null,
+                category: "hidden_gem",
+                tripId: tripId ?? null,
+                sourceType: "hidden_gem_visit",
+                verificationLevel: "checkin",
+                suggestionReason: "You visited a hidden gem",
+              } as any);
+            }
+          }
+        } catch { /* non-fatal */ }
+      })();
+    }
+
+    res.json({
+      ok: result.ok,
+      visitId: result.visitId,
+      distanceM: result.distanceM,
+      withinRange: result.withinRange,
+      trustLevel: result.trustLevel,
+      isSuspicious: result.isSuspicious,
+      verificationUpgraded: result.verificationUpgraded,
+      ...(result.error ? { error: result.error } : {}),
+    });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/report ──────────────────────────────────────────
+
+router.post("/hidden-gems/:id/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = reportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    const result = await reportGem(sc, req.params.id, user.id, parsed.data.reason, parsed.data.notes);
+    res.json({ ok: true, alreadyReported: result.alreadyReported });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/telegraph — share to Telegraph ─────────────────
+
+router.post("/hidden-gems/:id/telegraph", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const threadId = req.body?.threadId;
+  if (!threadId) { sendError(res, "invalid_payload", "threadId is required"); return; }
+
+  try {
+    const gem = await getGem(sc, req.params.id);
+    if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
+
+    // Privacy: protected gems can share name+city only — no coords, no neighborhood
+    const sensitivityLevel = (gem as any).sensitivity_level;
+    const isProtected = sensitivityLevel === "protected";
+
+    const card: Record<string, unknown> = {
+      type: "hidden_gem",
+      gemId: (gem as any).id,
+      name: (gem as any).name,
+      category: (gem as any).category,
+      city: (gem as any).city,
+      country: (gem as any).country ?? null,
+      neighborhood: isProtected ? null : (gem as any).neighborhood,
+      sensitivityLabel: sensitivityLevel,
+      verificationLevel: (gem as any).verification_level,
+      priceRange: (gem as any).price_range ?? null,
+      vibeTags: (gem as any).vibe_tags ?? [],
+    };
+
+    // Insert Telegraph message with gem card as metadata
+    await client
+      .from("messages")
+      .insert({
+        thread_id: threadId,
+        sender_id: user.id,
+        content: `📍 Shared a hidden gem: ${(gem as any).name} in ${(gem as any).city}`,
+        msg_type: "card",
+        subtype: "hidden_gem",
+        metadata: card,
+      });
+
+    res.json({ ok: true, card });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/plan — add to trip plan ────────────────────────
+
+router.post("/hidden-gems/:id/plan", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const tripId = req.body?.tripId;
+  if (!tripId) { sendError(res, "invalid_payload", "tripId is required"); return; }
+
+  try {
+    const gem = await getGem(sc, req.params.id);
+    if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
+
+    // Location reveal follows sensitivity rules
+    const coords = await (async () => {
+      const { resolveGemCoords } = await import("../services/hiddenGems/HiddenGemPrivacyGuard.js");
+      return resolveGemCoords(gem as any, sc, user.id, (gem as any).submitted_by ?? null, tripId);
+    })();
+
+    const planItem = {
+      trip_id: tripId,
+      added_by: user.id,
+      source_type: "hidden_gem",
+      source_id: (gem as any).id,
+      title: (gem as any).name,
+      description: (gem as any).description ?? null,
+      location_name: (gem as any).name,
+      city: (gem as any).city,
+      country: (gem as any).country ?? null,
+      // Coords hidden until plan accepted for reveal_after_acceptance gems
+      lat: coords.coordsPrecision === "exact" ? coords.lat : null,
+      lng: coords.coordsPrecision === "exact" ? coords.lng : null,
+      category: (gem as any).category,
+    };
+
+    const { data, error } = await client
+      .from("trip_plan_items")
+      .insert(planItem)
+      .select("id")
+      .single();
+
+    if (error) { sendError(res, "db_error", error.message); return; }
+
+    res.status(201).json({ ok: true, planItemId: (data as any).id });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── Local Guide profile ───────────────────────────────────────────────────────
+
+router.get("/hidden-gems/guides/:userId", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  try {
+    const guide = await getGuideProfile(sc, req.params.userId);
+    if (!guide || (guide as any).status !== "active") {
+      sendError(res, "not_found", "Guide not found");
+      return;
+    }
+    res.json({ guide });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.post("/hidden-gems/guides/apply", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const bio = typeof req.body?.bio === "string" ? req.body.bio.slice(0, 500) : undefined;
+  const cityExpertise = Array.isArray(req.body?.cityExpertise) ? req.body.cityExpertise.slice(0, 10) : [];
+
+  try {
+    const profile = await applyForGuide(sc, user.id, bio, cityExpertise);
+    res.status(201).json({ ok: true, guide: profile });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── Admin routes ──────────────────────────────────────────────────────────────
+
+router.get("/admin/hidden-gems/pending", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  try {
+    const queue = await getPendingQueue(sc);
+    res.json({ queue });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.get("/admin/hidden-gems/reported", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  try {
+    const gems = await getReportedGems(sc);
+    res.json({ gems });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.get("/admin/hidden-gems/guide-applications", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  try {
+    const applications = await getGuideApplications(sc);
+    res.json({ applications });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+const adminVerifySchema = z.object({
+  result: z.enum(["approved", "rejected", "hidden"]),
+  notes: z.string().max(500).optional(),
+});
+
+router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  const parsed = adminVerifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);
+    res.json({ ok: true });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.post("/admin/hidden-gems/:id/sensitive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  const sensitivityLevel = req.body?.sensitivityLevel;
+  if (!VALID_SENSITIVITY.includes(sensitivityLevel)) {
+    sendError(res, "invalid_payload", "Invalid sensitivityLevel");
+    return;
+  }
+
+  try {
+    await markSensitive(sc, req.params.id, sensitivityLevel);
+    res.json({ ok: true });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.post("/admin/hidden-gems/:id/merge", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  const canonicalGemId = req.body?.canonicalGemId;
+  if (!canonicalGemId) { sendError(res, "invalid_payload", "canonicalGemId is required"); return; }
+
+  try {
+    await mergeDuplicate(sc, req.params.id, canonicalGemId);
+    res.json({ ok: true });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+router.post("/admin/local-guides/:userId/status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await requireAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  const status = req.body?.status;
+  if (!["active", "suspended", "demoted"].includes(status)) {
+    sendError(res, "invalid_payload", "status must be active | suspended | demoted");
+    return;
+  }
+
+  try {
+    await setGuideStatus(sc, req.params.userId, status);
+    res.json({ ok: true });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+export default router;

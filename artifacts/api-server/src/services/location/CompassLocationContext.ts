@@ -22,6 +22,16 @@ export interface CompassSafeContext {
   }>;
   upcomingTripCity: string | null;
   upcomingTripCountry: string | null;
+  /** Hidden gems for Compass — only public/approximate/community-verified; protected excluded */
+  hiddenGems: Array<{
+    name: string;
+    category: string;
+    city: string;
+    neighborhood: string | null;
+    verificationLevel: string;
+    priceRange: string | null;
+    vibeTags: string[];
+  }>;
   // coordinates intentionally absent
 }
 
@@ -41,6 +51,7 @@ export async function buildCompassContext(
     nearbyVerifiedPlaces: [],
     upcomingTripCity: null,
     upcomingTripCountry: null,
+    hiddenGems: [],
   };
 
   try {
@@ -77,6 +88,30 @@ export async function buildCompassContext(
       .limit(1)
       .maybeSingle();
 
+    // Hidden gems for Compass — public sensitivity only; no protected gems; city-level only
+    let hiddenGems: CompassSafeContext["hiddenGems"] = [];
+    try {
+      if (city) {
+        const { data: gemRows } = await db
+          .from("hidden_gems")
+          .select("name, category, city, neighborhood, verification_level, price_range, vibe_tags, sensitivity_level")
+          .eq("status", "active")
+          .ilike("city", city)
+          .neq("sensitivity_level", "protected")
+          .in("verification_level", ["community", "guide", "gps_verified", "admin"])
+          .limit(5);
+        hiddenGems = (gemRows ?? []).map((g: any) => ({
+          name: g.name,
+          category: g.category,
+          city: g.city,
+          neighborhood: g.neighborhood ?? null,
+          verificationLevel: g.verification_level,
+          priceRange: g.price_range ?? null,
+          vibeTags: g.vibe_tags ?? [],
+        }));
+      }
+    } catch { /* non-fatal */ }
+
     return {
       currentCity: city,
       currentDistrict: district,
@@ -85,8 +120,9 @@ export async function buildCompassContext(
       nearbyVerifiedPlaces: verifiedPlaces,
       upcomingTripCity: (trip as any)?.destination_city ?? null,
       upcomingTripCountry: (trip as any)?.destination_country ?? null,
+      hiddenGems,
     };
   } catch {
-    return empty;
+    return { ...empty, hiddenGems: [] };
   }
 }
