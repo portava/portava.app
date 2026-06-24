@@ -20,6 +20,12 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
+// RichText surface note: the TripDetail model (`src/types/models.ts: TripDetail`)
+// does not expose a freeform description/notes field for RichText rendering.
+// The `notes` field exists on `TripPlanItem` (individual plan items) and is wired
+// via the plan-item detail sheets.  If a trip-level description is added to the
+// DB schema and the `TripDetail` type in the future, render it here with:
+//   <RichText content={trip.description} tags={trip.descriptionTags} hashtagUsages={trip.descriptionHashtags} />
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();

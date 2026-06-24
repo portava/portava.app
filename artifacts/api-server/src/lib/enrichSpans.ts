@@ -11,13 +11,18 @@
  */
 
 /**
- * Supported @mention entity types.
+ * Supported @mention entity types emitted by `enrichSpans`.
  *
- * **Current scope: `'user'` only.**
- * The `tags` table stores only `tagged_user_id` (UUID), so only user-mention
- * spans are emitted by `enrichSpans`.  The `event`, `circle`, `trip`, and
- * `place` entity types are reserved for future schema extensions; this module
- * will never emit those types until the backing DB tables support them.
+ * **Current DB scope: `'user'` only.**
+ * The `tags` table (migration 0043) stores `tagged_user_id` (UUID) but no
+ * equivalent column for event, circle, trip, or place targets.  Until the
+ * schema is extended with those FK columns, only `'user'` can be resolved
+ * and enriched here.
+ *
+ * The client-side `RichTextEntityType` deliberately includes the full set
+ * (`user | event | circle | trip | place`) so the rendering component and
+ * navigation layer are ready.  When future migrations add entity-specific
+ * tag rows, change this union and the fetch logic below accordingly.
  */
 export type SpanEntityType = 'user';
 
@@ -45,6 +50,8 @@ export interface SpanHashtag {
   startChar: number;
   /** Zero-based end character index (exclusive) of the #token. */
   endChar: number;
+  /** When true the hashtag is blocked site-wide → client renders as plain text. */
+  isBlocked?: boolean;
 }
 
 export interface ContentSpans {
@@ -69,6 +76,8 @@ interface RawTag {
 interface RawHashtag {
   slug: string;
   hashtagId: string;
+  /** True when the hashtag row has is_blocked=true — client renders as plain text. */
+  isBlocked?: boolean;
 }
 
 /**
@@ -112,6 +121,7 @@ function computePositions(
         hashtagId: h.hashtagId,
         startChar: m.index,
         endChar: m.index + m[0].length,
+        ...(h.isBlocked ? { isBlocked: true } : {}),
       });
     }
   }
@@ -223,14 +233,15 @@ export async function enrichSpans(
     ...new Set(((usageRows ?? []) as any[]).map((r: any) => r.hashtag_id as string)),
   ];
 
-  const hashtagMap: Record<string, string> = {};  // hashtagId → slug
+  // hashtagId → { slug, isBlocked }
+  const hashtagMetaMap: Record<string, { slug: string; isBlocked: boolean }> = {};
   if (hashtagIds.length > 0) {
     const { data: hashtags } = await sc
       .from('hashtags')
-      .select('id, slug')
+      .select('id, slug, is_blocked')
       .in('id', hashtagIds);
     for (const h of (hashtags ?? []) as any[]) {
-      if (h.slug) hashtagMap[h.id] = h.slug;
+      if (h.slug) hashtagMetaMap[h.id] = { slug: h.slug, isBlocked: !!h.is_blocked };
     }
   }
 
@@ -238,9 +249,13 @@ export async function enrichSpans(
   for (const id of sourceIds) rawHashtagsMap[id] = [];
 
   for (const row of (usageRows ?? []) as any[]) {
-    const slug = hashtagMap[row.hashtag_id];
-    if (slug && rawHashtagsMap[row.source_id]) {
-      rawHashtagsMap[row.source_id].push({ slug, hashtagId: row.hashtag_id });
+    const meta = hashtagMetaMap[row.hashtag_id];
+    if (meta && rawHashtagsMap[row.source_id]) {
+      rawHashtagsMap[row.source_id].push({
+        slug: meta.slug,
+        hashtagId: row.hashtag_id,
+        ...(meta.isBlocked ? { isBlocked: true } : {}),
+      });
     }
   }
 

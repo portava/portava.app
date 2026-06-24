@@ -93,7 +93,7 @@ export interface FeedPostItem {
   /** Saved @mention annotations — whitelist for RichText rendering. */
   tags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText rendering. */
-  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
 }
 export interface FeedUserItem {
   id: string; type: 'user'; handle: string; name: string | null; avatarUrl: string | null;

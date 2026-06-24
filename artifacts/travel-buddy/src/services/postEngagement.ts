@@ -25,7 +25,7 @@ export interface EngagementComment {
   /** Saved @mention annotations — whitelist for RichText. */
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText. */
-  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
 }
 
 export interface LikeResult {

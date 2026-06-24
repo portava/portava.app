@@ -48,7 +48,7 @@ export interface PostRow {
   /** @mention span annotations from the server whitelist. */
   tags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** #hashtag span annotations from the server whitelist. */
-  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
 }
 
 export type PostErrorKind =

@@ -70,6 +70,11 @@ function next14Days(): string[] {
   return days;
 }
 
+// RichText surface note: the Circle screen displays the viewer's own travel circle
+// (a per-user singleton — no parameterised /circle/:id route exists).  Circle data
+// is a flat member list; there is no freeform description field on the circle model.
+// If a circle bio/description is added in the future, render it with:
+//   <RichText content={circle.description} tags={circle.descriptionTags} hashtagUsages={circle.descriptionHashtags} />
 export default function Circle() {
   const { userId, isAuthed, configured } = useSession();
   const [tab, setTab]               = useState<'circle' | 'followers'>('circle');

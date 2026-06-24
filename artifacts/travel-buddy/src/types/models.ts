@@ -121,7 +121,7 @@ export interface Post {
   /** Saved @mention annotations from the `tags` table — positioned spans for RichText. */
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
-  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
 }
 
 export interface Comment {
@@ -705,7 +705,7 @@ export interface PulseFeedItem {
   /** Saved @mention annotations from `tags` table — positioned spans for RichText. */
   spanTags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
-  spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
 }
 
 export const PULSE_FILTERS = [

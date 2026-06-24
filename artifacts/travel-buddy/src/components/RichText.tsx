@@ -19,8 +19,12 @@
  *   renders as plain `<Text>` with no regex processing and no interactivity.
  *
  * Short-press → navigate; long-press → TagPreviewSheet mini-card.
- * Navigation routes: user → /u/:matchToken  |  trip → /trip/:id  |  place → /gems/:id
- * circle and event have no dedicated detail route — long-press preview only.
+ * Navigation routes:
+ *   user   → /u/:matchToken  (by handle)
+ *   trip   → /trip/:id
+ *   place  → /gems/:id
+ *   event  → /meetup/:id  (events are modelled as meetups in this app)
+ *   circle → long-press preview only (circles are per-user singletons, no /circle/:id route)
  *
  * TagPreviewSheet contract:
  *   For `user` type the sheet expects a *handle* (calls getUserByHandle internally),
@@ -163,9 +167,13 @@ function navigateTag(tag: RichTextTag) {
       // Hidden-gems / discovery place detail screen
       router.push(`/gems/${tag.id}` as any);
       break;
-    // 'circle' — app/circle.tsx is the viewer's own circle; no /circle/:id route exists
-    // 'event'  — no event detail route exists yet
-    // → long-press preview sheet is available for these types; no short-press nav
+    case 'event':
+      // Events are modelled as meetups in this app — app/meetup/[id].tsx
+      router.push(`/meetup/${tag.id}` as any);
+      break;
+    // 'circle' — app/circle.tsx is the viewer's own circle; there is no parameterised
+    //            /circle/:id route (circles are per-user singletons).  Long-press
+    //            preview sheet is available instead.
     default:
       break;
   }
@@ -173,7 +181,12 @@ function navigateTag(tag: RichTextTag) {
 
 /** Returns true only for entity types that have a real detail route. */
 function canNavigateShortPress(tag: RichTextTag): boolean {
-  return tag.type === 'user' || tag.type === 'trip' || tag.type === 'place';
+  return (
+    tag.type === 'user' ||
+    tag.type === 'trip' ||
+    tag.type === 'place' ||
+    tag.type === 'event'
+  );
 }
 
 function navigateHashtag(slug: string) {
