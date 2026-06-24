@@ -87,11 +87,11 @@ function EditSheet({
         >
           {/* Title */}
           <FieldLabel label="Package title" />
-          <TextInput style={[fi.input, { marginBottom: space.lg }]} value={form.title} onChangeText={(v) => update({ title: v })} placeholder="e.g. Bangkok Night Market Tour" placeholderTextColor={color.faint} />
+          <TextInput style={[fi.input, { marginBottom: space.lg }]} value={form.title} onChangeText={(v) => update({ title: v })} placeholder="e.g. Bangkok Night Market Tour" placeholderTextColor={color.haze} />
 
           {/* Description */}
           <FieldLabel label="Description" optional />
-          <TextInput style={[fi.input, fi.multi, { marginBottom: space.lg }]} value={form.description} onChangeText={(v) => update({ description: v })} placeholder="What's special about this package?" placeholderTextColor={color.faint} multiline />
+          <TextInput style={[fi.input, fi.multi, { marginBottom: space.lg }]} value={form.description} onChangeText={(v) => update({ description: v })} placeholder="What's special about this package?" placeholderTextColor={color.haze} multiline />
 
           {/* Category */}
           <FieldLabel label="Category" />
@@ -124,7 +124,7 @@ function EditSheet({
                 value={form.priceUsd > 0 ? String(form.priceUsd) : ''}
                 onChangeText={(v) => update({ priceUsd: parseFloat(v) || 0 })}
                 placeholder="e.g. 60"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
                 keyboardType="numeric"
               />
             </View>
@@ -155,7 +155,7 @@ function EditSheet({
                   update({ stops: next });
                 }}
                 placeholder={`Stop ${i + 1}`}
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
               />
               {form.stops.length > 1 && (
                 <Pressable onPress={() => update({ stops: form.stops.filter((_, j) => j !== i) })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -171,7 +171,7 @@ function EditSheet({
 
           {/* Meetup rules */}
           <FieldLabel label="Meetup rules" optional />
-          <TextInput style={[fi.input, fi.multi, { marginBottom: space.lg }]} value={form.meetupRules} onChangeText={(v) => update({ meetupRules: v })} placeholder="e.g. Meet at BTS Asok exit 3. I'll hold a sign." placeholderTextColor={color.faint} multiline />
+          <TextInput style={[fi.input, fi.multi, { marginBottom: space.lg }]} value={form.meetupRules} onChangeText={(v) => update({ meetupRules: v })} placeholder="e.g. Meet at BTS Asok exit 3. I'll hold a sign." placeholderTextColor={color.haze} multiline />
 
           {/* Active */}
           <View style={sh.toggleRow}>
@@ -418,7 +418,7 @@ function FieldLabel({ label, optional }: { label: string; optional?: boolean }) 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.xs }}>
       <Text style={{ ...t.bodyStrong, color: color.ink, fontSize: 13 }}>{label}</Text>
-      {optional && <Text style={{ ...t.small, color: color.faint }}>(optional)</Text>}
+      {optional && <Text style={{ ...t.small, color: color.haze }}>(optional)</Text>}
     </View>
   );
 }

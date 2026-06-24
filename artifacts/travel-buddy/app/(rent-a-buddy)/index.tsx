@@ -135,7 +135,7 @@ export default function RentABuddyLanding() {
           <TextInput
             style={styles.searchInput}
             placeholder="Enter city or destination…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             value={city}
             onChangeText={setCity}
             returnKeyType="search"

@@ -175,7 +175,7 @@ export default function RentABuddySearch() {
             value={city}
             onChangeText={setCity}
             placeholder="City or destination…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             returnKeyType="search"
             onSubmitEditing={() => { setMode('results'); doSearch(true); }}
           />

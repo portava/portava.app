@@ -95,17 +95,17 @@ function EditSheet({
             value={form.title}
             onChangeText={(v) => update({ title: v })}
             placeholder="e.g. VIP Club Access"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
           />
 
           {/* Description */}
-          <Text style={sh.fieldLabel}>Description <Text style={{ color: color.faint, fontWeight: '400' }}>(optional)</Text></Text>
+          <Text style={sh.fieldLabel}>Description <Text style={{ color: color.haze, fontWeight: '400' }}>(optional)</Text></Text>
           <TextInput
             style={[fi.input, fi.multi, { marginBottom: space.lg }]}
             value={form.description}
             onChangeText={(v) => update({ description: v })}
             placeholder="What does this add-on include?"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
           />
 
@@ -116,7 +116,7 @@ function EditSheet({
             value={form.priceUsd > 0 ? String(form.priceUsd) : ''}
             onChangeText={(v) => update({ priceUsd: parseFloat(v) || 0 })}
             placeholder="e.g. 20"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             keyboardType="numeric"
           />
 

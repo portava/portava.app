@@ -231,7 +231,7 @@ export default function RentABuddyCheckout() {
                 value={date}
                 onChangeText={setDate}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
               />
             </View>
             <View style={[styles.inputWrap, { flex: 1 }]}>
@@ -241,7 +241,7 @@ export default function RentABuddyCheckout() {
                 value={time}
                 onChangeText={setTime}
                 placeholder="HH:MM"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
               />
             </View>
           </View>
@@ -305,7 +305,7 @@ export default function RentABuddyCheckout() {
             value={customZone}
             onChangeText={v => { setCustomZone(v); setZoneIndex(null); }}
             placeholder="e.g. Louvre main entrance, near the pyramid"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
           />
         </Section>
 
@@ -337,7 +337,7 @@ export default function RentABuddyCheckout() {
             value={notes}
             onChangeText={setNotes}
             placeholder="Tell your Buddy what you're hoping to experience…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
             numberOfLines={3}
           />

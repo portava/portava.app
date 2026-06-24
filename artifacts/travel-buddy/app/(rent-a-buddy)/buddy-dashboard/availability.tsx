@@ -278,7 +278,7 @@ const grid_ = StyleSheet.create({
   row: { flexDirection: 'row', marginBottom: 2 },
   blockCol: { width: 90, justifyContent: 'center', paddingRight: space.sm },
   blockLabel: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 11 },
-  blockSub: { fontFamily: 'Courier', fontSize: 8, color: color.faint, letterSpacing: 0.3 },
+  blockSub: { fontFamily: 'Courier', fontSize: 8, color: color.haze, letterSpacing: 0.3 },
   dayHeader: { width: 42, alignItems: 'center', paddingBottom: 4 },
   dayText: { ...t.stamp, color: color.mute },
   dayTextOn: { color: color.signal },
@@ -312,5 +312,5 @@ const fi = StyleSheet.create({
     backgroundColor: color.paperRaised, justifyContent: 'center',
   },
   inputText: { ...t.body, color: color.ink },
-  inputPlaceholder: { ...t.body, color: color.faint },
+  inputPlaceholder: { ...t.body, color: color.haze },
 });

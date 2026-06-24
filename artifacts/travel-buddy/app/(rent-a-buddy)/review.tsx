@@ -147,7 +147,7 @@ export default function RentABuddyReview() {
             value={publicBody}
             onChangeText={setPublicBody}
             placeholder="What was your meetup like? What made your Buddy stand out?"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
             numberOfLines={4}
           />
@@ -179,7 +179,7 @@ export default function RentABuddyReview() {
             value={privateNote}
             onChangeText={setPrivateNote}
             placeholder="Any concerns or feedback for the Travel Buddy team only…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
             numberOfLines={3}
           />

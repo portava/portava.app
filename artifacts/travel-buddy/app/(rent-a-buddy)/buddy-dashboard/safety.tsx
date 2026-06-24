@@ -81,7 +81,7 @@ function ReasonSheet({
             value={detail}
             onChangeText={setDetail}
             placeholder="Add any additional details (optional)…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
           />
           <TravelButton

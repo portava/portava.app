@@ -79,7 +79,7 @@ function Field({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder ?? ''}
-        placeholderTextColor={color.faint}
+        placeholderTextColor={color.haze}
         multiline={multiline}
         keyboardType={keyboardType}
         autoCapitalize="none"
@@ -222,7 +222,7 @@ export default function ApplyToBeBuddy() {
                     setLanguages(next);
                   }}
                   placeholder="Language"
-                  placeholderTextColor={color.faint}
+                  placeholderTextColor={color.haze}
                 />
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: space.sm }}>
                   <View style={{ flexDirection: 'row', gap: space.xs }}>
@@ -294,7 +294,7 @@ export default function ApplyToBeBuddy() {
               value={bio}
               onChangeText={setBio}
               placeholder="I've lived in Bangkok for 10 years and love showing travellers the hidden side of the city — street food, temples off the tourist trail, and local markets most guides miss..."
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
               multiline
               maxLength={600}
             />
@@ -305,7 +305,7 @@ export default function ApplyToBeBuddy() {
             <View style={photos.row}>
               {[0, 1, 2].map((i) => (
                 <View key={i} style={photos.slot}>
-                  <Camera size={22} color={color.faint} />
+                  <Camera size={22} color={color.haze} />
                   <Text style={photos.slotText}>Photo {i + 1}</Text>
                 </View>
               ))}
@@ -398,7 +398,7 @@ export default function ApplyToBeBuddy() {
                     setZones(next);
                   }}
                   placeholder={`Zone ${i + 1}`}
-                  placeholderTextColor={color.faint}
+                  placeholderTextColor={color.haze}
                 />
                 {zones.length > 1 && (
                   <Pressable
@@ -533,7 +533,7 @@ const sh = StyleSheet.create({
 
 const fl = StyleSheet.create({
   label: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
-  opt: { ...t.small, color: color.faint },
+  opt: { ...t.small, color: color.haze },
 });
 
 const fi = StyleSheet.create({
@@ -597,11 +597,11 @@ const photos = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: color.paperRaised,
   },
-  slotText: { ...t.small, color: color.faint },
+  slotText: { ...t.small, color: color.haze },
 });
 
 const hint = StyleSheet.create({
-  text: { ...t.small, color: color.faint, lineHeight: 17 },
+  text: { ...t.small, color: color.haze, lineHeight: 17 },
 });
 
 const toggle = StyleSheet.create({
@@ -621,7 +621,7 @@ const nav = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: color.haze,
     backgroundColor: color.paper, gap: space.sm,
   },
-  hint: { ...t.small, color: color.faint, textAlign: 'center' },
+  hint: { ...t.small, color: color.haze, textAlign: 'center' },
 });
 
 const done = StyleSheet.create({

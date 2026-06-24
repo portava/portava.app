@@ -44,7 +44,7 @@ function BookingRow({ booking }: { booking: BuddyBooking }) {
     completed: color.success,
     in_progress: color.deep,
     disputed: color.signal,
-    cancelled: color.faint,
+    cancelled: color.haze,
     pending: color.warn,
     confirmed: color.warn,
   };
@@ -285,7 +285,7 @@ const stat = StyleSheet.create({
   },
   label: { fontFamily: 'Courier', fontSize: 9, color: color.mute, letterSpacing: 1, marginBottom: 4 },
   value: { ...t.heading, color: color.ink, fontSize: 22 },
-  sub: { ...t.small, color: color.faint, marginTop: 2 },
+  sub: { ...t.small, color: color.haze, marginTop: 2 },
 });
 
 const banner = StyleSheet.create({

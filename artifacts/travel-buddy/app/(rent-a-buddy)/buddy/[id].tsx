@@ -255,7 +255,7 @@ export default function BuddyProfileScreen() {
               ].map(f => (
                 <View key={f.label} style={styles.trustFactor}>
                   <CheckCircle size={12} color={f.ok ? color.success : color.haze} fill={f.ok ? color.success : color.haze} />
-                  <Text style={[styles.trustFactorText, !f.ok && { color: color.faint }]}>{f.label}</Text>
+                  <Text style={[styles.trustFactorText, !f.ok && { color: color.haze }]}>{f.label}</Text>
                 </View>
               ))}
             </View>
@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   reviewsAvg: { ...t.small, color: color.mute, fontWeight: '600' },
   reviewCard: { paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
   reviewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.xs },
-  reviewDate: { ...t.small, color: color.faint },
+  reviewDate: { ...t.small, color: color.haze },
   reviewBody: { ...t.body, color: color.ink, lineHeight: 20 },
   reportRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, justifyContent: 'center', padding: space.xl },
   reportText: { ...t.small, color: color.mute },
@@ -490,7 +490,7 @@ const styles = StyleSheet.create({
   availCellActive: { backgroundColor: '#EEF8F3', borderColor: color.success },
   availDay: { fontSize: 9, fontWeight: '700', color: color.mute, fontFamily: 'Courier' },
   availDayActive: { color: color.success },
-  availDate: { fontSize: 16, fontWeight: '700', color: color.faint },
+  availDate: { fontSize: 16, fontWeight: '700', color: color.haze },
   availDateActive: { color: color.ink },
   availSlots: { fontSize: 8, color: color.success, fontFamily: 'Courier', marginTop: 2 },
   zoneRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: color.haze },

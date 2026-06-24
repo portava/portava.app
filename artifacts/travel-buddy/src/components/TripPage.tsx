@@ -494,7 +494,7 @@ export function TripPostsSection({ posts }: { posts: { id: string; city: string;
               <Text style={tp.caption} numberOfLines={2}>{post.caption}</Text>
             </Pressable>
           ))}
-          <Pressable style={tp.addTile} onPress={() => router.push('/create')}>
+          <Pressable style={tp.addTile} onPress={() => router.push('/create' as any)}>
             <ImagePlus size={20} color={color.signal} /><Text style={tp.addText}>Add Post</Text>
           </Pressable>
         </ScrollView>

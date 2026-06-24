@@ -39,6 +39,8 @@ export interface BuddyProfile {
   galleryUrls: string[];
   createdAt: string;
   updatedAt: string;
+  availableNow?: boolean;
+  buddyLevel?: string;
 }
 
 export interface BuddyPackage {
@@ -510,7 +512,7 @@ export async function requestRouteChange(
 
 // ── Buddy-initiated offers ─────────────────────────────────────────────────────
 
-export interface BuddyOffer {
+export interface BuddyOfferPayload {
   category: BuddyCategory;
   priceUsd: number;
   proposedDate: string;
@@ -521,7 +523,7 @@ export interface BuddyOffer {
   addonIds?: string[];
 }
 
-export async function createBuddyOffer(payload: BuddyOffer): Promise<ApiResult<{ ok: boolean }>> {
+export async function createBuddyOffer(payload: BuddyOfferPayload): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch('/api/rent-a-buddy/dashboard/offers', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -616,4 +618,397 @@ export async function getOrCreateBookingThread(bookingId: string): Promise<ApiRe
   isNew: boolean;
 }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/thread`, { method: 'POST' });
+}
+
+// ── Marketplace — Types ───────────────────────────────────────────────────────
+
+export type OfferStatus = 'pending' | 'accepted' | 'declined' | 'expired' | 'withdrawn';
+export type RequestStatus = 'open' | 'matched' | 'expired' | 'cancelled' | 'closed';
+export type WaitlistStatus = 'active' | 'matched' | 'expired' | 'cancelled';
+
+export interface MatchPreferences {
+  need?: string | null;
+  vibe?: string | null;
+  energy?: string | null;
+  language?: string | null;
+  budgetMinUsd?: number | null;
+  budgetMaxUsd?: number | null;
+  bookingLength?: string | null;
+  safetyPrefs?: Record<string, boolean>;
+  groupSize?: number;
+  femaleOnly?: boolean;
+  publicOnly?: boolean;
+  rawAnswers?: Record<string, string>;
+}
+
+export interface BuddyOffer {
+  id: string;
+  requestId: string;
+  buddyProfileId: string;
+  buddyUserId: string;
+  proposedPriceUsd: number;
+  depositAmountUsd: number;
+  cashBalanceUsd: number;
+  proposedStart: string | null;
+  proposedEnd: string | null;
+  meetupLocation: string | null;
+  message: string | null;
+  includedServices: string[];
+  addonsOffered: unknown[];
+  paymentMode: string;
+  expiresAt: string;
+  status: OfferStatus;
+  acceptedBookingId: string | null;
+  createdAt: string;
+  buddy?: BuddyProfile | null;
+}
+
+export interface BuddyRequest {
+  id: string;
+  travelerId: string;
+  city: string;
+  category: string;
+  desiredDate: string | null;
+  desiredTime: string | null;
+  durationMinutes: number;
+  groupSize: number;
+  budgetMinUsd: number | null;
+  budgetMaxUsd: number | null;
+  languageNeeded: string | null;
+  energyType: string | null;
+  paymentModePref: string | null;
+  notes: string | null;
+  status: RequestStatus;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface SavedBuddyEntry {
+  buddyId: string;
+  notes: string | null;
+  savedAt: string;
+  updatedAt: string;
+  buddy: BuddyProfile | null;
+}
+
+export interface WaitlistEntry {
+  id: string;
+  city: string;
+  category: string | null;
+  language: string | null;
+  budgetMaxUsd: number | null;
+  desiredDate: string | null;
+  desiredTime: string | null;
+  notes: string | null;
+  groupSize: number;
+  status: WaitlistStatus;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export interface EarningsSummary {
+  isEstimated: boolean;
+  warning: string;
+  today: { bookingCount: number; bookings: BuddyBooking[] };
+  upcoming: { bookingCount: number; bookings: BuddyBooking[] };
+  completed: {
+    count: number; totalUsd: number; depositCollected: number;
+    cashBalanceDue: number; cashBalanceConfirmed: number; inAppAmountCollected: number;
+  };
+  tips: { total: number; count: number };
+  estimatedPlatformFeeUsd: number;
+  estimatedBuddyEarningsUsd: number;
+  statusBreakdown: { completed: number; disputed: number; cancelled: number };
+  trustScore: number | null;
+  trustLevel: string | null;
+  profileViews: number;
+  searchAppearances: number;
+  repeatClientCount: number;
+  cityRanking: number | null;
+  averageRating: number | null;
+  reviewCount: number;
+}
+
+export interface LedgerEntry {
+  id: string;
+  bookingId: string;
+  pricingType: string | null;
+  totalBookingUsd: number;
+  addonsUsd: number;
+  tipUsd: number;
+  platformFeePercent: number | null;
+  platformFeeAmount: number;
+  travelerServiceFeeAmount: number;
+  buddyGrossAmount: number;
+  buddyNetEstimatedAmount: number;
+  depositAmount: number;
+  inAppAmountCollected: number;
+  cashBalanceDue: number;
+  cashBalanceConfirmed: boolean;
+  isEstimated: boolean;
+  createdAt: string;
+}
+
+export interface DiscoverySection {
+  key: string;
+  title: string;
+  buddies: BuddyProfile[];
+  isCtaSection?: boolean;
+}
+
+export interface PricingSuggestion {
+  label: string;
+  minUsd: number;
+  maxUsd: number;
+  pricingType: string;
+}
+
+export interface MarketplacePackage extends BuddyPackage {
+  city: string | null;
+  depositRequired: boolean;
+  depositPercent: number;
+  paymentModesAllowed: string[];
+  includedStops: unknown[];
+  includedServices: string[];
+  adminReviewStatus: 'pending' | 'approved' | 'disabled';
+}
+
+// ── Marketplace — Match ───────────────────────────────────────────────────────
+
+export async function saveMatchPreferences(prefs: MatchPreferences): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/match/preferences', {
+    method: 'POST',
+    body: JSON.stringify(prefs),
+  });
+}
+
+export async function runMatch(city: string, preferences?: MatchPreferences, limit = 20): Promise<ApiResult<{
+  results: Array<BuddyProfile & { compatibilityScore: number; scoreBreakdown: Record<string, number> }>;
+  total: number;
+}>> {
+  return apiFetch('/api/rent-a-buddy/match', {
+    method: 'POST',
+    body: JSON.stringify({ city, preferences, limit }),
+  });
+}
+
+// ── Marketplace — Discovery ───────────────────────────────────────────────────
+
+export async function getDiscoverySections(city?: string): Promise<ApiResult<{
+  sections: DiscoverySection[];
+  city: string | null;
+}>> {
+  const qs = city ? `?city=${encodeURIComponent(city)}` : '';
+  return apiFetch(`/api/rent-a-buddy/sections${qs}`);
+}
+
+export async function getAvailableNow(city?: string): Promise<ApiResult<{ buddies: BuddyProfile[] }>> {
+  const qs = city ? `?city=${encodeURIComponent(city)}` : '';
+  return apiFetch(`/api/rent-a-buddy/available-now${qs}`);
+}
+
+export async function getTopInCity(city: string): Promise<ApiResult<{ buddies: BuddyProfile[] }>> {
+  return apiFetch(`/api/rent-a-buddy/cities/${encodeURIComponent(city)}/top`);
+}
+
+// ── Marketplace — Availability Settings ──────────────────────────────────────
+
+export interface FullAvailabilitySettings {
+  weeklyBlocks?: unknown[];
+  oneTimeBlocks?: unknown[];
+  vacationDates?: unknown[];
+  minNoticeHours?: number;
+  bufferMinutes?: number;
+  maxBookingsPerDay?: number;
+  nightlifeAvailable?: boolean;
+  arrivalAvailable?: boolean;
+  groupAvailable?: boolean;
+  customAvailable?: boolean;
+}
+
+export async function getAvailabilitySettings(): Promise<ApiResult<{ settings: FullAvailabilitySettings | null }>> {
+  return apiFetch('/api/rent-a-buddy/me/availability-settings');
+}
+
+export async function updateAvailabilitySettings(settings: FullAvailabilitySettings): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/me/availability-settings', {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function setAvailableNow(durationMinutes = 60): Promise<ApiResult<{ ok: boolean; availableUntil: string }>> {
+  return apiFetch('/api/rent-a-buddy/me/available-now', {
+    method: 'POST',
+    body: JSON.stringify({ durationMinutes }),
+  });
+}
+
+export async function clearAvailableNow(): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/me/available-now', { method: 'DELETE' });
+}
+
+// ── Marketplace — Requests & Offers ──────────────────────────────────────────
+
+export async function createRequest(payload: {
+  city: string; category: string; desiredDate?: string; desiredTime?: string;
+  durationMinutes?: number; groupSize?: number; budgetMinUsd?: number; budgetMaxUsd?: number;
+  languageNeeded?: string; energyType?: string; safetyPrefs?: Record<string, boolean>;
+  paymentModePref?: string; notes?: string;
+}): Promise<ApiResult<{ request: BuddyRequest }>> {
+  return apiFetch('/api/rent-a-buddy/requests', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getRequest(requestId: string): Promise<ApiResult<{ request: BuddyRequest }>> {
+  return apiFetch(`/api/rent-a-buddy/requests/${requestId}`);
+}
+
+export async function getMatchingRequests(): Promise<ApiResult<{ requests: BuddyRequest[] }>> {
+  return apiFetch('/api/rent-a-buddy/me/matching-requests');
+}
+
+export async function getRequestOffers(requestId: string): Promise<ApiResult<{ offers: BuddyOffer[] }>> {
+  return apiFetch(`/api/rent-a-buddy/requests/${requestId}/offers`);
+}
+
+export async function submitOffer(requestId: string, payload: {
+  proposedPriceUsd: number; depositAmountUsd?: number; cashBalanceDue?: number;
+  proposedStart?: string; proposedEnd?: string; meetupLocation?: string; message?: string;
+  includedServices?: string[]; addonsOffered?: unknown[]; paymentMode?: string; expiresInHours?: number;
+}): Promise<ApiResult<{ offer: BuddyOffer }>> {
+  return apiFetch(`/api/rent-a-buddy/requests/${requestId}/offers`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getMyOffers(): Promise<ApiResult<{ offers: BuddyOffer[] }>> {
+  return apiFetch('/api/rent-a-buddy/me/offers');
+}
+
+export async function acceptOffer(offerId: string): Promise<ApiResult<{ bookingId: string }>> {
+  return apiFetch(`/api/rent-a-buddy/offers/${offerId}/accept`, { method: 'POST' });
+}
+
+export async function declineOffer(offerId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/offers/${offerId}/decline`, { method: 'POST' });
+}
+
+export async function withdrawOffer(offerId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/offers/${offerId}/withdraw`, { method: 'POST' });
+}
+
+// ── Marketplace — Enhanced Packages ──────────────────────────────────────────
+
+export async function createPackageV2(payload: {
+  title: string; description?: string; category: string; city?: string; durationH?: number;
+  priceUsd: number; maxGroup?: number; depositRequired?: boolean; depositPercent?: number;
+  paymentModesAllowed?: string[]; includedStops?: unknown[]; includedServices?: string[];
+  addonIds?: string[]; isActive?: boolean;
+}): Promise<ApiResult<{ pkg: MarketplacePackage; requiresAdminReview: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/me/packages/v2', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updatePackageV2(packageId: string, patch: Partial<{
+  title: string; description: string; priceUsd: number; maxGroup: number; isActive: boolean;
+  depositRequired: boolean; depositPercent: number; paymentModesAllowed: string[];
+  includedStops: unknown[]; includedServices: string[]; addonIds: string[];
+}>): Promise<ApiResult<{ pkg: MarketplacePackage }>> {
+  return apiFetch(`/api/rent-a-buddy/me/packages/v2/${packageId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export async function getBuddyPackages(buddyId: string): Promise<ApiResult<{ packages: MarketplacePackage[] }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/packages`);
+}
+
+export async function getPackage(packageId: string): Promise<ApiResult<{ pkg: MarketplacePackage & { stops: unknown[] } }>> {
+  return apiFetch(`/api/rent-a-buddy/packages/${packageId}`);
+}
+
+export async function bookPackage(packageId: string, payload: {
+  groupSize?: number; bookingDate?: string; notes?: string; paymentMode?: string;
+}): Promise<ApiResult<{ bookingId: string; booking: BuddyBooking }>> {
+  return apiFetch(`/api/rent-a-buddy/packages/${packageId}/book`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+// ── Marketplace — Add-ons & Tips ──────────────────────────────────────────────
+
+export async function getBuddyAddons(buddyId: string): Promise<ApiResult<{ addons: BuddyAddon[] }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/addons`);
+}
+
+export async function createMarketplaceAddon(payload: {
+  title: string; description?: string; priceUsd: number; category?: string; requiresAdminApproval?: boolean;
+}): Promise<ApiResult<{ addon: BuddyAddon }>> {
+  return apiFetch('/api/rent-a-buddy/me/addons', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateMarketplaceAddon(addonId: string, patch: Partial<{ title: string; description: string; priceUsd: number; isActive: boolean }>): Promise<ApiResult<{ addon: BuddyAddon }>> {
+  return apiFetch(`/api/rent-a-buddy/me/addons/${addonId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export async function attachAddonsToBooking(bookingId: string, addonIds: string[]): Promise<ApiResult<{
+  ok: boolean; newTotal: number; depositUsd: number; cashBalanceDue: number; addonsAdded: number;
+}>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/addons`, { method: 'POST', body: JSON.stringify({ addonIds }) });
+}
+
+export async function leaveTip(bookingId: string, amountUsd: number, note?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/tip`, { method: 'POST', body: JSON.stringify({ amountUsd, note }) });
+}
+
+// ── Marketplace — Saved & Waitlist ────────────────────────────────────────────
+
+export async function saveBuddyWithNotes(buddyId: string, notes?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/save`, { method: 'POST', body: JSON.stringify({ notes }) });
+}
+
+export async function unsaveBuddyById(buddyId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/save`, { method: 'DELETE' });
+}
+
+export async function getSavedBuddies(): Promise<ApiResult<{ saved: SavedBuddyEntry[] }>> {
+  return apiFetch('/api/rent-a-buddy/me/saved-buddies');
+}
+
+export async function bookAgain(buddyId: string, payload?: { category?: string; durationH?: number; bookingDate?: string; notes?: string }): Promise<ApiResult<{ suggestion: unknown; message: string }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/book-again`, { method: 'POST', body: JSON.stringify(payload ?? {}) });
+}
+
+export async function joinWaitlistV2(payload: {
+  city: string; category?: string; language?: string; budgetMaxUsd?: number;
+  desiredDate?: string; desiredTime?: string; notes?: string; groupSize?: number; expiryDays?: number;
+}): Promise<ApiResult<{ entry: WaitlistEntry }>> {
+  return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getWaitlistV2(): Promise<ApiResult<{ waitlist: WaitlistEntry[] }>> {
+  return apiFetch('/api/rent-a-buddy/me/waitlist/v2');
+}
+
+export async function leaveWaitlistById(waitlistId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/waitlist/${waitlistId}`, { method: 'DELETE' });
+}
+
+// ── Marketplace — Pricing ─────────────────────────────────────────────────────
+
+export async function getPricingSuggestion(params: {
+  city: string; category: string; durationMinutes?: number; buddyLevel?: string; groupSize?: number; pricingType?: string;
+}): Promise<ApiResult<PricingSuggestion>> {
+  const qs = new URLSearchParams({
+    city: params.city,
+    category: params.category,
+    durationMinutes: String(params.durationMinutes ?? 120),
+    buddyLevel: params.buddyLevel ?? 'new',
+    groupSize: String(params.groupSize ?? 1),
+    pricingType: params.pricingType ?? 'hourly',
+  }).toString();
+  return apiFetch(`/api/rent-a-buddy/pricing/suggestion?${qs}`);
+}
+
+// ── Marketplace — Earnings ────────────────────────────────────────────────────
+
+export async function getEarningsSummary(): Promise<ApiResult<EarningsSummary>> {
+  return apiFetch('/api/rent-a-buddy/me/earnings/summary');
+}
+
+export async function getEarningsLedger(limit = 50, offset = 0): Promise<ApiResult<{ ledger: LedgerEntry[]; total: number }>> {
+  return apiFetch(`/api/rent-a-buddy/me/earnings/ledger?limit=${limit}&offset=${offset}`);
 }

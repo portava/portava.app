@@ -64,7 +64,7 @@ function DeclineSheet({
               value={custom}
               onChangeText={setCustom}
               placeholder="Tell us more (optional)…"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
               multiline
             />
           )}
@@ -129,7 +129,7 @@ function SuggestSheet({
             value={date}
             onChangeText={setDate}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
           />
 
           <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>
@@ -140,7 +140,7 @@ function SuggestSheet({
                 value={time}
                 onChangeText={setTime}
                 placeholder="e.g. 14:00"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -150,7 +150,7 @@ function SuggestSheet({
                 value={duration}
                 onChangeText={setDuration}
                 placeholder="e.g. 3"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.haze}
                 keyboardType="numeric"
               />
             </View>
@@ -162,7 +162,7 @@ function SuggestSheet({
             value={location}
             onChangeText={setLocation}
             placeholder="City or specific spot"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
           />
 
           <Text style={modal.fieldLabel}>Message to traveller</Text>
@@ -171,7 +171,7 @@ function SuggestSheet({
             value={message}
             onChangeText={setMessage}
             placeholder="Explain the suggested change…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
           />
 
@@ -501,7 +501,7 @@ const rc = StyleSheet.create({
   totalLabel: { ...t.bodyStrong, color: color.mute },
   totalValue: { ...t.heading, color: color.success },
   notesWrap: { backgroundColor: color.paper, borderRadius: radius.sm, padding: space.md, marginBottom: space.md },
-  notesLabel: { fontFamily: 'Courier', fontSize: 9, color: color.faint, letterSpacing: 1, marginBottom: 4 },
+  notesLabel: { fontFamily: 'Courier', fontSize: 9, color: color.haze, letterSpacing: 1, marginBottom: 4 },
   notesBody: { ...t.small, color: color.ink, lineHeight: 18 },
   actions: { flexDirection: 'row', gap: space.xs, marginTop: space.xs, flexWrap: 'wrap' },
 });

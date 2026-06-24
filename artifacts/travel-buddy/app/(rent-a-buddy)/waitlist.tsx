@@ -123,7 +123,7 @@ export default function RentABuddyWaitlist() {
               value={city}
               onChangeText={setCity}
               placeholder="Which city are you visiting?"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
             />
           </View>
         </View>
@@ -155,14 +155,14 @@ export default function RentABuddyWaitlist() {
               value={desiredDate}
               onChangeText={setDesiredDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
             />
             <TextInput
               style={[styles.inputRow, styles.timeInput]}
               value={desiredTime}
               onChangeText={setDesiredTime}
               placeholder="HH:MM"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
             />
           </View>
         </View>
@@ -191,7 +191,7 @@ export default function RentABuddyWaitlist() {
             value={notes}
             onChangeText={setNotes}
             placeholder="Any specific needs or details for your Buddy search…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
             numberOfLines={3}
           />

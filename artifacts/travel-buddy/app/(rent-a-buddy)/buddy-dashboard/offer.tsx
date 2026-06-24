@@ -157,7 +157,7 @@ export default function BuddyOffer() {
           value={price}
           onChangeText={(v) => { setPrice(v); setErrors((e) => ({ ...e, price: '' })); }}
           placeholder="e.g. 75"
-          placeholderTextColor={color.faint}
+          placeholderTextColor={color.haze}
           keyboardType="numeric"
         />
 
@@ -171,7 +171,7 @@ export default function BuddyOffer() {
               value={date}
               onChangeText={(v) => { setDate(v); setErrors((e) => ({ ...e, date: '' })); }}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -181,7 +181,7 @@ export default function BuddyOffer() {
               value={time}
               onChangeText={setTime}
               placeholder="e.g. 10:00"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.haze}
             />
           </View>
         </View>
@@ -193,7 +193,7 @@ export default function BuddyOffer() {
           value={location}
           onChangeText={setLocation}
           placeholder="e.g. Suvarnabhumi Airport arrivals, Gate 3"
-          placeholderTextColor={color.faint}
+          placeholderTextColor={color.haze}
         />
 
         {/* Included services */}
@@ -216,7 +216,7 @@ export default function BuddyOffer() {
             value={customIncluded}
             onChangeText={setCustomIncluded}
             placeholder="Add custom item…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             onSubmitEditing={addCustom}
           />
           <Pressable style={custom.addBtn} onPress={addCustom}>
@@ -246,7 +246,7 @@ export default function BuddyOffer() {
           value={message}
           onChangeText={setMessage}
           placeholder="Add a personal note about this offer…"
-          placeholderTextColor={color.faint}
+          placeholderTextColor={color.haze}
           multiline
         />
 
@@ -304,7 +304,7 @@ const fi = StyleSheet.create({
 
 const fl = StyleSheet.create({
   label: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
-  opt: { ...t.small, color: color.faint },
+  opt: { ...t.small, color: color.haze },
 });
 
 const custom = StyleSheet.create({

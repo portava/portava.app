@@ -31,7 +31,7 @@ const STATUS_COLORS: Record<BookingStatus, string> = {
   confirmed: color.deep,
   in_progress: color.success,
   completed: color.mute,
-  cancelled: color.faint,
+  cancelled: color.haze,
   disputed: color.signal,
 };
 
@@ -179,7 +179,7 @@ function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClos
             value={reason}
             onChangeText={setReason}
             placeholder="Reason for cancellation (optional)"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.haze}
             multiline
           />
           <View style={modal.actions}>
@@ -513,7 +513,7 @@ const map = StyleSheet.create({
   },
   label: { ...t.bodyStrong, color: color.ink },
   city: { ...t.small, color: color.deep, marginTop: 2 },
-  hint: { ...t.small, color: color.faint, marginTop: 2 },
+  hint: { ...t.small, color: color.haze, marginTop: 2 },
 });
 
 const route = StyleSheet.create({

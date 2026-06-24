@@ -252,7 +252,7 @@ const s = StyleSheet.create({
   stepTitle: { ...t.bodyStrong, color: color.ink },
   stepBody: { ...t.small, color: color.mute, lineHeight: 17, marginTop: 2 },
   ctaSection: { paddingHorizontal: space.lg, marginTop: space.xxl, gap: space.md },
-  policyNote: { ...t.small, color: color.faint, textAlign: 'center', lineHeight: 17 },
+  policyNote: { ...t.small, color: color.haze, textAlign: 'center', lineHeight: 17 },
 });
 
 const faq = StyleSheet.create({

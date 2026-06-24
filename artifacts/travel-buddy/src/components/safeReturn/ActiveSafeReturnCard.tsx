@@ -151,7 +151,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
   }, [session.id, session.liveShareEnabled]);
 
   const handleMessageCircle = useCallback(() => {
-    router.push('/messages');
+    router.push('/messages' as any);
   }, [router]);
 
   const handleCancel = useCallback(() => {

@@ -382,7 +382,7 @@ const stat = StyleSheet.create({
   iconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   value: { ...t.heading, color: color.ink, fontSize: 20 },
   label: { fontFamily: 'Courier', fontSize: 9, color: color.mute, letterSpacing: 1, textAlign: 'center' },
-  sub: { ...t.small, color: color.faint, textAlign: 'center', fontSize: 11 },
+  sub: { ...t.small, color: color.haze, textAlign: 'center', fontSize: 11 },
 });
 
 const tile = StyleSheet.create({
@@ -436,7 +436,7 @@ const s = StyleSheet.create({
   cardList: { paddingHorizontal: space.lg, gap: space.sm, marginBottom: space.sm },
   bkDate: { ...t.bodyStrong, color: color.ink },
   bkCat: { ...t.small, color: color.mute, marginTop: 2 },
-  bkNote: { ...t.small, color: color.faint, marginTop: space.xs },
+  bkNote: { ...t.small, color: color.haze, marginTop: space.xs },
   statusPill: { paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
 });
