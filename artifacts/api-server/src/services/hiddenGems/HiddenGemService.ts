@@ -229,10 +229,17 @@ export async function saveGem(
     .insert({ gem_id: gemId, user_id: userId });
   if (error) throw error;
 
-  // Increment save_count (RPC may not exist yet — silent fallback)
+  // Increment save_count — direct UPDATE, no RPC dependency
   try {
-    await db.rpc("increment_hidden_gem_save_count" as any, { gem_id: gemId });
-  } catch { /* ignore */ }
+    await db.rpc("increment_counter" as any, {
+      table_name: "hidden_gems", column_name: "save_count", row_id: gemId,
+    });
+  } catch {
+    // Fallback: manual increment
+    const { data: cur } = await db.from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
+    const next = ((cur as any)?.save_count ?? 0) + 1;
+    await db.from("hidden_gems").update({ save_count: next }).eq("id", gemId);
+  }
 
   return { alreadySaved: false };
 }

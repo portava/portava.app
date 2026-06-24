@@ -22,6 +22,7 @@ export type SensitivityLevel =
   | "protected";
 
 export interface GemCoordContext {
+  id?: string;
   sensitivity_level: SensitivityLevel;
   latitude: number | null;
   longitude: number | null;
@@ -88,14 +89,27 @@ export async function resolveGemCoords(
 
     case "reveal_after_acceptance": {
       if (!callerId || !db || !callerTripId) break;
-      const { data: memberRow } = await db
-        .from("trip_members")
-        .select("id")
-        .eq("trip_id", callerTripId)
-        .eq("user_id", callerId)
-        .eq("status", "accepted")
-        .maybeSingle();
-      if (memberRow) {
+      // Dual check: caller must be an accepted trip member AND the gem must be
+      // explicitly linked to that specific trip via trip_plan_items.
+      // Without the gem↔trip binding check, any accepted trip membership would
+      // reveal coordinates — a caller-controlled over-disclosure vector.
+      const [{ data: memberRow }, { data: planRow }] = await Promise.all([
+        db
+          .from("trip_members")
+          .select("id")
+          .eq("trip_id", callerTripId)
+          .eq("user_id", callerId)
+          .eq("status", "accepted")
+          .maybeSingle(),
+        db
+          .from("trip_plan_items")
+          .select("id")
+          .eq("trip_id", callerTripId)
+          .eq("source_type", "hidden_gem")
+          .eq("source_id", gem.id)
+          .maybeSingle(),
+      ]);
+      if (memberRow && planRow) {
         return { lat: latitude, lng: longitude, coordsRevealed: true, coordsPrecision: "exact" };
       }
       break;

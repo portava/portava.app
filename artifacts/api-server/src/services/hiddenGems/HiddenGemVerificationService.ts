@@ -135,10 +135,12 @@ export async function recordGpsCheckin(
       }
     }
 
-    // Increment visit_count
+    // Increment visit_count — direct UPDATE, no RPC dependency
     try {
-      await db.rpc("increment_hidden_gem_visit_count" as any, { gem_id: gemId });
-    } catch { /* ignore */ }
+      const { data: cur } = await db.from("hidden_gems").select("visit_count").eq("id", gemId).maybeSingle();
+      const next = ((cur as any)?.visit_count ?? 0) + 1;
+      await db.from("hidden_gems").update({ visit_count: next }).eq("id", gemId);
+    } catch { /* non-fatal counter drift */ }
   } else {
     // Write manual_review trust event
     try {
