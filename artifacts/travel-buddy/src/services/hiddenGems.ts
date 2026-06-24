@@ -303,7 +303,20 @@ export async function applyForGuide(
 export async function getGuideProfile(userId: string): Promise<GuideProfile | null> {
   try {
     const data = await apiFetch<{ guide: any }>(`/api/hidden-gems/guides/${userId}`);
-    return data.guide;
+    const g = data.guide;
+    if (!g) return null;
+    // Normalise snake_case DB fields → camelCase GuideProfile interface
+    return {
+      userId:            g.user_id      ?? g.userId,
+      guideLevel:        g.guide_level  ?? g.guideLevel  ?? 1,
+      cityExpertise:     g.city_expertise ?? g.cityExpertise ?? [],
+      contributionCount: g.contribution_count ?? g.contributionCount ?? 0,
+      helpfulVotes:      g.helpful_votes ?? g.helpfulVotes ?? 0,
+      accuracyScore:     g.accuracy_score ?? g.accuracyScore ?? 0,
+      status:            g.status,
+      bio:               g.bio ?? null,
+      verifiedAt:        g.verified_at ?? g.verifiedAt ?? null,
+    };
   } catch {
     return null;
   }

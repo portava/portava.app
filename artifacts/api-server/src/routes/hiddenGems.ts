@@ -61,6 +61,8 @@ import {
   getPendingQueue,
   getReportedGems,
   getGuideApplications,
+  getSensitiveGems,
+  getDuplicateCandidates,
 } from "../services/hiddenGems/HiddenGemModerationService.js";
 import {
   applyForGuide,
@@ -223,6 +225,24 @@ router.get("/hidden-gems", async (req, res) => {
     if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string);
   }
   if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
+  if (req.query.submittedBy)       opts.submittedBy = req.query.submittedBy as string;
+
+  // submittedBy: return gems submitted by a specific user (public guide profile queries)
+  if (opts.submittedBy) {
+    try {
+      const { data: userGems } = await sc
+        .from("hidden_gems")
+        .select("*")
+        .eq("submitted_by", opts.submittedBy)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(opts.limit);
+      const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);
+      return res.json({ gems: safe, total: safe.length });
+    } catch (err: any) {
+      return sendError(res, "db_error", err.message);
+    }
+  }
 
   try {
     // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
@@ -921,6 +941,32 @@ router.get("/admin/hidden-gems/guide-applications", async (req, res) => {
 const adminVerifySchema = z.object({
   result: z.enum(["approved", "rejected", "hidden"]),
   notes: z.string().max(500).optional(),
+});
+
+router.get("/admin/hidden-gems/sensitive-gems", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await requireAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
+  try {
+    const gems = await getSensitiveGems(sc);
+    res.json({ gems });
+  } catch (err: any) { sendError(res, "db_error", err.message); }
+});
+
+router.get("/admin/hidden-gems/duplicate-candidates", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await requireAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
+  try {
+    const gems = await getDuplicateCandidates(sc);
+    res.json({ gems });
+  } catch (err: any) { sendError(res, "db_error", err.message); }
 });
 
 router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
