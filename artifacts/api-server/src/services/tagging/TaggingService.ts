@@ -356,38 +356,22 @@ async function processHashtags(
       const htRow = ht as any;
       if (htRow.is_blocked) continue;
 
-      // Dedup guard: only count new usage rows (prevents over-incrementing on re-process)
-      const { data: existingUsage } = await db
-        .from('hashtag_usage')
-        .select('id')
-        .eq('hashtag_id', htRow.id)
-        .eq('source_type', sourceType)
-        .eq('source_id', sourceId)
-        .maybeSingle();
+      // Atomically insert usage row + increment usage_count in one DB-side operation.
+      // upsert_hashtag_usage_and_increment uses ON CONFLICT DO NOTHING so concurrent
+      // writes for the same (hashtag_id, source_type, source_id) never double-count.
+      const { error: rpcErr } = await db.rpc('upsert_hashtag_usage_and_increment', {
+        p_hashtag_id:  htRow.id,
+        p_source_type: sourceType,
+        p_source_id:   sourceId,
+        p_author_id:   authorId,
+        p_city:        city ?? null,
+        p_country:     country ?? null,
+      });
 
-      if (existingUsage) continue; // Already counted — skip upsert and increment
-
-      const { error: usageErr } = await db
-        .from('hashtag_usage')
-        .upsert(
-          {
-            hashtag_id: htRow.id,
-            source_type: sourceType,
-            source_id: sourceId,
-            author_id: authorId,
-            city: city ?? null,
-            country: country ?? null,
-          },
-          { onConflict: 'hashtag_id,source_type,source_id', ignoreDuplicates: true },
-        );
-
-      if (usageErr) {
-        logger?.warn({ err: usageErr, slug }, 'hashtag_usage upsert failed');
+      if (rpcErr) {
+        logger?.warn({ err: rpcErr, slug }, 'upsert_hashtag_usage_and_increment failed');
         continue;
       }
-
-      // Atomic increment via DB helper — only reached for newly inserted rows
-      await db.rpc('increment_hashtag_usage_count', { p_hashtag_id: htRow.id });
     } catch (err) {
       logger?.warn({ err, slug }, 'processHashtags item error');
     }

@@ -114,3 +114,37 @@ BEGIN
   WHERE id = p_hashtag_id;
 END;
 $$;
+
+-- ── upsert_hashtag_usage_and_increment() ──────────────────────────────────────────
+-- Atomically inserts a hashtag_usage row (ON CONFLICT DO NOTHING) and increments
+-- usage_count only when a new row is inserted — preventing double-counting under
+-- concurrent writes for the same (hashtag_id, source_type, source_id) triple.
+-- Returns TRUE if a new row was inserted, FALSE if it already existed.
+CREATE OR REPLACE FUNCTION upsert_hashtag_usage_and_increment(
+  p_hashtag_id  UUID,
+  p_source_type TEXT,
+  p_source_id   UUID,
+  p_author_id   UUID,
+  p_city        TEXT DEFAULT NULL,
+  p_country     TEXT DEFAULT NULL
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_inserted BOOLEAN := FALSE;
+BEGIN
+  INSERT INTO hashtag_usage (hashtag_id, source_type, source_id, author_id, city, country)
+  VALUES (p_hashtag_id, p_source_type, p_source_id, p_author_id, p_city, p_country)
+  ON CONFLICT (hashtag_id, source_type, source_id) DO NOTHING;
+
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+
+  IF v_inserted THEN
+    UPDATE hashtags SET usage_count = usage_count + 1, updated_at = now()
+    WHERE id = p_hashtag_id;
+  END IF;
+
+  RETURN v_inserted;
+END;
+$$;

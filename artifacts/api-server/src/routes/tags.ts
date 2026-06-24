@@ -215,7 +215,15 @@ router.get('/tags/suggestions', async (req, res) => {
     }
   } catch { /* events table may not exist on all deployments */ }
 
-  const suggestions = [...userSuggestions, ...entitySuggestions].slice(0, limit);
+  // Cap each entity type at 10 before merging; preserve ranking order within users
+  const PER_TYPE_CAP = 10;
+  const typeCounts: Record<string, number> = {};
+  const cappedEntities = entitySuggestions.filter((e) => {
+    typeCounts[e.type] = (typeCounts[e.type] ?? 0) + 1;
+    return typeCounts[e.type] <= PER_TYPE_CAP;
+  });
+
+  const suggestions = [...userSuggestions, ...cappedEntities].slice(0, limit);
   res.status(200).json({ suggestions });
 });
 

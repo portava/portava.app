@@ -246,6 +246,20 @@ router.get('/hashtags/trending', async (req, res) => {
     }
   }
 
+  // Compute event activity (hashtag_usage rows where source_type='event' in window)
+  const eventActMap: Record<string, number> = {};
+  try {
+    const { data: evtUsage } = await sc
+      .from('hashtag_usage')
+      .select('hashtag_id')
+      .eq('source_type', 'event')
+      .in('hashtag_id', htIds)
+      .gte('created_at', since);
+    for (const row of (evtUsage ?? []) as any[]) {
+      eventActMap[row.hashtag_id] = (eventActMap[row.hashtag_id] ?? 0) + 1;
+    }
+  } catch { /* events table may not exist on all deployments */ }
+
   // Compute weighted scores
   const scored = htIds.map((htId) => {
     const u = usageByHt[htId];
@@ -253,7 +267,7 @@ router.get('/hashtags/trending', async (req, res) => {
     const engagement   = engagementMap[htId] ?? 0;
     const city_share   = cityId ? u.cityCount / Math.max(recent_usage, 1) : 0;
     const spam_pen     = u.authors.size < 3 ? 1 : 0;
-    const event_act    = 0; // events out of scope
+    const event_act    = eventActMap[htId] ?? 0;
 
     const score =
       recent_usage * 0.35 +
@@ -573,11 +587,18 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   } else if (tab === 'trips') {
     try {
-      // owner_id allows filtering out trips owned by blocked users; public trips only
+      // Visibility: only show public trips OR trips the viewer is a member/owner of
+      const { data: memberRows } = await sc
+        .from('trip_members').select('trip_id').eq('user_id', user.id).in('trip_id', sourceIds);
+      const viewerTripIds = new Set((memberRows ?? []).map((r: any) => r.trip_id as string));
+
       const { data: trips } = await sc
-        .from('trips').select('id, name, destination, status, owner_id').in('id', sourceIds);
+        .from('trips').select('id, name, destination, status, owner_id, visibility').in('id', sourceIds);
       const items = (trips ?? [])
-        .filter((t: any) => !feedBlockedSet.has(t.owner_id))
+        .filter((t: any) =>
+          !feedBlockedSet.has(t.owner_id) &&
+          (t.visibility === 'public' || t.owner_id === user.id || viewerTripIds.has(t.id))
+        )
         .map((t: any) => ({
           id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
         }));
@@ -586,17 +607,24 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   } else if (tab === 'circles') {
     try {
-      // owner_id allows filtering out circles owned by blocked users
-      const { data: circles } = await sc.from('circles').select('id, name, owner_id').in('id', sourceIds);
+      // Visibility: only show circles the viewer owns, is a member of, or are public
+      const { data: memberCircleRows } = await sc
+        .from('circle_members').select('circle_id').eq('user_id', user.id).in('circle_id', sourceIds);
+      const viewerCircleIds = new Set((memberCircleRows ?? []).map((r: any) => r.circle_id as string));
+
+      const { data: circles } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds);
       const items = (circles ?? [])
-        .filter((c: any) => !feedBlockedSet.has(c.owner_id))
+        .filter((c: any) =>
+          !feedBlockedSet.has(c.owner_id) &&
+          (c.visibility === 'public' || c.owner_id === user.id || viewerCircleIds.has(c.id))
+        )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
 
   } else if (tab === 'events') {
     try {
-      // organizer_id allows filtering out events by blocked users
+      // Events are public by nature; filter out those by blocked organizers
       const { data: events } = await sc
         .from('events').select('id, name, location, start_at, end_at, organizer_id').in('id', sourceIds);
       const items = (events ?? [])
