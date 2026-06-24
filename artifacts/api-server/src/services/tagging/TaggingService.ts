@@ -100,13 +100,37 @@ async function processMentions(
 ): Promise<string[]> {
   const capped = handles.slice(0, MAX_MENTIONS);
 
+  // For message sourceType: restrict tagging to thread members only
+  // (prevents notifying users who cannot see the message)
+  let allowedUserIds: Set<string> | null = null;
+  if (sourceType === 'message') {
+    try {
+      const { data: msgRow } = await db
+        .from('messages')
+        .select('thread_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (msgRow) {
+        const { data: memberRows } = await db
+          .from('message_thread_members')
+          .select('user_id')
+          .eq('thread_id', (msgRow as any).thread_id);
+        allowedUserIds = new Set((memberRows ?? []).map((r: any) => r.user_id as string));
+      }
+    } catch {
+      // If lookup fails, be safe and allow no tags for this message
+      allowedUserIds = new Set();
+    }
+  }
+
   // Per-hour rate-limit check: count author's tags in rolling 1-hour window
+  // NOTE: schema uses tagged_at (not created_at) — see migration 0044_tags_hashtags.sql
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const { count: hourCount } = await db
     .from('tags')
     .select('id', { count: 'exact', head: true })
     .eq('tagger_id', authorId)
-    .gte('created_at', oneHourAgo);
+    .gte('tagged_at', oneHourAgo);
 
   if ((hourCount ?? 0) >= MAX_TAGS_PER_HOUR) {
     logger?.warn({ authorId }, 'processMentions: hourly rate limit exceeded');
@@ -169,6 +193,8 @@ async function processMentions(
   for (const profile of (profiles as any[]).slice(0, remainingSlots)) {
     if (profile.id === authorId) continue;
     if (blockedSet.has(profile.id)) continue;
+    // For messages: only tag users who are thread members (content-visibility guard)
+    if (allowedUserIds !== null && !allowedUserIds.has(profile.id)) continue;
 
     const perm: string = profile.tag_permission ?? 'anyone';
     if (perm === 'nobody') continue;

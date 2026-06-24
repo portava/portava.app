@@ -547,49 +547,64 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     res.status(200).json({ items, posts: items, hasMore: items.length === limit, tab, scope });
 
   } else if (tab === 'people') {
+    // Exclude blocked/blocking profiles
     const { data: profiles } = await sc
       .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
-    const items = (profiles ?? []).map((p: any) => ({
-      id: p.id, type: 'user', handle: p.handle, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
-    }));
+    const items = (profiles ?? [])
+      .filter((p: any) => !feedBlockedSet.has(p.id))
+      .map((p: any) => ({
+        id: p.id, type: 'user', handle: p.handle, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
+      }));
     res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
 
   } else if (tab === 'places') {
     try {
+      // submitted_by allows filtering out content from blocked users
       const { data: places } = await sc
-        .from('discovery_places').select('id, name, city, place_type, image_url').in('id', sourceIds);
-      const items = (places ?? []).map((p: any) => ({
-        id: p.id, type: 'place', name: p.name, city: p.city ?? null,
-        placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
-      }));
+        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds);
+      const items = (places ?? [])
+        .filter((p: any) => !feedBlockedSet.has(p.submitted_by))
+        .map((p: any) => ({
+          id: p.id, type: 'place', name: p.name, city: p.city ?? null,
+          placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
+        }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
 
   } else if (tab === 'trips') {
     try {
+      // owner_id allows filtering out trips owned by blocked users; public trips only
       const { data: trips } = await sc
-        .from('trips').select('id, name, destination, status').in('id', sourceIds);
-      const items = (trips ?? []).map((t: any) => ({
-        id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
-      }));
+        .from('trips').select('id, name, destination, status, owner_id').in('id', sourceIds);
+      const items = (trips ?? [])
+        .filter((t: any) => !feedBlockedSet.has(t.owner_id))
+        .map((t: any) => ({
+          id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
+        }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
 
   } else if (tab === 'circles') {
     try {
-      const { data: circles } = await sc.from('circles').select('id, name').in('id', sourceIds);
-      const items = (circles ?? []).map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
+      // owner_id allows filtering out circles owned by blocked users
+      const { data: circles } = await sc.from('circles').select('id, name, owner_id').in('id', sourceIds);
+      const items = (circles ?? [])
+        .filter((c: any) => !feedBlockedSet.has(c.owner_id))
+        .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
 
   } else if (tab === 'events') {
     try {
+      // organizer_id allows filtering out events by blocked users
       const { data: events } = await sc
-        .from('events').select('id, name, location, start_at, end_at').in('id', sourceIds);
-      const items = (events ?? []).map((e: any) => ({
-        id: e.id, type: 'event', name: e.name, location: e.location ?? null,
-        startAt: e.start_at ?? null, endAt: e.end_at ?? null,
-      }));
+        .from('events').select('id, name, location, start_at, end_at, organizer_id').in('id', sourceIds);
+      const items = (events ?? [])
+        .filter((e: any) => !feedBlockedSet.has(e.organizer_id))
+        .map((e: any) => ({
+          id: e.id, type: 'event', name: e.name, location: e.location ?? null,
+          startAt: e.start_at ?? null, endAt: e.end_at ?? null,
+        }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
 

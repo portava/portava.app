@@ -526,7 +526,7 @@ describe('processTagging enforcement', () => {
       source_id: `post-rate-${i}`,
       tagger_id: authorId,
       tagged_user_id: aliceId,
-      created_at: new Date(now.getTime() - 1_000 * i).toISOString(),
+      tagged_at: new Date(now.getTime() - 1_000 * i).toISOString(),
     }));
     const sc = makeClient(store, { userId: authorId });
     const taggedIds = await processTagging({
