@@ -126,6 +126,11 @@ CREATE TABLE IF NOT EXISTS layover_recommendations (
   location_label    TEXT,
   city              TEXT,
   neighborhood      TEXT,
+  -- Admin moderation
+  status            TEXT        NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active', 'hidden', 'flagged')),
+  source            TEXT        NOT NULL DEFAULT 'ai'
+                      CHECK (source IN ('ai', 'user', 'admin')),
   -- Order for display
   sort_order        INTEGER     NOT NULL DEFAULT 0,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()

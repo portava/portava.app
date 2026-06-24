@@ -566,6 +566,91 @@ describe("Telegraph layover intents", () => {
   });
 });
 
+// ── Admin reports route-level tests ───────────────────────────────────────────
+// Tests the service-layer behavior for reports (status transitions) using the
+// fake client, covering the same logic as GET /admin/airport/reports and
+// POST /admin/airport/reports/:id/resolve.
+
+describe("Admin airport reports", () => {
+  it("lists flagged layover_recommendations only", async () => {
+    const tables: any = {
+      ...makeTables(),
+      layover_recommendations: [
+        { id: "rec-1", session_id: "sess-1", title: "Coffee shop", rec_type: "food", safety_rating: "safe",
+          source: "ai", status: "flagged", created_at: new Date().toISOString() },
+        { id: "rec-2", session_id: "sess-1", title: "Night market", rec_type: "activity", safety_rating: "possible_but_risky",
+          source: "ai", status: "active", created_at: new Date().toISOString() },
+        { id: "rec-3", session_id: "sess-2", title: "Spa", rec_type: "rest", safety_rating: "safe",
+          source: "ai", status: "flagged", created_at: new Date().toISOString() },
+      ],
+    };
+    const db = makeClient(tables);
+    const { data, error } = await db
+      .from("layover_recommendations")
+      .select("id, session_id, title, rec_type, safety_rating, source, status, created_at")
+      .eq("status", "flagged")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    assert.strictEqual(error, null);
+    assert.strictEqual((data as any[]).length, 2, "should return only flagged recs");
+    assert.ok((data as any[]).every((r: any) => r.status === "flagged"), "all results must be flagged");
+  });
+
+  it("resolves a report by approving it (status → active)", async () => {
+    const tables: any = {
+      ...makeTables(),
+      layover_recommendations: [
+        { id: "rec-10", session_id: "sess-1", title: "Dangerous spot",
+          source: "ai", status: "flagged", created_at: new Date().toISOString() },
+      ],
+    };
+    const db = makeClient(tables);
+    const { data, error } = await db
+      .from("layover_recommendations")
+      .update({ status: "active" })
+      .eq("id", "rec-10")
+      .select("id, status")
+      .maybeSingle();
+    assert.strictEqual(error, null);
+    assert.strictEqual((data as any).status, "active", "should transition to active");
+    // Verify DB was mutated
+    const updated = tables.layover_recommendations.find((r: any) => r.id === "rec-10");
+    assert.strictEqual(updated.status, "active");
+  });
+
+  it("resolves a report by hiding it (status → hidden)", async () => {
+    const tables: any = {
+      ...makeTables(),
+      layover_recommendations: [
+        { id: "rec-11", session_id: "sess-1", title: "Bad rec",
+          source: "user", status: "flagged", created_at: new Date().toISOString() },
+      ],
+    };
+    const db = makeClient(tables);
+    const { data, error } = await db
+      .from("layover_recommendations")
+      .update({ status: "hidden" })
+      .eq("id", "rec-11")
+      .select("id, status")
+      .maybeSingle();
+    assert.strictEqual(error, null);
+    assert.strictEqual((data as any).status, "hidden");
+  });
+
+  it("returns null for non-existent recommendation on resolve", async () => {
+    const tables: any = { ...makeTables(), layover_recommendations: [] };
+    const db = makeClient(tables);
+    const { data, error } = await db
+      .from("layover_recommendations")
+      .update({ status: "active" })
+      .eq("id", "no-such-id")
+      .select("id, status")
+      .maybeSingle();
+    assert.strictEqual(error, null);
+    assert.strictEqual(data, null, "should return null for missing row");
+  });
+});
+
 // ── Return deadline / admin tests ─────────────────────────────────────────────
 
 describe("Admin airport profile buffer defaults", () => {

@@ -6,8 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation,
+  Calendar, Waves, Navigation, Plane,
 } from 'lucide-react-native';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
@@ -87,6 +88,7 @@ export default function DiscoveryHub() {
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [layoverOpen, setLayoverOpen] = useState(false);
 
   // Keep destination in sync when location city changes (GPS capture / manual set).
   useEffect(() => {
@@ -291,6 +293,18 @@ export default function DiscoveryHub() {
         onClose={closeCityPicker}
         onSelect={handlePickDestination}
       />
+
+      {/* Layover Mode floating entry */}
+      <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
+        <Plane size={16} color="#fff" />
+        <Text style={styles.layoverFabText}>Layover Mode</Text>
+      </Pressable>
+
+      <LayoverModeSheet
+        visible={layoverOpen}
+        onClose={() => setLayoverOpen(false)}
+        initialCity={destination}
+      />
     </View>
   );
 }
@@ -422,4 +436,22 @@ const styles = StyleSheet.create({
   modeChipLabelActive: {
     color: color.signal,
   },
+  layoverFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1565C0',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
+  layoverFabText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 });

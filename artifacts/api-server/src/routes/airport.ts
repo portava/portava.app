@@ -998,7 +998,7 @@ router.get("/admin/airport/reports", async (req, res) => {
 
   const { data, error } = await sc
     .from("layover_recommendations")
-    .select("id, airport_id, title, description, rec_type, safety_rating, source, status, created_at")
+    .select("id, session_id, title, description, rec_type, safety_rating, source, status, created_at")
     .eq("status", "flagged")
     .order("created_at", { ascending: false })
     .limit(limit);
