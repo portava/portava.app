@@ -12,7 +12,7 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, type BuddyBooking } from '../../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -383,13 +383,30 @@ export default function BookingDetail() {
           </Pressable>
 
           {isCompleted && (
-            <Pressable
-              style={({ pressed }) => [styles.actionBtn, styles.actionBtnSignal, pressed && { opacity: layout.pressedOpacity }]}
-              onPress={() => router.push({ pathname: '/(rent-a-buddy)/review' as any, params: { bookingId: id } })}
-            >
-              <Star size={16} color={color.onInk} />
-              <Text style={styles.actionBtnTextPrimary}>Leave a review</Text>
-            </Pressable>
+            <>
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, styles.actionBtnSignal, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => router.push({ pathname: '/(rent-a-buddy)/review' as any, params: { bookingId: id } })}
+              >
+                <Star size={16} color={color.onInk} />
+                <Text style={styles.actionBtnTextPrimary}>Leave a review</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={async () => {
+                  const res = await optInStayConnected(id as string);
+                  Alert.alert(
+                    res.ok ? 'Stay Connected opted in' : 'Error',
+                    res.ok
+                      ? 'You\'ve opted to keep the chat open. If your Buddy also opts in, the thread will stay active.'
+                      : (res.error ?? 'Could not opt in'),
+                  );
+                }}
+              >
+                <MessageCircle size={16} color={color.deep} />
+                <Text style={styles.actionBtnText}>Stay connected</Text>
+              </Pressable>
+            </>
           )}
 
           {isCancellable && (
@@ -407,7 +424,15 @@ export default function BookingDetail() {
       <AddTimeModal
         visible={addTimeVisible}
         onClose={() => setAddTimeVisible(false)}
-        onAdd={(h) => Alert.alert('Time added', `${h} hour${h !== 1 ? 's' : ''} added to your session.`)}
+        onAdd={async (h) => {
+          const res = await addExtraTime(id as string, h);
+          if (res.ok) {
+            setBooking(prev => prev ? { ...prev, durationH: res.data?.newDurationH ?? prev.durationH + h } : prev);
+            Alert.alert('Time added', `${h} hour${h !== 1 ? 's' : ''} added to your session.`);
+          } else {
+            Alert.alert('Error', res.error ?? 'Could not add time');
+          }
+        }}
       />
 
       <CancelModal

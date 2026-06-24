@@ -461,6 +461,13 @@ export async function optInStayConnected(bookingId: string): Promise<ApiResult<{
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/stay-connected`, { method: 'POST' });
 }
 
+export async function addExtraTime(bookingId: string, hours: number): Promise<ApiResult<{ ok: boolean; newDurationH?: number }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/add-time`, {
+    method: 'POST',
+    body: JSON.stringify({ hours }),
+  });
+}
+
 export async function confirmCashBalance(
   bookingId: string,
   confirmed: boolean,

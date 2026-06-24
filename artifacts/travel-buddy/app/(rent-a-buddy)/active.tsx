@@ -9,7 +9,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, type BuddyBooking } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, type BuddyBooking } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
@@ -257,7 +257,10 @@ export default function RentABuddyActive() {
         </Pressable>
       </View>
 
-      <AddTimeModal visible={addTimeVisible} onClose={() => setAddTimeVisible(false)} onAdd={h => setAddedH(a => a + h)} />
+      <AddTimeModal visible={addTimeVisible} onClose={() => setAddTimeVisible(false)} onAdd={async h => {
+        const res = await addExtraTime(bookingId, h);
+        if (res.ok) setAddedH(a => a + h);
+      }} />
       <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={handleEnd} />
     </View>
   );

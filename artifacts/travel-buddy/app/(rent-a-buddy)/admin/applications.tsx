@@ -97,6 +97,7 @@ export default function AdminApplicationsScreen() {
   const [selected, setSelected] = useState<AdminApplication | null>(null);
   const [notes, setNotes] = useState('');
   const [actionTarget, setActionTarget] = useState<{ id: string; action: 'approved' | 'rejected' | 'under_review' } | null>(null);
+  const [approvedCategories, setApprovedCategories] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [limiting, setLimiting] = useState(false);
@@ -137,13 +138,15 @@ export default function AdminApplicationsScreen() {
 
   function initiateAction(id: string, action: 'approved' | 'rejected' | 'under_review') {
     setNotes('');
+    setApprovedCategories(selected?.categories ?? []);
     setActionTarget({ id, action });
   }
 
   async function confirmAction() {
     if (!actionTarget) return;
     setSaving(true);
-    const res = await reviewApplication(actionTarget.id, actionTarget.action, notes || undefined);
+    const cats = actionTarget.action === 'approved' ? approvedCategories : undefined;
+    const res = await reviewApplication(actionTarget.id, actionTarget.action, notes || undefined, cats);
     setSaving(false);
     if (!res.ok) {
       Alert.alert('Error', res.error ?? 'Failed to update');
@@ -218,6 +221,27 @@ export default function AdminApplicationsScreen() {
             <Text style={modal.title}>
               {actionTarget?.action === 'approved' ? 'Approve' : actionTarget?.action === 'rejected' ? 'Reject' : 'Mark Under Review'} Application
             </Text>
+
+            {actionTarget?.action === 'approved' && (selected?.categories?.length ?? 0) > 0 && (
+              <>
+                <Text style={[modal.label, { marginBottom: 4 }]}>Approved categories (tap to toggle):</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: space.sm }}>
+                  {selected?.categories.map(cat => {
+                    const on = approvedCategories.includes(cat);
+                    return (
+                      <Pressable key={cat}
+                        style={[modal.catChip, on && modal.catChipOn]}
+                        onPress={() => setApprovedCategories(prev =>
+                          on ? prev.filter(c => c !== cat) : [...prev, cat]
+                        )}>
+                        <Text style={[modal.catChipText, on && modal.catChipTextOn]}>{cat}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
             <TextInput
               style={modal.input}
               placeholder="Review notes (optional)"
@@ -348,6 +372,7 @@ const modal = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'flex-end', padding: space.lg },
   sheet: { width: '100%', backgroundColor: color.paperRaised, borderRadius: radius.lg, padding: space.xl, gap: space.md },
   title: { ...t.heading, color: color.ink },
+  label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 1.5 },
   input: { borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm, padding: space.md, ...t.body, color: color.ink, minHeight: 72 },
   actions: { flexDirection: 'row', gap: space.md },
   btn: { flex: 1, padding: space.md, borderRadius: radius.md, alignItems: 'center' },
@@ -355,6 +380,13 @@ const modal = StyleSheet.create({
   confirm: { backgroundColor: color.ink },
   cancelText: { ...t.bodyStrong, color: color.mute },
   confirmText: { ...t.bodyStrong, color: color.onInk },
+  catChip: {
+    paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.sm,
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.haze,
+  },
+  catChipOn: { borderColor: '#10B981', backgroundColor: '#10B98120' },
+  catChipText: { ...t.small, color: color.mute },
+  catChipTextOn: { color: '#10B981', fontWeight: '700' },
 });
 
 const detail = StyleSheet.create({

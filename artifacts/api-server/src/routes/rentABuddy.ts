@@ -1097,6 +1097,55 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 // Gets or creates the Telegraph thread for a rent-a-buddy booking.
 // Both the traveler and the buddy can call this to get the thread ID.
 
+// POST /api/rent-a-buddy/bookings/:bookingId/add-time
+// Traveler or buddy adds extra hours to an in-progress or confirmed booking and
+// emits a rent_buddy_extra_time system milestone on the thread.
+router.post("/api/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { hours } = req.body ?? {};
+  if (!hours || typeof hours !== "number" || hours <= 0) {
+    return res.status(400).json({ error: "invalid_payload", message: "hours must be a positive number." });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id, duration_h, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const { data: bProf } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", (booking as any).buddy_id)
+    .maybeSingle();
+  const buddyUserId: string = (bProf as any)?.user_id ?? "";
+  const isTraveler = (booking as any).traveler_id === auth.user.id;
+  const isBuddy = buddyUserId === auth.user.id;
+  if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
+
+  const newDurationH = Number((booking as any).duration_h) + hours;
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ duration_h: newDurationH, updated_at: new Date().toISOString() })
+    .eq("id", bookingId);
+
+  await emitBookingMilestone(
+    serviceClient,
+    bookingId,
+    auth.user.id,
+    "rent_buddy_extra_time",
+    `${hours} extra hour${hours !== 1 ? 's' : ''} added — new total: ${newDurationH}h`,
+  );
+
+  return res.json({ ok: true, newDurationH });
+});
+
 // POST /api/rent-a-buddy/bookings/:bookingId/stay-connected
 // Either party (traveler or buddy) calls this to opt into keeping the thread open after completion.
 // Both parties must call before completion fires for the thread to remain open.
@@ -2397,11 +2446,19 @@ router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
-  const { data, count } = await serviceClient
+  const { city, status, category, level } = req.query as Record<string, string | undefined>;
+
+  let query = serviceClient
     .from("rent_buddy_profiles")
     .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range((page - 1) * limit, page * limit - 1);
+    .order("created_at", { ascending: false });
+
+  if (city) query = (query as any).ilike("city", `%${city}%`);
+  if (status && status !== "all") query = (query as any).eq("status", status);
+  if (category) query = (query as any).contains("categories", [category]);
+  if (level) query = (query as any).eq("buddy_level", level);
+
+  const { data, count } = await (query as any).range((page - 1) * limit, page * limit - 1);
 
   return res.json({ buddies: (data ?? []).map(mapProfile), total: count ?? 0 });
 });

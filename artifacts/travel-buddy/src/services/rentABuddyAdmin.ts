@@ -181,10 +181,12 @@ export async function reviewApplication(
   appId: string,
   status: 'approved' | 'rejected' | 'under_review',
   reviewNotes?: string,
+  approvedCategories?: string[],
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await adminPatch(`/api/rent-a-buddy/admin/applications/${appId}`, {
     status,
     reviewNotes: reviewNotes ?? null,
+    ...(approvedCategories !== undefined ? { approvedCategories } : {}),
   });
   return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
@@ -199,12 +201,13 @@ export async function limitApplication(appId: string): Promise<{ ok: boolean }> 
 // ── Buddies ────────────────────────────────────────────────────────────────────
 
 export async function listAdminBuddies(
-  params: { city?: string; status?: string; category?: string; page?: number } = {},
+  params: { city?: string; status?: string; category?: string; level?: string; page?: number } = {},
 ): Promise<{ buddies: AdminBuddy[]; total: number }> {
   const qs = new URLSearchParams({ page: String(params.page ?? 1) });
   if (params.city) qs.set('city', params.city);
   if (params.status) qs.set('status', params.status);
   if (params.category) qs.set('category', params.category);
+  if (params.level) qs.set('level', params.level);
   const res = await adminGet<{ buddies: AdminBuddy[]; total: number }>(
     `/api/rent-a-buddy/admin/buddies?${qs}`,
   );

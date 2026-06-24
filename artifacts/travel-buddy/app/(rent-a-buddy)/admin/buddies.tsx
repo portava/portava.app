@@ -109,6 +109,8 @@ export default function AdminBuddiesScreen() {
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [levelFilter, setLevelFilter] = useState<'all' | 'standard' | 'pro' | 'elite'>('all');
   const [items, setItems] = useState<AdminBuddy[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -123,6 +125,8 @@ export default function AdminBuddiesScreen() {
       const data = await listAdminBuddies({
         city: search.trim() || undefined,
         status: statusFilter === 'all' ? undefined : statusFilter,
+        category: categoryFilter.trim() || undefined,
+        level: levelFilter === 'all' ? undefined : levelFilter,
         page: p,
       });
       setItems(prev => append ? [...prev, ...data.buddies] : data.buddies);
@@ -131,7 +135,7 @@ export default function AdminBuddiesScreen() {
     } catch (e: any) {
       if (e?.message === 'forbidden') setForbidden(true);
     }
-  }, [search, statusFilter]);
+  }, [search, statusFilter, categoryFilter, levelFilter]);
 
   useEffect(() => {
     setLoading(true);
@@ -194,6 +198,23 @@ export default function AdminBuddiesScreen() {
           returnKeyType="search"
         />
       </View>
+      <View style={[styles.searchWrap, { borderTopWidth: 0 }]}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Filter by category…"
+          placeholderTextColor={color.faint}
+          value={categoryFilter}
+          onChangeText={setCategoryFilter}
+          returnKeyType="search"
+        />
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabs} contentContainerStyle={styles.tabsInner}>
+        {(['all', 'standard', 'pro', 'elite'] as const).map(lvl => (
+          <Pressable key={`lvl-${lvl}`} style={[styles.tab, levelFilter === lvl && styles.tabActive]} onPress={() => setLevelFilter(lvl)}>
+            <Text style={[styles.tabText, levelFilter === lvl && styles.tabTextActive]}>{lvl === 'all' ? 'Any Level' : lvl}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabs} contentContainerStyle={styles.tabsInner}>
         {STATUS_FILTERS.map((f) => (
