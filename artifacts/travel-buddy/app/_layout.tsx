@@ -13,7 +13,9 @@ import { SessionProvider } from '../src/context/SessionContext';
 import { LocationProvider } from '../src/context/LocationContext';
 import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceContext';
 import { usePushToken } from '../src/hooks/usePushToken';
+import { useNotificationStream } from '../src/hooks/useNotifications';
 import { color } from '../src/theme/tokens';
+import { NotificationToastProvider } from '../src/components/NotificationToast';
 
 // Notify handler: show banner even when app is foregrounded
 if (Platform.OS !== 'web') {
@@ -29,6 +31,7 @@ if (Platform.OS !== 'web') {
 
 function PushSetup() {
   usePushToken();
+  useNotificationStream();
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -58,20 +61,22 @@ export default function RootLayout() {
               <AttachmentProvider>
                 <AttachControllerProvider>
                   <PlanPickerControllerProvider>
-                    <PushSetup />
-                    <StatusBar style="dark" />
-                    <Stack
-                      screenOptions={{
-                        headerShown: false,
-                        contentStyle: { backgroundColor: color.paper },
-                        animation: 'slide_from_right',
-                      }}
-                    >
-                      <Stack.Screen name="(tabs)" />
-                      <Stack.Screen name="(auth)" />
-                      <Stack.Screen name="create" options={{ presentation: 'modal' }} />
-                      <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
-                    </Stack>
+                    <NotificationToastProvider>
+                      <PushSetup />
+                      <StatusBar style="dark" />
+                      <Stack
+                        screenOptions={{
+                          headerShown: false,
+                          contentStyle: { backgroundColor: color.paper },
+                          animation: 'slide_from_right',
+                        }}
+                      >
+                        <Stack.Screen name="(tabs)" />
+                        <Stack.Screen name="(auth)" />
+                        <Stack.Screen name="create" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+                      </Stack>
+                    </NotificationToastProvider>
                   </PlanPickerControllerProvider>
                 </AttachControllerProvider>
               </AttachmentProvider>

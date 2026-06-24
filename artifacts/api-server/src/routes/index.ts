@@ -33,6 +33,7 @@ import pulseRouter from "./pulse";
 import adminRouter from "./admin";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use(placesRouter);
 router.use(pulseRouter);
 router.use(adminRouter);
 router.use(hiddenGemsRouter);
+router.use(notificationsRouter);
 
 export default router;

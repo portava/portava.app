@@ -90,6 +90,10 @@ function HighlightViewer(_a) {
     var _q = (0, react_1.useState)(false), replyOpen = _q[0], setReplyOpen = _q[1];
     var _r = (0, react_1.useState)(''), replyText = _r[0], setReplyText = _r[1];
     var _s = (0, react_1.useState)(false), replying = _s[0], setReplying = _s[1];
+    // Mute state for video highlights. As component state it survives index
+    // changes, so the choice carries forward as highlights advance and persists
+    // for the session (not reset when the viewer reopens).
+    var _t = (0, react_1.useState)(false), isMuted = _t[0], setIsMuted = _t[1];
     var intervalRef = (0, react_1.useRef)(null);
     var videoRef = (0, react_1.useRef)(null);
     // goNextRef lets the stable handleVideoStatus callback call the latest goNext
@@ -226,6 +230,9 @@ function HighlightViewer(_a) {
             });
         });
     }
+    var toggleMute = (0, react_1.useCallback)(function () {
+        setIsMuted(function (m) { return !m; });
+    }, []);
     function goPrev() {
         if (index > 0) {
             var prev = index - 1;
@@ -327,7 +334,7 @@ function HighlightViewer(_a) {
         {isVideo ? (<expo_av_1.Video key={current.id} ref={videoRef} source={{ uri: current.mediaUrl }} style={[
                 react_native_1.StyleSheet.absoluteFill,
                 shouldApplyFilter && react_native_1.Platform.OS === 'web' ? { filter: cssFilter } : undefined,
-            ]} resizeMode={expo_av_1.ResizeMode.COVER} shouldPlay={!paused} isLooping={false} isMuted={false} useNativeControls={false} onPlaybackStatusUpdate={handleVideoStatus}/>) : (<react_native_1.Image source={{ uri: current.mediaUrl }} style={react_native_1.StyleSheet.absoluteFill} resizeMode="cover"/>)}
+            ]} resizeMode={expo_av_1.ResizeMode.COVER} shouldPlay={!paused} isLooping={false} isMuted={isMuted} useNativeControls={false} onPlaybackStatusUpdate={handleVideoStatus}/>) : (<react_native_1.Image source={{ uri: current.mediaUrl }} style={react_native_1.StyleSheet.absoluteFill} resizeMode="cover"/>)}
 
         {/* Progress bars */}
         <react_native_1.View style={[s.progressRow, { marginTop: insets.top + 8 }]}>
@@ -352,6 +359,9 @@ function HighlightViewer(_a) {
               </react_native_1.View>
             </react_native_1.View>)}
           <react_native_1.View style={{ flex: 1 }}/>
+          {isVideo && (<react_native_1.Pressable onPress={toggleMute} hitSlop={8} style={[s.closeBtn, s.muteBtn]} accessibilityRole="button" accessibilityLabel={isMuted ? 'Unmute video' : 'Mute video'}>
+              {isMuted ? <lucide_react_native_1.VolumeX size={20} color="#fff"/> : <lucide_react_native_1.Volume2 size={20} color="#fff"/>}
+            </react_native_1.Pressable>)}
           {isOwner && onAddHighlight && (<react_native_1.Pressable onPress={onAddHighlight} hitSlop={8} style={[s.closeBtn, s.addBtn]}>
               <lucide_react_native_1.Plus size={20} color="#fff"/>
             </react_native_1.Pressable>)}
@@ -478,6 +488,7 @@ var s = react_native_1.StyleSheet.create({
     timeText: { color: '#fff', fontSize: 11, fontFamily: 'Courier', fontWeight: '700' },
     closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,15,0.4)' },
     addBtn: { marginRight: 8 },
+    muteBtn: { marginRight: 8 },
     tapZones: __assign(__assign({}, react_native_1.StyleSheet.absoluteFillObject), { flexDirection: 'row', zIndex: 5 }),
     tapLeft: { flex: 1 },
     tapRight: { flex: 1 },

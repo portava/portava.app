@@ -68,13 +68,26 @@ exports.useGroupChat = useGroupChat;
  */
 var react_1 = require("react");
 var messaging_1 = require("../services/messaging");
+var SessionContext_1 = require("../context/SessionContext");
+var telegraphRealtimeService_1 = require("../services/telegraphRealtimeService");
+function makeClientId() {
+    return "client-".concat(Date.now(), "-").concat(Math.random().toString(36).slice(2));
+}
+var TYPING_TTL_MS = 4000;
 function useGroupChat(type, id) {
     var _this = this;
-    var _a = (0, react_1.useState)('loading'), state = _a[0], setState = _a[1];
-    var _b = (0, react_1.useState)(null), thread = _b[0], setThread = _b[1];
-    var _c = (0, react_1.useState)([]), messages = _c[0], setMessages = _c[1];
-    var _d = (0, react_1.useState)(false), sending = _d[0], setSending = _d[1];
-    var _e = (0, react_1.useState)(null), errorMessage = _e[0], setErrorMessage = _e[1];
+    var _a;
+    var userId = (0, SessionContext_1.useSession)().userId;
+    var _b = (0, react_1.useState)('loading'), state = _b[0], setState = _b[1];
+    var _c = (0, react_1.useState)(null), thread = _c[0], setThread = _c[1];
+    var _d = (0, react_1.useState)([]), messages = _d[0], setMessages = _d[1];
+    var _e = (0, react_1.useState)(false), sending = _e[0], setSending = _e[1];
+    var _f = (0, react_1.useState)(null), errorMessage = _f[0], setErrorMessage = _f[1];
+    var _g = (0, react_1.useState)([]), typingUserIds = _g[0], setTypingUserIds = _g[1];
+    var threadIdRef = (0, react_1.useRef)(null);
+    threadIdRef.current = (_a = thread === null || thread === void 0 ? void 0 : thread.id) !== null && _a !== void 0 ? _a : null;
+    var typingTimers = (0, react_1.useRef)(new Map());
+    var lastTypingSentRef = (0, react_1.useRef)(0);
     var load = (0, react_1.useCallback)(function () { return __awaiter(_this, void 0, void 0, function () {
         var res, _a, errMsg, d;
         var _b, _c, _d;
@@ -128,25 +141,197 @@ function useGroupChat(type, id) {
         if (id)
             load();
     }, [load, id]);
+    // Silent refetch — merges new/updated messages without flipping to 'loading'.
+    var silentRefresh = (0, react_1.useCallback)(function () { return __awaiter(_this, void 0, void 0, function () {
+        var tid, res, incoming;
+        var _a;
+        return __generator(this, function (_b) {
+            switch (_b.label) {
+                case 0:
+                    tid = threadIdRef.current;
+                    if (!tid)
+                        return [2 /*return*/];
+                    return [4 /*yield*/, (0, messaging_1.getThreadMessages)(tid)];
+                case 1:
+                    res = _b.sent();
+                    if (!res.ok || !res.data)
+                        return [2 /*return*/];
+                    incoming = (_a = res.data.messages) !== null && _a !== void 0 ? _a : [];
+                    setMessages(function (prev) {
+                        // Replace any confirmed incoming messages; keep still-pending optimistic ones
+                        var confirmedIds = new Set(incoming.map(function (m) { return m.id; }));
+                        var byId = new Map();
+                        for (var _i = 0, prev_1 = prev; _i < prev_1.length; _i++) {
+                            var m = prev_1[_i];
+                            // Drop optimistic 'sending'/'failed' messages that were confirmed server-side
+                            if (!m.clientId || !confirmedIds.has(m.id))
+                                byId.set(m.id, m);
+                        }
+                        var changed = false;
+                        for (var _a = 0, incoming_1 = incoming; _a < incoming_1.length; _a++) {
+                            var m = incoming_1[_a];
+                            if (!byId.has(m.id))
+                                changed = true;
+                            byId.set(m.id, m);
+                        }
+                        if (!changed && byId.size === prev.length)
+                            return prev;
+                        return Array.from(byId.values()).sort(function (a, b) {
+                            return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0;
+                        });
+                    });
+                    return [2 /*return*/];
+            }
+        });
+    }); }, []);
+    // Helper: clear a user from typing list
+    var clearTyping = (0, react_1.useCallback)(function (uid) {
+        typingTimers.current.delete(uid);
+        setTypingUserIds(function (prev) { return prev.filter(function (u) { return u !== uid; }); });
+    }, []);
+    // Realtime: refresh on message events; handle typing events
+    (0, react_1.useEffect)(function () {
+        var unsub = telegraphRealtimeService_1.telegraphRealtime.subscribe(function (evt) {
+            var _a;
+            var tid = threadIdRef.current;
+            if (!tid || (evt.threadId && evt.threadId !== tid))
+                return;
+            if (evt.type === 'message.created' ||
+                evt.type === 'message.updated' ||
+                evt.type === 'message.translated') {
+                void silentRefresh();
+                return;
+            }
+            var uid = (_a = evt.payload) === null || _a === void 0 ? void 0 : _a.userId;
+            if (!uid)
+                return;
+            if (evt.type === 'typing.started') {
+                setTypingUserIds(function (prev) { return prev.includes(uid) ? prev : __spreadArray(__spreadArray([], prev, true), [uid], false); });
+                var existing = typingTimers.current.get(uid);
+                if (existing)
+                    clearTimeout(existing);
+                typingTimers.current.set(uid, setTimeout(function () { return clearTyping(uid); }, TYPING_TTL_MS));
+            }
+            else if (evt.type === 'typing.stopped') {
+                var t = typingTimers.current.get(uid);
+                if (t) {
+                    clearTimeout(t);
+                    typingTimers.current.delete(uid);
+                }
+                setTypingUserIds(function (prev) { return prev.filter(function (u) { return u !== uid; }); });
+            }
+        });
+        return function () {
+            unsub();
+            for (var _i = 0, _a = typingTimers.current.values(); _i < _a.length; _i++) {
+                var t = _a[_i];
+                clearTimeout(t);
+            }
+            typingTimers.current.clear();
+        };
+    }, [silentRefresh, clearTyping]);
     var send = (0, react_1.useCallback)(function (body) { return __awaiter(_this, void 0, void 0, function () {
-        var res;
+        var clientId, optimistic, res;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
                     if (!thread || !body.trim())
                         return [2 /*return*/, { ok: false }];
+                    clientId = makeClientId();
+                    optimistic = {
+                        id: clientId,
+                        clientId: clientId,
+                        threadId: thread.id,
+                        senderId: userId !== null && userId !== void 0 ? userId : '',
+                        body: body.trim(),
+                        originalBody: body.trim(),
+                        displayBody: body.trim(),
+                        createdAt: new Date().toISOString(),
+                        editedAt: null,
+                        deleted: false,
+                        msgType: 'text',
+                        subtype: null,
+                        deliveryStatus: 'sending',
+                        translationStatus: null,
+                        translationLabel: null,
+                        translated: false,
+                        canShowOriginal: false,
+                        senderName: null,
+                        senderHandle: null,
+                        senderAvatarUrl: null,
+                    };
                     setSending(true);
-                    return [4 /*yield*/, (0, messaging_1.sendMessage)(thread.id, body.trim())];
+                    setMessages(function (prev) { return __spreadArray(__spreadArray([], prev, true), [optimistic], false); });
+                    return [4 /*yield*/, (0, messaging_1.sendMessage)(thread.id, body.trim(), { clientId: clientId })];
                 case 1:
                     res = _a.sent();
                     if (res.ok && res.data) {
-                        setMessages(function (prev) { return __spreadArray(__spreadArray([], prev, true), [res.data], false); });
+                        setMessages(function (prev) {
+                            var withoutOptimistic = prev.filter(function (m) { return m.clientId !== clientId; });
+                            return __spreadArray(__spreadArray([], withoutOptimistic, true), [__assign(__assign({}, res.data), { deliveryStatus: 'sent' })], false);
+                        });
+                    }
+                    else {
+                        setMessages(function (prev) {
+                            return prev.map(function (m) {
+                                return m.clientId === clientId ? __assign(__assign({}, m), { deliveryStatus: 'failed' }) : m;
+                            });
+                        });
                     }
                     setSending(false);
                     return [2 /*return*/, { ok: res.ok }];
             }
         });
     }); }, [thread]);
+    var retrySend = (0, react_1.useCallback)(function (clientId) { return __awaiter(_this, void 0, void 0, function () {
+        var failed, res;
+        var _a;
+        return __generator(this, function (_b) {
+            switch (_b.label) {
+                case 0:
+                    failed = messages.find(function (m) { return m.clientId === clientId; });
+                    if (!failed || !thread)
+                        return [2 /*return*/];
+                    setMessages(function (prev) {
+                        return prev.map(function (m) {
+                            return m.clientId === clientId ? __assign(__assign({}, m), { deliveryStatus: 'sending' }) : m;
+                        });
+                    });
+                    return [4 /*yield*/, (0, messaging_1.sendMessage)(thread.id, (_a = failed.body) !== null && _a !== void 0 ? _a : '', { clientId: clientId })];
+                case 1:
+                    res = _b.sent();
+                    if (res.ok && res.data) {
+                        setMessages(function (prev) {
+                            var withoutOptimistic = prev.filter(function (m) { return m.clientId !== clientId; });
+                            return __spreadArray(__spreadArray([], withoutOptimistic, true), [__assign(__assign({}, res.data), { deliveryStatus: 'sent' })], false);
+                        });
+                    }
+                    else {
+                        setMessages(function (prev) {
+                            return prev.map(function (m) {
+                                return m.clientId === clientId ? __assign(__assign({}, m), { deliveryStatus: 'failed' }) : m;
+                            });
+                        });
+                    }
+                    return [2 /*return*/];
+            }
+        });
+    }); }, [messages, thread]);
+    var notifyTyping = (0, react_1.useCallback)(function (isTyping) {
+        var tid = threadIdRef.current;
+        if (!tid)
+            return;
+        if (!isTyping) {
+            lastTypingSentRef.current = 0;
+            void (0, messaging_1.sendTyping)(tid, false);
+            return;
+        }
+        var now = Date.now();
+        if (now - lastTypingSentRef.current < 2000)
+            return;
+        lastTypingSentRef.current = now;
+        void (0, messaging_1.sendTyping)(tid, true);
+    }, []);
     var edit = (0, react_1.useCallback)(function (messageId, body) { return __awaiter(_this, void 0, void 0, function () {
         var res, updated_1;
         return __generator(this, function (_a) {
@@ -203,5 +388,5 @@ function useGroupChat(type, id) {
             }
         });
     }); }, [thread, messages]);
-    return { state: state, thread: thread, messages: messages, sending: sending, errorMessage: errorMessage, reload: load, send: send, edit: edit, remove: remove, loadMore: loadMore };
+    return { state: state, thread: thread, messages: messages, sending: sending, errorMessage: errorMessage, typingUserIds: typingUserIds, reload: load, send: send, retrySend: retrySend, notifyTyping: notifyTyping, edit: edit, remove: remove, loadMore: loadMore };
 }

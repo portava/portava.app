@@ -1,0 +1,607 @@
+/**
+ * Notifications routes
+ *
+ * User-facing:
+ *   GET    /me/notifications                — list (paginated, filterable)
+ *   GET    /me/notifications/unread-count   — badge count
+ *   POST   /me/notifications/:id/read       — mark single read
+ *   POST   /me/notifications/read-all       — mark all read
+ *   POST   /me/notifications/:id/dismiss    — dismiss
+ *   GET    /me/notification-preferences     — get prefs
+ *   PUT    /me/notification-preferences     — update prefs
+ *   POST   /me/devices                      — register push token
+ *   DELETE /me/devices/:id                  — unregister push token
+ *   GET    /me/notifications/stream         — SSE stream for realtime updates
+ *
+ * Internal (service-role secret header):
+ *   POST   /internal/notifications           — create a notification
+ *   POST   /internal/notifications/send      — create + route (push, etc.)
+ *   POST   /internal/notifications/digest    — trigger digest for a user
+ *   POST   /internal/activity-events         — log an activity event
+ *   POST   /internal/notifications/expire    — expire old notifications
+ *
+ * Admin:
+ *   GET    /admin/notification-templates            — list all templates
+ *   POST   /admin/notifications/account-notice      — send account notice to a user
+ *   GET    /admin/notification-delivery-attempts    — list delivery attempts
+ *   PUT    /admin/notification-defaults             — update default prefs
+ */
+import { Router } from "express";
+import { z } from "zod";
+import { requireUser, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { NotificationService } from "../services/notifications/NotificationService.js";
+import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
+import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
+import { NotificationDigestService } from "../services/notifications/NotificationDigestService.js";
+import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
+import { TEMPLATES } from "../services/notifications/NotificationTemplateService.js";
+import type { NotificationCategory } from "../services/notifications/NotificationTemplateService.js";
+
+const router = Router();
+
+const NOTIFICATION_CATEGORIES = [
+  'plans','trips','telegraph','safe_return','location','trip_crew',
+  'compass','pulse','passport','hidden_gems','trust','airport','admin',
+] as const;
+
+// ── Internal secret guard ─────────────────────────────────────────────────────
+
+/**
+ * Fail-closed guard for internal (service-to-service) endpoints.
+ * If INTERNAL_API_SECRET is not set the route is disabled — returns 503.
+ * This prevents accidental open exposure when the env var is misconfigured.
+ */
+function requireInternalSecret(req: any, res: any): boolean {
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) {
+    res.status(503).json({
+      error: 'misconfigured',
+      message: 'INTERNAL_API_SECRET is not set; internal endpoints are disabled',
+    });
+    return false;
+  }
+  const provided = req.headers['x-internal-secret'];
+  if (provided !== secret) {
+    res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid internal secret' });
+    return false;
+  }
+  return true;
+}
+
+// ── Admin guard (re-used from admin.ts pattern) ───────────────────────────────
+
+async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const { client, user } = auth;
+
+  const { data, error } = await client
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error || !data || (data as any).role !== 'admin') {
+    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
+    return null;
+  }
+
+  const sc = getServiceClient() ?? client;
+  return { userId: user.id, sc };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USER-FACING ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** GET /me/notifications */
+router.get('/me/notifications', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const svc = new NotificationService(sc);
+
+  const limit    = Math.min(Number(req.query.limit  ?? 20), 100);
+  const offset   = Number(req.query.offset ?? 0);
+  const category = req.query.category as string | undefined;
+  const priority = req.query.priority as string | undefined;
+  const unreadOnly = req.query.unread === 'true';
+  const since    = req.query.since as string | undefined;
+
+  try {
+    const result = await svc.list({ userId: user.id, category, priority, unreadOnly, limit, offset, since });
+    res.json(result);
+  } catch (err: any) {
+    sendError(res, 'db_error', err.message);
+  }
+});
+
+/** GET /me/notifications/unread-count */
+router.get('/me/notifications/unread-count', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const svc = new NotificationService(sc);
+
+  const count = await svc.getUnreadCount(user.id);
+  res.json({ unreadCount: count });
+});
+
+/** POST /me/notifications/read-all  (must come before /:id/read) */
+router.post('/me/notifications/read-all', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const svc = new NotificationService(sc);
+  const realtimeSvc = new RealtimeActivityService(sc);
+
+  const category = req.body?.category as string | undefined;
+  const count = await svc.markAllRead(user.id, category);
+  void realtimeSvc.emitUnreadUpdate(user.id);
+  res.json({ marked: count });
+});
+
+/** POST /me/notifications/:id/read */
+router.post('/me/notifications/:id/read', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const svc = new NotificationService(sc);
+  const realtimeSvc = new RealtimeActivityService(sc);
+
+  const ok = await svc.markRead(user.id, req.params.id);
+  if (!ok) { sendError(res, 'not_found', 'Notification not found'); return; }
+  realtimeSvc.emitRead(user.id, req.params.id);
+  res.json({ ok: true });
+});
+
+/** POST /me/notifications/:id/dismiss */
+router.post('/me/notifications/:id/dismiss', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const svc = new NotificationService(sc);
+
+  const ok = await svc.dismiss(user.id, req.params.id);
+  if (!ok) { sendError(res, 'not_found', 'Notification not found'); return; }
+  res.json({ ok: true });
+});
+
+/** GET /me/notification-preferences */
+router.get('/me/notification-preferences', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const prefSvc = new NotificationPreferenceService(sc);
+
+  const [prefs, catPrefs] = await Promise.all([
+    prefSvc.getPreferences(user.id),
+    prefSvc.getCategoryPreferences(user.id),
+  ]);
+  res.json({ preferences: prefs, categoryPreferences: catPrefs });
+});
+
+const UpdatePrefsSchema = z.object({
+  pushEnabled:       z.boolean().optional(),
+  emailEnabled:      z.boolean().optional(),
+  inAppEnabled:      z.boolean().optional(),
+  digestsEnabled:    z.boolean().optional(),
+  safetyOverride:    z.boolean().optional(),
+  quietHoursEnabled: z.boolean().optional(),
+  quietStart:        z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  quietEnd:          z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  messagePreviews:   z.boolean().optional(),
+  locationPreviews:  z.boolean().optional(),
+  categoryPreferences: z.array(z.object({
+    category:      z.enum(NOTIFICATION_CATEGORIES),
+    inAppEnabled:  z.boolean().optional(),
+    pushEnabled:   z.boolean().optional(),
+    emailEnabled:  z.boolean().optional(),
+    digestEnabled: z.boolean().optional(),
+  })).optional(),
+});
+
+/** PUT /me/notification-preferences */
+router.put('/me/notification-preferences', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = UpdatePrefsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid body');
+    return;
+  }
+
+  const sc = getServiceClient() ?? client;
+  const prefSvc = new NotificationPreferenceService(sc);
+
+  const { categoryPreferences, ...globalPatch } = parsed.data;
+  const prefs = await prefSvc.upsertPreferences(user.id, globalPatch);
+
+  if (categoryPreferences && categoryPreferences.length > 0) {
+    await Promise.all(
+      categoryPreferences.map((cp) =>
+        prefSvc.upsertCategoryPreferences(user.id, cp.category as NotificationCategory, cp),
+      ),
+    );
+  }
+
+  res.json({ ok: true, preferences: prefs });
+});
+
+const RegisterDeviceSchema = z.object({
+  pushToken: z.string().min(10),
+  platform:  z.enum(['expo', 'apns', 'fcm']).optional().default('expo'),
+  label:     z.string().max(100).optional(),
+});
+
+/** POST /me/devices */
+router.post('/me/devices', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = RegisterDeviceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid body');
+    return;
+  }
+
+  const sc = getServiceClient() ?? client;
+
+  // Upsert device token
+  const { data, error } = await sc
+    .from('notification_devices')
+    .upsert({
+      user_id:      user.id,
+      push_token:   parsed.data.pushToken,
+      platform:     parsed.data.platform,
+      label:        parsed.data.label ?? null,
+      last_used_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,push_token' })
+    .select('id')
+    .single();
+
+  if (error) { sendError(res, 'db_error', error.message); return; }
+
+  // Backfill legacy expo_push_token on profiles (keep for SafeReturn compat)
+  if (parsed.data.platform === 'expo') {
+    await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);
+  }
+
+  res.status(201).json({ ok: true, deviceId: (data as any).id });
+});
+
+/** DELETE /me/devices/:id */
+router.delete('/me/devices/:id', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const { error } = await sc
+    .from('notification_devices')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', user.id);
+
+  if (error) { sendError(res, 'db_error', error.message); return; }
+  res.json({ ok: true });
+});
+
+/**
+ * GET /me/notifications/stream — SSE realtime stream
+ * Client should reconnect on connection drop (standard SSE behaviour).
+ */
+router.get('/me/notifications/stream', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const sc = getServiceClient() ?? client;
+  const realtimeSvc = new RealtimeActivityService(sc);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  // Send a heartbeat comment every 30s to keep the connection alive
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch {}
+  }, 30_000);
+
+  const cleanup = realtimeSvc.registerSSEStream(user.id, (data) => {
+    res.write(data);
+  });
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    cleanup();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTERNAL ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CreateNotificationSchema = z.object({
+  userId:     z.string().uuid(),
+  eventType:  z.string().min(1),
+  params:     z.record(z.string()).optional(),
+  title:      z.string().optional(),
+  body:       z.string().optional(),
+  category:   z.enum(NOTIFICATION_CATEGORIES).optional(),
+  priority:   z.enum(['urgent','important','normal','low']).optional(),
+  channels:   z.array(z.string()).optional(),
+  actionUrl:  z.string().optional(),
+  imageUrl:   z.string().optional(),
+  sourceType: z.string().optional(),
+  sourceId:   z.string().optional(),
+  actorId:    z.string().uuid().optional(),
+  metadata:   z.record(z.unknown()).optional(),
+  expiresAt:  z.string().optional(),
+  tripId:     z.string().uuid().optional(),
+  senderId:   z.string().uuid().optional(),
+  isLiveShare: z.boolean().optional(),
+});
+
+/** POST /internal/notifications — create a notification (store only, no routing) */
+router.post('/internal/notifications', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const parsed = CreateNotificationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_payload', message: parsed.error.issues[0]?.message });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ error: 'server_not_configured' }); return; }
+
+  const svc = new NotificationService(sc);
+  const notification = await svc.create(parsed.data);
+
+  if (!notification) {
+    res.status(200).json({ ok: true, created: false, reason: 'blocked_or_deduped' });
+    return;
+  }
+
+  res.status(201).json({ ok: true, created: true, notification });
+});
+
+/** POST /internal/notifications/send — create + route (push etc.) */
+router.post('/internal/notifications/send', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const parsed = CreateNotificationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_payload', message: parsed.error.issues[0]?.message });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ error: 'server_not_configured' }); return; }
+
+  const svc = new NotificationService(sc);
+  const notifRouter = new NotifRouter(sc);
+  const realtimeSvc = new RealtimeActivityService(sc);
+
+  const notification = await svc.create(parsed.data);
+  if (!notification) {
+    res.status(200).json({ ok: true, created: false, reason: 'blocked_or_deduped' });
+    return;
+  }
+
+  // Route asynchronously (push etc.) — don't block the HTTP response
+  void notifRouter.route(notification).catch(() => {});
+  realtimeSvc.emitCreated(notification);
+
+  res.status(201).json({ ok: true, created: true, notification });
+});
+
+/** POST /internal/notifications/digest — trigger daily digest for a user */
+router.post('/internal/notifications/digest', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const { userId } = req.body ?? {};
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ error: 'server_not_configured' }); return; }
+
+  const digestSvc = new NotificationDigestService(sc);
+
+  if (userId) {
+    await digestSvc.sendDailyDigest(userId as string);
+    res.json({ ok: true, mode: 'single', userId });
+  } else {
+    const { usersProcessed } = await digestSvc.runForAllUsers();
+    res.json({ ok: true, mode: 'all', usersProcessed });
+  }
+});
+
+/** POST /internal/activity-events — log a raw activity event */
+router.post('/internal/activity-events', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const schema = z.object({
+    userId:    z.string().uuid(),
+    eventType: z.string().min(1),
+    category:  z.string().min(1),
+    actorId:   z.string().uuid().optional(),
+    sourceType: z.string().optional(),
+    sourceId:  z.string().optional(),
+    metadata:  z.record(z.unknown()).optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_payload', message: parsed.error.issues[0]?.message });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ error: 'server_not_configured' }); return; }
+
+  const { error } = await sc.from('activity_events').insert({
+    user_id:    parsed.data.userId,
+    event_type: parsed.data.eventType,
+    category:   parsed.data.category,
+    actor_id:   parsed.data.actorId ?? null,
+    source_type: parsed.data.sourceType ?? null,
+    source_id:  parsed.data.sourceId ?? null,
+    metadata:   parsed.data.metadata ?? {},
+  });
+
+  if (error) { res.status(500).json({ error: 'db_error', message: error.message }); return; }
+  res.status(201).json({ ok: true });
+});
+
+/** POST /internal/notifications/expire — hard-delete expired rows */
+router.post('/internal/notifications/expire', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ error: 'server_not_configured' }); return; }
+
+  const svc = new NotificationService(sc);
+  const deleted = await svc.expireOldNotifications();
+  res.json({ ok: true, deleted });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** GET /admin/notification-templates */
+router.get('/admin/notification-templates', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const templates = TEMPLATES.map((t) => ({
+    eventType:       t.eventType,
+    category:        t.category,
+    defaultPriority: t.defaultPriority,
+    defaultChannels: t.defaultChannels,
+  }));
+  res.json({ templates, total: templates.length });
+});
+
+/** POST /admin/notifications/account-notice */
+router.post('/admin/notifications/account-notice', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const schema = z.object({
+    userId:  z.string().uuid(),
+    subject: z.string().min(1).max(200),
+    body:    z.string().min(1).max(2000),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid body');
+    return;
+  }
+
+  const svc = new NotificationService(admin.sc);
+  const notifRouter = new NotifRouter(admin.sc);
+
+  const notification = await svc.create({
+    userId:    parsed.data.userId,
+    eventType: 'admin.account_notice',
+    params:    { subject: parsed.data.subject, body: parsed.data.body },
+    priority:  'urgent',
+    metadata:  { sentBy: admin.userId },
+    sourceType: 'admin',
+    sourceId:  admin.userId,
+  });
+
+  if (!notification) {
+    res.json({ ok: false, reason: 'blocked_or_deduped' });
+    return;
+  }
+
+  void notifRouter.route(notification).catch(() => {});
+  res.status(201).json({ ok: true, notification });
+});
+
+/** GET /admin/notification-delivery-attempts */
+router.get('/admin/notification-delivery-attempts', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const limit  = Math.min(Number(req.query.limit ?? 50), 200);
+  const offset = Number(req.query.offset ?? 0);
+  const status = req.query.status as string | undefined;
+  const channel = req.query.channel as string | undefined;
+
+  let query = admin.sc
+    .from('notification_delivery_attempts')
+    .select('*', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (status)  query = (query as any).eq('status', status);
+  if (channel) query = (query as any).eq('channel', channel);
+
+  const { data, error, count } = await (query as any);
+  if (error) { sendError(res, 'db_error', error.message); return; }
+  res.json({ attempts: data ?? [], total: count ?? 0 });
+});
+
+/** PUT /admin/notification-defaults — update default preferences for all new users */
+router.put('/admin/notification-defaults', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  // For now: update feature flags to toggle the system
+  const schema = z.object({
+    notificationsEnabled:       z.boolean().optional(),
+    pushNotificationsEnabled:   z.boolean().optional(),
+    notificationDigestsEnabled: z.boolean().optional(),
+    realtimeActivityEnabled:    z.boolean().optional(),
+    safetyNotificationsEnabled: z.boolean().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid body');
+    return;
+  }
+
+  const flagMap: Record<string, string> = {
+    notificationsEnabled:       'notifications_enabled',
+    pushNotificationsEnabled:   'push_notifications_enabled',
+    notificationDigestsEnabled: 'notification_digests_enabled',
+    realtimeActivityEnabled:    'realtime_activity_enabled',
+    safetyNotificationsEnabled: 'safety_notifications_enabled',
+  };
+
+  const updated: Record<string, boolean> = {};
+  for (const [key, flagName] of Object.entries(flagMap)) {
+    const val = (parsed.data as any)[key];
+    if (val !== undefined) {
+      await admin.sc.from('feature_flags').update({ enabled: val, updated_at: new Date().toISOString() }).eq('flag', flagName);
+      updated[key] = val;
+    }
+  }
+
+  res.json({ ok: true, updated });
+});
+
+export default router;

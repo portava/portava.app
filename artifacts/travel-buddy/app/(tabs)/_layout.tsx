@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane, Bell, MessageCircle } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane, MessageCircle } from 'lucide-react-native';
+import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
@@ -57,16 +58,11 @@ function DesktopSidebar({ unreadNotifications, unreadMessages, pendingRequests }
         )}
       </Pressable>
 
-      {/* Notifications link */}
-      <Pressable style={styles.notifBtn} onPress={() => router.push('/notifications' as any)}>
-        <Bell size={18} color={color.mute} />
+      {/* Notifications — bell with popover preview */}
+      <View style={styles.notifBtn}>
+        <NotificationBell />
         <Text style={styles.navLabel}>Notifications</Text>
-        {unreadNotifications > 0 && (
-          <View style={styles.sidebarBadge}>
-            <Text style={styles.sidebarBadgeText}>{unreadNotifications > 99 ? '99+' : String(unreadNotifications)}</Text>
-          </View>
-        )}
-      </Pressable>
+      </View>
 
       {/* Compose button */}
       <Pressable style={styles.composeBtn} onPress={() => router.push('/create')}>

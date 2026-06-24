@@ -237,7 +237,7 @@ function EditForm(_a) {
 function PlanItemSheet(_a) {
     var _this = this;
     var _b, _c, _d, _e;
-    var item = _a.item, tripId = _a.tripId, currentUserId = _a.currentUserId, isOwner = _a.isOwner, _f = _a.canEdit, canEdit = _f === void 0 ? true : _f, startInEditMode = _a.startInEditMode, onClose = _a.onClose, onUpdated = _a.onUpdated, onRemoved = _a.onRemoved;
+    var item = _a.item, tripId = _a.tripId, currentUserId = _a.currentUserId, isOwner = _a.isOwner, _f = _a.canEdit, canEdit = _f === void 0 ? true : _f, startInEditMode = _a.startInEditMode, onClose = _a.onClose, onUpdated = _a.onUpdated, onRemoved = _a.onRemoved, onSetupSafeReturn = _a.onSetupSafeReturn;
     var _g = (0, react_1.useState)(false), editing = _g[0], setEditing = _g[1];
     // Enter edit mode automatically when the prop flips (e.g. context menu "Edit" tapped)
     (0, react_1.useEffect)(function () {
@@ -392,6 +392,12 @@ function PlanItemSheet(_a) {
                 })}
                     </react_native_1.View>
                   </react_native_1.View>)}
+
+                {/* Safe Return entry point — visible when a callback is wired */}
+                {onSetupSafeReturn && (<react_native_1.Pressable style={sh.safeReturnBtn} onPress={function () { onClose(); onSetupSafeReturn(item); }}>
+                    <lucide_react_native_1.Shield size={14} color={tokens_1.color.deep}/>
+                    <react_native_1.Text style={sh.safeReturnBtnText}>Set up Safe Return for this activity</react_native_1.Text>
+                  </react_native_1.Pressable>)}
               </>)}
           </react_native_1.ScrollView>
         </react_native_1.View>
@@ -431,6 +437,13 @@ var sh = react_native_1.StyleSheet.create({
     statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     statusChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
     statusChipText: __assign(__assign({}, tokens_1.type.small), { fontWeight: '600', fontSize: 11 }),
+    safeReturnBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        borderWidth: 1, borderColor: tokens_1.color.deep + '40',
+        backgroundColor: '#EAF2F4', borderRadius: tokens_1.radius.md,
+        paddingHorizontal: tokens_1.space.md, paddingVertical: 10, marginTop: 4,
+    },
+    safeReturnBtnText: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.deep, fontWeight: '600', fontSize: 12, flex: 1 }),
 });
 var ef = react_native_1.StyleSheet.create({
     wrap: { gap: 10 },

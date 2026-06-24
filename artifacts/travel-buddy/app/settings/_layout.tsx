@@ -5,6 +5,7 @@ export default function SettingsLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="location" />
+      <Stack.Screen name="notifications" />
     </Stack>
   );
 }

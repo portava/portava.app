@@ -1,22 +1,26 @@
 /**
  * SafeReturnNotificationService
  *
- * Sends push notifications for Safe Return events.
+ * Sends notifications for Safe Return events through the unified notification
+ * pipeline (NotificationService → privacy guard → preference check → persist,
+ * then NotificationRouter for push dispatch).
+ *
  * Privacy rules:
  *   - Trusted Circle contacts are only notified when trusted_circle_enabled = true.
  *   - Host/crew are only notified when notify_host_enabled/notify_trip_crew_enabled = true.
  *   - Notifications never include exact GPS coordinates.
- *   - Only approximate area (city/district) is included.
+ *   - Only approximate area (city/district) is shared.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendPushNotification } from "../../lib/push";
 import { logger as rootLogger } from "../../lib/logger";
+import { NotificationService } from "../notifications/NotificationService.js";
+import { NotificationRouter } from "../notifications/NotificationRouter.js";
 import type { SafeReturnSession, SafeReturnContact } from "./SafeReturnService";
 
 const logger = rootLogger.child({ service: "SafeReturnNotificationService" });
 
-// ── Event persistence ─────────────────────────────────────────────────────────
-// Advisory-only — never throws; notification failure doesn't block alert flow.
+// ── Safe Return event audit (separate from notification pipeline) ─────────────
+// Advisory-only — never throws; event write failure doesn't block alert flow.
 
 async function logNotificationEvent(
   db: SupabaseClient,
@@ -38,20 +42,7 @@ async function logNotificationEvent(
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function fetchPushToken(db: SupabaseClient, userId: string): Promise<string | null> {
-  try {
-    const { data } = await db
-      .from("profiles")
-      .select("expo_push_token")
-      .eq("id", userId)
-      .maybeSingle();
-    return (data as any)?.expo_push_token ?? null;
-  } catch {
-    return null;
-  }
-}
+// ── Context helpers ───────────────────────────────────────────────────────────
 
 async function fetchDisplayName(db: SupabaseClient, userId: string): Promise<string> {
   try {
@@ -66,9 +57,7 @@ async function fetchDisplayName(db: SupabaseClient, userId: string): Promise<str
   }
 }
 
-/** Look up the user's last known city/country from user_location_state.
- *  Falls back to "an unknown area" if the table has no record.
- *  Never returns exact GPS. */
+/** Returns city/country from user_location_state. Never returns exact GPS. */
 async function fetchAreaLabel(db: SupabaseClient, userId: string): Promise<string> {
   try {
     const { data } = await db
@@ -85,7 +74,6 @@ async function fetchAreaLabel(db: SupabaseClient, userId: string): Promise<strin
   }
 }
 
-/** Fetch the location name of a trip plan item (for notification context). */
 async function fetchPlanItemTitle(
   db: SupabaseClient,
   planItemId: string | null,
@@ -103,6 +91,39 @@ async function fetchPlanItemTitle(
   }
 }
 
+// ── Pipeline helper ───────────────────────────────────────────────────────────
+
+/**
+ * Create a notification through the unified pipeline then route it.
+ * Never throws — advisory-only so caller's main flow is never blocked.
+ */
+async function createAndRoute(
+  db: SupabaseClient,
+  userId: string,
+  eventType: string,
+  params: Record<string, string>,
+  sessionId: string,
+): Promise<void> {
+  try {
+    const svc    = new NotificationService(db);
+    const router = new NotificationRouter(db);
+    const notification = await svc.create({
+      userId,
+      eventType,
+      params,
+      sourceType: "safe_return_session",
+      sourceId:   sessionId,
+    });
+    if (notification) {
+      void router.route(notification).catch((err) =>
+        logger.warn({ err, notificationId: notification.id }, "SafeReturn: router dispatch failed"),
+      );
+    }
+  } catch (err) {
+    logger.warn({ err, userId, eventType }, "SafeReturn: createAndRoute failed");
+  }
+}
+
 // ── Notification senders ──────────────────────────────────────────────────────
 
 /** Remind the session owner that a check-in is due. */
@@ -110,17 +131,8 @@ export async function sendUserReminder(
   db: SupabaseClient,
   session: SafeReturnSession,
 ): Promise<void> {
-  try {
-    const token = await fetchPushToken(db, session.userId);
-    await sendPushNotification([token], {
-      title: "Safe Return check-in",
-      body: "Are you back okay? Tap to confirm you're safe.",
-      data: { type: "safe_return_reminder", sessionId: session.id },
-    });
-    logger.info({ sessionId: session.id }, "SafeReturnNotification: reminder sent to session owner");
-  } catch (err) {
-    logger.warn({ err }, "sendUserReminder: threw");
-  }
+  await createAndRoute(db, session.userId, "safe_return.reminder", {}, session.id);
+  logger.info({ sessionId: session.id }, "SafeReturnNotification: reminder queued");
 }
 
 /** Alert the session owner that their check-in was missed. */
@@ -128,23 +140,13 @@ export async function sendMissedCheckIn(
   db: SupabaseClient,
   session: SafeReturnSession,
 ): Promise<void> {
-  try {
-    const token = await fetchPushToken(db, session.userId);
-    await sendPushNotification([token], {
-      title: "We couldn't confirm you're safe",
-      body: "Your Safe Return timer has expired. Tap to let us know you're okay or get help.",
-      data: { type: "safe_return_missed", sessionId: session.id, escalationLevel: session.escalationLevel },
-    });
-    logger.info({ sessionId: session.id, level: session.escalationLevel }, "SafeReturnNotification: missed check-in sent");
-  } catch (err) {
-    logger.warn({ err }, "sendMissedCheckIn: threw");
-  }
+  await createAndRoute(db, session.userId, "safe_return.missed", {}, session.id);
+  logger.info({ sessionId: session.id, level: session.escalationLevel }, "SafeReturnNotification: missed check-in queued");
 }
 
 /**
  * Notify selected Trusted Circle contacts (only when trusted_circle_enabled = true).
- * Sends calm, non-alarming message with display name, approximate area, and
- * missed time.  Never includes exact GPS.
+ * Uses approximate area — never exact GPS.
  */
 export async function notifyTrustedCircle(
   db: SupabaseClient,
@@ -161,45 +163,34 @@ export async function notifyTrustedCircle(
     fetchAreaLabel(db, session.userId),
     fetchPlanItemTitle(db, session.planItemId),
   ]);
+
   const missedTime = session.timerEndAt
     ? new Date(session.timerEndAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "a scheduled time";
-  const locationPhrase = planTitle
-    ? `around ${planTitle} in ${area}`
-    : `in ${area}`;
+  const locationPhrase = planTitle ? `around ${planTitle} in ${area}` : area;
 
   const inAppContacts = contacts.filter(
     (c) => c.contactMethod === "in_app" && c.contactUserId,
   );
 
   await Promise.all(
-    inAppContacts.map(async (c) => {
-      try {
-        const token = await fetchPushToken(db, c.contactUserId!);
-        await sendPushNotification([token], {
-          title: `${userName} missed their Safe Return check-in`,
-          body: `They were last ${locationPhrase} and expected back by ${missedTime}. They may need support.`,
-          data: {
-            type: "safe_return_tc_alert",
-            sessionId: session.id,
-            contactId: c.id,
-          },
-        });
-        logger.info({ sessionId: session.id, contactId: c.id }, "notifyTrustedCircle: alert sent");
-      } catch (err) {
-        logger.warn({ err, contactId: c.id }, "notifyTrustedCircle: per-contact send failed");
-      }
-    }),
+    inAppContacts.map((c) =>
+      createAndRoute(db, c.contactUserId!, "safe_return.trusted_circle_alert", {
+        travelerName: userName,
+        area: locationPhrase,
+        missedTime,
+      }, session.id),
+    ),
   );
 
   await logNotificationEvent(db, session, "trusted_circle_notified", {
     contactCount: inAppContacts.length,
   });
+  logger.info({ sessionId: session.id, contactCount: inAppContacts.length }, "notifyTrustedCircle: queued");
 }
 
 /**
  * Notify trip host (only when notify_host_enabled = true).
- * Fetches host from the trip and sends a push notification.
  */
 export async function notifyHost(
   db: SupabaseClient,
@@ -225,15 +216,17 @@ export async function notifyHost(
       fetchDisplayName(db, session.userId),
       fetchAreaLabel(db, session.userId),
     ]);
-    const hostToken = await fetchPushToken(db, hostId);
 
-    await sendPushNotification([hostToken], {
-      title: `${userName} missed their Safe Return check-in`,
-      body: `They were last in ${area}. As trip host, you may wish to check in.`,
-      data: { type: "safe_return_host_alert", sessionId: session.id },
-    });
-    logger.info({ sessionId: session.id, hostId }, "notifyHost: sent");
+    await createAndRoute(db, hostId, "safe_return.trusted_circle_alert", {
+      travelerName: userName,
+      area,
+      missedTime: session.timerEndAt
+        ? new Date(session.timerEndAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "a scheduled time",
+    }, session.id);
+
     await logNotificationEvent(db, session, "host_notified", { hostId });
+    logger.info({ sessionId: session.id, hostId }, "notifyHost: queued");
   } catch (err) {
     logger.warn({ err }, "notifyHost: threw");
   }
@@ -267,15 +260,22 @@ export async function notifyTripCrew(
     ]);
     const memberIds = (members as any[]).map((m) => m.user_id as string);
 
-    const tokens = await Promise.all(memberIds.map((id) => fetchPushToken(db, id)));
+    const missedTime = session.timerEndAt
+      ? new Date(session.timerEndAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "a scheduled time";
 
-    await sendPushNotification(tokens, {
-      title: `${userName} missed their Safe Return check-in`,
-      body: `They were last in ${area}. Reach out if you can.`,
-      data: { type: "safe_return_crew_alert", sessionId: session.id },
-    });
-    logger.info({ sessionId: session.id, crewCount: memberIds.length }, "notifyTripCrew: sent");
+    await Promise.all(
+      memberIds.map((id) =>
+        createAndRoute(db, id, "safe_return.trusted_circle_alert", {
+          travelerName: userName,
+          area,
+          missedTime,
+        }, session.id),
+      ),
+    );
+
     await logNotificationEvent(db, session, "crew_notified", { crewCount: memberIds.length });
+    logger.info({ sessionId: session.id, crewCount: memberIds.length }, "notifyTripCrew: queued");
   } catch (err) {
     logger.warn({ err }, "notifyTripCrew: threw");
   }

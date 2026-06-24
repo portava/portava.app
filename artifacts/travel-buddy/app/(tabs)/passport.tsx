@@ -2,10 +2,10 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Bell, Share2, MessageCircle } from 'lucide-react-native';
+import { Share2, MessageCircle } from 'lucide-react-native';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
-import { useRequestCount } from '../../src/hooks/useRequests';
+import { NotificationBell } from '../../src/components/NotificationBell';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { useHighlightRingState, invalidateHighlightCache } from '../../src/hooks/useHighlightRingState';
@@ -306,14 +306,12 @@ function PassportContent({
   onNewHighlightPress?: () => void;
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
-  const { count: requestCount, reload: reloadCount } = useRequestCount();
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
   const { messages: unreadMessages } = useUnreadCounts();
 
   useFocusEffect(useCallback(() => {
-    reloadCount();
     reload();
-  }, [reloadCount, reload]));
+  }, [reload]));
 
   return (
     <View style={{ flex: 1 }}>
@@ -459,20 +457,8 @@ function PassportContent({
         )}
       </Pressable>
 
-      {/* Notifications bell — absolutely positioned top-right */}
-      <Pressable
-        style={[styles.bellBtn, { top: insets.top + space.sm }]}
-        onPress={() => router.push('/notifications' as any)}
-        hitSlop={8}
-        accessibilityLabel="Open notifications inbox"
-      >
-        <Bell size={20} color={color.ink} />
-        {requestCount > 0 && (
-          <View style={styles.bellBadge}>
-            <Text style={styles.bellBadgeText}>{requestCount > 9 ? '9+' : String(requestCount)}</Text>
-          </View>
-        )}
-      </Pressable>
+      {/* Notifications bell — absolutely positioned top-right, shows popover preview */}
+      <NotificationBell style={[styles.bellBtn, { top: insets.top + space.sm }]} />
     </View>
   );
 }
@@ -513,20 +499,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bellBadge: {
-    position: 'absolute',
-    top: -3,
-    right: -3,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-  },
-  bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700', lineHeight: 11 },
-
   telegraphRow: {
     flexDirection: 'row',
     alignItems: 'center',

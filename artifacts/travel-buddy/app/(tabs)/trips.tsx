@@ -4,6 +4,7 @@ import {
   ActivityIndicator, StyleSheet, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
+import { NotificationBell } from '../../src/components/NotificationBell';
 import {
   Plus, Users, CalendarDays, MapPin, CalendarClock,
   ChevronRight, Check, X, UserCircle,
@@ -160,10 +161,13 @@ export default function Trips() {
       <ScreenHeader
         title="Trips"
         right={
-          <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
-            <Plus size={16} color={color.onInk} />
-            <Text style={styles.newBtnText}>New trip</Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+            <NotificationBell />
+            <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
+              <Plus size={16} color={color.onInk} />
+              <Text style={styles.newBtnText}>New trip</Text>
+            </Pressable>
+          </View>
         }
       />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>

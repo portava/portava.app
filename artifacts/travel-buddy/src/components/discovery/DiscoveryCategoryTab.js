@@ -64,6 +64,7 @@ var discovery_1 = require("../../services/discovery");
 var tokens_1 = require("../../theme/tokens");
 var PlaceCard_1 = require("./PlaceCard");
 var PlaceSkeleton_1 = require("./PlaceSkeleton");
+var DiscoveryMapView_1 = require("./DiscoveryMapView");
 // ── Radius chips ──────────────────────────────────────────────────────────────
 var RADIUS_OPTIONS = [
     { label: '5 km', km: 5 },
@@ -199,14 +200,14 @@ var nd = react_native_1.StyleSheet.create({
 });
 function DiscoveryCategoryTab(_a) {
     var _this = this;
-    var category = _a.category, destination = _a.destination, onSelectPlace = _a.onSelectPlace, onAddToPlan = _a.onAddToPlan, onPickDestination = _a.onPickDestination, contextMode = _a.contextMode;
-    var _b = (0, react_1.useState)([]), places = _b[0], setPlaces = _b[1];
-    var _c = (0, react_1.useState)(false), loading = _c[0], setLoading = _c[1];
-    var _d = (0, react_1.useState)(false), refreshing = _d[0], setRefreshing = _d[1];
-    var _e = (0, react_1.useState)(null), error = _e[0], setError = _e[1];
-    var _f = (0, react_1.useState)(1), page = _f[0], setPage = _f[1];
-    var _g = (0, react_1.useState)(0), total = _g[0], setTotal = _g[1];
-    var _h = (0, react_1.useState)({ radiusKm: 10, openNow: false, minRating: null }), filters = _h[0], setFilters = _h[1];
+    var category = _a.category, destination = _a.destination, onSelectPlace = _a.onSelectPlace, onAddToPlan = _a.onAddToPlan, onPickDestination = _a.onPickDestination, contextMode = _a.contextMode, _b = _a.viewMode, viewMode = _b === void 0 ? 'list' : _b;
+    var _c = (0, react_1.useState)([]), places = _c[0], setPlaces = _c[1];
+    var _d = (0, react_1.useState)(false), loading = _d[0], setLoading = _d[1];
+    var _e = (0, react_1.useState)(false), refreshing = _e[0], setRefreshing = _e[1];
+    var _f = (0, react_1.useState)(null), error = _f[0], setError = _f[1];
+    var _g = (0, react_1.useState)(1), page = _g[0], setPage = _g[1];
+    var _h = (0, react_1.useState)(0), total = _h[0], setTotal = _h[1];
+    var _j = (0, react_1.useState)({ radiusKm: 10, openNow: false, minRating: null }), filters = _j[0], setFilters = _j[1];
     var loadingMore = (0, react_1.useRef)(false);
     var applyClientFilters = function (raw) {
         var result = raw;
@@ -288,7 +289,7 @@ function DiscoveryCategoryTab(_a) {
           <react_native_1.Text style={styles.emptyDesc}>
             Try increasing the search radius or adjust the filters.
           </react_native_1.Text>
-        </react_native_1.View>) : (<react_native_1.FlatList data={places} keyExtractor={function (item) { return item.id; }} renderItem={function (_a) {
+        </react_native_1.View>) : viewMode === 'map' ? (<DiscoveryMapView_1.DiscoveryMapView places={places} onSelectPlace={onSelectPlace}/>) : (<react_native_1.FlatList data={places} keyExtractor={function (item) { return item.id; }} renderItem={function (_a) {
                 var item = _a.item;
                 return (<PlaceCard_1.default place={item} onPress={function () { return onSelectPlace(item); }} onAddToPlan={function () { return onAddToPlan(item); }}/>);
             }} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshControl={<react_native_1.RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={tokens_1.color.signal}/>} onEndReached={handleLoadMore} onEndReachedThreshold={0.4} ListFooterComponent={places.length >= total && places.length > 0 ? (<react_native_1.Text style={styles.endText}>{places.length} places found</react_native_1.Text>) : null}/>)}

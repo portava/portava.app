@@ -24,10 +24,13 @@ async function savePushToken(pushToken: string): Promise<void> {
   if (!base) return;
   const token = await freshToken();
   if (!token) return;
-  await fetch(`${base}/api/me/push-token`, {
-    method: 'PUT',
+  // Register via the multi-device notification pipeline (POST /api/me/devices).
+  // This replaces the legacy PUT /api/me/push-token endpoint so the token is
+  // stored in notification_devices and respects per-device routing.
+  await fetch(`${base}/api/me/devices`, {
+    method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: pushToken }),
+    body: JSON.stringify({ pushToken, platform: 'expo' }),
   }).catch(() => {});
 }
 

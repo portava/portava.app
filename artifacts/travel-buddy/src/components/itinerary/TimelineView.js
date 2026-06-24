@@ -115,6 +115,17 @@ function dayLabel(key, tripStartDate) {
     }
     return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+// Reconcile a proposed display order against the authoritative id set: keep the
+// proposed order for ids that still exist, drop ids no longer present, and append
+// any authoritative ids missing from the proposed order (e.g. items a teammate
+// added mid-drag). Used to honour remote add/remove without losing a local move.
+function reconcileMembership(proposed, authoritative) {
+    var authSet = new Set(authoritative);
+    var kept = proposed.filter(function (id) { return authSet.has(id); });
+    var keptSet = new Set(kept);
+    var added = authoritative.filter(function (id) { return !keptSet.has(id); });
+    return __spreadArray(__spreadArray([], kept, true), added, true);
+}
 // ── Warning badge strip ───────────────────────────────────────────────────────
 var WARN_SHORT = {
     time_overlap: '⚡ Conflict',
@@ -242,19 +253,6 @@ function DraggableItemList(_a) {
     // Local display order (IDs); actual item data comes from `items` prop.
     var _b = (0, react_1.useState)(function () { return items.map(function (i) { return i.id; }); }), order = _b[0], setOrder = _b[1];
     var itemMap = (0, react_1.useMemo)(function () { return Object.fromEntries(items.map(function (i) { return [i.id, i]; })); }, [items]);
-    // Sync order when items prop changes (add / remove)
-    var prevItemsRef = (0, react_1.useRef)(items);
-    if (prevItemsRef.current !== items) {
-        prevItemsRef.current = items;
-        var incoming_1 = items.map(function (i) { return i.id; });
-        // keep existing order, append new, drop removed
-        var kept_1 = order.filter(function (id) { return incoming_1.includes(id); });
-        var added = incoming_1.filter(function (id) { return !kept_1.includes(id); });
-        var synced = __spreadArray(__spreadArray([], kept_1, true), added, true);
-        if (synced.join(',') !== order.join(',')) {
-            setOrder(synced);
-        }
-    }
     // Drag state (refs for gesture tracking, state for re-render triggers)
     var activeIdxRef = (0, react_1.useRef)(-1);
     var activeAnim = (0, react_1.useRef)(new react_native_1.Animated.Value(0)).current;
@@ -264,6 +262,37 @@ function DraggableItemList(_a) {
     var getEstimatedHeight = (0, react_1.useCallback)(function (id) {
         var _a;
         return (_a = itemHeightsRef.current[id]) !== null && _a !== void 0 ? _a : 100;
+    }, []);
+    // Sync local display order when the items prop changes (add / remove / remote reorder).
+    // While a drag is in progress we must NOT clobber the in-flight order: keep the
+    // current order and only append new / drop removed ids. When idle we adopt the
+    // canonical server order so reorders made by other members are reflected.
+    // Holds a canonical server order that arrived mid-drag; applied once the drag ends.
+    var pendingServerOrderRef = (0, react_1.useRef)(null);
+    var prevItemsRef = (0, react_1.useRef)(items);
+    if (prevItemsRef.current !== items) {
+        prevItemsRef.current = items;
+        var incoming = items.map(function (i) { return i.id; });
+        var dragging = activeIdxRef.current >= 0;
+        if (dragging) {
+            // Don't disturb the in-flight gesture; remember the canonical order and
+            // reconcile to it when the drag is released/terminated.
+            pendingServerOrderRef.current = incoming;
+        }
+        else {
+            pendingServerOrderRef.current = null;
+            if (incoming.join(',') !== order.join(',')) {
+                setOrder(incoming);
+            }
+        }
+    }
+    // Apply any order that arrived while a drag was active (called on drag end).
+    var applyPendingOrder = (0, react_1.useCallback)(function () {
+        var pending = pendingServerOrderRef.current;
+        pendingServerOrderRef.current = null;
+        if (pending) {
+            setOrder(function (cur) { return (pending.join(',') !== cur.join(',') ? pending : cur); });
+        }
     }, []);
     var commitReorder = (0, react_1.useCallback)(function (oldOrder, newOrder) { return __awaiter(_this, void 0, void 0, function () {
         var changed;
@@ -287,10 +316,19 @@ function DraggableItemList(_a) {
                         }))];
                 case 1:
                     _a.sent();
-                    // Notify parent so the canonical list stays in sync
+                    // Notify parent so the canonical list stays in sync. Guard against emitting
+                    // unknown/partial items: only keep ids that resolve to a real item, and
+                    // append any locally-known ids missing from newOrder rather than dropping them.
                     onItemsChanged(function (prev) {
-                        var byId = Object.fromEntries(prev.map(function (i) { return [i.id, i]; }));
-                        return newOrder.map(function (id, idx) { var _a; return (__assign(__assign({}, ((_a = byId[id]) !== null && _a !== void 0 ? _a : itemMap[id])), { sortOrder: (idx + 1) * 1000 })); });
+                        var byId = new Map(prev.map(function (i) { return [i.id, i]; }));
+                        var resolvable = newOrder.filter(function (id) { return byId.has(id) || itemMap[id]; });
+                        var missing = prev.map(function (i) { return i.id; }).filter(function (id) { return !resolvable.includes(id); });
+                        var finalIds = __spreadArray(__spreadArray([], resolvable, true), missing, true);
+                        return finalIds.map(function (id, idx) {
+                            var _a;
+                            var base = (_a = byId.get(id)) !== null && _a !== void 0 ? _a : itemMap[id];
+                            return __assign(__assign({}, base), { sortOrder: (idx + 1) * 1000 });
+                        });
                     });
                     return [2 /*return*/];
             }
@@ -332,7 +370,10 @@ function DraggableItemList(_a) {
                             newSlot = k;
                         }
                     }
-                    currentDragIdx.current = newSlot;
+                    if (newSlot !== currentDragIdx.current) {
+                        currentDragIdx.current = newSlot;
+                        forceUpdate(function (n) { return n + 1; });
+                    }
                 },
                 onPanResponderRelease: function () {
                     var from = activeIdxRef.current;
@@ -343,15 +384,23 @@ function DraggableItemList(_a) {
                         toValue: 0, duration: 120, useNativeDriver: true,
                     }).start(function () { return forceUpdate(function (n) { return n + 1; }); });
                     if (from !== to && from >= 0 && to >= 0) {
+                        // Local reorder is the newer write (last-write-wins for position), but
+                        // membership (remote add/remove arriving mid-drag) must still be
+                        // honoured. Rebase the local move onto the latest canonical id set.
+                        var pending_1 = pendingServerOrderRef.current;
+                        pendingServerOrderRef.current = null;
                         setOrder(function (prev) {
                             var next = __spreadArray([], prev, true);
                             var moved = next.splice(from, 1)[0];
                             next.splice(to, 0, moved);
-                            commitReorder(prev, next);
-                            return next;
+                            var finalOrder = pending_1 ? reconcileMembership(next, pending_1) : next;
+                            commitReorder(prev, finalOrder);
+                            return finalOrder;
                         });
                     }
                     else {
+                        // No local move — reconcile to any order that arrived during the drag.
+                        applyPendingOrder();
                         forceUpdate(function (n) { return n + 1; });
                     }
                 },
@@ -359,21 +408,56 @@ function DraggableItemList(_a) {
                     activeIdxRef.current = -1;
                     currentDragIdx.current = -1;
                     activeAnim.setValue(0);
+                    applyPendingOrder();
                     forceUpdate(function (n) { return n + 1; });
                 },
             });
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [order, canEdit]);
+    // Build the visual render list.
+    // While dragging to a different slot we:
+    //   • Show the dragged card lifted (translateY) and dimmed at its origin slot
+    //   • Insert a dashed placeholder at the current target slot so users can see the drop position
+    //   • Other items naturally shift to make room for the placeholder
+    var activeIdx = activeIdxRef.current;
+    var targetIdx = currentDragIdx.current;
+    var isDragging = activeIdx >= 0 && activeIdx < order.length;
+    var showPlaceholder = isDragging && targetIdx !== activeIdx && targetIdx >= 0;
+    var renderEntries = [];
+    if (!showPlaceholder) {
+        order.forEach(function (id, slotIdx) { return renderEntries.push({ kind: 'item', id: id, slotIdx: slotIdx }); });
+    }
+    else {
+        var draggedHeight_1 = getEstimatedHeight(order[activeIdx]);
+        var placeholderBeforeDragged_1 = targetIdx < activeIdx;
+        order.forEach(function (id, slotIdx) {
+            // Insert placeholder before this item when target is above the dragged slot
+            if (slotIdx === targetIdx && placeholderBeforeDragged_1) {
+                renderEntries.push({ kind: 'placeholder', height: draggedHeight_1 });
+            }
+            renderEntries.push({ kind: 'item', id: id, slotIdx: slotIdx });
+            // Insert placeholder after this item when target is below the dragged slot
+            if (slotIdx === targetIdx && !placeholderBeforeDragged_1) {
+                renderEntries.push({ kind: 'placeholder', height: draggedHeight_1 });
+            }
+        });
+    }
     return (<>
-      {order.map(function (id, slotIdx) {
+      {renderEntries.map(function (entry) {
+            if (entry.kind === 'placeholder') {
+                return (<react_native_1.View key="__drag_placeholder__" style={[dl.placeholder, { height: entry.height }]}/>);
+            }
+            var id = entry.id, slotIdx = entry.slotIdx;
             var item = itemMap[id];
             if (!item)
                 return null;
-            var isActive = activeIdxRef.current === slotIdx;
+            var isActive = activeIdx === slotIdx;
             var pr = panResponders[slotIdx];
             var card = (<PlanItemCard item={item} currentUserId={currentUserId} isOwner={isOwner} canEdit={canEdit} tripId={tripId} onPress={onItemPress} onEditPress={onEditPress} onRemove={onRemove} onMarkDone={onMarkDone} onMarkTentative={onMarkTentative} onEdited={function (updated) { return onItemsChanged(function (prev) { return prev.map(function (i) { return i.id === updated.id ? updated : i; }); }); }} onMoveToUnscheduled={onMoveToUnscheduled} dragHandlers={pr === null || pr === void 0 ? void 0 : pr.panHandlers} isDragging={isActive}/>);
-            return (<react_native_1.Animated.View key={id} style={isActive ? { transform: [{ translateY: activeAnim }], zIndex: 10 } : undefined} onLayout={function (e) {
+            return (<react_native_1.Animated.View key={id} style={isActive
+                    ? { transform: [{ translateY: activeAnim }], zIndex: 10, opacity: showPlaceholder ? 0.55 : 0.85 }
+                    : undefined} onLayout={function (e) {
                     itemHeightsRef.current[id] = e.nativeEvent.layout.height;
                 }}>
             {id === firstWarnedId && warnedItemRef
@@ -540,6 +624,16 @@ var dg = react_native_1.StyleSheet.create({
     line: { flex: 1, height: 1, backgroundColor: tokens_1.color.haze },
     count: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.faint }),
     emptyDay: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.faint, paddingLeft: 18, paddingBottom: 4 }),
+});
+var dl = react_native_1.StyleSheet.create({
+    placeholder: {
+        marginBottom: 8,
+        borderRadius: tokens_1.radius.lg,
+        borderWidth: 2,
+        borderColor: tokens_1.color.deep,
+        borderStyle: 'dashed',
+        backgroundColor: 'rgba(30, 90, 120, 0.06)',
+    },
 });
 var tv = react_native_1.StyleSheet.create({
     wrap: { gap: 0 },

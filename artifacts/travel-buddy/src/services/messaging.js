@@ -71,6 +71,7 @@ exports.syncTripChat = syncTripChat;
 exports.syncCircleChat = syncCircleChat;
 exports.getThreadMessages = getThreadMessages;
 exports.sendMessage = sendMessage;
+exports.sendTyping = sendTyping;
 exports.muteThread = muteThread;
 exports.leaveThread = leaveThread;
 exports.sendDiscoveryCard = sendDiscoveryCard;
@@ -442,6 +443,22 @@ function sendMessage(threadId, body, opts) {
     return __awaiter(this, void 0, void 0, function () {
         return __generator(this, function (_a) {
             return [2 /*return*/, apiPost("/api/threads/".concat(threadId, "/messages"), __assign({ body: body }, opts))];
+        });
+    });
+}
+/**
+ * Relay a transient typing indicator to the other thread members. Best-effort —
+ * a failed call is silently ignored (typing is non-critical presence).
+ */
+function sendTyping(threadId, typing) {
+    return __awaiter(this, void 0, void 0, function () {
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, apiPost("/api/threads/".concat(threadId, "/typing"), { typing: typing }).catch(function () { return undefined; })];
+                case 1:
+                    _a.sent();
+                    return [2 /*return*/];
+            }
         });
     });
 }

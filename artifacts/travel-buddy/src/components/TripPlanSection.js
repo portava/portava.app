@@ -63,12 +63,17 @@ var async_storage_1 = require("@react-native-async-storage/async-storage");
 var expo_router_1 = require("expo-router");
 var lucide_react_native_1 = require("lucide-react-native");
 var tripPlan_1 = require("../services/tripPlan");
+var usePlanSync_1 = require("../hooks/usePlanSync");
 var tokens_1 = require("../theme/tokens");
 var AddToPlanSheet_1 = require("./AddToPlanSheet");
 var TimelineView_1 = require("./itinerary/TimelineView");
 var MapView_1 = require("./itinerary/MapView");
 var PlanItemSheet_1 = require("./itinerary/PlanItemSheet");
 var TripPlanSettingsSheet_1 = require("./TripPlanSettingsSheet");
+var SafeReturnSetupSheet_1 = require("./safeReturn/SafeReturnSetupSheet");
+var ActiveSafeReturnCard_1 = require("./safeReturn/ActiveSafeReturnCard");
+var MissedCheckinPrompt_1 = require("./safeReturn/MissedCheckinPrompt");
+var safeReturn_1 = require("../services/safeReturn");
 // ── Category filter data ───────────────────────────────────────────────────────
 var CAT_CHIPS = [
     { key: 'all', label: 'All' },
@@ -209,25 +214,58 @@ function ViewToggle(_a) {
       </react_native_1.Pressable>
     </react_native_1.View>);
 }
+// ── Background-sync merge ──────────────────────────────────────────────────────
+// Cheap per-item equality: `updatedAt` changes on any server-side field edit,
+// `sortOrder` covers reorders, and warnings are advisory and recomputed per fetch.
+function planItemEqual(a, b) {
+    var _a, _b, _c, _d;
+    return (a.id === b.id &&
+        a.updatedAt === b.updatedAt &&
+        a.sortOrder === b.sortOrder &&
+        a.dayDate === b.dayDate &&
+        ((_b = (_a = a.warnings) === null || _a === void 0 ? void 0 : _a.join('|')) !== null && _b !== void 0 ? _b : '') === ((_d = (_c = b.warnings) === null || _c === void 0 ? void 0 : _c.join('|')) !== null && _d !== void 0 ? _d : ''));
+}
+/**
+ * Merge a freshly-fetched plan into the current local list. The server response
+ * is the source of truth for membership and order. Unchanged items keep their
+ * previous object reference so React can skip re-rendering those rows. Returns
+ * the same array reference when nothing changed so callers can no-op.
+ */
+function mergePlanItems(prev, next) {
+    var sameLength = prev.length === next.length;
+    if (sameLength && prev.every(function (p, i) { return p.id === next[i].id && planItemEqual(p, next[i]); })) {
+        return { merged: prev, changed: false };
+    }
+    var prevById = new Map(prev.map(function (p) { return [p.id, p]; }));
+    var merged = next.map(function (n) {
+        var existing = prevById.get(n.id);
+        return existing && planItemEqual(existing, n) ? existing : n;
+    });
+    return { merged: merged, changed: true };
+}
 // ── Main section ──────────────────────────────────────────────────────────────
 function TripPlanSection(_a) {
     var _this = this;
-    var _b;
+    var _b, _c;
     var tripId = _a.tripId, currentUserId = _a.currentUserId, isOwner = _a.isOwner, isPendingInvite = _a.isPendingInvite, tripStartDate = _a.tripStartDate, tripEndDate = _a.tripEndDate, pageScrollRef = _a.pageScrollRef;
-    var _c = (0, react_1.useState)([]), items = _c[0], setItems = _c[1];
-    var _d = (0, react_1.useState)(false), loading = _d[0], setLoading = _d[1];
-    var _e = (0, react_1.useState)(false), canEdit = _e[0], setCanEdit = _e[1];
-    var _f = (0, react_1.useState)([]), mapItems = _f[0], setMapItems = _f[1];
-    var _g = (0, react_1.useState)(false), mapLoading = _g[0], setMapLoading = _g[1];
-    var _h = (0, react_1.useState)(false), addSheetOpen = _h[0], setAddSheetOpen = _h[1];
-    var _j = (0, react_1.useState)(false), accessDenied = _j[0], setAccessDenied = _j[1];
-    var _k = (0, react_1.useState)(false), settingsOpen = _k[0], setSettingsOpen = _k[1];
-    var _l = (0, react_1.useState)('all'), activeDay = _l[0], setActiveDay = _l[1];
-    var _m = (0, react_1.useState)('all'), activeCat = _m[0], setActiveCat = _m[1];
-    var _o = (0, react_1.useState)('timeline'), viewMode = _o[0], setViewMode = _o[1];
-    var _p = (0, react_1.useState)(false), showWarningsOnly = _p[0], setShowWarningsOnly = _p[1];
-    var _q = (0, react_1.useState)(null), detailItem = _q[0], setDetailItem = _q[1];
-    var _r = (0, react_1.useState)(false), detailStartInEditMode = _r[0], setDetailStartInEditMode = _r[1];
+    var _d = (0, react_1.useState)([]), items = _d[0], setItems = _d[1];
+    var _e = (0, react_1.useState)(false), loading = _e[0], setLoading = _e[1];
+    var _f = (0, react_1.useState)(false), canEdit = _f[0], setCanEdit = _f[1];
+    var _g = (0, react_1.useState)([]), mapItems = _g[0], setMapItems = _g[1];
+    var _h = (0, react_1.useState)(false), mapLoading = _h[0], setMapLoading = _h[1];
+    var _j = (0, react_1.useState)(false), addSheetOpen = _j[0], setAddSheetOpen = _j[1];
+    var _k = (0, react_1.useState)(false), accessDenied = _k[0], setAccessDenied = _k[1];
+    var _l = (0, react_1.useState)(false), settingsOpen = _l[0], setSettingsOpen = _l[1];
+    var _m = (0, react_1.useState)('all'), activeDay = _m[0], setActiveDay = _m[1];
+    var _o = (0, react_1.useState)('all'), activeCat = _o[0], setActiveCat = _o[1];
+    var _p = (0, react_1.useState)('timeline'), viewMode = _p[0], setViewMode = _p[1];
+    var _q = (0, react_1.useState)(false), showWarningsOnly = _q[0], setShowWarningsOnly = _q[1];
+    var _r = (0, react_1.useState)(null), detailItem = _r[0], setDetailItem = _r[1];
+    var _s = (0, react_1.useState)(false), detailStartInEditMode = _s[0], setDetailStartInEditMode = _s[1];
+    var _t = (0, react_1.useState)(null), safeReturnSetupItem = _t[0], setSafeReturnSetupItem = _t[1];
+    var _u = (0, react_1.useState)(false), safeReturnSetupOpen = _u[0], setSafeReturnSetupOpen = _u[1];
+    var _v = (0, react_1.useState)(null), activeSafeReturnSession = _v[0], setActiveSafeReturnSession = _v[1];
+    var _w = (0, react_1.useState)(false), showMissedPrompt = _w[0], setShowMissedPrompt = _w[1];
     // Persist view mode per-trip
     (0, react_1.useEffect)(function () {
         async_storage_1.default.getItem("tripPlanMode:".concat(tripId))
@@ -291,6 +329,39 @@ function TripPlanSection(_a) {
         });
     }); }, [tripId]);
     (0, expo_router_1.useFocusEffect)((0, react_1.useCallback)(function () { load(); }, [load]));
+    // ── Background auto-sync ──────────────────────────────────────────────────────
+    // Keep a ref of the latest items so the poll callback merges against current
+    // state without needing to be re-created (which would restart the interval).
+    var itemsRef = (0, react_1.useRef)(items);
+    (0, react_1.useEffect)(function () { itemsRef.current = items; }, [items]);
+    // "Plan updated" toast — fades in when a remote change arrives, then auto-hides.
+    var updatedAnim = (0, react_1.useRef)(new react_native_1.Animated.Value(0)).current;
+    var updatedHideTimer = (0, react_1.useRef)(null);
+    var showUpdatedToast = (0, react_1.useCallback)(function () {
+        if (updatedHideTimer.current)
+            clearTimeout(updatedHideTimer.current);
+        react_native_1.Animated.timing(updatedAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+        updatedHideTimer.current = setTimeout(function () {
+            react_native_1.Animated.timing(updatedAnim, { toValue: 0, duration: 240, useNativeDriver: true }).start();
+        }, 2200);
+    }, [updatedAnim]);
+    (0, react_1.useEffect)(function () { return function () { if (updatedHideTimer.current)
+        clearTimeout(updatedHideTimer.current); }; }, []);
+    var applyServerResult = (0, react_1.useCallback)(function (result) {
+        setCanEdit(result.canEdit);
+        var _a = mergePlanItems(itemsRef.current, result.items), merged = _a.merged, changed = _a.changed;
+        if (!changed)
+            return;
+        itemsRef.current = merged;
+        setItems(merged);
+        setMapItems([]); // invalidate map cache so it refetches fresh coords
+        showUpdatedToast();
+    }, [showUpdatedToast]);
+    (0, usePlanSync_1.usePlanSync)(tripId, {
+        enabled: !accessDenied,
+        intervalMs: 10000,
+        onResult: applyServerResult,
+    });
     // Auto-load map when entering map mode or when mapItems is cleared by a mutation
     (0, react_1.useEffect)(function () {
         if (viewMode === 'map' && mapItems.length === 0 && !mapLoading) {
@@ -336,9 +407,50 @@ function TripPlanSection(_a) {
         setItems(updater);
         setMapItems([]); // invalidate map cache
     }, []);
+    // Poll active Safe Return session every 60 s.
+    // Auto-show MissedCheckinPrompt when the backend flags the session as 'missed'.
+    (0, react_1.useEffect)(function () {
+        var cancelled = false;
+        function pollSession() {
+            return __awaiter(this, void 0, void 0, function () {
+                var r, _a;
+                var _b, _c;
+                return __generator(this, function (_d) {
+                    switch (_d.label) {
+                        case 0:
+                            _d.trys.push([0, 2, , 3]);
+                            return [4 /*yield*/, (0, safeReturn_1.getActiveSession)()];
+                        case 1:
+                            r = _d.sent();
+                            if (cancelled)
+                                return [2 /*return*/];
+                            setActiveSafeReturnSession((_b = r.session) !== null && _b !== void 0 ? _b : null);
+                            if (((_c = r.session) === null || _c === void 0 ? void 0 : _c.status) === 'missed')
+                                setShowMissedPrompt(true);
+                            return [3 /*break*/, 3];
+                        case 2:
+                            _a = _d.sent();
+                            return [3 /*break*/, 3];
+                        case 3: return [2 /*return*/];
+                    }
+                });
+            });
+        }
+        pollSession();
+        var iv = setInterval(pollSession, 60000);
+        return function () { cancelled = true; clearInterval(iv); };
+    }, []);
     var handleItemPress = (0, react_1.useCallback)(function (item) {
         setDetailStartInEditMode(false);
         setDetailItem(item);
+        // Check Safe Return suggestion in the background (best-effort)
+        (0, safeReturn_1.getSuggestion)(item.id)
+            .then(function (result) {
+            if (result === null || result === void 0 ? void 0 : result.suggest) {
+                setSafeReturnSetupItem(item);
+            }
+        })
+            .catch(function () { });
     }, []);
     var handleEditPress = (0, react_1.useCallback)(function (item) {
         setDetailStartInEditMode(true);
@@ -369,6 +481,20 @@ function TripPlanSection(_a) {
     })();
     var hasContent = items.length > 0;
     return (<react_native_1.View style={ps.wrap}>
+      {/* "Plan updated" toast — appears briefly when a teammate's change syncs in */}
+      <react_native_1.Animated.View pointerEvents="none" style={[
+            ps.updatedToast,
+            {
+                opacity: updatedAnim,
+                transform: [{
+                        translateY: updatedAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }),
+                    }],
+            },
+        ]}>
+        <lucide_react_native_1.RefreshCw size={11} color={tokens_1.color.onInk}/>
+        <react_native_1.Text style={ps.updatedToastText}>Plan updated</react_native_1.Text>
+      </react_native_1.Animated.View>
+
       {/* Header */}
       <react_native_1.View style={ps.head}>
         <react_native_1.Text style={ps.title}>Trip Plan</react_native_1.Text>
@@ -439,8 +565,28 @@ function TripPlanSection(_a) {
                 ? mapItems.filter(function (item) { return activeCat === 'all' || item.category === activeCat; })
                 : filteredItems.filter(function (item) { return item.lat != null && item.lng != null && !item.locationIsPrivate; })} onItemPress={setDetailItem} selectedDay={activeDay} loading={mapLoading}/>)}
 
+      {/* Active Safe Return session card */}
+      {activeSafeReturnSession && (<ActiveSafeReturnCard_1.ActiveSafeReturnCard session={activeSafeReturnSession} onSessionEnded={function () { return setActiveSafeReturnSession(null); }} onSessionUpdated={function (s) { return setActiveSafeReturnSession(s); }}/>)}
+
+      {/* Missed check-in prompt — shown automatically when the session
+            timer expires and the backend marks the session as 'missed'. */}
+      {activeSafeReturnSession && activeSafeReturnSession.status === 'missed' && (<MissedCheckinPrompt_1.MissedCheckinPrompt visible={showMissedPrompt} session={activeSafeReturnSession} onDismiss={function () { return setShowMissedPrompt(false); }} onSafe={function () {
+                setShowMissedPrompt(false);
+                setActiveSafeReturnSession(null);
+            }} onExtended={function (s) {
+                setShowMissedPrompt(false);
+                setActiveSafeReturnSession(s);
+            }}/>)}
+
       {/* Item detail sheet */}
-      <PlanItemSheet_1.PlanItemSheet item={detailItem} tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} canEdit={canEdit} startInEditMode={detailStartInEditMode} onClose={function () { setDetailItem(null); setDetailStartInEditMode(false); }} onUpdated={function (updated) {
+      <PlanItemSheet_1.PlanItemSheet item={detailItem} tripId={tripId} currentUserId={currentUserId} isOwner={isOwner} canEdit={canEdit} startInEditMode={detailStartInEditMode} onClose={function () {
+            setDetailItem(null);
+            setDetailStartInEditMode(false);
+            // Show Safe Return setup if the API suggested it for this item
+            if (safeReturnSetupItem) {
+                setSafeReturnSetupOpen(true);
+            }
+        }} onUpdated={function (updated) {
             setItems(function (prev) { return prev.map(function (i) { return i.id === updated.id ? updated : i; }); });
             setMapItems([]); // invalidate map cache
             setDetailItem(updated);
@@ -450,6 +596,19 @@ function TripPlanSection(_a) {
             setMapItems([]); // invalidate map cache
             setDetailItem(null);
             setDetailStartInEditMode(false);
+        }} onSetupSafeReturn={function (item) {
+            setSafeReturnSetupItem(item);
+            setSafeReturnSetupOpen(true);
+        }}/>
+
+      {/* Safe Return setup — shown after plan item sheet closes when suggested */}
+      <SafeReturnSetupSheet_1.SafeReturnSetupSheet visible={safeReturnSetupOpen} planItemId={safeReturnSetupItem === null || safeReturnSetupItem === void 0 ? void 0 : safeReturnSetupItem.id} tripId={tripId} planEndsAt={(_c = safeReturnSetupItem === null || safeReturnSetupItem === void 0 ? void 0 : safeReturnSetupItem.endsAt) !== null && _c !== void 0 ? _c : null} onClose={function () { setSafeReturnSetupOpen(false); setSafeReturnSetupItem(null); }} onStarted={function () {
+            setSafeReturnSetupOpen(false);
+            setSafeReturnSetupItem(null);
+            // Refresh active session to show the new card
+            (0, safeReturn_1.getActiveSession)()
+                .then(function (r) { return setActiveSafeReturnSession(r.session); })
+                .catch(function () { });
         }}/>
 
       <AddToPlanSheet_1.AddToPlanSheet visible={addSheetOpen} tripId={tripId} onClose={function () { return setAddSheetOpen(false); }} onAdded={handleAdded}/>
@@ -472,6 +631,8 @@ var ps = react_native_1.StyleSheet.create({
     warnBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: tokens_1.space.lg, marginBottom: tokens_1.space.sm, backgroundColor: '#FFFBEB', borderRadius: tokens_1.radius.md, borderWidth: 1, borderColor: '#F5D77B', paddingHorizontal: tokens_1.space.md, paddingVertical: 8 },
     warnBannerText: __assign(__assign({}, tokens_1.type.small), { color: '#8B5E00', fontWeight: '600', flex: 1 }),
     warnBannerLink: __assign(__assign({}, tokens_1.type.small), { color: '#F59E0B', fontWeight: '700' }),
+    updatedToast: { position: 'absolute', top: -4, alignSelf: 'center', zIndex: 50, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: tokens_1.color.deep, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+    updatedToastText: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.onInk, fontWeight: '700' }),
     empty: { padding: tokens_1.space.lg, alignItems: 'center', gap: 8, paddingVertical: 40 },
     emptyTitle: __assign(__assign({}, tokens_1.type.title), { fontSize: 18, color: tokens_1.color.ink }),
     emptyBody: __assign(__assign({}, tokens_1.type.body), { color: tokens_1.color.mute, textAlign: 'center', maxWidth: 280, lineHeight: 22 }),

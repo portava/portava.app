@@ -124,7 +124,7 @@ export default function Settings() {
     } else if (label === 'Edit profile') {
       router.push('/profile/edit');
     } else if (label === 'Notifications') {
-      router.push('/notifications');
+      router.push('/settings/notifications' as any);
     } else if (label === 'Location settings') {
       router.push('/settings/location' as any);
     } else if (

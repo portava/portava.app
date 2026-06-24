@@ -69,7 +69,9 @@ var SessionContext_1 = require("../context/SessionContext");
 var tokens_1 = require("../theme/tokens");
 var TelegraphSystemNotice_1 = require("./TelegraphSystemNotice");
 var TranslationSettingsSheet_1 = require("./TranslationSettingsSheet");
+var TripMembersSheet_1 = require("./TripMembersSheet");
 var messaging_1 = require("../services/messaging");
+var friends_1 = require("../services/friends");
 var Haptics = require("expo-haptics");
 var Clipboard = require("expo-clipboard");
 function formatTime(iso) {
@@ -191,7 +193,7 @@ var las = react_native_1.StyleSheet.create({
 });
 function GroupMessageBubble(_a) {
     var _b, _c, _d, _e;
-    var item = _a.item, mine = _a.mine, onLongPress = _a.onLongPress, receiptState = _a.receiptState, autoTranslate = _a.autoTranslate, defaultShowOriginal = _a.defaultShowOriginal;
+    var item = _a.item, mine = _a.mine, onLongPress = _a.onLongPress, receiptState = _a.receiptState, autoTranslate = _a.autoTranslate, defaultShowOriginal = _a.defaultShowOriginal, deliveryStatus = _a.deliveryStatus, onRetry = _a.onRetry;
     var _f = (0, react_1.useState)(defaultShowOriginal || !autoTranslate), showOriginal = _f[0], setShowOriginal = _f[1];
     if (item.deleted) {
         return (<react_native_1.Pressable style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]} onLongPress={onLongPress} delayLongPress={300}>
@@ -236,7 +238,22 @@ function GroupMessageBubble(_a) {
         {/* Translation unavailable */}
         {isTranslationFailed && (<react_native_1.Text style={styles.transUnavailable}>Translation unavailable.</react_native_1.Text>)}
       </react_native_1.Pressable>
-      {mine && receiptState && (<react_native_1.View style={styles.receiptRow}>
+      {/* Delivery status — sending / sent / failed (tap-to-retry) */}
+      {mine && deliveryStatus === 'sending' && (<react_native_1.View style={styles.deliveryRow}>
+          <lucide_react_native_1.Clock size={11} color={tokens_1.color.mute}/>
+          <react_native_1.Text style={styles.deliverySending}>Sending…</react_native_1.Text>
+        </react_native_1.View>)}
+      {mine && deliveryStatus === 'sent' && !receiptState && (<react_native_1.View style={styles.deliveryRow}>
+          <lucide_react_native_1.Check size={11} color={tokens_1.color.signal}/>
+          <react_native_1.Text style={styles.deliverySent}>Sent</react_native_1.Text>
+        </react_native_1.View>)}
+      {mine && deliveryStatus === 'failed' && (<react_native_1.Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
+          <lucide_react_native_1.AlertCircle size={11} color="#EF4444"/>
+          <react_native_1.Text style={styles.deliveryFailed}>Tap to retry</react_native_1.Text>
+        </react_native_1.Pressable>)}
+
+      {/* Read receipt — shown on the last confirmed own message only */}
+      {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (<react_native_1.View style={styles.receiptRow}>
           {receiptState === 'read' ? (<>
               <lucide_react_native_1.CheckCheck size={11} color={tokens_1.color.signal}/>
               <react_native_1.Text style={styles.receiptSent}>Read</react_native_1.Text>
@@ -256,7 +273,7 @@ function GroupChatScreen(_a) {
     var type = _a.type, id = _a.id, title = _a.title, memberLabel = _a.memberLabel;
     var insets = (0, react_native_safe_area_context_1.useSafeAreaInsets)();
     var userId = (0, SessionContext_1.useSession)().userId;
-    var _d = (0, useGroupChat_1.useGroupChat)(type, id), state = _d.state, thread = _d.thread, messages = _d.messages, sending = _d.sending, errorMessage = _d.errorMessage, reload = _d.reload, send = _d.send;
+    var _d = (0, useGroupChat_1.useGroupChat)(type, id), state = _d.state, thread = _d.thread, messages = _d.messages, sending = _d.sending, errorMessage = _d.errorMessage, reload = _d.reload, send = _d.send, retrySend = _d.retrySend, notifyTyping = _d.notifyTyping, typingUserIds = _d.typingUserIds;
     var _e = (0, react_1.useState)(''), input = _e[0], setInput = _e[1];
     var _f = (0, react_1.useState)(false), sendFailed = _f[0], setSendFailed = _f[1];
     var _g = (0, react_1.useState)(undefined), lastSentText = _g[0], setLastSentText = _g[1];
@@ -266,6 +283,9 @@ function GroupChatScreen(_a) {
     var _k = (0, react_1.useState)(true), autoTranslate = _k[0], setAutoTranslate = _k[1];
     var _l = (0, react_1.useState)(false), defaultShowOriginal = _l[0], setDefaultShowOriginal = _l[1];
     var _m = (0, react_1.useState)(false), showTranslationSheet = _m[0], setShowTranslationSheet = _m[1];
+    var _o = (0, react_1.useState)(false), showMembersSheet = _o[0], setShowMembersSheet = _o[1];
+    var _p = (0, react_1.useState)([]), memberPreview = _p[0], setMemberPreview = _p[1];
+    var _q = (0, react_1.useState)(null), memberCount = _q[0], setMemberCount = _q[1];
     var listRef = (0, react_1.useRef)(null);
     var displayTitle = (_c = (_b = thread === null || thread === void 0 ? void 0 : thread.title) !== null && _b !== void 0 ? _b : title) !== null && _c !== void 0 ? _c : (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
     var isNoAccess = state === 'no_access' || (thread === null || thread === void 0 ? void 0 : thread.memberAccess) === 'removed';
@@ -304,6 +324,39 @@ function GroupChatScreen(_a) {
             });
         });
     }
+    // Load a small member preview (count + avatar stack) for the header chip.
+    // Re-runs after the sheet closes so a fresh invite is reflected immediately.
+    (0, react_1.useEffect)(function () {
+        if (state !== 'active' || showMembersSheet)
+            return;
+        var cancelled = false;
+        (function () { return __awaiter(_this, void 0, void 0, function () {
+            var res, _a;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        if (!(type === 'trip')) return [3 /*break*/, 2];
+                        return [4 /*yield*/, (0, friends_1.getTripMembers)(id)];
+                    case 1:
+                        _a = _b.sent();
+                        return [3 /*break*/, 4];
+                    case 2: return [4 /*yield*/, (0, friends_1.getCircleMembers)(id)];
+                    case 3:
+                        _a = _b.sent();
+                        _b.label = 4;
+                    case 4:
+                        res = _a;
+                        if (cancelled || !res.ok || !res.data)
+                            return [2 /*return*/];
+                        // Backend excludes the caller, so add 1 for the current user.
+                        setMemberPreview(res.data.members.slice(0, 3));
+                        setMemberCount(res.data.members.length + 1);
+                        return [2 /*return*/];
+                }
+            });
+        }); })();
+        return function () { cancelled = true; };
+    }, [type, id, state, showMembersSheet]);
     var listItems = (0, react_1.useMemo)(function () {
         var items = [];
         var lastDay = '';
@@ -356,6 +409,7 @@ function GroupChatScreen(_a) {
                         text = input.trim();
                         if (!text || sending || isNoAccess)
                             return [2 /*return*/];
+                        notifyTyping(false);
                         setInput('');
                         setLastSentText(text);
                         setSendFailed(false);
@@ -379,13 +433,27 @@ function GroupChatScreen(_a) {
             ? <lucide_react_native_1.Globe size={14} color={tokens_1.color.onInk}/>
             : <lucide_react_native_1.Users size={14} color={tokens_1.color.onInk}/>}
       </react_native_1.View>
-      <react_native_1.View style={styles.headerMeta}>
+      <react_native_1.Pressable style={styles.headerMeta} onPress={function () { return setShowMembersSheet(true); }} hitSlop={6}>
         <react_native_1.Text style={styles.headerName} numberOfLines={1}>{displayTitle}</react_native_1.Text>
-        {memberLabel ? (<react_native_1.View style={styles.headerTagRow}>
-            <lucide_react_native_1.Users size={9} color={tokens_1.color.mute}/>
-            <react_native_1.Text style={styles.headerTag}>{memberLabel}</react_native_1.Text>
-          </react_native_1.View>) : null}
-      </react_native_1.View>
+        <react_native_1.View style={styles.headerTagRow}>
+          {memberPreview.length > 0 && (<react_native_1.View style={styles.avatarStack}>
+              {memberPreview.map(function (m, i) {
+                var _a, _b, _c, _d;
+                return (m.avatarUrl ? (<react_native_1.Image key={m.id} source={{ uri: m.avatarUrl }} style={[styles.stackAvatar, i > 0 && styles.stackAvatarOverlap]}/>) : (<react_native_1.View key={m.id} style={[styles.stackAvatar, styles.stackAvatarFallback, i > 0 && styles.stackAvatarOverlap]}>
+                    <react_native_1.Text style={styles.stackAvatarInitial}>
+                      {((_d = (_b = (_a = m.name) === null || _a === void 0 ? void 0 : _a[0]) !== null && _b !== void 0 ? _b : (_c = m.handle) === null || _c === void 0 ? void 0 : _c[0]) !== null && _d !== void 0 ? _d : '?').toUpperCase()}
+                    </react_native_1.Text>
+                  </react_native_1.View>));
+            })}
+            </react_native_1.View>)}
+          {memberCount === null && <lucide_react_native_1.Users size={9} color={tokens_1.color.signal}/>}
+          <react_native_1.Text style={styles.headerMembersChip}>
+            {memberCount !== null
+            ? "".concat(memberCount, " ").concat(memberCount === 1 ? 'member' : 'members')
+            : (memberLabel !== null && memberLabel !== void 0 ? memberLabel : 'Members')}
+          </react_native_1.Text>
+        </react_native_1.View>
+      </react_native_1.Pressable>
       <react_native_1.View style={styles.headerActions}>
         <react_native_1.Pressable hitSlop={8} style={styles.headerIconBtn} onPress={function () { return react_native_1.Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.'); }}>
           <lucide_react_native_1.Info size={18} color={tokens_1.color.mute}/>
@@ -475,7 +543,7 @@ function GroupChatScreen(_a) {
                 : 'Say something to your circle.'}
             </react_native_1.Text>
           </react_native_1.View>} renderItem={function (_a) {
-            var _b, _c, _d;
+            var _b, _c, _d, _e;
             var item = _a.item;
             if (item._t === 'day') {
                 return <DayDivider label={item.label}/>;
@@ -496,9 +564,18 @@ function GroupChatScreen(_a) {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     setActionMsg(m);
                     setActionMsgMine(mine);
-                }} receiptState={m.id === lastOwnMsgId ? receiptState : null} autoTranslate={autoTranslate} defaultShowOriginal={defaultShowOriginal}/>
+                }} receiptState={m.id === lastOwnMsgId ? receiptState : null} autoTranslate={autoTranslate} defaultShowOriginal={defaultShowOriginal} deliveryStatus={mine ? ((_e = m.deliveryStatus) !== null && _e !== void 0 ? _e : null) : null} onRetry={mine && m.clientId ? function () { return retrySend(m.clientId); } : undefined}/>
             </react_native_1.View>);
         }} onLayout={function () { var _a; return (_a = listRef.current) === null || _a === void 0 ? void 0 : _a.scrollToEnd({ animated: false }); }} ItemSeparatorComponent={function () { return <react_native_1.View style={{ height: tokens_1.space.sm }}/>; }}/>
+
+      {/* Typing indicator */}
+      {typingUserIds.length > 0 && (<react_native_1.View style={styles.typingRow}>
+          <react_native_1.Text style={styles.typingText}>
+            {typingUserIds.length === 1
+                ? 'Someone is typing…'
+                : "".concat(typingUserIds.length, " people are typing\u2026")}
+          </react_native_1.Text>
+        </react_native_1.View>)}
 
       {/* Failed-send banner — sits above the composer, offers retry */}
       {sendFailed && lastSentText && (<react_native_1.View style={styles.failedBanner}>
@@ -529,7 +606,7 @@ function GroupChatScreen(_a) {
             <react_native_1.Pressable style={styles.composeIconBtn} onPress={function () { return react_native_1.Alert.alert('AI Suggestions', 'Compass AI suggestions — coming soon.'); }} hitSlop={6}>
               <lucide_react_native_1.Bot size={18} color={tokens_1.color.mute}/>
             </react_native_1.Pressable>
-            <react_native_1.TextInput style={styles.inputField} placeholder="Write a Telegraph…" placeholderTextColor={tokens_1.color.faint} value={input} onChangeText={setInput} onSubmitEditing={handleSend} returnKeyType="send" editable={!sending} multiline/>
+            <react_native_1.TextInput style={styles.inputField} placeholder="Write a Telegraph…" placeholderTextColor={tokens_1.color.faint} value={input} onChangeText={function (text) { setInput(text); notifyTyping(text.trim().length > 0); }} onBlur={function () { return notifyTyping(false); }} onSubmitEditing={handleSend} returnKeyType="send" editable={!sending} multiline/>
             <react_native_1.Pressable style={[
                 styles.sendBtn,
                 (input.trim() && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled,
@@ -549,6 +626,9 @@ function GroupChatScreen(_a) {
             setDefaultShowOriginal(v);
             saveTranslationPrefs(autoTranslate, v);
         }} onClose={function () { return setShowTranslationSheet(false); }}/>
+
+      {/* Members list + invite */}
+      {showMembersSheet && (<TripMembersSheet_1.TripMembersSheet type={type} id={id} onDismiss={function () { return setShowMembersSheet(false); }}/>)}
     </react_native_1.KeyboardAvoidingView>);
 }
 var styles = react_native_1.StyleSheet.create({
@@ -578,6 +658,12 @@ var styles = react_native_1.StyleSheet.create({
     headerName: __assign(__assign({}, tokens_1.type.bodyStrong), { color: tokens_1.color.ink, fontWeight: '700' }),
     headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
     headerTag: __assign(__assign({}, tokens_1.type.stamp), { fontFamily: 'Courier', color: tokens_1.color.mute, fontSize: 10, letterSpacing: 0.4 }),
+    headerMembersChip: __assign(__assign({}, tokens_1.type.stamp), { fontFamily: 'Courier', color: tokens_1.color.signal, fontSize: 10, letterSpacing: 0.4 }),
+    avatarStack: { flexDirection: 'row', alignItems: 'center', marginRight: 2 },
+    stackAvatar: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: tokens_1.color.paperRaised },
+    stackAvatarOverlap: { marginLeft: -6 },
+    stackAvatarFallback: { backgroundColor: tokens_1.color.haze, alignItems: 'center', justifyContent: 'center' },
+    stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: tokens_1.color.ink },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
     headerIconBtn: { padding: 5 },
     stateIcon: { fontSize: 36, marginBottom: tokens_1.space.md },
@@ -620,6 +706,12 @@ var styles = react_native_1.StyleSheet.create({
     bubbleTimeMine: { color: tokens_1.color.onInk + '88' },
     receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
     receiptSent: { fontSize: 10, color: tokens_1.color.signal, fontFamily: 'Courier' },
+    deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+    deliverySending: { fontSize: 10, color: tokens_1.color.mute, fontFamily: 'Courier' },
+    deliverySent: { fontSize: 10, color: tokens_1.color.signal, fontFamily: 'Courier' },
+    deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
+    typingRow: { paddingHorizontal: tokens_1.space.lg, paddingVertical: 5, backgroundColor: tokens_1.color.paper },
+    typingText: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.mute, fontSize: 11, fontStyle: 'italic' }),
     translationRow: {
         flexDirection: 'row',
         alignItems: 'center',

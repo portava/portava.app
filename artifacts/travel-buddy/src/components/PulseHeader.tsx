@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, SlidersHorizontal, MapPin, Pencil, MessageCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { useUnreadCounts } from '../hooks/useMessaging';
+import { NotificationBell } from './NotificationBell';
 
 /** Pulse Wall header — compact city title, status chips, and action icons. */
 export function PulseHeader({
@@ -37,6 +38,9 @@ export function PulseHeader({
         <Activity size={16} color={color.signal} />
         <Text style={styles.title}>{city} Pulse</Text>
         <View style={{ flex: 1 }} />
+
+        {/* Notification bell */}
+        <NotificationBell />
 
         {/* Telegraph / Messages icon */}
         <Pressable style={styles.iconBtn} onPress={() => router.push('/(tabs)/messages')} hitSlop={8}>
