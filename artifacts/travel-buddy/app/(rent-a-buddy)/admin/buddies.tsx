@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Search, Shield, ShieldOff, Star } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
-import { listAdminBuddies, type AdminBuddy } from '../../../src/services/rentABuddyAdmin';
+import { listAdminBuddies, setBuddyLevel, updateBuddyCategories, type AdminBuddy } from '../../../src/services/rentABuddyAdmin';
 import { supabase } from '../../../src/lib/supabase';
 
 const STATUS_FILTERS = ['all', 'active', 'paused', 'suspended'] as const;
@@ -243,7 +243,39 @@ export default function AdminBuddiesScreen() {
                   <Text style={detail.label}>RISK HOLD</Text>
                   <Text style={detail.value}>{selected.riskHold ? 'YES' : 'No'}</Text>
                   <Text style={detail.label}>LEVEL</Text>
-                  <Text style={detail.value}>{selected.buddyLevel ?? 'Standard'}</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: space.sm }}>
+                    {(['standard', 'pro', 'elite'] as const).map(lvl => {
+                      const active = (selected.buddyLevel ?? 'standard').toLowerCase() === lvl;
+                      return (
+                        <Pressable key={lvl} disabled={acting}
+                          style={[detail.btn, active && { backgroundColor: '#3B82F620', borderColor: '#3B82F6' }]}
+                          onPress={async () => {
+                            setActing(true);
+                            await setBuddyLevel(selected.id, lvl);
+                            setActing(false);
+                            setSelected({ ...selected, buddyLevel: lvl });
+                          }}>
+                          <Text style={[detail.btnText, active && { color: '#3B82F6' }]}>{lvl}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={detail.label}>CATEGORIES (toggle to disable)</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: space.sm }}>
+                    {selected.categories.map(cat => (
+                      <Pressable key={cat} disabled={acting}
+                        style={[detail.btn, { backgroundColor: '#10B98120' }]}
+                        onPress={async () => {
+                          setActing(true);
+                          const next = selected.categories.filter(c => c !== cat);
+                          await updateBuddyCategories(selected.id, next);
+                          setActing(false);
+                          setSelected({ ...selected, categories: next });
+                        }}>
+                        <Text style={[detail.btnText, { color: '#10B981' }]}>{cat} ✕</Text>
+                      </Pressable>
+                    ))}
+                  </View>
                   <Text style={detail.label}>FEATURED</Text>
                   <Text style={detail.value}>{selected.featured ? '⭐ Yes' : 'No'}</Text>
                   <Text style={detail.label}>JOINED</Text>

@@ -215,11 +215,15 @@ export async function listAdminBuddies(
 // ── Bookings ───────────────────────────────────────────────────────────────────
 
 export async function listAdminBookings(
-  params: { status?: string; city?: string; page?: number } = {},
+  params: { status?: string; city?: string; category?: string; paymentMode?: string; dateFrom?: string; dateTo?: string; page?: number } = {},
 ): Promise<{ bookings: AdminBooking[]; total: number }> {
   const qs = new URLSearchParams({ page: String(params.page ?? 1) });
   if (params.status) qs.set('status', params.status);
   if (params.city) qs.set('city', params.city);
+  if (params.category) qs.set('category', params.category);
+  if (params.paymentMode) qs.set('paymentMode', params.paymentMode);
+  if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
+  if (params.dateTo) qs.set('dateTo', params.dateTo);
   const res = await adminGet<{ bookings: AdminBooking[]; total: number }>(
     `/api/rent-a-buddy/admin/bookings?${qs}`,
   );
@@ -271,6 +275,23 @@ export async function escalateFlag(
     { notes: notes ?? null },
   );
   return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function suspendApplication(appId: string): Promise<{ ok: boolean }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/applications/${appId}`, {
+    adminStatus: 'suspended',
+  });
+  return res.ok ? { ok: true } : { ok: false };
+}
+
+export async function setBuddyLevel(buddyId: string, level: 'standard' | 'pro' | 'elite'): Promise<{ ok: boolean }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/buddies/${buddyId}/level`, { level });
+  return res.ok ? { ok: true } : { ok: false };
+}
+
+export async function updateBuddyCategories(buddyId: string, categories: string[]): Promise<{ ok: boolean }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/buddies/${buddyId}/categories`, { categories });
+  return res.ok ? { ok: true } : { ok: false };
 }
 
 // ── Analytics ──────────────────────────────────────────────────────────────────

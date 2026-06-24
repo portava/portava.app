@@ -78,14 +78,19 @@ export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTran
         {booking.bookingDate && (
           <View style={styles.metaItem}>
             <Clock size={11} color={color.mute} />
-            <Text style={styles.metaText}>{fmtDate(booking.bookingDate)}</Text>
+            <Text style={styles.metaText}>
+              {fmtDate(booking.bookingDate)}
+              {booking.startTime ? ` · ${booking.startTime.slice(0, 5)}` : ''}
+            </Text>
           </View>
         )}
 
-        {booking.city && (
+        {(booking.routePlan?.[0]?.location || booking.city) && (
           <View style={styles.metaItem}>
             <MapPin size={11} color={color.mute} />
-            <Text style={styles.metaText}>{booking.city}</Text>
+            <Text style={styles.metaText}>
+              {booking.routePlan?.[0]?.location ?? booking.city}
+            </Text>
           </View>
         )}
       </View>

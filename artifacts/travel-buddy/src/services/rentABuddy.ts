@@ -94,6 +94,8 @@ export interface BuddyBooking {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  routePlan: Array<{ location: string; description?: string }>;
+  telegraphThreadId: string | null;
 }
 
 export interface BuddyReview {
@@ -453,6 +455,10 @@ export async function startBooking(bookingId: string, payload?: {
 
 export async function completeBooking(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/complete`, { method: 'POST' });
+}
+
+export async function optInStayConnected(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/stay-connected`, { method: 'POST' });
 }
 
 export async function confirmCashBalance(

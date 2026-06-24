@@ -16,7 +16,7 @@ import { ArrowLeft, Check, X, Clock, Eye } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import {
-  listAdminApplications, reviewApplication, limitApplication,
+  listAdminApplications, reviewApplication, limitApplication, suspendApplication,
   type AdminApplication,
 } from '../../../src/services/rentABuddyAdmin';
 
@@ -276,6 +276,15 @@ export default function AdminApplicationsScreen() {
                   <Pressable style={[detail.btn, { backgroundColor: '#F59E0B20' }]}
                     onPress={() => handleLimit(selected.id)} disabled={limiting}>
                     <Text style={[detail.btnText, { color: '#F59E0B' }]}>Limit</Text>
+                  </Pressable>
+                  <Pressable style={[detail.btn, { backgroundColor: '#EF444420' }]}
+                    onPress={async () => {
+                      await suspendApplication(selected.id);
+                      setSelected(null);
+                      load(1);
+                    }} disabled={limiting || saving}>
+                    <X size={14} color='#EF4444' />
+                    <Text style={[detail.btnText, { color: '#EF4444' }]}>Suspend</Text>
                   </Pressable>
                   <Pressable style={[detail.btn, { backgroundColor: '#10B98120' }]}
                     onPress={() => initiateAction(selected.id, 'approved')} disabled={saving}>

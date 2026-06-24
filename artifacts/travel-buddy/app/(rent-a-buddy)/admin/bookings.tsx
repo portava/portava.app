@@ -72,6 +72,10 @@ export default function AdminBookingsScreen() {
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [cityFilter, setCityFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [items, setItems] = useState<AdminBooking[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -85,6 +89,10 @@ export default function AdminBookingsScreen() {
       const data = await listAdminBookings({
         status: statusFilter === 'all' ? undefined : statusFilter,
         city: cityFilter.trim() || undefined,
+        category: categoryFilter.trim() || undefined,
+        paymentMode: paymentFilter.trim() || undefined,
+        dateFrom: dateFrom.trim() || undefined,
+        dateTo: dateTo.trim() || undefined,
         page: p,
       });
 
@@ -94,7 +102,7 @@ export default function AdminBookingsScreen() {
     } catch (e: any) {
       if (e?.message === 'forbidden') setForbidden(true);
     }
-  }, [statusFilter, cityFilter]);
+  }, [statusFilter, cityFilter, categoryFilter, paymentFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     setLoading(true);
@@ -141,11 +149,45 @@ export default function AdminBookingsScreen() {
       </ScrollView>
       <View style={styles.cityRow}>
         <TextInput
-          style={styles.cityInput}
-          placeholder="Filter by city…"
+          style={[styles.cityInput, { flex: 1 }]}
+          placeholder="City…"
           placeholderTextColor={color.faint}
           value={cityFilter}
           onChangeText={setCityFilter}
+          returnKeyType="search"
+        />
+        <TextInput
+          style={[styles.cityInput, { flex: 1 }]}
+          placeholder="Category…"
+          placeholderTextColor={color.faint}
+          value={categoryFilter}
+          onChangeText={setCategoryFilter}
+          returnKeyType="search"
+        />
+      </View>
+      <View style={styles.cityRow}>
+        <TextInput
+          style={[styles.cityInput, { flex: 1 }]}
+          placeholder="Payment (cash/online)…"
+          placeholderTextColor={color.faint}
+          value={paymentFilter}
+          onChangeText={setPaymentFilter}
+          returnKeyType="search"
+        />
+        <TextInput
+          style={[styles.cityInput, { flex: 1 }]}
+          placeholder="From YYYY-MM-DD…"
+          placeholderTextColor={color.faint}
+          value={dateFrom}
+          onChangeText={setDateFrom}
+          returnKeyType="search"
+        />
+        <TextInput
+          style={[styles.cityInput, { flex: 1 }]}
+          placeholder="To YYYY-MM-DD…"
+          placeholderTextColor={color.faint}
+          value={dateTo}
+          onChangeText={setDateTo}
           returnKeyType="search"
         />
       </View>
@@ -235,7 +277,7 @@ const styles = StyleSheet.create({
   list: { padding: space.lg, gap: space.md, paddingBottom: 48 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { ...t.body, color: color.mute, textAlign: 'center', paddingVertical: space.xxl },
-  cityRow: { paddingHorizontal: space.lg, paddingVertical: space.sm, borderBottomWidth: 1, borderColor: color.haze },
+  cityRow: { flexDirection: 'row', gap: 6, paddingHorizontal: space.lg, paddingVertical: space.sm, borderBottomWidth: 1, borderColor: color.haze },
   cityInput: { backgroundColor: color.haze, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8, ...t.body, color: color.ink },
 });
 
