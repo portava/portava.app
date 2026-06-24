@@ -443,22 +443,28 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   const userId = auth?.user.id ?? null;
   const { buddyId } = req.params;
 
-  const [profileRes, packagesRes, addonsRes, reviewsRes, availRes] = await Promise.all([
+  const [profileRes, packagesRes, addonsRes, availRes] = await Promise.all([
     serviceClient.from("rent_buddy_profiles").select("*").eq("id", buddyId).maybeSingle(),
     serviceClient.from("rent_buddy_packages").select("*").eq("buddy_id", buddyId).eq("is_active", true),
     serviceClient.from("rent_buddy_addons").select("*").eq("buddy_id", buddyId).eq("is_active", true),
-    serviceClient.from("rent_buddy_reviews")
-      .select("*")
-      .eq("reviewee_id", buddyId)
-      .eq("is_public", true)
-      .order("created_at", { ascending: false })
-      .limit(5),
     serviceClient.from("rent_buddy_availability")
       .select("*")
       .eq("buddy_id", buddyId)
       .gte("date", new Date().toISOString().slice(0, 10))
       .limit(30),
   ]);
+
+  // reviewee_id references profiles.id (user_id), not rent_buddy_profiles.id
+  const buddyUserIdForReviews: string = profileRes.data ? (profileRes.data as any).user_id : "";
+  const reviewsRes = buddyUserIdForReviews
+    ? await serviceClient
+        .from("rent_buddy_reviews")
+        .select("*")
+        .eq("reviewee_id", buddyUserIdForReviews)
+        .eq("is_public", true)
+        .order("created_at", { ascending: false })
+        .limit(5)
+    : { data: [] };
 
   let savedByMe = false;
   if (userId && profileRes.data) {
@@ -518,10 +524,21 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 10;
 
+  // reviewee_id references profiles.id (user_id), not rent_buddy_profiles.id
+  const { data: bpRow } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", buddyId)
+    .maybeSingle();
+
+  if (!bpRow) return res.json({ reviews: [], total: 0 });
+
+  const buddyUserId: string = (bpRow as any).user_id;
+
   const { data, count } = await serviceClient
     .from("rent_buddy_reviews")
     .select("*", { count: "exact" })
-    .eq("reviewee_id", buddyId)
+    .eq("reviewee_id", buddyUserId)
     .eq("is_public", true)
     .order("created_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
@@ -1130,6 +1147,100 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change", async (req, re
     .maybeSingle();
 
   return res.status(201).json({ routeChangeRequest: changeReq });
+});
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approve", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId, changeId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  // Only the traveler can approve a buddy-proposed route change
+  if ((booking as any).traveler_id !== auth.user.id) {
+    return res.status(403).json({ error: "forbidden", message: "Only the traveler can approve route changes." });
+  }
+
+  const { data: changeReq } = await serviceClient
+    .from("rent_buddy_route_change_requests")
+    .select("*")
+    .eq("id", changeId)
+    .eq("booking_id", bookingId)
+    .maybeSingle();
+  if (!changeReq) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_route_change_requests")
+    .update({ status: "approved", resolved_at: new Date().toISOString() })
+    .eq("id", changeId);
+
+  // Apply the new route plan to the booking
+  const newStops = (changeReq as any).new_stops_json ?? [];
+  await serviceClient.from("rent_buddy_bookings")
+    .update({ route_plan: newStops, updated_at: new Date().toISOString() })
+    .eq("id", bookingId);
+
+  // Resolve any open safety event created for this unapproved change
+  await serviceClient.from("rent_buddy_safety_events")
+    .update({ event_status: "resolved" })
+    .eq("booking_id", bookingId)
+    .eq("event_type", "route_change_unapproved")
+    .eq("event_status", "open");
+
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/decline", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId, changeId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  if ((booking as any).traveler_id !== auth.user.id) {
+    return res.status(403).json({ error: "forbidden", message: "Only the traveler can decline route changes." });
+  }
+
+  const { data: changeReq } = await serviceClient
+    .from("rent_buddy_route_change_requests")
+    .select("requested_by")
+    .eq("id", changeId)
+    .eq("booking_id", bookingId)
+    .maybeSingle();
+  if (!changeReq) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_route_change_requests")
+    .update({ status: "declined", resolved_at: new Date().toISOString() })
+    .eq("id", changeId);
+
+  // Trust penalty: buddy proposed an unauthorized route deviation, traveler declined
+  const buddyWhoRequested: string = (changeReq as any).requested_by ?? "";
+  if (buddyWhoRequested && buddyWhoRequested !== auth.user.id) {
+    void recordTrustEvent(serviceClient, {
+      userId: buddyWhoRequested,
+      eventType: "rent_buddy_route_change_declined",
+      category: "respect_safety",
+      delta: -5,
+      severity: "minor",
+      sourceType: "booking",
+      sourceId: bookingId,
+    });
+  }
+
+  return res.json({ ok: true });
 });
 
 // ── Bookings — Reviews ────────────────────────────────────────────────────────

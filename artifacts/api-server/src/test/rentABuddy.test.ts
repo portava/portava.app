@@ -138,8 +138,10 @@ function makeClient(userId: string, role = "user") {
         // Handle inserts
         if (this._insertData !== null) {
           const data = Array.isArray(this._insertData) ? this._insertData : [this._insertData];
+          const generatedRows: any[] = [];
           for (const row of data) {
             const r = { id: `gen-${Math.random().toString(36).slice(2)}`, ...row };
+            generatedRows.push(r);
             inserted.push({ table: t, row: r });
             if (t === "trust_events") {
               if (!state.trustEvents) state.trustEvents = [];
@@ -169,8 +171,12 @@ function makeClient(userId: string, role = "user") {
               if (!state.reviews) state.reviews = [];
               state.reviews.push(r);
             }
+            if (t === "rent_buddy_route_change_requests") {
+              if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
+              (state as any).routeChangeRequests.push(r);
+            }
           }
-          if (this._maybeSingle) return { data: data.length === 1 ? { ...data[0], id: `gen-${Math.random().toString(36).slice(2)}` } : null, error: null };
+          if (this._maybeSingle) return { data: generatedRows.length === 1 ? generatedRows[0] : null, error: null };
           return { data: null, error: null };
         }
 
@@ -305,7 +311,32 @@ function makeClient(userId: string, role = "user") {
 
         if (t === "rent_buddy_safety_events") {
           const events = state.safetyEvents ?? [];
+          if (this._updateData !== null) {
+            // handle resolve update
+            return { data: null, error: null };
+          }
           return { data: events, count: events.length, error: null };
+        }
+
+        if (t === "rent_buddy_route_change_requests") {
+          const rcReqs = (state as any).routeChangeRequests ?? [];
+          const eqId = this._filters.find(([op, col]: [string,string,any]) => op === "eq" && col === "id");
+          if (this._insertData !== null) {
+            const newReq = { id: `rcr-${Math.random().toString(36).slice(2)}`, ...this._insertData };
+            if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
+            (state as any).routeChangeRequests.push(newReq);
+            if (this._maybeSingle) return { data: newReq, error: null };
+            return { data: null, error: null };
+          }
+          if (this._updateData !== null) {
+            if (eqId) {
+              const idx = rcReqs.findIndex((r: any) => r.id === eqId[2]);
+              if (idx >= 0) Object.assign(rcReqs[idx], this._updateData);
+            }
+            return { data: null, error: null };
+          }
+          if (eqId && this._maybeSingle) return { data: rcReqs.find((r: any) => r.id === eqId[2]) ?? null, error: null };
+          return { data: rcReqs, error: null };
         }
 
         if (t === "rent_buddy_user_limits") {
@@ -906,5 +937,132 @@ describe("application", () => {
     assert.equal(r.status, 200);
     assert.ok(r.body.application);
     assert.equal(r.body.application.status, "pending");
+  });
+});
+
+// ── Review display fix — reviewee_id uses user_id not profile_id ─────────────
+
+describe("review display (ID domain regression)", () => {
+  it("review is stored with buddy user_id as reviewee_id, not profile_id", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          booking_date: new Date().toISOString().slice(0, 10),
+          status: "completed", payment_mode: "full_in_app",
+          total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          cash_balance_confirmed_by_traveler: null,
+          cash_balance_confirmed_by_buddy: null,
+          safety_status: "normal", route_plan: [],
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/review`, {
+      rating: 5, body: "Great experience!",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    // reviewee_id must be the buddy's user_id (BUDDY_USER), not the profile id (BUDDY_PROF)
+    const savedReview = (state.reviews ?? [])[0];
+    assert.ok(savedReview, "Review should be saved in state");
+    assert.equal(savedReview.reviewee_id, BUDDY_USER,
+      `reviewee_id should be buddy user_id (${BUDDY_USER}), got ${savedReview.reviewee_id}`);
+    assert.notEqual(savedReview.reviewee_id, BUDDY_PROF,
+      "reviewee_id must NOT be the rent_buddy_profiles.id (profile id)");
+  });
+
+  it("buddy profile reviews endpoint looks up by user_id, not profile_id", async () => {
+    // Seed reviews stored with reviewee_id = BUDDY_USER (user_id) — not BUDDY_PROF (profile id)
+    setupState({
+      reviews: [
+        { id: "rev-1", booking_id: BOOKING_ID, reviewer_id: USER_ID, reviewee_id: BUDDY_USER,
+          role: "traveler", rating: 5, body: "Excellent!", is_public: true,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      ],
+    });
+    const r = await req("GET", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/reviews`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    // Should find the review because BUDDY_PROF.user_id = BUDDY_USER
+    assert.equal(r.body.total, 1,
+      "Review should be returned when filtering by buddy user_id via profile lookup");
+    assert.equal(r.body.reviews[0].reviewee_id, BUDDY_USER);
+  });
+});
+
+// ── Route-change approval / decline ──────────────────────────────────────────
+
+describe("route-change approval workflow", () => {
+  it("buddy can propose a route change and it creates a safety event", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          booking_date: new Date().toISOString().slice(0, 10),
+          status: "in_progress", payment_mode: "full_in_app",
+          total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          safety_status: "normal", route_plan: [],
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change`, {
+      newStops: [{ name: "Shinjuku Park", lat: 35.689, lng: 139.692 }],
+      reason: "More scenic option",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const safetyEvents = state.safetyEvents ?? [];
+    const routeEvent = safetyEvents.find((e: any) => e.event_type === "route_change_unapproved");
+    assert.ok(routeEvent, "Should create a route_change_unapproved safety event for buddy-initiated changes");
+  });
+
+  it("traveler can approve a route change request", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          booking_date: new Date().toISOString().slice(0, 10),
+          status: "in_progress", payment_mode: "full_in_app",
+          total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          safety_status: "normal", route_plan: [],
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    // First create a route change request
+    const proposeRes = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change`, {
+      newStops: [{ name: "Ueno Park" }], reason: "nice spot",
+    }, BUDDY_TOKEN);
+    assert.equal(proposeRes.status, 201);
+    const changeId = proposeRes.body.routeChangeRequest?.id;
+    assert.ok(changeId, "Should return route change request id");
+
+    // Traveler approves it
+    const approveRes = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change/${changeId}/approve`);
+    assert.equal(approveRes.status, 200, JSON.stringify(approveRes.body));
+    assert.ok(approveRes.body.ok);
+  });
+
+  it("only the traveler can approve a route change — buddy gets 403", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          booking_date: new Date().toISOString().slice(0, 10),
+          status: "in_progress", payment_mode: "full_in_app",
+          total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          safety_status: "normal", route_plan: [],
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const proposeRes = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change`, {
+      newStops: [{ name: "Shibuya" }], reason: "faster",
+    }, BUDDY_TOKEN);
+    assert.equal(proposeRes.status, 201);
+    const changeId = proposeRes.body.routeChangeRequest?.id;
+
+    // Buddy tries to self-approve — should be 403
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change/${changeId}/approve`, undefined, BUDDY_TOKEN);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
   });
 });
