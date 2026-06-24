@@ -31,10 +31,11 @@
  *   so we pass `tag.matchToken` — NOT `tag.id` — as the sheet `id` prop.
  */
 import React, { useState } from 'react';
-import { Text, StyleSheet, type TextStyle, type StyleProp } from 'react-native';
+import { Text, StyleSheet, Alert, type TextStyle, type StyleProp } from 'react-native';
 import { router } from 'expo-router';
 import { color } from '../theme/tokens';
 import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet';
+import { removeSelfTag } from '../services/tagging';
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -61,6 +62,8 @@ export interface RichTextTag {
   isDeleted?: boolean;
   /** When true the target is private/inaccessible → plain text. */
   isPrivate?: boolean;
+  /** UUID of the `tags` table row — provided so the tagged user can self-remove. */
+  tagRowId?: string;
 }
 
 /** A persisted #hashtag annotation returned by the API (from `hashtag_usage`). */
@@ -89,6 +92,11 @@ export interface RichTextProps {
   mentionColor?: string;
   /** Colour override for #hashtags on dark/inverted backgrounds. */
   hashtagColor?: string;
+  /**
+   * When provided, long-pressing the viewer's own @mention shows a
+   * "Remove this tag" action (calls DELETE /api/tags/:id).
+   */
+  currentUserId?: string;
 }
 
 // ── Internal segment types ─────────────────────────────────────────────────────
@@ -210,8 +218,10 @@ export function RichText({
   disableNavigation,
   mentionColor,
   hashtagColor,
+  currentUserId,
 }: RichTextProps) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [removedTagRowIds, setRemovedTagRowIds] = useState<Set<string>>(new Set());
 
   const hasTags     = (tags?.length ?? 0) > 0;
   const hasHashtags = (hashtagUsages?.length ?? 0) > 0;
@@ -230,16 +240,55 @@ export function RichText({
     }
 
     if (seg.kind === 'mention') {
+      // Self-removed tags render as plain text immediately without a round-trip
+      if (seg.tag.tagRowId && removedTagRowIds.has(seg.tag.tagRowId)) {
+        return <Text key={i}>{seg.displayText}</Text>;
+      }
       if (!seg.interactive) {
         return <Text key={i}>{seg.displayText}</Text>;
       }
       const canNav = !disableNavigation && canNavigateShortPress(seg.tag);
+
+      // Self-tag: long-press shows "Remove this tag" action sheet
+      const isSelfTag =
+        currentUserId &&
+        seg.tag.type === 'user' &&
+        seg.tag.id === currentUserId &&
+        !!seg.tag.tagRowId;
+
+      const handleLongPress = isSelfTag
+        ? () => {
+            const tagRowId = seg.tag.tagRowId!;
+            Alert.alert(
+              'Tag options',
+              undefined,
+              [
+                {
+                  text: 'Remove this tag',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const res = await removeSelfTag(tagRowId);
+                    if (res.ok) {
+                      setRemovedTagRowIds((prev) => new Set(prev).add(tagRowId));
+                    } else {
+                      Alert.alert('Could not remove tag', res.error ?? 'Please try again.');
+                    }
+                  },
+                },
+                { text: 'View profile', onPress: () => setPreview({ kind: 'tag', tag: seg.tag }) },
+                { text: 'Cancel', style: 'cancel' },
+              ],
+              { cancelable: true },
+            );
+          }
+        : () => setPreview({ kind: 'tag', tag: seg.tag });
+
       return (
         <Text
           key={i}
           style={[_s.mention, mentionColor ? { color: mentionColor } : null]}
           onPress={canNav ? () => navigateTag(seg.tag) : undefined}
-          onLongPress={() => setPreview({ kind: 'tag', tag: seg.tag })}
+          onLongPress={handleLongPress}
           suppressHighlighting={canNav}
         >
           {seg.displayText}

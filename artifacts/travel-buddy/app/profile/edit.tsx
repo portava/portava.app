@@ -13,6 +13,10 @@ import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername
 import type { OwnProfile } from '../../src/types/models';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import {
+  getTagPermission, updateTagPermission,
+  type TagPermission, TAG_PERMISSION_OPTIONS,
+} from '../../src/services/tagging';
 
 const BIO_MAX = 300;
 
@@ -63,6 +67,7 @@ interface FormState {
   coverUrl: string | null;
   preferredLanguage: string | null;
   dateOfBirth: string | null;
+  tagPermission: TagPermission;
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -86,6 +91,7 @@ export default function EditProfileScreen() {
     coverUrl: null,
     preferredLanguage: null,
     dateOfBirth: null,
+    tagPermission: 'anyone',
   });
 
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
@@ -110,13 +116,20 @@ export default function EditProfileScreen() {
     form.avatarUri !== originalForm.avatarUri ||
     form.coverUri !== originalForm.coverUri ||
     form.preferredLanguage !== originalForm.preferredLanguage ||
-    form.dateOfBirth !== originalForm.dateOfBirth
+    form.dateOfBirth !== originalForm.dateOfBirth ||
+    form.tagPermission !== originalForm.tagPermission
   );
 
   useEffect(() => {
     let alive = true;
-    getMyProfile().then((res) => {
+    Promise.all([
+      getMyProfile(),
+      getTagPermission(),
+    ]).then(([res, tagPermRes]) => {
       if (!alive) return;
+      const tagPerm: TagPermission = tagPermRes.ok && tagPermRes.data
+        ? tagPermRes.data.tagPermission
+        : 'anyone';
       if (res.ok && res.data) {
         const p = res.data as OwnProfile;
         setProfile(p);
@@ -133,6 +146,7 @@ export default function EditProfileScreen() {
           coverUrl: p.coverPhotoUrl,
           preferredLanguage: langFromCtx,
           dateOfBirth: p.dateOfBirth ?? null,
+          tagPermission: tagPerm,
         };
         setForm(initial);
         setOriginalForm(initial);
@@ -335,22 +349,28 @@ export default function EditProfileScreen() {
     }
 
     const langChanged = form.preferredLanguage !== (originalForm?.preferredLanguage ?? null);
+    const tagPermChanged = form.tagPermission !== (originalForm?.tagPermission ?? 'anyone');
 
-    if (Object.keys(patch).length === 0 && !langChanged) {
+    if (Object.keys(patch).length === 0 && !langChanged && !tagPermChanged) {
       setSaving(false);
       router.back();
       return;
     }
 
-    // Save language via canonical endpoint; save other profile fields via updateMyProfile
-    const [langRes, profileRes] = await Promise.all([
+    // Save language + tag permission via canonical endpoints; other fields via updateMyProfile
+    const [langRes, profileRes, tagPermRes] = await Promise.all([
       langChanged ? updateLanguage(form.preferredLanguage) : Promise.resolve({ ok: true as const }),
       Object.keys(patch).length > 0 ? updateMyProfile(patch) : Promise.resolve({ ok: true as const }),
+      tagPermChanged ? updateTagPermission(form.tagPermission) : Promise.resolve({ ok: true as const }),
     ]);
     setSaving(false);
 
     if (!langRes.ok) {
-      setSaveError(langRes.message ?? 'Failed to save language preference');
+      setSaveError((langRes as any).message ?? 'Failed to save language preference');
+      return;
+    }
+    if (!tagPermRes.ok) {
+      setSaveError((tagPermRes as any).error ?? 'Failed to save tag permission');
       return;
     }
     if (!profileRes.ok) {
@@ -562,6 +582,30 @@ export default function EditProfileScreen() {
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.visibilityLabel, form.visibility === opt.key && styles.visibilityLabelActive]}>
+                          {opt.label}
+                        </Text>
+                        <Text style={styles.visibilityDesc}>{opt.desc}</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Who can tag me */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Who can @mention me</Text>
+                <View style={styles.visibilityOptions}>
+                  {TAG_PERMISSION_OPTIONS.map((opt) => (
+                    <Pressable
+                      key={opt.key}
+                      style={styles.visibilityOption}
+                      onPress={() => setForm((f) => ({ ...f, tagPermission: opt.key }))}
+                    >
+                      <View style={styles.visibilityRadio}>
+                        {form.tagPermission === opt.key && <View style={styles.visibilityRadioDot} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.visibilityLabel, form.tagPermission === opt.key && styles.visibilityLabelActive]}>
                           {opt.label}
                         </Text>
                         <Text style={styles.visibilityDesc}>{opt.desc}</Text>

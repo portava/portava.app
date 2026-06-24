@@ -117,6 +117,23 @@ Rules:
     locationLines.push(`- Nearby verified places: ${names}`);
   }
 
+  // Followed hashtags context — enrich recommendations with the user's interest tags.
+  // Non-fatal: a failure falls back to no hashtag context.
+  let followedHashtagSlugs: string[] = [];
+  try {
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: followRows } = await sc
+        .from("user_hashtag_follows")
+        .select("hashtags(slug)")
+        .eq("user_id", auth.user.id)
+        .limit(15);
+      followedHashtagSlugs = ((followRows ?? []) as any[])
+        .map((r: any) => r.hashtags?.slug)
+        .filter(Boolean) as string[];
+    }
+  } catch { /* non-fatal */ }
+
   const userPrompt = `Generate ${count} activity recommendations.
 
 Traveler context:
@@ -125,6 +142,7 @@ Traveler context:
 - Travel style: ${travelStyle ?? "explorer"}
 - Preferred language: ${defaultLanguage ?? "en"}
 ${tripDates ? `- Trip: ${tripDates.start} → ${tripDates.end}` : ""}
+${followedHashtagSlugs.length > 0 ? `- Followed hashtags: ${followedHashtagSlugs.map((s) => `#${s}`).join(", ")}` : ""}
 ${locationLines.length > 0 ? `\nLocation context (city-level only, no exact coords):\n${locationLines.join("\n")}` : ""}
 ${weatherBrief ? `- Weather forecast: ${weatherBrief}` : ""}
 ${conversationContext ? `- Chat context: "${conversationContext}"` : ""}

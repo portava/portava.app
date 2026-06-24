@@ -52,6 +52,25 @@ async function apiPost<T>(path: string): Promise<{ ok: boolean; data?: T; error?
   }
 }
 
+async function apiPostJson<T>(path: string, body: unknown): Promise<{ ok: boolean; data?: T; error?: string }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      return { ok: false, error: (b as any)?.message ?? res.statusText };
+    }
+    return { ok: true, data: (await res.json()) as T };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 async function apiDelete<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
@@ -165,4 +184,36 @@ export async function getHashtagFeed(
 
 export async function getUserByHandle(handle: string) {
   return apiGet<UserPreview>(`/api/users/by-handle/${encodeURIComponent(handle)}`);
+}
+
+// ── Trending hashtags ──────────────────────────────────────────────────────────
+
+export interface TrendingHashtag {
+  id: string;
+  slug: string;
+  name: string;
+  usageCount: number;
+  trendingScore: number;
+}
+
+export async function getTrendingHashtags(
+  scope: 'global' | 'city' = 'city',
+  city?: string | null,
+) {
+  const qs = new URLSearchParams({ scope });
+  if (city) qs.set('city', city);
+  return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null }>(
+    `/api/hashtags/trending?${qs}`,
+  );
+}
+
+// ── Hashtag reporting ──────────────────────────────────────────────────────────
+
+export type HashtagReportReason = 'spam' | 'misleading' | 'abusive';
+
+export async function reportHashtag(slug: string, reason: HashtagReportReason) {
+  return apiPostJson<{ ok: boolean }>(
+    `/api/hashtags/${encodeURIComponent(slug)}/report`,
+    { reason },
+  );
 }

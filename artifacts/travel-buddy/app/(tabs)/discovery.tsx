@@ -3,11 +3,12 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane, Users,
+  Calendar, Waves, Navigation, Plane, Users, Hash,
 } from 'lucide-react-native';
+import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
@@ -70,6 +71,14 @@ export default function DiscoveryHub() {
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
   const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
+  const currentCity = locationState.place.city ?? null;
+
+  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
+  useEffect(() => {
+    getTrendingHashtags('city', currentCity).then((res) => {
+      if (res.ok && res.data) setTrendingHashtags(res.data.trending.slice(0, 12));
+    }).catch(() => {});
+  }, [currentCity]);
 
   // Deep-link: ?category=food navigates to that tab on mount
   const params = useLocalSearchParams<{ category?: string }>();
@@ -322,6 +331,32 @@ export default function DiscoveryHub() {
           sessionViewedIds={sessionViewedIds}
           onMarkViewed={markSessionViewed}
         />
+      )}
+
+      {/* ── Trending hashtags strip ── */}
+      {trendingHashtags.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.trendingBar}
+          contentContainerStyle={styles.trendingBarContent}
+        >
+          {trendingHashtags.map((ht) => (
+            <Pressable
+              key={ht.id}
+              style={styles.trendingChip}
+              onPress={() => router.push(`/hashtag/${ht.slug}` as any)}
+            >
+              <Hash size={10} color={color.deep} />
+              <Text style={styles.trendingChipText}>{ht.slug}</Text>
+              {ht.usageCount > 0 && (
+                <Text style={styles.trendingChipCount}>
+                  {ht.usageCount >= 1000 ? `${(ht.usageCount / 1000).toFixed(1)}k` : String(ht.usageCount)}
+                </Text>
+              )}
+            </Pressable>
+          ))}
+        </ScrollView>
       )}
 
       {/* ── Active tab content ── */}
@@ -586,4 +621,36 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   layoverFabText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+
+  trendingBar: {
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingTop: 4,
+  },
+  trendingBarContent: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.xs,
+    gap: space.xs,
+    flexDirection: 'row',
+  },
+  trendingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: color.deep + '12',
+    borderWidth: 1,
+    borderColor: color.deep + '22',
+  },
+  trendingChipText: {
+    ...t.small,
+    color: color.deep,
+    fontWeight: '600' as const,
+  },
+  trendingChipCount: {
+    fontSize: 10,
+    color: color.mute,
+  },
 });

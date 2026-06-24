@@ -11,16 +11,16 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  Modal, View, Text, Pressable, StyleSheet, ActivityIndicator, Image,
+  Modal, View, Text, Pressable, StyleSheet, ActivityIndicator, Image, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  X, Hash, User, Plane, Users, Calendar, MapPin,
+  X, Hash, User, Plane, Users, Calendar, MapPin, Flag,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import {
-  getHashtag, getUserByHandle, followHashtag, unfollowHashtag,
+  getHashtag, getUserByHandle, followHashtag, unfollowHashtag, reportHashtag,
   type HashtagMeta, type UserPreview,
 } from '../services/hashtag';
 import type { RichTextEntityType } from './RichText';
@@ -91,6 +91,42 @@ function HashtagCard({
   onFollow: () => void;
   onNavigate: () => void;
 }) {
+  const [reportBusy, setReportBusy] = useState(false);
+
+  function handleReport() {
+    Alert.alert(
+      'Report hashtag',
+      `Why are you reporting #${data.slug}?`,
+      [
+        {
+          text: 'Spam',
+          onPress: () => submitReport('spam'),
+        },
+        {
+          text: 'Misleading',
+          onPress: () => submitReport('misleading'),
+        },
+        {
+          text: 'Abusive',
+          onPress: () => submitReport('abusive'),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true },
+    );
+  }
+
+  async function submitReport(reason: 'spam' | 'misleading' | 'abusive') {
+    setReportBusy(true);
+    const res = await reportHashtag(data.slug, reason);
+    setReportBusy(false);
+    if (res.ok) {
+      Alert.alert('Report submitted', 'Thanks for helping keep Travel Buddy safe.');
+    } else {
+      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
+    }
+  }
+
   return (
     <View style={s.card}>
       <View style={[s.typeIconWrap, { backgroundColor: color.deep + '15' }]}>
@@ -118,6 +154,15 @@ function HashtagCard({
           <Text style={s.viewBtnText}>View feed</Text>
         </Pressable>
       </View>
+      <Pressable style={s.reportBtn} onPress={handleReport} disabled={reportBusy}>
+        {reportBusy
+          ? <ActivityIndicator size="small" color={color.faint} />
+          : <>
+              <Flag size={12} color={color.faint} />
+              <Text style={s.reportBtnText}>Report hashtag</Text>
+            </>
+        }
+      </Pressable>
     </View>
   );
 }
@@ -363,6 +408,12 @@ const s = StyleSheet.create({
   hashtagSlug: { ...t.title, color: color.ink, textAlign: 'center' },
   entityTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center', fontWeight: '700' },
   entitySub: { ...t.small, color: color.mute },
+
+  reportBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: space.xs, opacity: 0.6,
+  },
+  reportBtnText: { ...t.small, color: color.faint },
 
   ctaRow: { flexDirection: 'row', gap: space.sm, width: '100%', paddingTop: space.xs },
   followBtn: {

@@ -311,6 +311,49 @@ router.patch('/me/tag-permission', async (req, res) => {
   res.status(200).json({ tagPermission: (data as any).tag_permission });
 });
 
+// ─── DELETE /api/tags/:id — tagged user removes their own @mention tag ────────
+
+router.delete('/tags/:id', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const tagId = req.params.id;
+  if (!isUuid(tagId)) {
+    sendError(res, 'invalid_payload', 'Invalid tag id');
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const { data: existing } = await sc
+    .from('tags')
+    .select('id, tagged_user_id')
+    .eq('id', tagId)
+    .maybeSingle();
+
+  if (!existing) {
+    sendError(res, 'not_found', 'Tag not found');
+    return;
+  }
+
+  if ((existing as any).tagged_user_id !== user.id) {
+    sendError(res, 'forbidden', 'You can only remove your own tags');
+    return;
+  }
+
+  const { error } = await sc.from('tags').delete().eq('id', tagId);
+
+  if (error) {
+    req.log.error({ err: error }, 'tags/:id self-delete failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true });
+});
+
 // ─── DELETE /api/admin/tags/:id ───────────────────────────────────────────────
 
 router.delete('/admin/tags/:id', async (req, res) => {

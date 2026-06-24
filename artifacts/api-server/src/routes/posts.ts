@@ -510,7 +510,38 @@ router.get("/posts", async (req, res) => {
     };
   });
 
-  res.status(200).json({ posts: mergedGlobal, feed: "global" });
+  // ── Hashtag boost for followed hashtags ──────────────────────────────────────
+  // Posts that share at least one hashtag with the viewer's followed set are
+  // surfaced slightly higher.  This is a soft-boost (re-sort within the page),
+  // not a hard filter — the feed always contains non-followed posts too.
+  const boostedPostIds = new Set<string>();
+  try {
+    if (globalPostIds.length > 0) {
+      const { data: followedRows } = await svc
+        .from("user_hashtag_follows")
+        .select("hashtag_id")
+        .eq("user_id", user.id);
+      const followedHashtagIds = (followedRows ?? []).map((r: any) => r.hashtag_id as string);
+      if (followedHashtagIds.length > 0) {
+        const { data: matchRows } = await svc
+          .from("hashtag_usage")
+          .select("source_id")
+          .eq("source_type", "post")
+          .in("source_id", globalPostIds)
+          .in("hashtag_id", followedHashtagIds);
+        for (const r of matchRows ?? []) boostedPostIds.add((r as any).source_id as string);
+      }
+    }
+  } catch { /* non-fatal — serve feed without boost on error */ }
+
+  const finalPosts = boostedPostIds.size === 0
+    ? mergedGlobal
+    : [
+        ...mergedGlobal.filter((p) => boostedPostIds.has(p.id)).map((p) => ({ ...p, hashtagBoosted: true })),
+        ...mergedGlobal.filter((p) => !boostedPostIds.has(p.id)),
+      ];
+
+  res.status(200).json({ posts: finalPosts, feed: "global" });
 });
 
 /* ===========================================================================

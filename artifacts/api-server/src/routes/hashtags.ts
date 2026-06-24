@@ -712,6 +712,45 @@ router.get('/me/hashtag-follows', async (req, res) => {
   res.status(200).json({ follows });
 });
 
+// ─── POST /api/hashtags/:slug/report ─────────────────────────────────────────
+
+const ReportSchema = z.object({
+  reason: z.enum(['spam', 'misleading', 'abusive']),
+});
+
+router.post('/hashtags/:slug/report', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const slug = req.params.slug.toLowerCase().replace(/^#/, '');
+  const parsed = ReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid body');
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const { data: ht } = await sc.from('hashtags').select('id').eq('slug', slug).maybeSingle();
+  if (!ht) { sendError(res, 'not_found', 'Hashtag not found'); return; }
+
+  const { error } = await sc.from('hashtag_reports').insert({
+    hashtag_id: (ht as any).id,
+    reporter_id: user.id,
+    reason: parsed.data.reason,
+  });
+
+  if (error) {
+    req.log.error({ err: error }, 'hashtag report insert failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(201).json({ ok: true });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN ROUTES
 // ═══════════════════════════════════════════════════════════════════════════════

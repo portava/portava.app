@@ -40,6 +40,8 @@ export interface SpanTag {
   isBlocked?: boolean;
   /** True when the user's profile no longer exists → render as plain text. */
   isDeleted?: boolean;
+  /** UUID of the `tags` table row — provided so the tagged user can self-remove. */
+  tagRowId?: string;
 }
 
 export interface SpanHashtag {
@@ -71,6 +73,7 @@ interface RawTag {
   matchToken: string;
   isBlocked?: boolean;
   isDeleted?: boolean;
+  tagRowId?: string;
 }
 
 interface RawHashtag {
@@ -105,6 +108,7 @@ function computePositions(
         matchToken: tag.matchToken,
         startChar: m.index,
         endChar: m.index + m[0].length,
+        ...(tag.tagRowId   ? { tagRowId:   tag.tagRowId } : {}),
         ...(tag.isBlocked  ? { isBlocked:  true } : {}),
         ...(tag.isDeleted  ? { isDeleted:  true } : {}),
       });
@@ -168,7 +172,7 @@ export async function enrichSpans(
   // ── User-mention tags ──────────────────────────────────────────────────────
   const { data: tagRows } = await sc
     .from('tags')
-    .select('source_id, tagged_user_id')
+    .select('id, source_id, tagged_user_id')
     .eq('source_type', sourceType)
     .in('source_id', sourceIds);
 
@@ -217,6 +221,7 @@ export async function enrichSpans(
       type: 'user',
       id: uid,
       matchToken: handle ?? '',
+      tagRowId: row.id as string,
       ...(blockedSet.has(uid)  ? { isBlocked:  true } : {}),
       ...(!handle              ? { isDeleted:  true } : {}),
     });
