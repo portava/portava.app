@@ -179,8 +179,8 @@ export async function liftTrustRestriction(
   targetUser: string,
   reason: string,
 ): Promise<{ ok: boolean }> {
-  const res = await authedFetch(trustUrl('restrictions', restrictionId), {
-    method: 'DELETE',
+  const res = await authedFetch(trustUrl('restrictions', restrictionId, 'remove'), {
+    method: 'POST',
     body: JSON.stringify({ targetUser, reason }),
   });
   if (!res.ok) {

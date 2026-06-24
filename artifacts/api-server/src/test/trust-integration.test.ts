@@ -482,6 +482,14 @@ describe("trust-admin routes — restrict / remove restriction", () => {
     });
     assert.equal(status, 400);
   });
+
+  it("DELETE /admin/trust/restrictions/:id (old endpoint) is NOT registered — returns 404", async () => {
+    // Regression guard: mobile service must use POST /:id/remove, not DELETE /:id
+    // If this starts passing with 200, a DELETE route was re-added and the contract broke.
+    setClients({ role: "admin" });
+    const { status } = await httpReq("DELETE", `/admin/trust/restrictions/00000000-0000-0000-0000-00000000aa01`);
+    assert.notEqual(status, 200, "DELETE endpoint must not be registered — use POST /:id/remove");
+  });
 });
 
 // ── POST /admin/trust/users/:userId/cap/override ──────────────────────────────
