@@ -1,67 +1,18 @@
 /**
  * Rent a Buddy — full implementation
  *
- * All routes are gated by requireRentBuddyEnabled (feature flag).
- * Policy scanner runs on user-generated text at write time.
+ * All non-admin routes are gated by requireRentBuddyEnabled (feature flag).
+ * Admin routes intentionally bypass the flag so admins can manage the feature
+ * even while it is disabled (e.g. review applications, handle flags).
  *
- * POST   /api/rent-a-buddy/search
- * GET    /api/rent-a-buddy/buddies/:buddyId
- * GET    /api/rent-a-buddy/buddies/:buddyId/availability
- * GET    /api/rent-a-buddy/buddies/:buddyId/reviews
- * POST   /api/rent-a-buddy/bookings
- * GET    /api/rent-a-buddy/bookings
- * GET    /api/rent-a-buddy/bookings/:bookingId
- * POST   /api/rent-a-buddy/bookings/:bookingId/accept
- * POST   /api/rent-a-buddy/bookings/:bookingId/decline
- * POST   /api/rent-a-buddy/bookings/:bookingId/start
- * POST   /api/rent-a-buddy/bookings/:bookingId/complete
- * POST   /api/rent-a-buddy/bookings/:bookingId/cancel
- * POST   /api/rent-a-buddy/bookings/:bookingId/confirm-cash
- * POST   /api/rent-a-buddy/bookings/:bookingId/route
- * POST   /api/rent-a-buddy/bookings/:bookingId/route-change
- * POST   /api/rent-a-buddy/bookings/:bookingId/review
- * POST   /api/rent-a-buddy/bookings/:bookingId/report
- * POST   /api/rent-a-buddy/bookings/:bookingId/safety/checkin
- * POST   /api/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe
- * POST   /api/rent-a-buddy/bookings/:bookingId/safety/end-early
- * POST   /api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase
- * GET    /api/rent-a-buddy/apply
- * POST   /api/rent-a-buddy/apply
- * GET    /api/rent-a-buddy/me/profile
- * PATCH  /api/rent-a-buddy/me/profile
- * PATCH  /api/rent-a-buddy/me/availability
- * GET    /api/rent-a-buddy/me/requests
- * GET    /api/rent-a-buddy/saved
- * POST   /api/rent-a-buddy/saved/:buddyId
- * DELETE /api/rent-a-buddy/saved/:buddyId
- * GET    /api/rent-a-buddy/waitlist
- * POST   /api/rent-a-buddy/waitlist
- * DELETE /api/rent-a-buddy/waitlist/:city
- * GET    /api/rent-a-buddy/dashboard
- * GET    /api/rent-a-buddy/dashboard/requests
- * PATCH  /api/rent-a-buddy/dashboard/offer
- * GET    /api/rent-a-buddy/dashboard/availability
- * POST   /api/rent-a-buddy/dashboard/availability
- * GET    /api/rent-a-buddy/dashboard/packages
- * POST   /api/rent-a-buddy/dashboard/packages
- * PATCH  /api/rent-a-buddy/dashboard/packages/:packageId
- * DELETE /api/rent-a-buddy/dashboard/packages/:packageId
- * GET    /api/rent-a-buddy/dashboard/addons
- * POST   /api/rent-a-buddy/dashboard/addons
- * PATCH  /api/rent-a-buddy/dashboard/addons/:addonId
- * DELETE /api/rent-a-buddy/dashboard/addons/:addonId
- * GET    /api/rent-a-buddy/dashboard/earnings
- * GET    /api/rent-a-buddy/admin/applications
- * PATCH  /api/rent-a-buddy/admin/applications/:appId
- * GET    /api/rent-a-buddy/admin/buddies
- * GET    /api/rent-a-buddy/admin/bookings
- * GET    /api/rent-a-buddy/admin/analytics
- * GET    /api/rent-a-buddy/admin/safety/flags
- * POST   /api/rent-a-buddy/admin/safety/flags/:flagId/dismiss
- * POST   /api/rent-a-buddy/admin/safety/flags/:flagId/confirm
- * GET    /api/rent-a-buddy/admin/safety/events
- * POST   /api/rent-a-buddy/admin/users/:userId/limits
- * PATCH  /api/rent-a-buddy/admin/users/:userId/limits
+ * IDENTITY CONTRACT
+ * ─────────────────
+ * rent_buddy_profiles.id       → "buddyProfileId"  (used as buddy_id in bookings)
+ * rent_buddy_profiles.user_id  → "buddyUserId"     (= profiles.id, used in FKs to profiles)
+ * rent_buddy_bookings.traveler_id                  (= profiles.id, user ID)
+ *
+ * When writing to tables with FK → profiles(id), always use the *user_id*, never
+ * the buddy profile id.
  */
 
 import { Router } from "express";
@@ -81,12 +32,13 @@ export const POLICY_TEXT =
 const PRIVATE_LOCATION_PATTERNS = [
   /private\s+hotel\s+room/i,
   /come\s+to\s+my\s+room/i,
-  /my\s+room/i,
+  /\bmy\s+room\b/i,
   /hotel\s+room/i,
-  /private\s+home/i,
-  /my\s+place/i,
+  /\bmy\s+place\b/i,
   /my\s+apartment/i,
   /my\s+airbnb/i,
+  /\bmy\s+home\b/i,
+  /private\s+home/i,
 ];
 
 function isPrivateLocation(text: string): boolean {
@@ -101,38 +53,58 @@ const POLICY_RULES: Array<{
   severity: "low" | "medium" | "high" | "critical";
 }> = [
   {
-    patterns: [/escort/i, /girlfriend\s+experience/i, /boyfriend\s+experience/i, /gfe\b/i, /bfe\b/i],
+    patterns: [/\bescort\b/i, /girlfriend\s+experience/i, /boyfriend\s+experience/i, /\bgfe\b/i, /\bbfe\b/i],
     category: "adult_service",
     severity: "critical",
   },
   {
-    patterns: [/adult\s+service/i, /sexual\s+service/i, /sex\s+work/i, /sex\b.*for\s+hire/i],
+    patterns: [/\badult\s+service/i, /\bsexual\s+service/i, /\bsex\s+work\b/i, /\bsex\b.*\bfor\s+hire\b/i],
     category: "adult_service",
     severity: "critical",
   },
   {
-    patterns: [/massage\b/i],
+    patterns: [/\bprostitut/i, /\bcall\s+girl\b/i, /\bcall\s+boy\b/i, /\bsugarbaby\b/i, /\bsugar\s+baby\b/i],
+    category: "adult_service",
+    severity: "critical",
+  },
+  {
+    patterns: [/\bmassage\s+with\s+(happy|happy[-\s]ending|extra|sexual)/i, /\bhappy\s+ending\b/i],
+    category: "adult_massage",
+    severity: "critical",
+  },
+  {
+    patterns: [/\bmassage\b/i, /\bbody\s+rub\b/i],
     category: "massage_service",
     severity: "medium",
   },
   {
-    patterns: [/\bhookup\b/i, /date\s+me/i, /romantic\s+service/i, /romantic\s+companion/i],
+    patterns: [/\bhookup\b/i, /\bdate\s+me\b/i, /\bromantic\s+service/i, /\bromantic\s+companion/i, /\bintimate\s+time\b/i],
     category: "romantic_service",
     severity: "high",
   },
   {
-    patterns: [/\bsex\b/i],
+    patterns: [/\bsex\b/i, /\bsexy\b/i],
     category: "explicit",
     severity: "high",
   },
   {
-    patterns: [/off[-\s]?app/i, /pay\s+outside/i, /cash\s+only\s+outside/i, /venmo\s+me/i, /paypal\s+me/i],
+    patterns: [/\boff[-\s]?app\b/i, /\bpay\s+outside\b/i, /\bcash\s+only\b.*\boutside\b/i, /\bvenmo\s+me\b/i, /\bpaypal\s+me\b/i, /\bbank\s+transfer\s+only\b/i, /\bno\s+app\s+payment\b/i],
     category: "off_app_payment",
-    severity: "medium",
+    severity: "high",
   },
   {
-    patterns: [/\bdrugs?\b/i, /\bweed\b/i, /\bcocaine\b/i, /\bheroin\b/i, /\bmeth\b/i, /\bmdma\b/i],
+    patterns: [/\bdrugs?\b(?!\s+store)/i, /\bweed\b/i, /\bcocaine\b/i, /\bheroin\b/i, /\bmeth\b/i, /\bmdma\b/i, /\becstasy\b/i, /\bketamine\b/i, /\bsupply\s+drugs?\b/i],
     category: "drugs",
+    severity: "high",
+  },
+  {
+    patterns: [/\bweapon\b/i, /\bknife\b/i, /\bgun\b/i, /\bfirearm\b/i],
+    category: "weapons",
+    severity: "critical",
+  },
+  {
+    patterns: [/\balone\s+in\s+my\s+room\b/i, /\bno\s+one\s+will\s+know\b/i, /\bkeep\s+this\s+between\s+us\b/i, /\bdon.t\s+tell\s+anyone\b/i],
+    category: "grooming_language",
     severity: "high",
   },
 ];
@@ -145,7 +117,9 @@ interface PolicyMatch {
 
 function scanText(text: string): PolicyMatch[] {
   const matches: PolicyMatch[] = [];
+  const seen = new Set<string>();
   for (const rule of POLICY_RULES) {
+    if (seen.has(rule.category)) continue;
     for (const pattern of rule.patterns) {
       const m = text.match(pattern);
       if (m) {
@@ -154,11 +128,18 @@ function scanText(text: string): PolicyMatch[] {
           severity: rule.severity,
           excerpt: text.substring(Math.max(0, (m.index ?? 0) - 20), (m.index ?? 0) + m[0].length + 20),
         });
+        seen.add(rule.category);
         break;
       }
     }
   }
   return matches;
+}
+
+function worstSeverity(matches: PolicyMatch[]): PolicyMatch | null {
+  if (matches.length === 0) return null;
+  const order: Record<string, number> = { critical: 3, high: 2, medium: 1, low: 0 };
+  return matches.reduce((a, b) => order[a.severity] >= order[b.severity] ? a : b);
 }
 
 async function scanForPolicyViolations(opts: {
@@ -174,10 +155,7 @@ async function scanForPolicyViolations(opts: {
   const matches = scanText(text);
   if (matches.length === 0) return [];
 
-  const mostSevere = matches.reduce((a, b) => {
-    const order = { critical: 3, high: 2, medium: 1, low: 0 };
-    return order[a.severity] >= order[b.severity] ? a : b;
-  });
+  const worst = worstSeverity(matches)!;
 
   await sc.from("rent_buddy_policy_flags").insert({
     booking_id: bookingId ?? null,
@@ -185,15 +163,20 @@ async function scanForPolicyViolations(opts: {
     flagged_user_id: flaggedUserId ?? null,
     source_type: sourceType,
     source_id: sourceId ?? null,
-    category: mostSevere.category,
-    severity: mostSevere.severity,
-    matched_text_excerpt: mostSevere.excerpt,
+    category: worst.category,
+    severity: worst.severity,
+    matched_text_excerpt: worst.excerpt,
     status: "open",
   });
 
   return matches;
 }
 
+/**
+ * Apply policy severity ONLY for automated scanner context (pre-submission
+ * gating). Trust Score penalties are applied when admin CONFIRMS a flag,
+ * not when the scanner runs.
+ */
 async function applyPolicySeverity(opts: {
   sc: any;
   userId: string;
@@ -202,79 +185,97 @@ async function applyPolicySeverity(opts: {
   if (opts.matches.length === 0) return;
   const { sc, userId, matches } = opts;
 
-  const mostSevere = matches.reduce((a, b) => {
-    const order = { critical: 3, high: 2, medium: 1, low: 0 };
-    return order[a.severity] >= order[b.severity] ? a : b;
-  });
+  const worst = worstSeverity(matches)!;
 
-  if (mostSevere.severity === "critical") {
+  if (worst.severity === "critical") {
+    // Disable profile immediately for critical — high-risk content
     await sc
       .from("rent_buddy_profiles")
-      .update({ admin_status: "disabled" })
+      .update({ admin_status: "disabled", risk_hold: true })
       .eq("user_id", userId);
-    void recordTrustEvent(sc, {
-      userId,
-      eventType: "rent_buddy_policy_flag_confirmed",
-      category: "respect_safety",
-      delta: -30,
-      severity: "severe",
-      sourceType: "policy_scanner",
-    });
-  } else if (mostSevere.severity === "high") {
+  } else if (worst.severity === "high") {
+    // Apply access limits; Trust Score penalty deferred to admin confirmation
     await sc
       .from("rent_buddy_user_limits")
-      .upsert({
-        user_id: userId,
-        nightlife_disabled: true,
-        public_meetup_required: true,
-        full_in_app_payment_required: true,
-        reason: `Policy flag: ${mostSevere.category}`,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id" });
-    void recordTrustEvent(sc, {
-      userId,
-      eventType: "rent_buddy_policy_flag_confirmed",
-      category: "respect_safety",
-      delta: -15,
-      severity: "serious",
-      sourceType: "policy_scanner",
-    });
-  } else if (mostSevere.severity === "medium") {
-    void recordTrustEvent(sc, {
-      userId,
-      eventType: "rent_buddy_policy_flag_confirmed",
-      category: "respect_safety",
-      delta: -8,
-      severity: "moderate",
-      sourceType: "policy_scanner",
-    });
+      .upsert(
+        {
+          user_id: userId,
+          nightlife_disabled: true,
+          public_meetup_required: true,
+          full_in_app_payment_required: true,
+          reason: `Auto-restricted: policy flag (${worst.category})`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
   }
+  // medium and low: flag created, no immediate action — admin reviews
 }
 
 // ── Feature flag guard ─────────────────────────────────────────────────────────
 
-async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
+async function checkRentBuddyEnabled(sc: any): Promise<boolean> {
   const { data } = await sc
     .from("feature_flags")
     .select("enabled")
     .eq("flag", "rent_buddy_enabled")
     .maybeSingle();
-  if (!data || !(data as any).enabled) {
+  return !!data && !!(data as any).enabled;
+}
+
+async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
+  const enabled = await checkRentBuddyEnabled(sc);
+  if (!enabled) {
     res.status(403).json({ error: "feature_disabled", message: "Rent a Buddy is not available yet." });
     return false;
   }
   return true;
 }
 
+// ── Get service client (with fallback) ────────────────────────────────────────
+
+function sc(fallback?: any) {
+  return getServiceClient() ?? fallback;
+}
+
 // ── User limits helper ─────────────────────────────────────────────────────────
 
-async function getUserLimits(sc: any, userId: string): Promise<any | null> {
-  const { data } = await sc
+async function getUserLimits(client: any, userId: string): Promise<any | null> {
+  const { data } = await client
     .from("rent_buddy_user_limits")
     .select("*")
     .eq("user_id", userId)
     .maybeSingle();
   return data ?? null;
+}
+
+// ── Booking-party auth check ──────────────────────────────────────────────────
+
+/**
+ * Returns { isTraveler, isBuddy, buddyUserId } or null if the caller has no
+ * relationship to this booking. Sends 403 if not a party.
+ */
+async function requireBookingParty(
+  client: any,
+  booking: any,
+  callerUserId: string,
+  res: any,
+): Promise<{ isTraveler: boolean; isBuddy: boolean; buddyUserId: string } | null> {
+  const isTraveler = booking.traveler_id === callerUserId;
+  const { data: bp } = await client
+    .from("rent_buddy_profiles")
+    .select("id, user_id")
+    .eq("id", booking.buddy_id)
+    .maybeSingle();
+
+  const buddyUserId: string = bp ? (bp as any).user_id : "";
+  const isBuddy = !!bp && buddyUserId === callerUserId;
+
+  if (!isTraveler && !isBuddy) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return { isTraveler, isBuddy, buddyUserId };
 }
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
@@ -286,7 +287,7 @@ async function requireAdmin(
   const auth = await requireUser(req, res);
   if (!auth) return null;
   const { client, user } = auth;
-  const sc = getServiceClient() ?? client;
+  const serviceClient = getServiceClient() ?? client;
 
   const { data } = await client
     .from("profiles")
@@ -298,7 +299,7 @@ async function requireAdmin(
     res.status(403).json({ error: "forbidden", message: "Admin role required" });
     return null;
   }
-  return { userId: user.id, client, sc };
+  return { userId: user.id, client, sc: serviceClient };
 }
 
 // ── Row mapper helpers ─────────────────────────────────────────────────────────
@@ -336,7 +337,6 @@ function mapProfile(row: any) {
     newBuddyMaxHours: row.new_buddy_max_hours,
     maxGroupSize: row.max_group_size,
     preferredMeetupZones: row.preferred_meetup_zones ?? [],
-    trustScoreOverride: row.trust_score_override,
     riskHold: row.risk_hold,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -401,66 +401,59 @@ function mapApplication(row: any) {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/search", async (req, res) => {
-  const sc = getServiceClient();
-  if (!sc) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const {
-    city, category, date, groupSize, language, maxBudgetUsd,
-    trustScoreMin, buddyLevel, vibeTags, femaleSafetyMode,
-    publicMeetupOnly, nightlifeAvailable, availableNow,
-    page = 1, perPage = 20,
+    city, category, language, maxBudgetUsd, buddyLevel,
+    nightlifeAvailable, publicMeetupOnly, page = 1, perPage = 20,
   } = req.body ?? {};
 
-  let query = sc
+  let query = serviceClient
     .from("rent_buddy_profiles")
     .select("*", { count: "exact" })
     .eq("status", "active")
     .eq("admin_status", "active")
-    .ilike("city", `%${city ?? ""}%`)
     .order("review_count", { ascending: false })
     .range((page - 1) * perPage, page * perPage - 1);
 
-  if (category) query = query.contains("categories", [category]);
-  if (language)  query = query.contains("languages", [language]);
-  if (maxBudgetUsd) query = query.lte("hourly_rate_usd", maxBudgetUsd);
-  if (buddyLevel) query = query.eq("buddy_level", buddyLevel);
+  if (city)          query = query.ilike("city", `%${city}%`);
+  if (category)      query = query.contains("categories", [category]);
+  if (language)      query = query.contains("languages", [language]);
+  if (maxBudgetUsd)  query = query.lte("hourly_rate_usd", maxBudgetUsd);
+  if (buddyLevel)    query = query.eq("buddy_level", buddyLevel);
   if (nightlifeAvailable) query = query.contains("categories", ["nightlife"]);
-  if (publicMeetupOnly) query = query.eq("new_buddy_public_only", true);
+  if (publicMeetupOnly)   query = query.eq("new_buddy_public_only", true);
 
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
 
-  return res.json({
-    buddies: (data ?? []).map(mapProfile),
-    total: count ?? 0,
-    page,
-    perPage,
-  });
+  return res.json({ buddies: (data ?? []).map(mapProfile), total: count ?? 0, page, perPage });
 });
 
 // ── Buddy profile ─────────────────────────────────────────────────────────────
 
 router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
-  const sc = getServiceClient();
-  if (!sc) return res.json({ buddy: null, packages: [], addons: [], reviews: [], availability: [], savedByMe: false });
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ buddy: null, packages: [], addons: [], reviews: [], availability: [], savedByMe: false });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const auth = await requireUser(req, res);
   const userId = auth?.user.id ?? null;
   const { buddyId } = req.params;
 
   const [profileRes, packagesRes, addonsRes, reviewsRes, availRes] = await Promise.all([
-    sc.from("rent_buddy_profiles").select("*").eq("id", buddyId).maybeSingle(),
-    sc.from("rent_buddy_packages").select("*").eq("buddy_id", buddyId).eq("is_active", true),
-    sc.from("rent_buddy_addons").select("*").eq("buddy_id", buddyId).eq("is_active", true),
-    sc.from("rent_buddy_reviews")
+    serviceClient.from("rent_buddy_profiles").select("*").eq("id", buddyId).maybeSingle(),
+    serviceClient.from("rent_buddy_packages").select("*").eq("buddy_id", buddyId).eq("is_active", true),
+    serviceClient.from("rent_buddy_addons").select("*").eq("buddy_id", buddyId).eq("is_active", true),
+    serviceClient.from("rent_buddy_reviews")
       .select("*")
       .eq("reviewee_id", buddyId)
       .eq("is_public", true)
       .order("created_at", { ascending: false })
       .limit(5),
-    sc.from("rent_buddy_availability")
+    serviceClient.from("rent_buddy_availability")
       .select("*")
       .eq("buddy_id", buddyId)
       .gte("date", new Date().toISOString().slice(0, 10))
@@ -469,7 +462,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
 
   let savedByMe = false;
   if (userId && profileRes.data) {
-    const { data: savedRow } = await sc
+    const { data: savedRow } = await serviceClient
       .from("rent_buddy_saved")
       .select("buddy_id")
       .eq("user_id", userId)
@@ -483,11 +476,11 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
     packages: (packagesRes.data ?? []).map((p: any) => ({
       id: p.id, buddyId: p.buddy_id, title: p.title, description: p.description,
       category: p.category, durationH: Number(p.duration_h), priceUsd: Number(p.price_usd),
-      maxGroup: p.max_group, isActive: p.is_active, createdAt: p.created_at, updatedAt: p.updated_at,
+      maxGroup: p.max_group, isActive: p.is_active,
     })),
     addons: (addonsRes.data ?? []).map((a: any) => ({
       id: a.id, buddyId: a.buddy_id, title: a.title, description: a.description,
-      priceUsd: Number(a.price_usd), isActive: a.is_active, createdAt: a.created_at,
+      priceUsd: Number(a.price_usd), isActive: a.is_active,
     })),
     reviews: reviewsRes.data ?? [],
     availability: (availRes.data ?? []).map((av: any) => ({
@@ -499,32 +492,33 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
 });
 
 router.get("/api/rent-a-buddy/buddies/:buddyId/availability", async (req, res) => {
-  const sc = getServiceClient();
-  if (!sc) return res.json({ availability: [] });
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ availability: [] });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { buddyId } = req.params;
   const month = (req.query.month as string) ?? "";
-  let query = sc.from("rent_buddy_availability").select("*").eq("buddy_id", buddyId);
+  let query = serviceClient.from("rent_buddy_availability").select("*").eq("buddy_id", buddyId);
   if (month) query = query.like("date", `${month}%`);
 
   const { data } = await query.order("date");
   return res.json({
     availability: (data ?? []).map((av: any) => ({
-      id: av.id, buddyId: av.buddy_id, date: av.date,
-      timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
+      id: av.id, date: av.date, timeSlots: av.time_slots ?? [], isAvailable: av.is_available,
     })),
   });
 });
 
 router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
-  const sc = getServiceClient();
-  if (!sc) return res.json({ reviews: [], total: 0 });
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ reviews: [], total: 0 });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { buddyId } = req.params;
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 10;
 
-  const { data, count } = await sc
+  const { data, count } = await serviceClient
     .from("rent_buddy_reviews")
     .select("*", { count: "exact" })
     .eq("reviewee_id", buddyId)
@@ -535,17 +529,17 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   return res.json({ reviews: data ?? [], total: count ?? 0 });
 });
 
-// ── Bookings — Traveler ───────────────────────────────────────────────────────
+// ── Bookings — Create ──────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
 
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const limits = await getUserLimits(sc, user.id);
+  const limits = await getUserLimits(serviceClient, user.id);
   if (limits?.rent_buddy_disabled || limits?.traveler_booking_disabled) {
     return res.status(403).json({
       error: "access_limited",
@@ -556,93 +550,69 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const {
     buddyId, packageId, tripId, bookingDate, startTime,
     durationH, groupSize = 1, city, category, notes,
-    addonIds, paymentMode = "full_in_app",
+    paymentMode = "full_in_app",
   } = req.body ?? {};
 
   if (!buddyId || !bookingDate || !durationH || !city || !category) {
-    return res.status(400).json({ error: "invalid_payload", message: "buddyId, bookingDate, durationH, city, category required." });
+    return res.status(400).json({ error: "invalid_payload", message: "buddyId, bookingDate, durationH, city, category are required." });
   }
 
   if (limits?.cash_balance_disabled && paymentMode === "deposit_plus_cash") {
-    return res.status(403).json({
-      error: "access_limited",
-      message: "Cash balance is unavailable for this booking. Full in-app payment is required.",
-    });
+    return res.status(403).json({ error: "access_limited", message: "Cash balance is unavailable. Full in-app payment is required." });
   }
 
   if (limits?.full_in_app_payment_required && paymentMode !== "full_in_app") {
-    return res.status(403).json({
-      error: "access_limited",
-      message: "Full in-app payment is required for your account.",
-    });
+    return res.status(403).json({ error: "access_limited", message: "Full in-app payment is required for your account." });
   }
 
   if (limits?.nightlife_disabled && category === "nightlife") {
-    return res.status(403).json({
-      error: "access_limited",
-      message: "Nightlife bookings are not available for your account.",
-    });
+    return res.status(403).json({ error: "access_limited", message: "Nightlife bookings are not available for your account." });
   }
 
   const maxDurMin = limits?.max_booking_duration_minutes;
   if (maxDurMin && durationH * 60 > maxDurMin) {
-    return res.status(403).json({
-      error: "access_limited",
-      message: `Max booking duration for your account is ${maxDurMin} minutes.`,
-    });
+    return res.status(403).json({ error: "access_limited", message: `Max booking duration for your account is ${maxDurMin} minutes.` });
   }
 
-  // Fetch buddy profile for new-buddy restriction checks
-  const { data: buddyProfile } = await sc
+  const { data: buddyProfile } = await serviceClient
     .from("rent_buddy_profiles")
     .select("*")
     .eq("id", buddyId)
     .maybeSingle();
 
-  if (!buddyProfile) {
-    return res.status(404).json({ error: "not_found", message: "Buddy not found." });
-  }
+  if (!buddyProfile) return res.status(404).json({ error: "not_found", message: "Buddy not found." });
 
   if (buddyProfile.status !== "active" || buddyProfile.admin_status !== "active") {
     return res.status(400).json({ error: "buddy_unavailable", message: "This Buddy is not accepting bookings." });
   }
 
-  // New Buddy: public meetup required, no nightlife/group, max hours enforced
-  if (buddyProfile.new_buddy_public_only && limits?.public_meetup_required !== false) {
+  // New Buddy restrictions
+  if (buddyProfile.new_buddy_public_only) {
     if (isPrivateLocation(city)) {
       return res.status(400).json({
         error: "invalid_location",
-        message: "First meetup must be at a public location (hotel lobby, airport, coffee shop, landmark, etc.). Private hotel rooms and private homes are not allowed.",
+        message: "First meetup must be at a public location (hotel lobby, airport, coffee shop, landmark, etc.). Private rooms and private homes are not allowed.",
       });
+    }
+
+    const approvals: Record<string, boolean> = buddyProfile.category_approvals ?? {};
+    if ((category === "nightlife" || category === "group") && !approvals[category]) {
+      return res.status(403).json({ error: "category_not_approved", message: `This Buddy is not approved for ${category} bookings yet.` });
+    }
+
+    if (durationH > buddyProfile.new_buddy_max_hours) {
+      return res.status(400).json({ error: "duration_exceeded", message: `New Buddies can accept a maximum of ${buddyProfile.new_buddy_max_hours} hours per booking.` });
     }
   }
 
-  if (buddyProfile.new_buddy_public_only && (category === "nightlife" || category === "group") &&
-      !((buddyProfile.category_approvals as any)?.[category])) {
-    return res.status(403).json({
-      error: "category_not_approved",
-      message: `This Buddy is not approved for ${category} bookings yet.`,
-    });
-  }
-
-  if (buddyProfile.new_buddy_public_only && durationH > buddyProfile.new_buddy_max_hours) {
-    return res.status(400).json({
-      error: "duration_exceeded",
-      message: `New Buddies can accept a maximum of ${buddyProfile.new_buddy_max_hours} hours per booking.`,
-    });
-  }
-
-  // Scan traveler notes for policy violations
+  // Policy scan on traveler notes
   if (notes) {
     const matches = await scanForPolicyViolations({
-      sc,
-      text: notes,
-      sourceType: "booking_note",
-      flaggedUserId: user.id,
+      sc: serviceClient, text: notes, sourceType: "booking_note", flaggedUserId: user.id,
     });
-    await applyPolicySeverity({ sc, userId: user.id, matches });
-    const hasCritical = matches.some((m) => m.severity === "critical" || m.severity === "high");
-    if (hasCritical) {
+    await applyPolicySeverity({ sc: serviceClient, userId: user.id, matches });
+    const isBlockable = matches.some((m) => m.severity === "critical" || m.severity === "high");
+    if (isBlockable) {
       return res.status(400).json({
         error: "policy_violation",
         message: "Your booking note contains content that violates Rent a Buddy policy. Please review our policy and try again.",
@@ -650,13 +620,12 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
     }
   }
 
-  // Compute pricing
   const rateUsd = buddyProfile.hourly_rate_usd ? Number(buddyProfile.hourly_rate_usd) : 0;
-  const totalUsd = rateUsd * durationH;
+  const totalUsd = Math.round(rateUsd * durationH * 100) / 100;
   const depositUsd = paymentMode === "deposit_plus_cash" ? Math.round(totalUsd * 0.3 * 100) / 100 : totalUsd;
-  const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? totalUsd - depositUsd : 0;
+  const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? Math.round((totalUsd - depositUsd) * 100) / 100 : 0;
 
-  const { data: booking, error } = await sc
+  const { data: booking, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
       buddy_id: buddyId,
@@ -675,6 +644,8 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       deposit_usd: depositUsd,
       cash_balance_usd: cashBalanceUsd,
       status: "pending",
+      safety_status: "normal",
+      route_plan: [],
       updated_at: new Date().toISOString(),
     })
     .select()
@@ -688,10 +659,10 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 router.get("/api/rent-a-buddy/bookings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("traveler_id", auth.user.id)
@@ -703,11 +674,11 @@ router.get("/api/rent-a-buddy/bookings", async (req, res) => {
 router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
@@ -715,26 +686,90 @@ router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
 
   if (!data) return res.status(404).json({ error: "not_found" });
 
-  const b = data as any;
-  if (b.traveler_id !== auth.user.id) {
-    const { data: bp } = await sc
-      .from("rent_buddy_profiles")
-      .select("id")
-      .eq("user_id", auth.user.id)
-      .maybeSingle();
-    if (!bp || bp.id !== b.buddy_id) return res.status(403).json({ error: "forbidden" });
-  }
+  const party = await requireBookingParty(serviceClient, data, auth.user.id, res);
+  if (!party) return;
 
   return res.json({ booking: mapBooking(data), policyText: POLICY_TEXT });
 });
 
+// ── Bookings — Payment ────────────────────────────────────────────────────────
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .eq("traveler_id", auth.user.id)
+    .maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const b = booking as any;
+  if (b.payment_mode !== "deposit_plus_cash") {
+    return res.status(400).json({ error: "invalid_payload", message: "This booking uses full in-app payment. Use /pay-full." });
+  }
+  if (!["pending", "confirmed"].includes(b.status)) {
+    return res.status(400).json({ error: "invalid_payload", message: "Deposit can only be paid for pending or confirmed bookings." });
+  }
+
+  // Record deposit intent — real Stripe integration wires here
+  return res.json({
+    ok: true,
+    depositUsd: Number(b.deposit_usd),
+    cashBalanceUsd: Number(b.cash_balance_usd),
+    paymentIntent: { status: "requires_payment_method", bookingId },
+    message: "Deposit recorded. Complete payment via the Stripe payment sheet.",
+  });
+});
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .eq("traveler_id", auth.user.id)
+    .maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const b = booking as any;
+  if (b.payment_mode !== "full_in_app") {
+    return res.status(400).json({ error: "invalid_payload", message: "This booking uses deposit+cash. Use /pay-deposit." });
+  }
+  if (!["pending", "confirmed"].includes(b.status)) {
+    return res.status(400).json({ error: "invalid_payload", message: "Full payment can only be made for pending or confirmed bookings." });
+  }
+
+  return res.json({
+    ok: true,
+    totalUsd: Number(b.total_usd),
+    paymentIntent: { status: "requires_payment_method", bookingId },
+    message: "Payment recorded. Complete payment via the Stripe payment sheet.",
+  });
+});
+
+// ── Bookings — Cancel ─────────────────────────────────────────────────────────
+
 router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
@@ -743,20 +778,19 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const b = booking as any;
-  const isParty = b.traveler_id === auth.user.id;
-  if (!isParty) return res.status(403).json({ error: "forbidden" });
+  if (b.traveler_id !== auth.user.id) return res.status(403).json({ error: "forbidden" });
 
   const now = new Date();
-  const bookingDt = new Date(`${b.booking_date}T${b.start_time ?? "00:00"}Z`);
+  const bookingDt = new Date(`${b.booking_date}T${b.start_time ?? "12:00"}Z`);
   const hoursUntil = (bookingDt.getTime() - now.getTime()) / 3600000;
   const eventType = hoursUntil < 2 ? "rent_buddy_late_cancel" : "rent_buddy_abandoned_booking";
 
-  await sc
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "cancelled", cancelled_at: now.toISOString(), updated_at: now.toISOString() })
     .eq("id", bookingId);
 
-  void recordTrustEvent(sc, {
+  void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
     eventType,
     category: "communication",
@@ -769,30 +803,31 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
   return res.json({ ok: true });
 });
 
-// ── Bookings — Buddy-side lifecycle ───────────────────────────────────────────
+// ── Bookings — Buddy lifecycle (accept / decline / start / complete) ───────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc
+  const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
     .select("id, status, admin_status")
     .eq("user_id", auth.user.id)
     .maybeSingle();
 
-  if (!bp || bp.status !== "active" || bp.admin_status !== "active") {
+  if (!bp || (bp as any).status !== "active" || (bp as any).admin_status !== "active") {
     return res.status(403).json({ error: "forbidden", message: "Your Buddy profile is not active." });
   }
 
-  const limits = await getUserLimits(sc, auth.user.id);
+  const limits = await getUserLimits(serviceClient, auth.user.id);
   if (limits?.rent_buddy_disabled || limits?.buddy_disabled) {
     return res.status(403).json({ error: "access_limited", message: "Rent a Buddy access is limited while your account is under review." });
   }
 
   const { bookingId } = req.params;
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
@@ -803,7 +838,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const now = new Date().toISOString();
-  await sc
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "confirmed", confirmed_at: now, updated_at: now })
     .eq("id", bookingId);
@@ -814,9 +849,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
 router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc
+  const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
     .select("id")
     .eq("user_id", auth.user.id)
@@ -824,13 +860,20 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
 
   if (!bp) return res.status(403).json({ error: "forbidden" });
 
-  const { bookingId } = req.params;
   const now = new Date().toISOString();
-  await sc
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id")
+    .eq("id", req.params.bookingId)
+    .eq("buddy_id", (bp as any).id)
+    .maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "cancelled", cancelled_at: now, updated_at: now })
-    .eq("id", bookingId)
-    .eq("buddy_id", (bp as any).id);
+    .eq("id", req.params.bookingId);
 
   return res.json({ ok: true });
 });
@@ -838,10 +881,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
 router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
@@ -852,12 +896,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const now = new Date().toISOString();
-  await sc
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "in_progress", started_at: now, updated_at: now })
     .eq("id", bookingId);
 
-  await sc.from("rent_buddy_emergency_contacts_snapshot").insert({
+  await serviceClient.from("rent_buddy_emergency_contacts_snapshot").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     trusted_circle_shared: req.body?.trustedCircleShared ?? false,
@@ -871,10 +915,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
 router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
@@ -885,17 +930,27 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const now = new Date().toISOString();
-  await sc
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "completed", completed_at: now, updated_at: now })
     .eq("id", bookingId);
 
-  await sc
+  // Fetch current count from profile (not from booking row)
+  const { data: profRow } = await serviceClient
     .from("rent_buddy_profiles")
-    .update({ completed_bookings: ((booking as any).completed_bookings ?? 0) + 1 })
+    .select("completed_bookings, user_id")
+    .eq("id", (booking as any).buddy_id)
+    .maybeSingle();
+
+  const currentCount = (profRow as any)?.completed_bookings ?? 0;
+  const buddyUserId: string = (profRow as any)?.user_id ?? "";
+
+  await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ completed_bookings: currentCount + 1, updated_at: now })
     .eq("id", (booking as any).buddy_id);
 
-  void recordTrustEvent(sc, {
+  void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
     eventType: "rent_buddy_completed",
     category: "community_value",
@@ -905,76 +960,70 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     sourceId: bookingId,
   });
 
-  void recordTrustEvent(sc, {
-    userId: auth.user.id,
-    eventType: "rent_buddy_stayed_on_app",
-    category: "community_value",
-    delta: 3,
-    severity: "minor",
-    sourceType: "booking",
-    sourceId: bookingId,
-  });
+  if (buddyUserId) {
+    void recordTrustEvent(serviceClient, {
+      userId: buddyUserId,
+      eventType: "rent_buddy_completed",
+      category: "community_value",
+      delta: 5,
+      severity: "minor",
+      sourceType: "booking",
+      sourceId: bookingId,
+    });
+  }
 
   return res.json({ ok: true });
 });
 
+// ── Bookings — Cash balance confirmation ──────────────────────────────────────
+
 router.post("/api/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { confirmed } = req.body ?? {};
 
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
-  const b = booking as any;
 
-  const { data: bp } = await sc
-    .from("rent_buddy_profiles")
-    .select("id, user_id")
-    .eq("id", b.buddy_id)
-    .maybeSingle();
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
 
-  const isTraveler = b.traveler_id === auth.user.id;
-  const isBuddy = bp && (bp as any).user_id === auth.user.id;
-
-  if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
-
+  const { isTraveler, isBuddy } = party;
   const updatePatch: Record<string, any> = { updated_at: new Date().toISOString() };
-
   if (isTraveler) updatePatch.cash_balance_confirmed_by_traveler = confirmed;
   if (isBuddy)    updatePatch.cash_balance_confirmed_by_buddy = confirmed;
 
-  await sc.from("rent_buddy_bookings").update(updatePatch).eq("id", bookingId);
+  await serviceClient.from("rent_buddy_bookings").update(updatePatch).eq("id", bookingId);
 
-  const refreshed = { ...b, ...updatePatch };
-  const tConfirmed = refreshed.cash_balance_confirmed_by_traveler;
-  const bConfirmed = refreshed.cash_balance_confirmed_by_buddy;
+  const b = booking as any;
+  const tConf = isTraveler ? confirmed : b.cash_balance_confirmed_by_traveler;
+  const bConf = isBuddy    ? confirmed : b.cash_balance_confirmed_by_buddy;
 
-  if (tConfirmed === false || bConfirmed === false) {
-    // Disagreement → disputed
-    await sc.from("rent_buddy_bookings")
+  if (tConf === false || bConf === false) {
+    await serviceClient.from("rent_buddy_bookings")
       .update({ status: "disputed", updated_at: new Date().toISOString() })
       .eq("id", bookingId);
 
-    await sc.from("rent_buddy_disputes").insert({
+    await serviceClient.from("rent_buddy_disputes").insert({
       booking_id: bookingId,
       raised_by: auth.user.id,
       reason: "cash_balance_disagreement",
       status: "open",
     });
-
     return res.json({ ok: true, disputed: true });
   }
 
-  if (tConfirmed && bConfirmed) {
-    void recordTrustEvent(sc, {
+  if (tConf && bConf) {
+    void recordTrustEvent(serviceClient, {
       userId: b.traveler_id,
       eventType: "rent_buddy_cash_balance_confirmed",
       category: "community_value",
@@ -988,36 +1037,30 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, re
   return res.json({ ok: true, disputed: false });
 });
 
-// ── Booking — Route management ─────────────────────────────────────────────────
+// ── Bookings — Route management ───────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { stops } = req.body ?? {};
+  if (!Array.isArray(stops)) return res.status(400).json({ error: "invalid_payload", message: "stops array required." });
 
-  if (!Array.isArray(stops)) {
-    return res.status(400).json({ error: "invalid_payload", message: "stops array required." });
-  }
-
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("buddy_id, traveler_id")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
 
-  const b = booking as any;
-  const { data: bp } = await sc
-    .from("rent_buddy_profiles").select("id, user_id").eq("id", b.buddy_id).maybeSingle();
-  const isBuddy = bp && (bp as any).user_id === auth.user.id;
-  if (!isBuddy) return res.status(403).json({ error: "forbidden" });
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles").select("id, user_id").eq("id", (booking as any).buddy_id).maybeSingle();
+  if (!bp || (bp as any).user_id !== auth.user.id) return res.status(403).json({ error: "forbidden" });
 
-  await sc.from("rent_buddy_route_stops").delete().eq("booking_id", bookingId);
-
+  await serviceClient.from("rent_buddy_route_stops").delete().eq("booking_id", bookingId);
   const inserts = stops.map((s: any, i: number) => ({
     booking_id: bookingId,
     stop_order: i + 1,
@@ -1027,9 +1070,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
     lat: s.lat ?? null,
     lng: s.lng ?? null,
   }));
-
-  await sc.from("rent_buddy_route_stops").insert(inserts);
-  await sc.from("rent_buddy_bookings").update({ route_plan: stops, updated_at: new Date().toISOString() }).eq("id", bookingId);
+  if (inserts.length > 0) await serviceClient.from("rent_buddy_route_stops").insert(inserts);
+  await serviceClient.from("rent_buddy_bookings").update({ route_plan: stops, updated_at: new Date().toISOString() }).eq("id", bookingId);
 
   return res.json({ ok: true });
 });
@@ -1037,44 +1079,50 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
 router.post("/api/rent-a-buddy/bookings/:bookingId/route-change", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { newStops, reason } = req.body ?? {};
 
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
-  const b = booking as any;
 
-  const { data: bp } = await sc
-    .from("rent_buddy_profiles").select("id, user_id").eq("id", b.buddy_id).maybeSingle();
-  const isBuddy = bp && (bp as any).user_id === auth.user.id;
-  if (!isBuddy) return res.status(403).json({ error: "forbidden" });
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
 
-  // Scan new stops for private location flags
+  // Scan new stops for policy violations
   const stopText = (newStops ?? []).map((s: any) => s.name ?? "").join(" ");
   if (stopText) {
     const matches = await scanForPolicyViolations({
-      sc,
-      text: stopText,
-      sourceType: "route_change",
-      bookingId,
-      flaggedUserId: auth.user.id,
+      sc: serviceClient, text: stopText, sourceType: "route_change",
+      bookingId, flaggedUserId: auth.user.id,
     });
-    await applyPolicySeverity({ sc, userId: auth.user.id, matches });
+    await applyPolicySeverity({ sc: serviceClient, userId: auth.user.id, matches });
   }
 
-  const { data: changeReq } = await sc
+  // If buddy is unilaterally proposing a route change, log it as safety event
+  if (party.isBuddy) {
+    await serviceClient.from("rent_buddy_safety_events").insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      target_user_id: (booking as any).traveler_id,
+      event_type: "route_change_unapproved",
+      event_status: "open",
+      metadata: { new_stops: newStops, reason },
+    });
+  }
+
+  const { data: changeReq } = await serviceClient
     .from("rent_buddy_route_change_requests")
     .insert({
       booking_id: bookingId,
       requested_by: auth.user.id,
-      old_stops_json: b.route_plan ?? [],
+      old_stops_json: (booking as any).route_plan ?? [],
       new_stops_json: newStops ?? [],
       reason: reason ?? null,
     })
@@ -1084,41 +1132,40 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change", async (req, re
   return res.status(201).json({ routeChangeRequest: changeReq });
 });
 
-// ── Booking — Reviews ─────────────────────────────────────────────────────────
+// ── Bookings — Reviews ────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { rating, body: reviewBody, safetyScore, communicationScore, punctualityScore, isPublic = false, photos = [] } = req.body ?? {};
-
+  const { rating, body: reviewBody, safetyScore, communicationScore, punctualityScore, photos = [] } = req.body ?? {};
   if (!rating) return res.status(400).json({ error: "invalid_payload", message: "rating required." });
 
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
-  const b = booking as any;
 
-  const { data: bp } = await sc
-    .from("rent_buddy_profiles").select("id, user_id").eq("id", b.buddy_id).maybeSingle();
-  const isTraveler = b.traveler_id === auth.user.id;
-  const isBuddy = bp && (bp as any).user_id === auth.user.id;
-  if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const b = booking as any;
+  const { isTraveler, buddyUserId } = party;
 
   const role = isTraveler ? "traveler" : "buddy";
-  const revieweeId = isTraveler ? b.buddy_id : b.traveler_id;
+  // reviewee must be a profiles.id (user ID), NOT a rent_buddy_profiles.id
+  const revieweeId: string = isTraveler ? buddyUserId : b.traveler_id;
 
-  // Double-blind: blind until 7 days after booking date or both submitted
+  // Double-blind: blind until 7 days after booking date
   const blindUntil = new Date(b.booking_date);
   blindUntil.setDate(blindUntil.getDate() + 7);
 
-  const { data: review, error } = await sc
+  const { data: review, error } = await serviceClient
     .from("rent_buddy_reviews")
     .insert({
       booking_id: bookingId,
@@ -1140,59 +1187,55 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
 
   if (error) return sendError(res, "db_error", error.message);
 
-  // Check if both sides submitted — if so, reveal both
-  const { count } = await sc
+  // Unblind if both sides have submitted
+  const { count } = await serviceClient
     .from("rent_buddy_reviews")
     .select("id", { count: "exact" })
     .eq("booking_id", bookingId);
 
   let unblinded = false;
   if ((count ?? 0) >= 2) {
-    await sc.from("rent_buddy_reviews")
+    await serviceClient.from("rent_buddy_reviews")
       .update({ is_public: true, blind_until: new Date().toISOString() })
       .eq("booking_id", bookingId);
     unblinded = true;
 
-    void recordTrustEvent(sc, {
+    void recordTrustEvent(serviceClient, {
       userId: auth.user.id,
       eventType: "rent_buddy_positive_review",
       category: "community_value",
-      delta: rating >= 4 ? 4 : 2,
+      delta: Number(rating) >= 4 ? 4 : 2,
       severity: "minor",
       sourceType: "review",
-      sourceId: review?.id,
+      sourceId: (review as any)?.id,
     });
   }
 
   return res.status(201).json({ review, unblinded });
 });
 
-// ── Booking — Report ──────────────────────────────────────────────────────────
+// ── Bookings — Report (no immediate trust penalty; admin reviews) ─────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { reason = "other", details } = req.body ?? {};
 
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("traveler_id, buddy_id")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
-  const b = booking as any;
 
-  const { data: bp } = await sc
-    .from("rent_buddy_profiles").select("id, user_id").eq("id", b.buddy_id).maybeSingle();
-  const isTraveler = b.traveler_id === auth.user.id;
-  const isBuddy = bp && (bp as any).user_id === auth.user.id;
-  if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
 
-  await sc.from("rent_buddy_disputes").insert({
+  await serviceClient.from("rent_buddy_disputes").insert({
     booking_id: bookingId,
     raised_by: auth.user.id,
     reason,
@@ -1201,23 +1244,18 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
 
   if (details) {
     await scanForPolicyViolations({
-      sc,
+      sc: serviceClient,
       text: details,
       sourceType: "report",
       bookingId,
       reporterUserId: auth.user.id,
+      // The reported party is whoever is NOT the reporter
+      flaggedUserId: party.isTraveler ? party.buddyUserId : (booking as any).traveler_id,
     });
   }
 
-  void recordTrustEvent(sc, {
-    userId: isTraveler ? b.buddy_id : b.traveler_id,
-    eventType: "rent_buddy_harassment_report_confirmed",
-    category: "respect_safety",
-    delta: -10,
-    severity: "serious",
-    sourceType: "booking",
-    sourceId: bookingId,
-  });
+  // Trust Score penalty deferred until admin confirms the report —
+  // do NOT emit here to avoid false penalties.
 
   return res.status(201).json({ ok: true });
 });
@@ -1227,22 +1265,24 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { checkinType, response: checkinResponse } = req.body ?? {};
-
   if (!checkinType) return res.status(400).json({ error: "invalid_payload", message: "checkinType required." });
 
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("traveler_id, buddy_id")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
 
-  await sc.from("rent_buddy_safety_checkins").insert({
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     checkin_type: checkinType,
@@ -1251,7 +1291,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, 
 
   const distressResponses = ["uncomfortable", "end_early", "contact_support", "start_safe_return"];
   if (distressResponses.includes(checkinResponse ?? "") || distressResponses.includes(checkinType)) {
-    await sc.from("rent_buddy_safety_events").insert({
+    await serviceClient.from("rent_buddy_safety_events").insert({
       booking_id: bookingId,
       actor_user_id: auth.user.id,
       event_type: "comfort_check_distress",
@@ -1266,24 +1306,26 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, 
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("traveler_id, buddy_id")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
 
-  await sc
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ safety_status: "uncomfortable", updated_at: new Date().toISOString() })
     .eq("id", bookingId);
 
-  await sc.from("rent_buddy_safety_events").insert({
+  await serviceClient.from("rent_buddy_safety_events").insert({
     booking_id: bookingId,
     actor_user_id: auth.user.id,
     event_type: "feel_unsafe",
@@ -1297,17 +1339,27 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (r
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const now = new Date().toISOString();
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
 
-  await sc
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const now = new Date().toISOString();
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "completed", completed_at: now, safety_status: "emergency", updated_at: now })
     .eq("id", bookingId);
 
-  await sc.from("rent_buddy_safety_events").insert({
+  await serviceClient.from("rent_buddy_safety_events").insert({
     booking_id: bookingId,
     actor_user_id: auth.user.id,
     event_type: "end_early",
@@ -1321,22 +1373,23 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-
-  const { data: booking } = await sc
+  const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("traveler_id")
     .eq("id", bookingId)
     .maybeSingle();
-
   if (!booking) return res.status(404).json({ error: "not_found" });
+
+  // Emergency phrase is traveler-ONLY — buddy cannot trigger it
   if ((booking as any).traveler_id !== auth.user.id) {
     return res.status(403).json({ error: "forbidden" });
   }
 
-  await sc.from("rent_buddy_safety_events").insert({
+  await serviceClient.from("rent_buddy_safety_events").insert({
     booking_id: bookingId,
     actor_user_id: auth.user.id,
     event_type: "emergency_phrase_triggered",
@@ -1344,22 +1397,22 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", asy
     metadata: { phrase: "I need to check my passport" },
   });
 
-  await sc
+  await serviceClient
     .from("rent_buddy_bookings")
     .update({ safety_status: "check_requested", updated_at: new Date().toISOString() })
     .eq("id", bookingId);
 
-  // Private prompt — returned to traveler ONLY. Buddy is never notified.
+  // Private prompt — returned to traveler ONLY. Buddy is never informed.
   return res.json({
     travelerOnly: true,
     prompt: "Are you okay? Only you can see this message.",
     options: [
-      { id: "ok",            label: "I am okay" },
-      { id: "end_booking",   label: "End booking now" },
-      { id: "share_location",label: "Share location with Trusted Circle" },
-      { id: "safe_return",   label: "Start Safe Return" },
+      { id: "ok",             label: "I am okay" },
+      { id: "end_booking",    label: "End booking now" },
+      { id: "share_location", label: "Share location with Trusted Circle" },
+      { id: "safe_return",    label: "Start Safe Return" },
       { id: "contact_support",label: "Contact support" },
-      { id: "emergency",     label: "Use emergency button" },
+      { id: "emergency",      label: "Use emergency button" },
     ],
   });
 });
@@ -1369,10 +1422,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", asy
 router.get("/api/rent-a-buddy/apply", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_applications")
     .select("*")
     .eq("user_id", auth.user.id)
@@ -1384,37 +1437,37 @@ router.get("/api/rent-a-buddy/apply", async (req, res) => {
 router.post("/api/rent-a-buddy/apply", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  if (!await requireRentBuddyEnabled(sc, res)) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { city, country, categories = [], languages = [], motivation, socialLinks = {} } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
   if (motivation) {
     const matches = await scanForPolicyViolations({
-      sc,
-      text: motivation,
-      sourceType: "profile",
-      flaggedUserId: auth.user.id,
+      sc: serviceClient, text: motivation, sourceType: "profile", flaggedUserId: auth.user.id,
     });
-    await applyPolicySeverity({ sc, userId: auth.user.id, matches });
+    await applyPolicySeverity({ sc: serviceClient, userId: auth.user.id, matches });
   }
 
-  const { data, error } = await sc
+  const { data, error } = await serviceClient
     .from("rent_buddy_applications")
-    .upsert({
-      user_id: auth.user.id,
-      city,
-      country: country ?? null,
-      categories,
-      languages,
-      motivation: motivation ?? null,
-      social_links: socialLinks,
-      policy_accepted: true,
-      policy_accepted_at: new Date().toISOString(),
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" })
+    .upsert(
+      {
+        user_id: auth.user.id,
+        city,
+        country: country ?? null,
+        categories,
+        languages,
+        motivation: motivation ?? null,
+        social_links: socialLinks,
+        policy_accepted: true,
+        policy_accepted_at: new Date().toISOString(),
+        status: "pending",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    )
     .select()
     .maybeSingle();
 
@@ -1432,9 +1485,10 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
 router.get("/api/rent-a-buddy/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_profiles")
     .select("*")
     .eq("user_id", auth.user.id)
@@ -1446,76 +1500,73 @@ router.get("/api/rent-a-buddy/me/profile", async (req, res) => {
 router.patch("/api/rent-a-buddy/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const allowed = ["display_name","tagline","bio","intro_video_url","languages","categories",
-                   "hourly_rate_usd","cover_photo_url","gallery_urls","vibe_tags",
-                   "preferred_meetup_zones","max_group_size"];
-  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
   const body = req.body ?? {};
-  for (const k of allowed) {
-    if (body[k] !== undefined) patch[k] = body[k];
-  }
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (body.displayName !== undefined)  patch.display_name   = body.displayName;
   if (body.tagline !== undefined)       patch.tagline        = body.tagline;
   if (body.bio !== undefined)           patch.bio            = body.bio;
   if (body.introVideoUrl !== undefined) patch.intro_video_url = body.introVideoUrl;
+  if (body.languages !== undefined)     patch.languages      = body.languages;
+  if (body.coverPhotoUrl !== undefined) patch.cover_photo_url = body.coverPhotoUrl;
+  if (body.galleryUrls !== undefined)   patch.gallery_urls   = body.galleryUrls;
+  if (body.vibeTags !== undefined)      patch.vibe_tags      = body.vibeTags;
+  if (body.maxGroupSize !== undefined)  patch.max_group_size = body.maxGroupSize;
+  if (body.preferredMeetupZones !== undefined) patch.preferred_meetup_zones = body.preferredMeetupZones;
 
   if (body.bio) {
     const matches = await scanForPolicyViolations({
-      sc,
-      text: body.bio,
-      sourceType: "profile",
-      flaggedUserId: auth.user.id,
+      sc: serviceClient, text: body.bio, sourceType: "profile", flaggedUserId: auth.user.id,
     });
-    await applyPolicySeverity({ sc, userId: auth.user.id, matches });
+    await applyPolicySeverity({ sc: serviceClient, userId: auth.user.id, matches });
   }
 
-  await sc.from("rent_buddy_profiles").update(patch).eq("user_id", auth.user.id);
+  await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", auth.user.id);
   return res.json({ ok: true });
 });
 
 router.patch("/api/rent-a-buddy/me/availability", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc
+  const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
     .select("id")
     .eq("user_id", auth.user.id)
     .maybeSingle();
-
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
 
   const { entries = [] } = req.body ?? {};
   for (const e of entries as any[]) {
-    await sc.from("rent_buddy_availability").upsert({
-      buddy_id: (bp as any).id,
-      date: e.date,
-      time_slots: e.timeSlots ?? [],
-      is_available: e.isAvailable ?? true,
-      notes: e.notes ?? null,
-    }, { onConflict: "buddy_id,date" });
+    await serviceClient.from("rent_buddy_availability").upsert(
+      {
+        buddy_id: (bp as any).id, date: e.date,
+        time_slots: e.timeSlots ?? [], is_available: e.isAvailable ?? true, notes: e.notes ?? null,
+      },
+      { onConflict: "buddy_id,date" },
+    );
   }
-
   return res.json({ ok: true });
 });
 
 router.get("/api/rent-a-buddy/me/requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc
+  const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
     .select("id")
     .eq("user_id", auth.user.id)
     .maybeSingle();
-
   if (!bp) return res.json({ requests: [] });
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("buddy_id", (bp as any).id)
@@ -1530,35 +1581,34 @@ router.get("/api/rent-a-buddy/me/requests", async (req, res) => {
 router.get("/api/rent-a-buddy/saved", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_saved")
     .select("buddy_id, rent_buddy_profiles(*)")
     .eq("user_id", auth.user.id);
 
-  return res.json({
-    saved: (data ?? []).map((row: any) => mapProfile(row.rent_buddy_profiles)),
-  });
+  return res.json({ saved: (data ?? []).map((row: any) => mapProfile(row.rent_buddy_profiles)) });
 });
 
 router.post("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { buddyId } = req.params;
-  await sc.from("rent_buddy_saved").upsert({ user_id: auth.user.id, buddy_id: buddyId });
+  await serviceClient.from("rent_buddy_saved").upsert({ user_id: auth.user.id, buddy_id: req.params.buddyId });
   return res.json({ ok: true });
 });
 
 router.delete("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { buddyId } = req.params;
-  await sc.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", buddyId);
+  await serviceClient.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
   return res.json({ ok: true });
 });
 
@@ -1567,9 +1617,10 @@ router.delete("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
 router.get("/api/rent-a-buddy/waitlist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_waitlist")
     .select("id, city, category, created_at")
     .eq("user_id", auth.user.id)
@@ -1581,12 +1632,13 @@ router.get("/api/rent-a-buddy/waitlist", async (req, res) => {
 router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { city, category } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
-  await sc.from("rent_buddy_waitlist").upsert(
+  await serviceClient.from("rent_buddy_waitlist").upsert(
     { user_id: auth.user.id, city, category: category ?? null },
     { onConflict: "user_id,city" },
   );
@@ -1597,9 +1649,10 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
 router.delete("/api/rent-a-buddy/waitlist/:city", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  await sc.from("rent_buddy_waitlist")
+  await serviceClient.from("rent_buddy_waitlist")
     .delete()
     .eq("user_id", auth.user.id)
     .eq("city", decodeURIComponent(req.params.city));
@@ -1612,9 +1665,10 @@ router.delete("/api/rent-a-buddy/waitlist/:city", async (req, res) => {
 router.get("/api/rent-a-buddy/dashboard", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: profile } = await sc
+  const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
     .select("*")
     .eq("user_id", auth.user.id)
@@ -1626,9 +1680,9 @@ router.get("/api/rent-a-buddy/dashboard", async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const [upcomingRes, pendingRes, earningsRes] = await Promise.all([
-    sc.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "confirmed").gte("booking_date", today),
-    sc.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "pending"),
-    sc.from("rent_buddy_bookings").select("total_usd").eq("buddy_id", (profile as any).id).eq("status", "completed"),
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "confirmed").gte("booking_date", today),
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "pending"),
+    serviceClient.from("rent_buddy_bookings").select("total_usd").eq("buddy_id", (profile as any).id).eq("status", "completed"),
   ]);
 
   const totalEarnings = (earningsRes.data ?? []).reduce((s: number, r: any) => s + Number(r.total_usd ?? 0), 0);
@@ -1646,70 +1700,27 @@ router.get("/api/rent-a-buddy/dashboard", async (req, res) => {
 router.get("/api/rent-a-buddy/dashboard/requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.json({ requests: [] });
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("buddy_id", (bp as any).id)
-    .in("status", ["pending"])
+    .eq("status", "pending")
     .order("created_at", { ascending: false });
 
   return res.json({ requests: (data ?? []).map(mapBooking) });
 });
 
-router.get("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.json({ availability: [] });
-
-  const { data } = await sc
-    .from("rent_buddy_availability")
-    .select("*")
-    .eq("buddy_id", (bp as any).id)
-    .gte("date", new Date().toISOString().slice(0, 10))
-    .order("date");
-
-  return res.json({
-    availability: (data ?? []).map((av: any) => ({
-      id: av.id, buddyId: av.buddy_id, date: av.date,
-      timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
-    })),
-  });
-});
-
-router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.status(404).json({ error: "profile_not_found" });
-
-  const { entries = [] } = req.body ?? {};
-  for (const e of entries as any[]) {
-    await sc.from("rent_buddy_availability").upsert({
-      buddy_id: (bp as any).id,
-      date: e.date,
-      time_slots: e.timeSlots ?? [],
-      is_available: e.isAvailable ?? true,
-      notes: e.notes ?? null,
-    }, { onConflict: "buddy_id,date" });
-  }
-
-  return res.json({ ok: true });
-});
-
 router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -1720,7 +1731,49 @@ router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
   if (body.categories !== undefined)    patch.categories     = body.categories;
   if (body.hourlyRateUsd !== undefined) patch.hourly_rate_usd = body.hourlyRateUsd;
 
-  await sc.from("rent_buddy_profiles").update(patch).eq("user_id", auth.user.id);
+  await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", auth.user.id);
+  return res.json({ ok: true });
+});
+
+router.get("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  if (!bp) return res.json({ availability: [] });
+
+  const { data } = await serviceClient
+    .from("rent_buddy_availability")
+    .select("*")
+    .eq("buddy_id", (bp as any).id)
+    .gte("date", new Date().toISOString().slice(0, 10))
+    .order("date");
+
+  return res.json({
+    availability: (data ?? []).map((av: any) => ({
+      id: av.id, date: av.date, timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
+    })),
+  });
+});
+
+router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
+  const { entries = [] } = req.body ?? {};
+  for (const e of entries as any[]) {
+    await serviceClient.from("rent_buddy_availability").upsert(
+      { buddy_id: (bp as any).id, date: e.date, time_slots: e.timeSlots ?? [], is_available: e.isAvailable ?? true, notes: e.notes ?? null },
+      { onConflict: "buddy_id,date" },
+    );
+  }
   return res.json({ ok: true });
 });
 
@@ -1729,56 +1782,70 @@ router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
 router.get("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.json({ packages: [] });
-  const { data } = await sc.from("rent_buddy_packages").select("*").eq("buddy_id", (bp as any).id).order("created_at");
+  const { data } = await serviceClient.from("rent_buddy_packages").select("*").eq("buddy_id", (bp as any).id).order("created_at");
   return res.json({ packages: data ?? [] });
 });
 
 router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
   const { title, description, category, durationH, priceUsd, maxGroup = 1 } = req.body ?? {};
   if (!title || !category || !durationH || !priceUsd) {
     return res.status(400).json({ error: "invalid_payload", message: "title, category, durationH, priceUsd required." });
   }
-  const { data } = await sc.from("rent_buddy_packages").insert({
+
+  const { data, error } = await serviceClient.from("rent_buddy_packages").insert({
     buddy_id: (bp as any).id, title, description: description ?? null, category,
     duration_h: durationH, price_usd: priceUsd, max_group: maxGroup, is_active: true,
     updated_at: new Date().toISOString(),
   }).select().maybeSingle();
+  if (error) return sendError(res, "db_error", error.message);
+
   return res.status(201).json({ pkg: data });
 });
 
 router.patch("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
-  if (body.title !== undefined)      patch.title       = body.title;
+  if (body.title !== undefined)       patch.title       = body.title;
   if (body.description !== undefined) patch.description = body.description;
   if (body.durationH !== undefined)   patch.duration_h  = body.durationH;
   if (body.priceUsd !== undefined)    patch.price_usd   = body.priceUsd;
   if (body.maxGroup !== undefined)    patch.max_group   = body.maxGroup;
   if (body.isActive !== undefined)    patch.is_active   = body.isActive;
-  await sc.from("rent_buddy_packages").update(patch).eq("id", req.params.packageId).eq("buddy_id", (bp as any).id);
+
+  await serviceClient.from("rent_buddy_packages").update(patch).eq("id", req.params.packageId).eq("buddy_id", (bp as any).id);
   return res.json({ ok: true });
 });
 
 router.delete("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
-  await sc.from("rent_buddy_packages").delete().eq("id", req.params.packageId).eq("buddy_id", (bp as any).id);
+  await serviceClient.from("rent_buddy_packages").delete().eq("id", req.params.packageId).eq("buddy_id", (bp as any).id);
   return res.json({ ok: true });
 });
 
@@ -1787,50 +1854,64 @@ router.delete("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res
 router.get("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.json({ addons: [] });
-  const { data } = await sc.from("rent_buddy_addons").select("*").eq("buddy_id", (bp as any).id).order("created_at");
+  const { data } = await serviceClient.from("rent_buddy_addons").select("*").eq("buddy_id", (bp as any).id).order("created_at");
   return res.json({ addons: data ?? [] });
 });
 
 router.post("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
   const { title, description, priceUsd } = req.body ?? {};
   if (!title || !priceUsd) return res.status(400).json({ error: "invalid_payload", message: "title, priceUsd required." });
-  const { data } = await sc.from("rent_buddy_addons").insert({
+
+  const { data, error } = await serviceClient.from("rent_buddy_addons").insert({
     buddy_id: (bp as any).id, title, description: description ?? null, price_usd: priceUsd, is_active: true,
   }).select().maybeSingle();
+  if (error) return sendError(res, "db_error", error.message);
+
   return res.status(201).json({ addon: data });
 });
 
 router.patch("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
   const body = req.body ?? {};
   const patch: Record<string, any> = {};
   if (body.title !== undefined)       patch.title       = body.title;
   if (body.description !== undefined) patch.description = body.description;
   if (body.priceUsd !== undefined)    patch.price_usd   = body.priceUsd;
   if (body.isActive !== undefined)    patch.is_active   = body.isActive;
-  await sc.from("rent_buddy_addons").update(patch).eq("id", req.params.addonId).eq("buddy_id", (bp as any).id);
+
+  await serviceClient.from("rent_buddy_addons").update(patch).eq("id", req.params.addonId).eq("buddy_id", (bp as any).id);
   return res.json({ ok: true });
 });
 
 router.delete("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
-  await sc.from("rent_buddy_addons").delete().eq("id", req.params.addonId).eq("buddy_id", (bp as any).id);
+  await serviceClient.from("rent_buddy_addons").delete().eq("id", req.params.addonId).eq("buddy_id", (bp as any).id);
   return res.json({ ok: true });
 });
 
@@ -1839,12 +1920,13 @@ router.delete("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) =>
 router.get("/api/rent-a-buddy/dashboard/earnings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const sc = getServiceClient() ?? auth.client;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await sc.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.json({ totalUsd: 0, thisMonthUsd: 0, completedBookings: 0, breakdown: [] });
 
-  const { data } = await sc
+  const { data } = await serviceClient
     .from("rent_buddy_bookings")
     .select("total_usd, booking_date")
     .eq("buddy_id", (bp as any).id)
@@ -1853,7 +1935,8 @@ router.get("/api/rent-a-buddy/dashboard/earnings", async (req, res) => {
   const rows = (data ?? []) as any[];
   const totalUsd = rows.reduce((s: number, r: any) => s + Number(r.total_usd ?? 0), 0);
   const thisMonth = new Date().toISOString().slice(0, 7);
-  const thisMonthUsd = rows.filter((r: any) => (r.booking_date ?? "").startsWith(thisMonth))
+  const thisMonthUsd = rows
+    .filter((r: any) => (r.booking_date ?? "").startsWith(thisMonth))
     .reduce((s: number, r: any) => s + Number(r.total_usd ?? 0), 0);
 
   const byMonth: Record<string, { total: number; count: number }> = {};
@@ -1872,18 +1955,18 @@ router.get("/api/rent-a-buddy/dashboard/earnings", async (req, res) => {
   });
 });
 
-// ── Admin routes ──────────────────────────────────────────────────────────────
+// ── Admin — Applications ──────────────────────────────────────────────────────
 
 router.get("/api/rent-a-buddy/admin/applications", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
   const status = (req.query.status as string) ?? undefined;
 
-  let query = sc
+  let query = serviceClient
     .from("rent_buddy_applications")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
@@ -1898,7 +1981,7 @@ router.get("/api/rent-a-buddy/admin/applications", async (req, res) => {
 router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, userId } = admin;
+  const { sc: serviceClient, userId } = admin;
 
   const { appId } = req.params;
   const { status, reviewNotes } = req.body ?? {};
@@ -1907,15 +1990,14 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
     return res.status(400).json({ error: "invalid_payload", message: "status must be approved|rejected|under_review." });
   }
 
-  const { data: app } = await sc
+  const { data: app } = await serviceClient
     .from("rent_buddy_applications")
-    .select("user_id")
+    .select("user_id, city, categories, languages")
     .eq("id", appId)
     .maybeSingle();
-
   if (!app) return res.status(404).json({ error: "not_found" });
 
-  await sc.from("rent_buddy_applications").update({
+  await serviceClient.from("rent_buddy_applications").update({
     status,
     review_notes: reviewNotes ?? null,
     reviewed_by: userId,
@@ -1924,16 +2006,18 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
   }).eq("id", appId);
 
   if (status === "approved") {
-    await sc.from("rent_buddy_profiles").upsert({
+    await serviceClient.from("rent_buddy_profiles").upsert({
       user_id: (app as any).user_id,
       city: (app as any).city ?? "Unknown",
+      categories: (app as any).categories ?? [],
+      languages: (app as any).languages ?? [],
       status: "active",
       admin_status: "active",
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
   }
 
-  await sc.from("rent_buddy_admin_actions").insert({
+  await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: userId,
     target_type: "application",
     target_id: appId,
@@ -1944,14 +2028,16 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
   return res.json({ ok: true });
 });
 
+// ── Admin — Buddies & Bookings ────────────────────────────────────────────────
+
 router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
-  const { data, count } = await sc
+  const { data, count } = await serviceClient
     .from("rent_buddy_profiles")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
@@ -1963,18 +2049,17 @@ router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
 router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
   const status = (req.query.status as string) ?? undefined;
 
-  let query = sc
+  let query = serviceClient
     .from("rent_buddy_bookings")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
-
   if (status) query = query.eq("status", status);
 
   const { data, count } = await query;
@@ -1984,17 +2069,17 @@ router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
 router.get("/api/rent-a-buddy/admin/analytics", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const [totalBuddies, activeBuddies, totalBookings, completedBookings, pendingApps] = await Promise.all([
-    sc.from("rent_buddy_profiles").select("id", { count: "exact" }),
-    sc.from("rent_buddy_profiles").select("id", { count: "exact" }).eq("status", "active"),
-    sc.from("rent_buddy_bookings").select("id", { count: "exact" }),
-    sc.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("status", "completed"),
-    sc.from("rent_buddy_applications").select("id", { count: "exact" }).eq("status", "pending"),
+    serviceClient.from("rent_buddy_profiles").select("id", { count: "exact" }),
+    serviceClient.from("rent_buddy_profiles").select("id", { count: "exact" }).eq("status", "active"),
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }),
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("status", "completed"),
+    serviceClient.from("rent_buddy_applications").select("id", { count: "exact" }).eq("status", "pending"),
   ]);
 
-  const { data: revenueData } = await sc
+  const { data: revenueData } = await serviceClient
     .from("rent_buddy_bookings")
     .select("total_usd")
     .eq("status", "completed");
@@ -2016,14 +2101,14 @@ router.get("/api/rent-a-buddy/admin/analytics", async (req, res) => {
 router.get("/api/rent-a-buddy/admin/safety/flags", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
   const severity = (req.query.severity as string) ?? undefined;
   const status = (req.query.status as string) ?? "open";
 
-  let query = sc
+  let query = serviceClient
     .from("rent_buddy_policy_flags")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
@@ -2039,16 +2124,23 @@ router.get("/api/rent-a-buddy/admin/safety/flags", async (req, res) => {
 router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/dismiss", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, userId } = admin;
+  const { sc: serviceClient, userId } = admin;
 
   const { flagId } = req.params;
-  await sc.from("rent_buddy_policy_flags").update({
+  const { data: flag } = await serviceClient
+    .from("rent_buddy_policy_flags")
+    .select("id")
+    .eq("id", flagId)
+    .maybeSingle();
+  if (!flag) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_policy_flags").update({
     status: "dismissed",
     admin_notes: req.body?.notes ?? null,
     resolved_at: new Date().toISOString(),
   }).eq("id", flagId);
 
-  await sc.from("rent_buddy_admin_actions").insert({
+  await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: userId,
     target_type: "flag",
     target_id: flagId,
@@ -2062,47 +2154,49 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/dismiss", async (req, 
 router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, userId } = admin;
+  const { sc: serviceClient, userId } = admin;
 
   const { flagId } = req.params;
-  const { data: flag } = await sc
+  const { data: flag } = await serviceClient
     .from("rent_buddy_policy_flags")
     .select("*")
     .eq("id", flagId)
     .maybeSingle();
-
   if (!flag) return res.status(404).json({ error: "not_found" });
+
   const f = flag as any;
 
-  await sc.from("rent_buddy_policy_flags").update({
+  await serviceClient.from("rent_buddy_policy_flags").update({
     status: "resolved",
     admin_notes: req.body?.notes ?? null,
     resolved_at: new Date().toISOString(),
   }).eq("id", flagId);
 
-  // Apply Trust Score penalty for confirmed flag
+  // Trust Score penalty emitted HERE (admin confirms), not at scan time
   if (f.flagged_user_id) {
     const severityDelta: Record<string, number> = { critical: -30, high: -15, medium: -8, low: -3 };
-    const trustSeverity: Record<string, string> = { critical: "severe", high: "serious", medium: "moderate", low: "minor" };
-    void recordTrustEvent(sc, {
+    const trustSeverity: Record<string, "severe" | "serious" | "moderate" | "minor"> = {
+      critical: "severe", high: "serious", medium: "moderate", low: "minor",
+    };
+    void recordTrustEvent(serviceClient, {
       userId: f.flagged_user_id,
       eventType: "rent_buddy_policy_flag_confirmed",
       category: "respect_safety",
       delta: severityDelta[f.severity] ?? -5,
-      severity: (trustSeverity[f.severity] ?? "minor") as any,
+      severity: trustSeverity[f.severity] ?? "minor",
       sourceType: "admin",
       sourceId: flagId,
     });
 
-    // Risk hold for critical
+    // Risk hold for critical flags
     if (f.severity === "critical") {
-      await sc.from("rent_buddy_profiles")
-        .update({ risk_hold: true })
+      await serviceClient.from("rent_buddy_profiles")
+        .update({ risk_hold: true, admin_status: "disabled" })
         .eq("user_id", f.flagged_user_id);
     }
   }
 
-  await sc.from("rent_buddy_admin_actions").insert({
+  await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: userId,
     target_type: "flag",
     target_id: flagId,
@@ -2118,13 +2212,13 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, 
 router.get("/api/rent-a-buddy/admin/safety/events", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc: serviceClient } = admin;
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
   const status = (req.query.status as string) ?? "open";
 
-  let query = sc
+  let query = serviceClient
     .from("rent_buddy_safety_events")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
@@ -2141,7 +2235,7 @@ router.get("/api/rent-a-buddy/admin/safety/events", async (req, res) => {
 router.post("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, userId: adminId } = admin;
+  const { sc: serviceClient, userId: adminId } = admin;
 
   const { userId } = req.params;
   const {
@@ -2156,24 +2250,27 @@ router.post("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => 
     reason,
   } = req.body ?? {};
 
-  const { data, error } = await sc.from("rent_buddy_user_limits").upsert({
-    user_id: userId,
-    rent_buddy_disabled: rentBuddyDisabled,
-    buddy_disabled: buddyDisabled,
-    traveler_booking_disabled: travelerBookingDisabled,
-    nightlife_disabled: nightlifeDisabled,
-    cash_balance_disabled: cashBalanceDisabled,
-    max_booking_duration_minutes: maxBookingDurationMinutes ?? null,
-    public_meetup_required: publicMeetupRequired,
-    full_in_app_payment_required: fullInAppPaymentRequired,
-    reason: reason ?? null,
-    created_by_admin_id: adminId,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "user_id" }).select().maybeSingle();
+  const { data, error } = await serviceClient.from("rent_buddy_user_limits").upsert(
+    {
+      user_id: userId,
+      rent_buddy_disabled: rentBuddyDisabled,
+      buddy_disabled: buddyDisabled,
+      traveler_booking_disabled: travelerBookingDisabled,
+      nightlife_disabled: nightlifeDisabled,
+      cash_balance_disabled: cashBalanceDisabled,
+      max_booking_duration_minutes: maxBookingDurationMinutes ?? null,
+      public_meetup_required: publicMeetupRequired,
+      full_in_app_payment_required: fullInAppPaymentRequired,
+      reason: reason ?? null,
+      created_by_admin_id: adminId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  ).select().maybeSingle();
 
   if (error) return sendError(res, "db_error", error.message);
 
-  await sc.from("rent_buddy_admin_actions").insert({
+  await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: adminId,
     target_type: "user",
     target_id: userId,
@@ -2187,7 +2284,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => 
 router.patch("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, userId: adminId } = admin;
+  const { sc: serviceClient, userId: adminId } = admin;
 
   const { userId } = req.params;
   const body = req.body ?? {};
@@ -2203,9 +2300,9 @@ router.patch("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) =>
   if (body.fullInAppPaymentRequired !== undefined)    patch.full_in_app_payment_required   = body.fullInAppPaymentRequired;
   if (body.reason !== undefined)                      patch.reason                         = body.reason;
 
-  await sc.from("rent_buddy_user_limits").update(patch).eq("user_id", userId);
+  await serviceClient.from("rent_buddy_user_limits").update(patch).eq("user_id", userId);
 
-  await sc.from("rent_buddy_admin_actions").insert({
+  await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: adminId,
     target_type: "user",
     target_id: userId,
