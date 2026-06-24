@@ -1,0 +1,244 @@
+Build a delayed geotag posting system for Travel Buddy.
+
+Goal:
+Protect user safety by preventing real-time location exposure. Users should be able to create geotagged posts, earn geotagged credit, Passport Stamps, Trust/Contribution points, and activity history, but the post should not become publicly visible until the user has exited that location/geofence or until a safety delay expires.
+
+Feature name:
+Delayed Location Posting
+
+User-facing concept:
+“Post now. Share later.”
+“Earn your geotag without exposing your live location.”
+
+Core behavior:
+When a user creates a geotagged post:
+- Save the post immediately as pending.
+- Store the verified geotag privately.
+- Award eligible geotag/stamp/visit credit according to existing rules.
+- Do not publish the post publicly while the user is still at or near that location.
+- Publish the post only after the user exits the location geofence or after a safe delay rule is satisfied.
+- Let the user manually choose “Post after I leave” or “Post after delay.”
+
+Posting modes:
+Add privacy posting options:
+1. Post now without location
+2. Post after I leave
+3. Post after delay
+4. Save as private memory
+5. Share only with Trusted Circle, if supported
+
+Default:
+For geotagged posts, default to “Post after I leave.”
+
+Geofence logic:
+When a geotagged post is created:
+- Capture location lat/lng privately.
+- Create a safety geofence around the location.
+- Suggested default radius: 300–500 meters.
+- Mark post as pending_location_exit.
+- Check if user has exited the geofence before publishing.
+
+Exit rules:
+A post can publish when:
+- User is outside the geofence radius, and
+- User has remained outside for a short confirmation period, such as 5–10 minutes, to avoid accidental GPS bounce.
+
+Delay fallback:
+If exit detection is unavailable or location updates stop:
+- Apply a fallback delay.
+- Suggested default: 60–180 minutes depending on category.
+- Let user choose longer delays:
+  - 30 minutes
+  - 1 hour
+  - 3 hours
+  - 6 hours
+  - Tomorrow
+  - Custom time
+
+Sensitive location rules:
+Use longer default delays or stricter privacy for:
+- Hotel/lodging
+- Home/private residence
+- Current workplace
+- Small venue with low crowd density
+- Late-night nightlife location
+- Solo traveler post
+- Safety mode enabled
+- User has active Safe Return session
+
+For sensitive locations:
+- Default to delayed posting.
+- Consider hiding exact location and showing only neighborhood/city.
+- Require confirmation before posting exact venue name.
+
+Post statuses:
+Add post status values:
+- draft
+- private
+- pending_location_exit
+- pending_delay
+- pending_safety_review
+- published
+- canceled
+- expired
+
+Database:
+Add or extend fields on posts:
+
+- location_privacy_mode: none, hidden, city_only, delayed_until_exit, delayed_until_time, trusted_circle_only
+- geotag_verified boolean
+- geotag_credit_awarded boolean
+- original_lat
+- original_lng
+- public_lat nullable
+- public_lng nullable
+- venue_id nullable
+- venue_name nullable
+- public_location_label
+- geofence_radius_meters
+- publish_after_exit boolean
+- publish_after_time nullable
+- exited_geofence_at nullable
+- publish_eligible_at nullable
+- published_at nullable
+- location_sensitivity_level: low, medium, high
+- post_status
+- delayed_location_reason
+- created_at
+- updated_at
+
+Create delayed_post_location_events table:
+- id
+- post_id
+- user_id
+- event_type: created_pending, geotag_credit_awarded, exit_detected, delay_elapsed, published, canceled, privacy_changed
+- lat nullable
+- lng nullable
+- metadata JSON
+- created_at
+
+Geotag credit:
+The user should still receive valid geotag credit when the post is created if:
+- Location is verified.
+- User is physically within valid geofence.
+- Anti-fraud rules pass.
+- The post is not spam or policy-violating.
+
+Credit should not require public posting in real time.
+
+Important:
+If the post is later deleted, hidden, or fails review, follow existing rules for whether geotag credit remains or is reversed.
+
+UI:
+In the post composer, add a location safety section:
+
+Title:
+Location Privacy
+
+Options:
+- Hide exact location
+- Show city only
+- Post after I leave
+- Post after delay
+- Share with Trusted Circle only
+
+Helper text:
+“Delayed posting helps protect your real-time location. You can earn your geotag now, but your post will not go public until you leave this area.”
+
+Pending post UI:
+Show user:
+“Your post is saved. We’ll publish it after you leave this location.”
+or
+“Your post is scheduled to publish at 8:30 PM.”
+
+Allow user actions:
+- Publish now without exact location
+- Change delay
+- Make private
+- Cancel post
+- Remove location
+- Share to Trusted Circle only
+
+Public display:
+When published, show a safer location label by default:
+- City/neighborhood instead of exact live location
+- Venue only if user allowed it
+- Do not show “posted 1 minute ago at this exact place” if it reveals real-time location
+- Consider showing “Posted after visit” or no timing detail for safety
+
+Safety copy:
+Add this message near geotag options:
+“Travel Buddy never has to expose your live location to prove you were there.”
+
+Backend APIs:
+Add or extend:
+- POST /api/posts
+- PATCH /api/posts/:postId/location-privacy
+- POST /api/posts/:postId/publish-now-without-location
+- POST /api/posts/:postId/cancel-delayed-publish
+- GET /api/posts/pending
+- POST /api/location/exit-geofence
+- POST /api/posts/:postId/location-event
+
+Background/worker:
+Add a safe publisher job:
+- Finds posts pending_location_exit or pending_delay.
+- Publishes posts only when eligible.
+- Skips posts that are private, canceled, under review, or unsafe.
+- Logs delayed_post_location_events.
+- Does not publish posts if user has active safety mode requiring hold.
+
+Location update handling:
+When user location updates:
+- Check pending posts.
+- If user exits geofence and remains out for confirmation window, mark publish eligible.
+- Publish or schedule publish according to user preference.
+
+Privacy rules:
+Never expose:
+- Original private lat/lng publicly unless user explicitly chooses exact public location.
+- Hotel room or private home exact location.
+- Active Safe Return route.
+- Real-time location from pending posts.
+
+Admin:
+Add admin visibility for abuse/safety only:
+- View delayed post status.
+- View whether geotag was credited.
+- View safety reason for delay.
+- Do not make private precise location broadly visible unless needed for safety/admin role.
+
+Anti-abuse:
+Prevent users from faking geotag credit:
+- Require location verification.
+- Use existing anti-spoofing if available.
+- Rate-limit geotag credit.
+- Prevent duplicate credit farming at same venue within a short window.
+- Flag suspicious repeated delayed geotag posts.
+
+Testing:
+Add tests for:
+- Geotagged post defaults to delayed posting.
+- User receives geotag credit while post remains pending.
+- Pending post is not public while user is inside geofence.
+- Post publishes after user exits geofence and confirmation window passes.
+- Post publishes after fallback delay if exit detection is unavailable.
+- Sensitive location hides exact venue by default.
+- User can cancel delayed publish.
+- User can publish now without location.
+- Original private lat/lng is not exposed in public API response.
+- Active Safe Return can hold publishing.
+- Duplicate geotag farming is prevented or flagged.
+- Worker does not publish canceled/private/review-held posts.
+- City-only display works.
+- Trusted Circle only mode does not publish publicly.
+
+Acceptance criteria:
+- Users can safely create geotagged posts without exposing real-time location.
+- Users still earn valid geotag/stamp credit when verified.
+- Posts remain private/pending until exit or delay rules are met.
+- Exact location privacy is protected by default.
+- Sensitive locations receive stricter privacy.
+- Users can control whether to publish, delay, hide, or privatize location.
+- Public APIs never leak private original coordinates.
+- Tests prove privacy, geotag credit, publishing delay, and safety behavior.
