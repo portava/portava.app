@@ -193,6 +193,7 @@ function makeTables(): FakeTables {
       level_building_trust: 35, level_reliable: 50,
       level_trusted: 65, level_highly_trusted: 78, level_city_trusted: 90,
       daily_cap_plan_attend: 3, daily_cap_guide_verify: 5, daily_cap_gem_save: 10,
+      weekly_cap_plan_attend: 10, weekly_cap_guide_verify: 20, weekly_cap_gem_save: 40,
       gaming_checkin_cluster_limit: 5,
       gaming_mutual_rate_threshold: 0.80,
       gaming_rapid_jump_points: 20,
@@ -274,6 +275,32 @@ describe("TrustEventService", () => {
     });
     assert.equal(capped.ok, false);
     assert.equal(capped.skipReason, "daily_cap");
+  });
+
+  it("weekly cap prevents earning beyond weekly limit when daily is not yet reached", async () => {
+    const tables = makeTables();
+    // Set weekly_cap_plan_attend = 4, daily = 10 (so daily never triggers first)
+    tables.trust_settings[0].weekly_cap_plan_attend = 4;
+    tables.trust_settings[0].daily_cap_plan_attend = 10;
+    const db = makeTrustClient(tables);
+    // Fill weekly cap with 4 events on different days (simulate old created_at within 7 days)
+    // We pre-seed 4 events directly so the count query picks them up
+    for (let i = 0; i < 4; i++) {
+      tables.trust_events.push({
+        id: `weekly-ev-${i}`, user_id: USER_A,
+        event_type: "plan_attend_weekly", category: "plan_attendance",
+        delta: 5, severity: "minor", status: "applied",
+        // spread across past 6 days (all within 7-day window)
+        created_at: new Date(Date.now() - (i + 1) * 24 * 60 * 60 * 1000).toISOString(),
+      });
+    }
+    const weekCapped = await recordTrustEvent(db, {
+      userId: USER_A, eventType: "plan_attend_weekly",
+      category: "plan_attendance", delta: 5, severity: "minor",
+      sourceType: "plan", sourceId: "plan-weekly-new",
+    });
+    assert.equal(weekCapped.ok, false);
+    assert.equal(weekCapped.skipReason, "daily_cap"); // weekly cap fires as daily_cap skip
   });
 
   it("flag_off: skips when trust_engine_enabled = false", async () => {

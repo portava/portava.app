@@ -156,10 +156,13 @@ CREATE TABLE IF NOT EXISTS trust_settings (
   level_trusted           NUMERIC(5,2) NOT NULL DEFAULT 65.00,
   level_highly_trusted    NUMERIC(5,2) NOT NULL DEFAULT 78.00,
   level_city_trusted      NUMERIC(5,2) NOT NULL DEFAULT 90.00,
-  -- Earning caps per event type (daily)
+  -- Earning caps per event type (daily and weekly)
   daily_cap_plan_attend   INT          NOT NULL DEFAULT 3,
   daily_cap_guide_verify  INT          NOT NULL DEFAULT 5,
   daily_cap_gem_save      INT          NOT NULL DEFAULT 10,
+  weekly_cap_plan_attend  INT          NOT NULL DEFAULT 10,
+  weekly_cap_guide_verify INT          NOT NULL DEFAULT 20,
+  weekly_cap_gem_save     INT          NOT NULL DEFAULT 40,
   -- Gaming detection thresholds
   gaming_checkin_cluster_limit  INT   NOT NULL DEFAULT 5,
   gaming_mutual_rate_threshold  NUMERIC(4,3) NOT NULL DEFAULT 0.80,

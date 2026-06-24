@@ -61,14 +61,15 @@ async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   }
 }
 
-/** Daily earning count for an event type for a user */
-async function dailyCount(
+/** Count events for a user/type within a time window */
+async function countInWindow(
   db: SupabaseClient,
   userId: string,
   eventType: string,
+  windowMs: number,
 ): Promise<number> {
   try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since = new Date(Date.now() - windowMs).toISOString();
     const { data } = await db
       .from("trust_events")
       .select("id")
@@ -81,21 +82,32 @@ async function dailyCount(
   }
 }
 
-/** Returns the daily cap for an event type from trust_settings */
-async function getDailyCap(
+interface EarningCaps { daily: number; weekly: number }
+
+/** Returns daily and weekly caps for an event type from trust_settings */
+async function getEarningCaps(
   db: SupabaseClient,
   eventType: string,
-): Promise<number> {
+): Promise<EarningCaps> {
   try {
     const { data } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
-    if (!data) return 999;
+    if (!data) return { daily: 999, weekly: 999 };
     const s = data as any;
-    if (eventType.includes("plan_attend")) return s.daily_cap_plan_attend ?? 3;
-    if (eventType.includes("guide_verify")) return s.daily_cap_guide_verify ?? 5;
-    if (eventType.includes("gem_save")) return s.daily_cap_gem_save ?? 10;
-    return 999; // unlimited by default
+    if (eventType.includes("plan_attend")) return {
+      daily:  s.daily_cap_plan_attend  ?? 3,
+      weekly: s.weekly_cap_plan_attend ?? 10,
+    };
+    if (eventType.includes("guide_verify")) return {
+      daily:  s.daily_cap_guide_verify  ?? 5,
+      weekly: s.weekly_cap_guide_verify ?? 20,
+    };
+    if (eventType.includes("gem_save")) return {
+      daily:  s.daily_cap_gem_save  ?? 10,
+      weekly: s.weekly_cap_gem_save ?? 40,
+    };
+    return { daily: 999, weekly: 999 }; // unlimited by default
   } catch {
-    return 999;
+    return { daily: 999, weekly: 999 };
   }
 }
 
@@ -145,11 +157,16 @@ export async function recordTrustEvent(
   const dup = await isDuplicate(db, userId, eventType, sourceType, sourceId, dedupWindowHours);
   if (dup) return { ok: false, skipped: true, skipReason: "dedup" };
 
-  // Daily cap check (only for positive events)
+  // Daily and weekly cap checks (only for positive events)
   if (delta > 0) {
-    const cap = await getDailyCap(db, eventType);
-    const count = await dailyCount(db, userId, eventType);
-    if (count >= cap) return { ok: false, skipped: true, skipReason: "daily_cap" };
+    const caps = await getEarningCaps(db, eventType);
+    const [dayCount, weekCount] = await Promise.all([
+      countInWindow(db, userId, eventType, 24 * 60 * 60 * 1000),
+      countInWindow(db, userId, eventType, 7 * 24 * 60 * 60 * 1000),
+    ]);
+    if (dayCount >= caps.daily || weekCount >= caps.weekly) {
+      return { ok: false, skipped: true, skipReason: "daily_cap" };
+    }
   }
 
   // Serious/severe → pending_review; others → applied

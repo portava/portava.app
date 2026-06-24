@@ -3,11 +3,14 @@
  *
  * Anti-fake GPS detection.
  * Detects: impossible speed, coordinate jumps, IP–city mismatch.
- * Writes to location_trust_events (no auto-ban, review only).
+ * Writes to location_trust_events (legacy table, no auto-ban, review only).
+ * Also feeds signals into the Trust Engine via TrustEventService when
+ * trust_engine_enabled flag is on.
  * Falls back gracefully if table doesn't exist yet.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger";
+import { recordLocationTrustEvent } from "../trust/TrustEventService.js";
 
 const logger = rootLogger.child({ service: "LocationSafetyService" });
 
@@ -94,6 +97,8 @@ export async function checkAndRecordSnapshot(
         prevLat: prev.lat,
         prevLng: prev.lng,
       });
+      // Also feed into the Trust Engine (fire-and-forget; flag-gated internally)
+      void recordLocationTrustEvent(db, userId, "coordinate_jump", "medium");
       return { trusted: false, suspicionReason: "coordinate_jump" };
     }
 
@@ -104,6 +109,8 @@ export async function checkAndRecordSnapshot(
         speedKmh: Math.round(km / elapsedHours),
         elapsedMinutes: Math.round(elapsedMs / 60000),
       });
+      // Also feed into the Trust Engine (fire-and-forget; flag-gated internally)
+      void recordLocationTrustEvent(db, userId, "impossible_speed", "high");
       return { trusted: false, suspicionReason: "impossible_speed" };
     }
   }

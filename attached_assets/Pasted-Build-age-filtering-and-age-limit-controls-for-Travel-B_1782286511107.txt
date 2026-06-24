@@ -1,0 +1,391 @@
+Build age filtering and age-limit controls for Travel Buddy events, circles, discovery, and join eligibility.
+
+Goal:
+Users should be able to filter events/circles by age range, and hosts/circle owners should be able to set age limits for who can join. Backend must enforce age eligibility so users cannot bypass the rules from the frontend.
+
+Applies to:
+1. Events / Plans
+2. Circles / Travel Circles
+3. Event discovery
+4. Circle discovery
+5. Join requests
+6. Invite acceptance
+7. Host approval
+8. Admin moderation
+
+Part 1: Event Age Limits
+
+Event hosts should be able to set optional age limits when creating or editing an event.
+
+Add event age-limit options:
+- No age limit
+- Minimum age only, example: 21+
+- Maximum age only, example: under 35
+- Full age range, example: 25–40
+
+Default:
+- No age limit
+
+Event database fields:
+- age_limit_enabled boolean default false
+- min_age integer nullable
+- max_age integer nullable
+
+Event validation:
+- min_age cannot be below platform minimum age
+- recommended minimum: 13 unless app policy says otherwise
+- max_age cannot be below min_age
+- max_age cannot be above 100
+- if age_limit_enabled is false, ignore min_age and max_age
+- if min_age and max_age are both null, treat as no age limit
+
+Event join enforcement:
+Before a user can:
+- request to join an event
+- accept an event invite
+- be approved by a host
+- be added manually by admin
+
+Backend must check:
+- user has date_of_birth saved
+- user age is calculated server-side
+- user meets event min_age/max_age rules
+
+Blocked messages:
+- Missing DOB:
+  “Add your date of birth to see if you’re eligible to join.”
+- Too young:
+  “This event has a minimum age requirement.”
+- Above max age:
+  “This event is limited to a specific age range.”
+- Full range:
+  “This event is open to ages {minAge}–{maxAge}.”
+
+Event detail display:
+If age limit is enabled, show:
+- “Ages 21+”
+- “Ages 18–30”
+- “Under 35”
+
+Do not expose another user’s exact age.
+
+Part 2: Circle Age Limits
+
+Circle owners should be able to set optional age limits for who can join their circle.
+
+Add circle age-limit options:
+- No age limit
+- Minimum age only
+- Maximum age only
+- Full age range
+
+Default:
+- No age limit
+
+Circle database fields:
+- age_limit_enabled boolean default false
+- min_age integer nullable
+- max_age integer nullable
+
+Circle join enforcement:
+Before a user can:
+- request to join a circle
+- accept a circle invite
+- be approved by circle owner
+- be manually added by admin
+
+Backend must check:
+- user has date_of_birth saved
+- user age is calculated server-side
+- user meets circle min_age/max_age rules
+
+Circle blocked messages:
+- Missing DOB:
+  “Add your date of birth to see if you’re eligible to join.”
+- Too young:
+  “This circle has a minimum age requirement.”
+- Above max age:
+  “This circle is limited to a specific age range.”
+- Full range:
+  “This circle is open to ages {minAge}–{maxAge}.”
+
+Circle detail display:
+If age limit is enabled, show:
+- “Ages 21+”
+- “Ages 18–30”
+- “Under 35”
+
+Part 3: User Date of Birth Requirement
+
+Add user profile DOB support if missing.
+
+User profile fields:
+- date_of_birth date nullable
+- dob_verified boolean default false, if verification system supports it
+
+Rules:
+- User age must be calculated from date_of_birth on the backend.
+- Do not trust frontend-submitted age.
+- Do not let users manually type age as plain text for eligibility.
+- If date_of_birth is missing, block age-limited joins and route user to profile setup.
+- If DOB is part of ID verification, use the verified DOB when available.
+- Exact birthday must stay private.
+
+Privacy:
+- Other users should not see exact age by default.
+- Hosts should not see full date of birth.
+- Hosts/admins may see eligibility status:
+  - Age eligible
+  - Does not meet age requirement
+  - Age not provided
+  - Needs review
+
+Part 4: Discovery Age Filters
+
+Add age filtering to event and circle discovery.
+
+Discovery filter options:
+- Any age
+- 18+
+- 21+
+- Under 30
+- 30+
+- Custom range
+
+Custom range:
+- minimum age
+- maximum age
+
+Event discovery:
+Users can filter events by:
+- events open to my age
+- events with no age limit
+- custom age range
+
+Circle discovery:
+Users can filter circles by:
+- circles open to my age
+- circles with no age limit
+- custom age range
+
+Default discovery behavior:
+- Show all public events/circles the user has permission to see.
+- If the user has DOB saved, optionally prioritize age-eligible events/circles.
+- If the user turns on “Only show events I can join,” hide age-ineligible events/circles.
+- Do not expose private events or circles through age filters.
+
+Filter labels:
+- “Open to my age”
+- “Ages 21+”
+- “Ages 18–30”
+- “No age limit”
+- “Custom age range”
+
+Part 5: Frontend UI
+
+Event create/edit screen:
+Add section:
+- “Who can join”
+
+Add toggle:
+- “Set age limit”
+
+If enabled, show:
+- Minimum age input
+- Maximum age input
+
+Helper text:
+- “Only people within this age range can request to join or accept invites.”
+
+Circle settings screen:
+Add section:
+- “Circle join rules”
+
+Add toggle:
+- “Set age limit”
+
+If enabled, show:
+- Minimum age input
+- Maximum age input
+
+Helper text:
+- “This keeps your circle matched to the age range you choose.”
+
+Discovery screens:
+Add filter section:
+- “Age”
+
+Options:
+- Any age
+- Open to my age
+- 18+
+- 21+
+- Under 30
+- Custom range
+
+Join flow:
+- If eligible, allow normal join/request.
+- If missing DOB, show DOB setup prompt.
+- If blocked, show private neutral message.
+- Do not shame or expose age details.
+
+Part 6: Backend Helpers
+
+Create shared backend helper functions:
+- calculateUserAge(dateOfBirth, currentDate)
+- isUserAgeEligible(userDob, minAge, maxAge, ageLimitEnabled)
+- getAgeEligibilityReason(userDob, minAge, maxAge, ageLimitEnabled)
+- formatAgeLimitLabel(minAge, maxAge, ageLimitEnabled)
+
+Eligibility result should return:
+- eligible boolean
+- reason:
+  - no_limit
+  - dob_missing
+  - below_min_age
+  - above_max_age
+  - within_range
+- public_message
+- host_status
+
+Part 7: Existing Events and Circles
+
+Migration rules:
+- Existing events default to age_limit_enabled = false
+- Existing circles default to age_limit_enabled = false
+- Existing records should remain joinable unless a host/circle owner later adds age limits
+- Do not break old events/circles with null age fields
+
+If age limit changes after users already joined:
+- Do not auto-remove existing members
+- Mark affected members as “needs review”
+- Host/admin can review manually
+
+If user changes DOB after joining:
+- Do not auto-remove immediately
+- Mark as “needs review” if the user becomes ineligible
+- Add audit log entry
+
+Part 8: Admin and Moderation
+
+Admin should be able to:
+- View event age limits
+- Edit event age limits
+- View circle age limits
+- Edit circle age limits
+- See eligibility status on join requests
+- See “needs review” flags
+- Review age-rule conflicts
+
+Avoid admin override by default.
+If admin override exists:
+- Require reason
+- Require audit log
+- Display “Admin override used”
+
+Admin eligibility statuses:
+- Eligible
+- Not eligible
+- DOB missing
+- Needs review
+- Admin override
+
+Part 9: Audit Logs
+
+Create audit logs when:
+- Event age limit is created
+- Event age limit is changed
+- Circle age limit is created
+- Circle age limit is changed
+- User is blocked from joining by age rule
+- User is blocked from accepting invite by age rule
+- Host approval fails age re-check
+- Admin edits age limit
+- Admin override is used
+- Existing member is marked needs review
+
+Audit log fields:
+- id
+- actor_user_id
+- target_type: event | circle | user
+- target_id
+- action
+- old_min_age nullable
+- old_max_age nullable
+- new_min_age nullable
+- new_max_age nullable
+- reason nullable
+- metadata jsonb nullable
+- created_at
+
+Part 10: Security and Abuse Prevention
+
+Security rules:
+- Backend is the source of truth.
+- Do not trust frontend age.
+- Do not expose DOB publicly.
+- Prevent users from bypassing age rules through direct API calls.
+- Prevent host from setting invalid ranges.
+- Rate limit repeated DOB update attempts if abuse is detected.
+- If DOB is verified through ID system, do not let user freely change it without review.
+
+Privacy rules:
+- Do not show “too old” or “too young” publicly.
+- Only show neutral messages to users.
+- Only show eligibility status to host/admin.
+- Exact DOB should remain private.
+
+Part 11: Testing
+
+Backend tests:
+- User can join event when no age limit exists
+- User can join circle when no age limit exists
+- User can join event when age is within range
+- User can join circle when age is within range
+- User is blocked when below event minimum age
+- User is blocked when above event maximum age
+- User is blocked when below circle minimum age
+- User is blocked when above circle maximum age
+- Missing DOB blocks age-limited event join
+- Missing DOB blocks age-limited circle join
+- Event invite acceptance checks age eligibility
+- Circle invite acceptance checks age eligibility
+- Host approval re-checks age eligibility
+- Admin manual add checks age eligibility
+- Invalid min/max values are rejected
+- Existing events without limits remain joinable
+- Existing circles without limits remain joinable
+- Age filter returns only eligible events when enabled
+- Age filter returns only eligible circles when enabled
+- Private events do not leak through age filtering
+- Private circles do not leak through age filtering
+- DOB is not returned in public profile response
+
+Frontend tests:
+- Age toggle appears in event create/edit
+- Age toggle appears in circle settings
+- Minimum age input works
+- Maximum age input works
+- Invalid range shows error
+- Event detail displays age label correctly
+- Circle detail displays age label correctly
+- Discovery age filter appears
+- “Open to my age” filter works
+- Join button blocks ineligible user
+- Missing DOB routes user to profile setup
+- Host sees eligibility status without exact DOB
+- Admin sees age review status
+- Existing no-limit event displays normally
+- Existing no-limit circle displays normally
+
+Acceptance criteria:
+- Hosts can set age limits on events.
+- Circle owners can set age limits on circles.
+- Users can filter discovery by age eligibility.
+- Users can search for events/circles open to their age.
+- Backend enforces age eligibility on all join and invite paths.
+- Users outside the age range cannot join, request, accept invites, or be approved.
+- Date of birth is private and age is calculated server-side.
+- Existing events and circles continue working.
+- Admins can review age-rule conflicts.
+- All tests pass.

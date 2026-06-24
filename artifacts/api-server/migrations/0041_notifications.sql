@@ -170,12 +170,12 @@ END $$;
 
 -- ── Feature flags for notifications ──────────────────────────────────────────
 
-INSERT INTO feature_flags (flag, enabled, description, updated_at)
+INSERT INTO feature_flags (key, enabled, description)
 VALUES
-  ('notifications_enabled',        true,  'Master switch for the notification system',                    now()),
-  ('activity_center_enabled',      true,  'Enables the Activity Center screen in the mobile app',         now()),
-  ('push_notifications_enabled',   true,  'Enables push notification delivery via Expo',                  now()),
-  ('notification_digests_enabled', false, 'Enables daily digest emails (requires email provider setup)',  now()),
-  ('realtime_activity_enabled',    true,  'Broadcasts notification events over the SSE realtime bus',     now()),
-  ('safety_notifications_enabled', true,  'Enables safety-priority notifications (safe return, trust)',   now())
-ON CONFLICT (flag) DO NOTHING;
+  ('notifications_enabled',        true,  'Master switch for the notification system'),
+  ('activity_center_enabled',      true,  'Enables the Activity Center screen in the mobile app'),
+  ('push_notifications_enabled',   true,  'Enables push notification delivery via Expo'),
+  ('notification_digests_enabled', false, 'Enables daily digest emails (requires email provider setup)'),
+  ('realtime_activity_enabled',    true,  'Broadcasts notification events over the SSE realtime bus'),
+  ('safety_notifications_enabled', true,  'Enables safety-priority notifications (safe return, trust)')
+ON CONFLICT (key) DO NOTHING;

@@ -129,8 +129,7 @@ export async function applyEventCaps(
   // Standard caps by event type
   const capMap: Record<string, { category: TrustCategory; ceiling: number; reasonCode: string; expiresInDays?: number }[]> = {
     PLAN_NO_SHOW:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
-    BEHAVIOR_REPORT_CONFIRMED: [{ category: "respect_safety",   ceiling: 40, reasonCode: "behavior_confirmed"                      },
-                                { category: "hosting",          ceiling: 30, reasonCode: "behavior_confirmed" } as any],
+    BEHAVIOR_REPORT_CONFIRMED: [{ category: "respect_safety" as TrustCategory, ceiling: 40, reasonCode: "behavior_confirmed" }],
     FAKE_GPS_CONFIRMED:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
     GPS_IMPOSSIBLE_SPEED:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
     CONTENT_REMOVED:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
