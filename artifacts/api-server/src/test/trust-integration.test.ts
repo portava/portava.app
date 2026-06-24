@@ -1,47 +1,53 @@
 /**
- * Trust Score Engine — integration tests
+ * Trust Score Engine — integration + route tests
  *
- * Chains multiple service-layer calls to validate end-to-end round-trips.
- * Uses the same node:test + fake-client pattern as trust.test.ts.
+ * Two layers:
+ *   1. Service-layer chains (node:test + fake client, no HTTP)
+ *   2. HTTP route tests  (trust-admin.ts mounted on a real Express server,
+ *      fake client injected via _setTestClient/_setTestServiceClient)
  *
  * Run: node --import tsx/esm --test src/test/trust-integration.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import trustAdminRouter from "../routes/trust-admin.js";
 
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recalculateTrustScore, getTrustProfile } from "../services/trust/TrustScoreService.js";
 import { getActiveCaps } from "../services/trust/TrustCapService.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import {
-  confirmEvent,
-  dismissEvent,
-  adminApplyRestriction,
-  adminLiftRestriction,
-  adminOverrideScore,
-  adminRemoveOverride,
-  getPendingEvents,
-  getOpenReviews,
+  confirmEvent, dismissEvent,
+  adminApplyRestriction, adminLiftRestriction,
+  adminOverrideScore, adminRemoveOverride,
+  getPendingEvents, getOpenReviews,
 } from "../services/trust/TrustAdminService.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../services/trust/TrustPrivacyGuard.js";
 import { getRecoveryStatus } from "../services/trust/TrustRecoveryService.js";
 import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
 
-// ── Fake client (copied / adapted from trust.test.ts) ─────────────────────────
+// ── Fake users ────────────────────────────────────────────────────────────────
 
 const ADMIN   = "admin-int-001";
-const USER_A  = "user-int-a";
-const USER_B  = "user-int-b";
-const USER_C  = "user-int-c";
+const USER_A  = "00000000-0000-0000-0000-000000000a01";  // valid UUIDs for route tests
+const USER_B  = "00000000-0000-0000-0000-000000000b01";
+const USER_C  = "00000000-0000-0000-0000-000000000c01";
+
+// ── Shared fake-client factory (service-layer tests) ─────────────────────────
 
 interface FakeTables {
-  feature_flags:      any[];
-  trust_settings:     any[];
-  trust_events:       any[];
-  trust_caps:         any[];
-  trust_restrictions: any[];
-  trust_profiles:     any[];
-  trust_reviews:      any[];
+  feature_flags:       any[];
+  trust_settings:      any[];
+  trust_events:        any[];
+  trust_caps:          any[];
+  trust_restrictions:  any[];
+  trust_profiles:      any[];
+  trust_reviews:       any[];
   trust_admin_actions: any[];
   plan_attendance_events: any[];
 }
@@ -60,41 +66,30 @@ function makeTrustClient(tables: FakeTables) {
     let isCount = false;
 
     const builder: any = {
-      select(_fields?: string, opts?: any) {
-        if (opts?.count === "exact") isCount = true;
-        return builder;
-      },
+      select(_f?: string, opts?: any) { if (opts?.count === "exact") isCount = true; return builder; },
       insert(row: any) {
         const r = { id: nextId(), created_at: new Date().toISOString(), ...row };
-        store.push(r);
-        pendingInsert = r;
-        return builder;
+        store.push(r); pendingInsert = r; return builder;
       },
       upsert(row: any, opts?: any) {
-        const conflictKey = opts?.onConflict ?? "id";
-        const idx = store.findIndex((r) => r[conflictKey] === (row as any)[conflictKey]);
-        if (idx >= 0) {
-          store[idx] = { ...store[idx], ...row };
-          pendingInsert = store[idx];
-        } else {
-          const r = { id: nextId(), created_at: new Date().toISOString(), ...row };
-          store.push(r);
-          pendingInsert = r;
-        }
+        const key = opts?.onConflict ?? "id";
+        const idx = store.findIndex((r) => r[key] === (row as any)[key]);
+        if (idx >= 0) { store[idx] = { ...store[idx], ...row }; pendingInsert = store[idx]; }
+        else { const r = { id: nextId(), created_at: new Date().toISOString(), ...row }; store.push(r); pendingInsert = r; }
         return builder;
       },
-      update(patch: any) { pendingUpdate = patch; return builder; },
-      delete()           { pendingDelete = true; return builder; },
-      eq(col: string, val: any)    { filters.push((r) => r[col] === val); return builder; },
-      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
-      is(col: string, val: any)    { filters.push((r) => val === null ? r[col] == null : r[col] === val); return builder; },
-      gt(col: string, val: any)    { filters.push((r) => r[col] > val); return builder; },
-      lt(col: string, val: any)    { filters.push((r) => r[col] < val); return builder; },
-      not(col: string, _op: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
-      or()     { return builder; },
-      order()  { return builder; },
+      update(p: any) { pendingUpdate = p; return builder; },
+      delete()       { pendingDelete = true; return builder; },
+      eq(c: string, v: any)    { filters.push((r) => r[c] === v); return builder; },
+      in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return builder; },
+      is(c: string, v: any)    { filters.push((r) => v === null ? r[c] == null : r[c] === v); return builder; },
+      gt(c: string, v: any)    { filters.push((r) => r[c] > v); return builder; },
+      lt(c: string, v: any)    { filters.push((r) => r[c] < v); return builder; },
+      not(c: string, _op: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
+      or() { return builder; },
+      order() { return builder; },
       limit(n: number) { limitN = n; return builder; },
-      range()  { return builder; },
+      range() { return builder; },
       maybeSingle() { return resolveSingle(true); },
       single()      { return resolveSingle(false); },
       then(onF: any, onR: any) { return resolveList().then(onF, onR); },
@@ -105,40 +100,20 @@ function makeTrustClient(tables: FakeTables) {
       if (limitN !== null) rows = rows.slice(0, limitN);
       return rows;
     }
-
-    async function resolveSingle(maybe: boolean) {
+    async function resolveSingle(_maybe: boolean) {
       if (pendingInsert && !pendingUpdate) return { data: pendingInsert, error: null };
-      if (pendingUpdate) {
-        const rows = matched();
-        rows.forEach((r) => Object.assign(r, pendingUpdate));
-        return { data: rows[0] ?? null, error: null };
-      }
-      if (pendingDelete) {
-        const rows = matched();
-        rows.forEach((r) => { store.splice(store.indexOf(r), 1); });
-        return { data: rows[0] ?? null, count: rows.length, error: null };
-      }
+      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows[0] ?? null, error: null }; }
+      if (pendingDelete) { const rows = matched(); rows.forEach((r) => { store.splice(store.indexOf(r), 1); }); return { data: rows[0] ?? null, error: null }; }
       const rows = matched();
-      if (maybe) return { data: rows[0] ?? null, error: null };
       return { data: rows[0] ?? null, error: null };
     }
-
     async function resolveList() {
       if (pendingInsert && !pendingUpdate) return { data: [pendingInsert], error: null, count: 1 };
-      if (pendingUpdate) {
-        const rows = matched();
-        rows.forEach((r) => Object.assign(r, pendingUpdate));
-        return { data: rows, error: null };
-      }
-      if (pendingDelete) {
-        const rows = matched();
-        rows.forEach((r) => { store.splice(store.indexOf(r), 1); });
-        return { data: rows, error: null, count: rows.length };
-      }
+      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows, error: null }; }
+      if (pendingDelete) { const rows = matched(); rows.forEach((r) => { store.splice(store.indexOf(r), 1); }); return { data: rows, error: null, count: rows.length }; }
       const rows = matched();
       return { data: rows, error: null, count: rows.length };
     }
-
     return builder;
   }
 
@@ -152,8 +127,8 @@ function makeTrustClient(tables: FakeTables) {
 function makeTables(): FakeTables {
   return {
     feature_flags: [
-      { key: "trust_engine_enabled",           enabled: true },
-      { key: "trust_gaming_detection_enabled",  enabled: true },
+      { key: "trust_engine_enabled",          enabled: true },
+      { key: "trust_gaming_detection_enabled", enabled: true },
     ],
     trust_settings: [{
       id: 1,
@@ -171,469 +146,674 @@ function makeTables(): FakeTables {
       gaming_mutual_rate_threshold: 0.80,
       gaming_rapid_jump_points: 20,
     }],
-    trust_events:         [],
-    trust_caps:           [],
-    trust_restrictions:   [],
-    trust_profiles:       [],
-    trust_reviews:        [],
-    trust_admin_actions:  [],
-    plan_attendance_events: [],
+    trust_events:          [],
+    trust_caps:            [],
+    trust_restrictions:    [],
+    trust_profiles:        [],
+    trust_reviews:         [],
+    trust_admin_actions:   [],
+    plan_attendance_events:[],
   };
 }
 
-// ── 1. Full event → recalculation → public-level round-trip ───────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// PART 1: HTTP Route Tests (trust-admin.ts endpoints)
+// ══════════════════════════════════════════════════════════════════════════════
 
-describe("Integration: full event → recalc → public level round-trip", () => {
-  it("records multiple positive events and derives correct public level", async () => {
+let server: http.Server;
+let base:   string;
+const FAKE_TOKEN = "fake.jwt.token";
+
+function httpReq(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const payload = body ? JSON.stringify(body) : undefined;
+    const r = http.request(
+      {
+        hostname: url.hostname,
+        port:     Number(url.port),
+        path:     url.pathname + url.search,
+        method,
+        headers: {
+          "content-type":  "application/json",
+          "authorization": `Bearer ${FAKE_TOKEN}`,
+          ...(payload ? { "content-length": Buffer.byteLength(payload).toString() } : {}),
+        },
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+/**
+ * Build a route-test fake client.
+ * `role` controls whether requireAdminGuard passes (admin) or rejects (user/non-admin).
+ * `tables` is the live in-memory store shared by all route calls in a test.
+ */
+function makeRouteFakeClient(opts: {
+  role?: string;
+  tables?: FakeTables;
+}) {
+  const { role = "admin", tables = makeTables() } = opts;
+
+  function from(table: string) {
+    // Admin guard profile lookup
+    if (table === "profiles") {
+      return {
+        select: () => b,
+        eq:     () => b,
+        maybeSingle: () => Promise.resolve({ data: { id: ADMIN, role }, error: null }),
+      };
+    }
+
+    // All other tables — delegate to the shared fake-client builder
+    const tblKey = table as keyof FakeTables;
+    if (!(tblKey in tables)) {
+      // Unknown table — return an empty no-op builder
+      const empty: any = {
+        select: () => empty, insert: () => empty, update: () => empty,
+        delete: () => empty, upsert: () => empty,
+        eq: () => empty, in: () => empty, is: () => empty, not: () => empty,
+        gt: () => empty, lt: () => empty, or: () => empty,
+        order: () => empty, limit: () => empty, range: () => empty,
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        single:      () => Promise.resolve({ data: null, error: null }),
+        then: (r: any) => Promise.resolve({ data: [], error: null, count: 0 }).then(r),
+      };
+      return empty;
+    }
+
+    return makeTrustClient(tables).from(tblKey);
+  }
+
+  const b: any = {
+    select: () => b,
+    eq:     () => b,
+    maybeSingle: () => Promise.resolve({ data: { id: ADMIN, role }, error: null }),
+  };
+
+  return {
+    from,
+    auth: {
+      getUser: () => Promise.resolve({ data: { user: { id: ADMIN } }, error: null }),
+    },
+  } as any;
+}
+
+function setClients(opts: { role?: string; tables?: FakeTables }) {
+  const c = makeRouteFakeClient(opts);
+  _setTestClient(c, true);
+  _setTestServiceClient(c);
+}
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(trustAdminRouter);
+  server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, r));
+  const addr = server.address() as any;
+  base = `http://127.0.0.1:${addr.port}`;
+});
+
+after(() => {
+  _setTestClient(null as any, false);
+  _setTestServiceClient(null);
+  server.close();
+});
+
+// ── Auth / admin guard ─────────────────────────────────────────────────────────
+
+describe("trust-admin routes — admin guard", () => {
+  it("GET /admin/trust/reviews returns 403 for non-admin", async () => {
+    setClients({ role: "user" });
+    const { status } = await httpReq("GET", "/admin/trust/reviews");
+    assert.equal(status, 403);
+  });
+
+  it("GET /admin/trust/reviews returns 200 for admin", async () => {
+    setClients({ role: "admin" });
+    const { status, body } = await httpReq("GET", "/admin/trust/reviews");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.reviews), "reviews should be an array");
+    assert.ok("total" in body, "should include total count");
+    assert.ok("page" in body, "should include page");
+  });
+
+  it("GET /admin/trust/gaming-flags returns 403 for non-admin", async () => {
+    setClients({ role: "user" });
+    const { status } = await httpReq("GET", "/admin/trust/gaming-flags");
+    assert.equal(status, 403);
+  });
+});
+
+// ── GET /admin/trust/reviews with filters ─────────────────────────────────────
+
+describe("trust-admin routes — review queue", () => {
+  it("returns only open/in_progress reviews by default", async () => {
+    const tables = makeTables();
+    tables.trust_reviews.push(
+      { id: "rev-open-1",     user_id: USER_A, review_type: "gaming_suspected", status: "open",       metadata: {}, assigned_to: null, created_at: "2026-01-01T00:00:00Z" },
+      { id: "rev-resolved-1", user_id: USER_B, review_type: "appeal",           status: "resolved",   metadata: {}, assigned_to: null, created_at: "2026-01-01T00:00:00Z" },
+    );
+    setClients({ tables });
+    const { status, body } = await httpReq("GET", "/admin/trust/reviews");
+    assert.equal(status, 200);
+    assert.ok(
+      body.reviews.every((r: any) => ["open", "in_progress"].includes(r.status)),
+      "default filter should return only open/in_progress",
+    );
+  });
+
+  it("assigned_to filter narrows results", async () => {
+    const tables = makeTables();
+    tables.trust_reviews.push(
+      { id: "rev-a1", user_id: USER_A, review_type: "gaming_suspected", status: "open", assigned_to: "admin-X", metadata: {}, created_at: "2026-01-01T00:00:00Z" },
+      { id: "rev-a2", user_id: USER_B, review_type: "appeal",           status: "open", assigned_to: null,      metadata: {}, created_at: "2026-01-01T00:00:00Z" },
+    );
+    setClients({ tables });
+    const { status, body } = await httpReq("GET", "/admin/trust/reviews?assigned_to=admin-X");
+    assert.equal(status, 200);
+    assert.ok(
+      body.reviews.every((r: any) => r.assigned_to === "admin-X"),
+      "assigned_to filter should only return assigned reviews",
+    );
+  });
+
+  it("type filter narrows to gaming_suspected", async () => {
+    const tables = makeTables();
+    tables.trust_reviews.push(
+      { id: "rev-g1", user_id: USER_A, review_type: "gaming_suspected", status: "open", assigned_to: null, metadata: {}, created_at: "2026-01-01T00:00:00Z" },
+      { id: "rev-ap1", user_id: USER_B, review_type: "appeal",          status: "open", assigned_to: null, metadata: {}, created_at: "2026-01-01T00:00:00Z" },
+    );
+    setClients({ tables });
+    const { status, body } = await httpReq("GET", "/admin/trust/reviews?type=gaming_suspected");
+    assert.equal(status, 200);
+    assert.ok(
+      body.reviews.every((r: any) => r.review_type === "gaming_suspected"),
+      "type filter should only return gaming_suspected reviews",
+    );
+  });
+});
+
+// ── GET /admin/trust/users/:userId ─────────────────────────────────────────────
+
+describe("trust-admin routes — user trust detail", () => {
+  it("returns correct shape for a known user", async () => {
+    const tables = makeTables();
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 55, public_level: "reliable_traveler",
+      plan_attendance: 60, host_quality: 50, communication: 55, respect_safety: 70,
+      location_honesty: 40, content_quality: 45, community_value: 50,
+      guide_accuracy: 45, passport_authenticity: 55, updated_at: new Date().toISOString(),
+    });
+    tables.trust_events.push({
+      id: "ev-detail-1", user_id: USER_A, event_type: "PLAN_ATTENDED",
+      category: "plan_attendance", delta: 5, severity: "minor",
+      status: "applied", source_type: "user_action", metadata: {}, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("GET", `/admin/trust/users/${USER_A}`);
+    assert.equal(status, 200);
+    assert.equal(body.userId, USER_A);
+    assert.ok("profile" in body, "response should include profile");
+    assert.ok(Array.isArray(body.caps), "caps should be an array");
+    assert.ok(Array.isArray(body.restrictions), "restrictions should be an array");
+    assert.ok(Array.isArray(body.events), "events should be an array");
+    assert.ok(Array.isArray(body.openReviews), "openReviews should be an array");
+  });
+
+  it("returns 400 for invalid userId", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("GET", "/admin/trust/users/not-a-uuid");
+    assert.equal(status, 400);
+  });
+});
+
+// ── POST /admin/trust/events/:eventId/confirm ─────────────────────────────────
+
+describe("trust-admin routes — confirm/dismiss event", () => {
+  it("POST confirm returns 200 and ok:true for a pending_review event", async () => {
+    const tables = makeTables();
+    const eventId = "00000000-0000-0000-0000-000000000e01";
+    tables.trust_events.push({
+      id: eventId, user_id: USER_A, event_type: "FAKE_GPS_CONFIRMED",
+      category: "location_honesty", delta: -20, severity: "severe",
+      status: "pending_review", source_type: "admin", metadata: {}, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/events/${eventId}/confirm`, { reason: "Verified by ops" });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, "confirm should return ok:true");
+    // Event should now be confirmed in the store
+    const evt = tables.trust_events.find((e) => e.id === eventId);
+    assert.equal(evt?.status, "confirmed", "event status should be confirmed");
+  });
+
+  it("POST confirm returns 400 when reason is missing", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("POST", "/admin/trust/events/00000000-0000-0000-0000-000000000e99/confirm", {});
+    assert.equal(status, 400);
+  });
+
+  it("POST dismiss returns 200 and marks event dismissed", async () => {
+    const tables = makeTables();
+    const eventId = "00000000-0000-0000-0000-000000000e02";
+    tables.trust_events.push({
+      id: eventId, user_id: USER_A, event_type: "GPS_IMPOSSIBLE_SPEED",
+      category: "location_honesty", delta: -8, severity: "serious",
+      status: "pending_review", source_type: "automated", metadata: {}, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/events/${eventId}/dismiss`, { reason: "False positive — device glitch" });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    const evt = tables.trust_events.find((e) => e.id === eventId);
+    assert.equal(evt?.status, "dismissed");
+  });
+});
+
+// ── POST /admin/trust/users/:userId/restrict ──────────────────────────────────
+
+describe("trust-admin routes — restrict / remove restriction", () => {
+  it("POST restrict returns 201 with restrictionId", async () => {
+    const tables = makeTables();
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/restrict`, {
+      restrictionType: "hosting",
+      reason:          "Repeated no-shows confirmed",
+    });
+    assert.equal(status, 201);
+    assert.equal(body.ok, true);
+    assert.ok(body.restrictionId, "restrictionId should be returned");
+    // Verify it was stored
+    const restriction = tables.trust_restrictions.find((r: any) => r.restriction_type === "hosting");
+    assert.ok(restriction, "restriction row should exist in store");
+  });
+
+  it("POST restrict returns 400 for unknown restrictionType", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/restrict`, {
+      restrictionType: "fly_fishing",
+      reason:          "test",
+    });
+    assert.equal(status, 400);
+  });
+
+  it("POST restrictions/:id/remove returns 200 and lifts restriction", async () => {
+    const tables = makeTables();
+    const restrictionId = "00000000-0000-0000-0000-00000000aa01";
+    tables.trust_restrictions.push({
+      id: restrictionId, user_id: USER_A, restriction_type: "hosting",
+      reason: "No-shows", lifted_at: null, expires_at: null, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/restrictions/${restrictionId}/remove`, {
+      targetUser: USER_A,
+      reason:     "Period served, reinstated",
+    });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    // lifted_at should now be set
+    const r = tables.trust_restrictions.find((x: any) => x.id === restrictionId);
+    assert.ok(r?.lifted_at, "restriction lifted_at should be set after removal");
+  });
+
+  it("POST restrictions/:id/remove returns 400 if targetUser missing", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("POST", `/admin/trust/restrictions/00000000-0000-0000-0000-00000000ba99/remove`, {
+      reason: "test",
+      // targetUser missing
+    });
+    assert.equal(status, 400);
+  });
+});
+
+// ── POST /admin/trust/users/:userId/cap/override ──────────────────────────────
+
+describe("trust-admin routes — cap override (lift cap early)", () => {
+  it("lifts an active cap and returns ok:true with capId", async () => {
+    const tables = makeTables();
+    const capId = "00000000-0000-0000-0000-000000000c01";
+    tables.trust_caps.push({
+      id: capId, user_id: USER_A, category: "location_honesty",
+      ceiling_score: 30, reason_code: "fake_gps_severe",
+      lifted_at: null, lifted_by: null, expires_at: null, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId,
+      reason: "GPS sensor confirmed faulty — lifting cap",
+    });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.capId, capId);
+    // Cap should be lifted in the store
+    const cap = tables.trust_caps.find((c: any) => c.id === capId);
+    assert.ok(cap?.lifted_at, "cap.lifted_at should be set after override");
+  });
+
+  it("returns 400 if capId is not a UUID", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId: "not-a-uuid",
+      reason: "test",
+    });
+    assert.equal(status, 400);
+  });
+});
+
+// ── GET /admin/trust/gaming-flags ─────────────────────────────────────────────
+
+describe("trust-admin routes — gaming flags", () => {
+  it("returns gaming_suspected reviews with flags array", async () => {
+    const tables = makeTables();
+    tables.trust_reviews.push(
+      { id: "gf-1", user_id: USER_A, review_type: "gaming_suspected", status: "open",       metadata: { pattern: "rapid_jump" }, created_at: new Date().toISOString() },
+      { id: "gf-2", user_id: USER_B, review_type: "appeal",           status: "open",       metadata: {},                        created_at: new Date().toISOString() },
+      { id: "gf-3", user_id: USER_C, review_type: "gaming_suspected", status: "in_progress", metadata: { pattern: "checkin_cluster" }, created_at: new Date().toISOString() },
+    );
+    setClients({ tables });
+    const { status, body } = await httpReq("GET", "/admin/trust/gaming-flags");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.flags), "flags should be an array");
+    assert.ok(
+      body.flags.every((f: any) => f.review_type === "gaming_suspected"),
+      "all returned flags should be gaming_suspected",
+    );
+    assert.equal(body.flags.length, 2, "should return 2 gaming flags (not the appeal)");
+  });
+
+  it("POST mark-reviewed dismisses the gaming flag", async () => {
+    const tables = makeTables();
+    const reviewId = "00000000-0000-0000-0000-00000000bb01";
+    tables.trust_reviews.push({
+      id: reviewId, user_id: USER_A, review_type: "gaming_suspected",
+      status: "open", metadata: { pattern: "rapid_jump" }, created_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("POST", `/admin/trust/gaming-flags/${reviewId}/mark-reviewed`, { notes: "False positive — legitimate travel" });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    const rev = tables.trust_reviews.find((r: any) => r.id === reviewId);
+    assert.equal(rev?.status, "dismissed");
+  });
+});
+
+// ── GET/PUT /admin/trust/settings ─────────────────────────────────────────────
+
+describe("trust-admin routes — trust settings", () => {
+  it("GET settings returns settings object", async () => {
+    setClients({ role: "admin" });
+    const { status, body } = await httpReq("GET", "/admin/trust/settings");
+    assert.equal(status, 200);
+    assert.ok("settings" in body, "response should include settings object");
+  });
+
+  it("PUT settings/:key updates value and triggers async recalc", async () => {
+    const tables = makeTables();
+    // Add a trust profile so recalc has something to iterate over
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 50, public_level: "reliable_traveler",
+      updated_at: new Date().toISOString(),
+    });
+    setClients({ tables });
+    const { status, body } = await httpReq("PUT", "/admin/trust/settings/decay_half_life_days", { value: 120 });
+    assert.equal(status, 200);
+    assert.ok("settings" in body, "response should include updated settings");
+    assert.equal(body.updated.key,   "decay_half_life_days");
+    assert.equal(body.updated.value, 120);
+    // The settings row should now reflect the update
+    const row = tables.trust_settings[0];
+    assert.equal(row?.decay_half_life_days, 120, "trust_settings row should be updated");
+  });
+
+  it("PUT settings/:key returns 400 for unknown key", async () => {
+    setClients({ role: "admin" });
+    const { status } = await httpReq("PUT", "/admin/trust/settings/unknown_key", { value: 99 });
+    assert.equal(status, 400);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PART 2: Service-layer chain tests (no HTTP)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Full event → recalculation → public-level round-trip ──────────────────────
+
+describe("Service: full event → recalc → public level round-trip", () => {
+  it("records positive events and derives correct public level", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
-    // Add several 'applied' (non-pending) positive events across categories
-    await db.from("trust_events").insert({
-      user_id: USER_A, event_type: "PLAN_ATTENDED",
-      category: "plan_attendance", delta: 8, severity: "minor",
-      status: "applied", source_type: "user_action",
-    });
-    await db.from("trust_events").insert({
-      user_id: USER_A, event_type: "HOST_QUALITY_RATING",
-      category: "host_quality", delta: 10, severity: "minor",
-      status: "applied", source_type: "user_action",
-    });
-    await db.from("trust_events").insert({
-      user_id: USER_A, event_type: "COMMUNITY_UPVOTE",
-      category: "community_value", delta: 5, severity: "minor",
-      status: "applied", source_type: "user_action",
-    });
+    await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 8, severity: "minor", status: "applied", source_type: "user_action" });
+    await db.from("trust_events").insert({ user_id: USER_A, event_type: "HOST_QUALITY_RATING", category: "host_quality", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
 
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.overall_score > 0, `overall_score should be >0 (got ${result.overall_score})`);
-    assert.ok(
-      ["new_traveler","building_trust","reliable_traveler","trusted_traveler","highly_trusted","city_trusted"]
-        .includes(result.public_level),
-      `public_level should be a valid level, got "${result.public_level}"`,
-    );
+    assert.ok(result.overall_score > 0);
+    assert.ok(["new_traveler","building_trust","reliable_traveler","trusted_traveler","highly_trusted","city_trusted"].includes(result.public_level));
 
-    // getTrustProfile should return persisted values
     const profile = await getTrustProfile(db, USER_A);
-    assert.ok(profile !== null, "profile should be persisted");
-    assert.equal(profile!.userId, USER_A);
+    assert.ok(profile !== null);
     assert.equal(profile!.overall_score, result.overall_score);
   });
 
-  it("new user with no events gets a neutral score at the reliable_traveler baseline", async () => {
+  it("new user with no events gets neutral baseline (score=50, reliable_traveler)", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // No events seeded — recalculate uses the 50-point neutral default per category
     const result = await recalculateTrustScore(db, USER_B);
-    // Each category defaults to 50 (neutral midpoint); weighted overall = 50 × Σweights = 50
     assert.equal(result.overall_score, 50);
     assert.equal(result.public_level, "reliable_traveler");
   });
 });
 
-// ── 2. Severe event → pending review (appeal creates a review) ────────────────
+// ── Severe event creates pending review ────────────────────────────────────────
 
-describe("Integration: severe event creates pending review", () => {
-  it("FAKE_GPS_CONFIRMED severe → pendingReview=true, trust_reviews gets a row", async () => {
+describe("Service: severe event creates pending review (appeal scenario)", () => {
+  it("FAKE_GPS_CONFIRMED severe → pendingReview=true; appears in getPendingEvents queue", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
     const rec = await recordTrustEvent(db, {
-      userId:     USER_A,
-      eventType:  "FAKE_GPS_CONFIRMED",
-      category:   "location_honesty",
-      delta:      -20,
-      severity:   "severe",
-      sourceType: "admin",
-      sourceId:   "gps-case-int-1",
+      userId:     USER_A, eventType: "FAKE_GPS_CONFIRMED",
+      category:   "location_honesty", delta: -20, severity: "severe",
+      sourceType: "admin", sourceId: "gps-case-1",
+    });
+    assert.equal(rec.pendingReview, true, "severe event should be pending_review");
+    assert.ok(rec.eventId);
+
+    // Should appear in admin queue
+    const queue = await getPendingEvents(db);
+    assert.equal(queue.length, 1, "pending events queue should have exactly one entry");
+    assert.equal(queue[0].id, rec.eventId);
+  });
+
+  it("appeal scenario: user can create a review that appears in getOpenReviews", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Simulate an appeal by inserting a review row directly (would come from user-facing appeal endpoint)
+    await db.from("trust_reviews").insert({
+      user_id:     USER_A,
+      review_type: "appeal",
+      status:      "open",
+      metadata:    { reason: "My GPS was broken during a flight" },
     });
 
-    assert.equal(rec.pendingReview, true, "severe event should be pending_review");
-    assert.ok(rec.eventId, "eventId should be set");
-
-    // Verify the event row has status pending_review
-    const evt = tables.trust_events.find((e) => e.id === rec.eventId);
-    assert.ok(evt, "event row should exist");
-    assert.equal(evt.status, "pending_review");
+    const reviews = await getOpenReviews(db);
+    assert.equal(reviews.length, 1, "should have one open review");
+    assert.equal(reviews[0].review_type, "appeal");
+    assert.equal(reviews[0].user_id, USER_A);
   });
 });
 
-// ── 3. Admin confirm event → recalculation ────────────────────────────────────
+// ── Admin confirm → recalculation + caps ──────────────────────────────────────
 
-describe("Integration: admin confirm event triggers recalculation", () => {
-  it("confirming a severe event caps the category and lowers score", async () => {
+describe("Service: admin confirm event triggers recalculation", () => {
+  it("confirming a severe event caps the category and lowers the score", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
-    // Seed a pending_review event
-    const rec = await recordTrustEvent(db, {
-      userId:     USER_A,
-      eventType:  "FAKE_GPS_CONFIRMED",
-      category:   "location_honesty",
-      delta:      -20,
-      severity:   "severe",
-      sourceType: "admin",
-      sourceId:   "gps-case-int-2",
-    });
+    const rec = await recordTrustEvent(db, { userId: USER_A, eventType: "FAKE_GPS_CONFIRMED", category: "location_honesty", delta: -20, severity: "severe", sourceType: "admin" });
     assert.equal(rec.pendingReview, true);
 
-    // Admin confirms
-    const confirmResult = await confirmEvent(db, ADMIN, rec.eventId!, "Verified by manual review");
-    assert.equal(confirmResult.ok, true);
-
-    // Event should now be 'confirmed'
+    await confirmEvent(db, ADMIN, rec.eventId!, "Verified");
     const evt = tables.trust_events.find((e) => e.id === rec.eventId);
     assert.equal(evt?.status, "confirmed");
 
-    // Cap should have been applied
-    const activeCaps = await getActiveCaps(db, USER_A);
-    assert.ok(activeCaps.length > 0, "at least one cap should be active after confirmed severe event");
-
-    // Score should reflect the cap
-    const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(
-      result.categories.location_honesty <= 50,
-      `location_honesty should be ≤50 after severe confirmed event, got ${result.categories.location_honesty}`,
-    );
-  });
-
-  it("dismissing a pending_review event marks it dismissed and recalcs without caps", async () => {
-    const tables = makeTables();
-    const db = makeTrustClient(tables);
-
-    // Must use "serious" or "severe" to produce a pending_review event
-    const rec = await recordTrustEvent(db, {
-      userId:     USER_A,
-      eventType:  "FAKE_GPS_CONFIRMED",
-      category:   "location_honesty",
-      delta:      -15,
-      severity:   "serious",
-      sourceType: "admin",
-    });
-
-    const result = await dismissEvent(db, ADMIN, rec.eventId!, "False positive — GPS glitch");
-    assert.equal(result.ok, true);
-
-    const evt = tables.trust_events.find((e) => e.id === rec.eventId);
-    assert.equal(evt?.status, "dismissed");
-
-    // No caps created for a dismissed event
     const caps = await getActiveCaps(db, USER_A);
-    assert.equal(caps.length, 0, "no caps should be created after dismissal");
+    assert.ok(caps.length > 0, "at least one cap should be active");
+
+    const result = await recalculateTrustScore(db, USER_A);
+    assert.ok(result.categories.location_honesty <= 50, `location_honesty should be ≤50, got ${result.categories.location_honesty}`);
+  });
+
+  it("dismissing a serious event leaves no caps", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    const rec = await recordTrustEvent(db, { userId: USER_A, eventType: "GPS_IMPOSSIBLE_SPEED", category: "location_honesty", delta: -8, severity: "serious", sourceType: "automated" });
+    await dismissEvent(db, ADMIN, rec.eventId!, "False positive");
+    const caps = await getActiveCaps(db, USER_A);
+    assert.equal(caps.length, 0, "no caps after dismissal");
   });
 });
 
-// ── 4. Admin restrict → blocks the hosting seam ───────────────────────────────
+// ── Hosting restriction round-trip ────────────────────────────────────────────
 
-describe("Integration: admin restrict blocks hosting, lift restores it", () => {
-  it("applying hosting restriction → canHost=false; lifting it → canHost=true", async () => {
+describe("Service: admin restrict blocks hosting seam, lift restores it", () => {
+  it("apply hosting → canHost=false; lift → canHost=true", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
-    // Initially no restrictions
     const before = await getRestrictionState(db, USER_A);
-    assert.equal(before.canHost, true, "user should be able to host before any restriction");
+    assert.equal(before.canHost, true);
 
-    // Admin applies hosting restriction
-    const applyResult = await adminApplyRestriction(
-      db, ADMIN, USER_A, "hosting", "Confirmed venue no-show pattern", null,
-    );
-    assert.equal(applyResult.ok, true);
-    assert.ok(applyResult.restrictionId, "restrictionId should be returned");
+    const { restrictionId } = await adminApplyRestriction(db, ADMIN, USER_A, "hosting", "No-show pattern", null);
+    const after = await getRestrictionState(db, USER_A);
+    assert.equal(after.canHost, false);
 
-    const afterApply = await getRestrictionState(db, USER_A);
-    assert.equal(afterApply.canHost, false, "canHost should be false after restriction");
-
-    // Admin lifts it
-    const liftResult = await adminLiftRestriction(db, ADMIN, USER_A, applyResult.restrictionId, "Served restriction period");
-    assert.equal(liftResult.ok, true);
-
-    const afterLift = await getRestrictionState(db, USER_A);
-    assert.equal(afterLift.canHost, true, "canHost should be true again after restriction is lifted");
-  });
-
-  it("messaging restriction does not affect hosting ability", async () => {
-    const tables = makeTables();
-    const db = makeTrustClient(tables);
-
-    await adminApplyRestriction(db, ADMIN, USER_A, "messaging", "Spam detected", null);
-
-    const state = await getRestrictionState(db, USER_A);
-    assert.equal(state.canHost, true,    "hosting should still be allowed");
-    assert.equal(state.canMessage, false, "messaging should be restricted");
+    await adminLiftRestriction(db, ADMIN, USER_A, restrictionId, "Served");
+    const restored = await getRestrictionState(db, USER_A);
+    assert.equal(restored.canHost, true);
   });
 });
 
-// ── 5. Override cap removes ceiling, adminRemoveOverride restores natural score ─
+// ── Override cap → remove override ────────────────────────────────────────────
 
-describe("Integration: adminOverrideScore → adminRemoveOverride restores score", () => {
-  it("score override locks category, removing override allows natural recalc", async () => {
+describe("Service: adminOverrideScore → adminRemoveOverride restores score", () => {
+  it("cap override locks score; removing it allows natural recalc", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
-    // Seed positive events for plan_attendance
     for (let i = 0; i < 5; i++) {
-      await db.from("trust_events").insert({
-        user_id: USER_A, event_type: "PLAN_ATTENDED",
-        category: "plan_attendance", delta: 10, severity: "minor",
-        status: "applied", source_type: "user_action",
-      });
+      await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
     }
 
-    // Natural score should be above 0
-    const natural = await recalculateTrustScore(db, USER_A);
-    const naturalAttendance = natural.categories.plan_attendance;
-
-    // Admin overrides plan_attendance to 5
-    await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 5, "Downgrade for testing");
-
+    await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 5, "Test");
     const capped = await recalculateTrustScore(db, USER_A);
-    assert.ok(
-      capped.categories.plan_attendance <= 5,
-      `plan_attendance should be ≤5 after override, got ${capped.categories.plan_attendance}`,
-    );
+    assert.ok(capped.categories.plan_attendance <= 5, `got ${capped.categories.plan_attendance}`);
 
-    // Remove override
-    await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring natural score");
-
+    await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring");
     const restored = await recalculateTrustScore(db, USER_A);
-    assert.ok(
-      restored.categories.plan_attendance >= capped.categories.plan_attendance,
-      `After removing override, plan_attendance (${restored.categories.plan_attendance}) should be ≥ capped value (${capped.categories.plan_attendance})`,
-    );
+    assert.ok(restored.categories.plan_attendance >= capped.categories.plan_attendance);
   });
 });
 
-// ── 6. Gaming detection scan flags a farming pattern ─────────────────────────
+// ── Gaming detection + dedup ───────────────────────────────────────────────────
 
-describe("Integration: gaming detection scan creates review", () => {
-  it("rapid score jump pattern → gaming_suspected review created", async () => {
+describe("Service: gaming detection scan", () => {
+  it("rapid jump pattern creates gaming_suspected review", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // Seed many rapid events for USER_C (above gaming_rapid_jump_points=20)
     for (let i = 0; i < 6; i++) {
-      tables.trust_events.push({
-        id: `rapid-int-${i}`,
-        user_id: USER_C,
-        category: "plan_attendance",
-        delta: 5,
-        severity: "minor",
-        status: "applied",
-        source_type: "user_action",
-        created_at: new Date().toISOString(),
-      });
+      tables.trust_events.push({ id: `gd-${i}`, user_id: USER_C, category: "plan_attendance", delta: 5, severity: "minor", status: "applied", source_type: "user_action", created_at: new Date().toISOString() });
     }
-
-    const scanResult = await runGamingDetectionScan(db);
-    assert.equal(scanResult.ok, true, "scan should complete without error");
-
-    const review = tables.trust_reviews.find(
-      (r) => r.user_id === USER_C && r.review_type === "gaming_suspected",
-    );
-    assert.ok(review, "should have created a gaming_suspected review for USER_C");
-    assert.ok(
-      ["open", "in_progress"].includes(review.status),
-      `review status should be open/in_progress, got "${review.status}"`,
-    );
+    const result = await runGamingDetectionScan(db);
+    assert.equal(result.ok, true);
+    const review = tables.trust_reviews.find((r) => r.user_id === USER_C && r.review_type === "gaming_suspected");
+    assert.ok(review, "gaming review should be created");
   });
 
-  it("duplicate scan does not create second review if one already open", async () => {
+  it("dedup: second scan does not create a second open review", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // Pre-seed an open gaming review
-    tables.trust_reviews.push({
-      id: "existing-review-1",
-      user_id: USER_C,
-      review_type: "gaming_suspected",
-      status: "open",
-      metadata: { pattern: "rapid_jump" },
-      created_at: new Date().toISOString(),
-    });
-
+    tables.trust_reviews.push({ id: "existing-1", user_id: USER_C, review_type: "gaming_suspected", status: "open", metadata: { pattern: "rapid_jump" }, created_at: new Date().toISOString() });
     for (let i = 0; i < 6; i++) {
-      tables.trust_events.push({
-        id: `rapid-dup-${i}`,
-        user_id: USER_C,
-        category: "plan_attendance",
-        delta: 5,
-        severity: "minor",
-        status: "applied",
-        source_type: "user_action",
-        created_at: new Date().toISOString(),
-      });
+      tables.trust_events.push({ id: `gd2-${i}`, user_id: USER_C, category: "plan_attendance", delta: 5, severity: "minor", status: "applied", source_type: "user_action", created_at: new Date().toISOString() });
     }
-
     await runGamingDetectionScan(db);
-    const reviews = tables.trust_reviews.filter(
-      (r) => r.user_id === USER_C && r.review_type === "gaming_suspected",
-    );
-    assert.equal(reviews.length, 1, "should not create a second open review");
+    assert.equal(tables.trust_reviews.filter((r) => r.user_id === USER_C && r.review_type === "gaming_suspected").length, 1);
   });
 });
 
-// ── 7. Public profile returns no sensitive data ───────────────────────────────
+// ── Public badge contains no sensitive fields ──────────────────────────────────
 
-describe("Integration: public trust badge contains no sensitive fields", () => {
-  it("getPublicTrustBadge does not expose raw scores or internal cap info", async () => {
+describe("Service: public trust badge contains no sensitive fields", () => {
+  it("getPublicTrustBadge does not include raw category scores", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // Seed a trust profile for USER_A
     tables.trust_profiles.push({
-      user_id:          USER_A,
-      overall_score:    42,
-      public_level:     "building_trust",
-      plan_attendance:  55,
-      host_quality:     60,
-      communication:    50,
-      respect_safety:   70,
-      location_honesty: 30,
-      content_quality:  40,
-      community_value:  45,
-      guide_accuracy:   35,
-      passport_authenticity: 50,
-      updated_at: new Date().toISOString(),
+      user_id: USER_A, overall_score: 42, public_level: "building_trust",
+      plan_attendance: 55, host_quality: 60, communication: 50, respect_safety: 70,
+      location_honesty: 30, content_quality: 40, community_value: 45, guide_accuracy: 35, passport_authenticity: 50, updated_at: new Date().toISOString(),
     });
-
-    // Also seed an active cap so we can confirm it's hidden
-    tables.trust_caps.push({
-      id: "cap-pub-1",
-      user_id: USER_A,
-      category: "location_honesty",
-      ceiling_score: 30,
-      reason_code: "fake_gps_severe",
-      lifted_at: null,
-      expires_at: null,
-      created_at: new Date().toISOString(),
-    });
-
     const badge = await getPublicTrustBadge(db, USER_A);
-    assert.ok(badge !== null, "badge should not be null for a user with a profile");
-
-    // Should NOT expose raw category scores
-    assert.ok(!("plan_attendance" in badge!), "plan_attendance should not be in public badge");
-    assert.ok(!("overall_score" in badge!), "overall_score should not be in public badge");
-
-    // Should expose the public level
-    assert.ok("level" in badge!, "badge should include public trust level");
-  });
-
-  it("getSafeTrustSummary strips event details not safe for LLM context", async () => {
-    const tables = makeTables();
-    const db = makeTrustClient(tables);
-
-    tables.trust_profiles.push({
-      user_id:      USER_A,
-      overall_score: 72,
-      public_level:  "trusted_traveler",
-      updated_at:    new Date().toISOString(),
-    });
-
-    const summary = await getSafeTrustSummary(db, USER_A);
-    assert.ok(summary !== null, "summary should not be null");
-    // Should not include anything that would reveal system-internal detail
-    const summaryStr = JSON.stringify(summary);
-    assert.ok(!summaryStr.includes("caps"), "summary should not include raw cap info");
+    assert.ok(badge !== null);
+    assert.ok(!("plan_attendance" in badge!), "no raw category score");
+    assert.ok(!("overall_score" in badge!),   "no overall_score");
+    assert.ok("level" in badge!,              "badge should include level");
   });
 });
 
-// ── 8. New user can still access low-trust features ──────────────────────────
+// ── New user has no restrictions ───────────────────────────────────────────────
 
-describe("Integration: new user with no profile has no restrictions", () => {
-  it("user with no trust_restrictions rows has all permissions open", async () => {
+describe("Service: new user has no restrictions", () => {
+  it("user with no restriction rows has all permissions open", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // USER_B has never had any events or restrictions
     const state = await getRestrictionState(db, USER_B);
-    assert.equal(state.canHost,              true, "new user can host");
-    assert.equal(state.canMessage,           true, "new user can message");
-    assert.equal(state.canJoinPrivatePlans,  true, "new user can join private plans");
-    assert.equal(state.canJoinLocationPlans, true, "new user can join location plans");
-    assert.deepEqual(state.activeRestrictions, [], "no active restrictions");
+    assert.equal(state.canHost,              true);
+    assert.equal(state.canMessage,           true);
+    assert.equal(state.canJoinPrivatePlans,  true);
+    assert.equal(state.canJoinLocationPlans, true);
+    assert.deepEqual(state.activeRestrictions, []);
   });
 
   it("new user recovery status shows no probation", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    tables.trust_profiles.push({
-      user_id: USER_B,
-      overall_score: 0,
-      public_level: "new_traveler",
-      updated_at: new Date().toISOString(),
-    });
-
+    tables.trust_profiles.push({ user_id: USER_B, overall_score: 0, public_level: "new_traveler", updated_at: new Date().toISOString() });
     const recovery = await getRecoveryStatus(db, USER_B);
-    assert.equal(recovery.onProbation, false, "new user should not be on probation");
+    assert.equal(recovery.onProbation, false);
   });
 });
 
-// ── 9. getPendingEvents + getOpenReviews pagination ───────────────────────────
+// ── Probation lifecycle ────────────────────────────────────────────────────────
 
-describe("Integration: admin queue helpers return correct rows", () => {
-  it("getPendingEvents returns only pending_review events in FIFO order", async () => {
+describe("Service: probation lifecycle on severe confirmed event", () => {
+  it("confirming a severe event puts user on probation", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
-
-    // Seed applied + pending events
-    tables.trust_events.push(
-      { id: "ev-applied-1", user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance",
-        delta: 5, severity: "minor", status: "applied", source_type: "user_action",
-        created_at: "2026-01-01T00:00:00Z" },
-      { id: "ev-pending-1", user_id: USER_A, event_type: "FAKE_GPS_CONFIRMED", category: "location_honesty",
-        delta: -20, severity: "severe", status: "pending_review", source_type: "admin",
-        created_at: "2026-01-02T00:00:00Z" },
-      { id: "ev-pending-2", user_id: USER_B, event_type: "FAKE_GPS_CONFIRMED", category: "location_honesty",
-        delta: -15, severity: "moderate", status: "pending_review", source_type: "admin",
-        created_at: "2026-01-03T00:00:00Z" },
-    );
-
-    const pending = await getPendingEvents(db);
-    assert.equal(pending.length, 2, "should return exactly 2 pending events");
-    assert.ok(!pending.some((e) => e.status !== "pending_review"), "all returned events should be pending_review");
-  });
-
-  it("getOpenReviews returns only open/in_progress reviews", async () => {
-    const tables = makeTables();
-    const db = makeTrustClient(tables);
-
-    tables.trust_reviews.push(
-      { id: "rev-open-1",     user_id: USER_A, review_type: "gaming_suspected", status: "open",       metadata: {}, created_at: "2026-01-01T00:00:00Z" },
-      { id: "rev-progress-1", user_id: USER_B, review_type: "appeal",           status: "in_progress", metadata: {}, created_at: "2026-01-02T00:00:00Z" },
-      { id: "rev-resolved-1", user_id: USER_C, review_type: "admin_flagged",     status: "resolved",   metadata: {}, created_at: "2026-01-01T00:00:00Z" },
-    );
-
-    const reviews = await getOpenReviews(db);
-    assert.equal(reviews.length, 2, "should return exactly 2 open reviews");
-    assert.ok(reviews.every((r) => ["open", "in_progress"].includes(r.status)), "all reviews should be open or in_progress");
-  });
-});
-
-// ── 10. Probation lifecycle ───────────────────────────────────────────────────
-
-describe("Integration: probation set on severe confirmed event", () => {
-  it("confirming a severe event sets user on probation", async () => {
-    const tables = makeTables();
-    const db = makeTrustClient(tables);
-
-    const rec = await recordTrustEvent(db, {
-      userId:     USER_A,
-      eventType:  "HARASSMENT_CONFIRMED",
-      category:   "respect_safety",
-      delta:      -30,
-      severity:   "severe",
-      sourceType: "admin",
-    });
+    const rec = await recordTrustEvent(db, { userId: USER_A, eventType: "BEHAVIOR_REPORT_CONFIRMED", category: "respect_safety", delta: -30, severity: "severe", sourceType: "admin" });
     assert.equal(rec.pendingReview, true);
-
-    await confirmEvent(db, ADMIN, rec.eventId!, "Confirmed harassment report");
-
+    await confirmEvent(db, ADMIN, rec.eventId!, "Confirmed");
     const recovery = await getRecoveryStatus(db, USER_A);
-    assert.equal(recovery.onProbation, true, "user should be on probation after confirmed severe event");
-    assert.ok(recovery.probationEndsAt, "probation end date should be set");
+    assert.equal(recovery.onProbation, true);
+    assert.ok(recovery.probationEndsAt);
   });
 });

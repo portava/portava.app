@@ -3,16 +3,17 @@
  *
  * Mounted at /api (so full paths are /api/admin/trust/...).
  *
- * GET    /admin/trust/reviews                  — paginated review queue
- * GET    /admin/trust/users/:userId            — full admin trust view
- * POST   /admin/trust/events/:eventId/confirm  — confirm pending event
- * POST   /admin/trust/events/:eventId/dismiss  — dismiss pending event
- * POST   /admin/trust/users/:userId/restrict   — apply restriction
- * DELETE /admin/trust/restrictions/:id         — lift restriction
- * POST   /admin/trust/users/:userId/cap/override — lift a cap early
- * GET    /admin/trust/gaming-flags             — suspected gaming rings
- * GET    /admin/trust/settings                 — read trust settings
- * PUT    /admin/trust/settings/:key            — update one trust setting
+ * GET    /admin/trust/reviews                      — paginated review queue
+ * GET    /admin/trust/users/:userId                — full admin trust view
+ * POST   /admin/trust/events/:eventId/confirm      — confirm pending event
+ * POST   /admin/trust/events/:eventId/dismiss      — dismiss pending event
+ * POST   /admin/trust/users/:userId/restrict       — apply restriction
+ * POST   /admin/trust/restrictions/:id/remove      — lift restriction (POST + body)
+ * POST   /admin/trust/users/:userId/cap/override   — lift a cap early
+ * GET    /admin/trust/gaming-flags                 — suspected gaming rings
+ * POST   /admin/trust/gaming-flags/:id/mark-reviewed — dismiss a gaming flag
+ * GET    /admin/trust/settings                     — read trust settings
+ * PUT    /admin/trust/settings/:key                — update one trust setting + async recalc
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -28,7 +29,6 @@ import {
 import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
-import type { TrustCategory } from "../services/trust/TrustEventService.js";
 
 const router = Router();
 
@@ -45,10 +45,6 @@ const TRUST_SETTING_KEYS = new Set([
   "weekly_cap_plan_attend", "weekly_cap_guide_verify", "weekly_cap_gem_save",
   "gaming_checkin_cluster_limit", "gaming_mutual_rate_threshold", "gaming_rapid_jump_points",
 ]);
-
-const RESTRICTION_TYPES: RestrictionType[] = [
-  "hosting", "private_plan_access", "messaging", "location_plan_join",
-];
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
 
@@ -82,10 +78,11 @@ router.get("/admin/trust/reviews", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const page   = Math.max(1, Number(req.query.page) || 1);
-  const limit  = Math.min(100, Number(req.query.limit) || 50);
-  const type   = (req.query.type as string) || null;
-  const status = (req.query.status as string) || null;
+  const page       = Math.max(1, Number(req.query.page) || 1);
+  const limit      = Math.min(100, Number(req.query.limit) || 50);
+  const type       = (req.query.type as string) || null;
+  const status     = (req.query.status as string) || null;
+  const assignedTo = (req.query.assigned_to as string) || null;
 
   let query = sc
     .from("trust_reviews")
@@ -96,9 +93,10 @@ router.get("/admin/trust/reviews", async (req, res) => {
     .order("created_at", { ascending: true })
     .range((page - 1) * limit, page * limit - 1);
 
-  if (type)   query = query.eq("review_type", type);
-  if (status) query = query.eq("status", status);
-  else        query = query.in("status", ["open", "in_progress"]);
+  if (type)       query = query.eq("review_type", type);
+  if (status)     query = query.eq("status", status);
+  else            query = query.in("status", ["open", "in_progress"]);
+  if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -140,11 +138,11 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
 
   res.json({
     userId,
-    profile:         profile ?? null,
-    caps:            caps,
-    restrictions:    (restrictionsRes.data as any[]) ?? [],
-    events:          (eventsRes.data as any[]) ?? [],
-    openReviews:     (reviewsRes.data as any[]) ?? [],
+    profile:      profile ?? null,
+    caps,
+    restrictions: (restrictionsRes.data as any[]) ?? [],
+    events:       (eventsRes.data as any[]) ?? [],
+    openReviews:  (reviewsRes.data as any[]) ?? [],
   });
 });
 
@@ -226,14 +224,14 @@ router.post("/admin/trust/users/:userId/restrict", async (req, res) => {
   }
 });
 
-// ── DELETE /admin/trust/restrictions/:id ─────────────────────────────────────
+// ── POST /admin/trust/restrictions/:id/remove ────────────────────────────────
 
 const LiftSchema = z.object({
   reason:     z.string().min(1).max(500),
   targetUser: z.string().regex(UUID, "targetUser must be a valid UUID"),
 });
 
-router.delete("/admin/trust/restrictions/:id", async (req, res) => {
+router.post("/admin/trust/restrictions/:id/remove", async (req, res) => {
   const admin = await requireAdminGuard(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
@@ -272,7 +270,8 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
 
   try {
     await liftCap(sc, parsed.data.capId, adminId);
-    await recalculateTrustScore(sc, userId).catch(() => {});
+    // Fire-and-forget score recalculation after cap is lifted
+    recalculateTrustScore(sc, userId).catch(() => {});
     await sc.from("trust_admin_actions").insert({
       admin_id:    adminId,
       target_user: userId,
@@ -371,13 +370,33 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  await sc.from("trust_admin_actions").insert({
-    admin_id:    adminId,
-    target_user: adminId,
-    action_type: "score_override",
-    reason:      `Updated trust setting ${key} to ${parsed.data.value}`,
-    metadata:    { key, value: parsed.data.value },
-  }).catch(() => {});
+  // Audit log (fire-and-forget — wrap in real Promise so .catch() is available)
+  Promise.resolve().then(() =>
+    sc.from("trust_admin_actions").insert({
+      admin_id:    adminId,
+      target_user: adminId,
+      action_type: "score_override",
+      reason:      `Updated trust setting ${key} to ${parsed.data.value}`,
+      metadata:    { key, value: parsed.data.value },
+    }),
+  ).catch(() => {});
+
+  // Fire-and-forget: recalculate all users' scores so the new weights/decay take effect.
+  // Read all user_ids from trust_profiles in one query, then recalc each sequentially.
+  setImmediate(() => {
+    sc.from("trust_profiles")
+      .select("user_id")
+      .limit(1000)
+      .then(({ data: profiles }: { data: any[] | null }) => {
+        if (!profiles?.length) return;
+        const ids: string[] = profiles.map((p: any) => p.user_id);
+        ids.reduce((chain: Promise<void>, uid: string) =>
+          chain.then(() => recalculateTrustScore(sc, uid).then(() => {}).catch(() => {})),
+          Promise.resolve(),
+        );
+      })
+      .catch(() => {});
+  });
 
   res.json({ settings: data ?? {}, updated: { key, value: parsed.data.value } });
 });
