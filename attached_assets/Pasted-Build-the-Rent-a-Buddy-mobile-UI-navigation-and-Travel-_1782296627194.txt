@@ -1,0 +1,529 @@
+Build the Rent a Buddy mobile UI, navigation, and Travel Buddy integration layer.
+
+Goal:
+Integrate Rent a Buddy into the Travel Buddy app as a polished, safe, easy-to-use feature for travelers, Buddies, and admins. The UI should make the feature feel like a verified travel companion marketplace, not dating or escorting.
+
+Feature flag:
+Use RENT_BUDDY_ENABLED.
+If disabled:
+- Hide Rent a Buddy entry points.
+- Direct route access should show “Rent a Buddy is not available yet.”
+- Admin can still see feature flag status if admin tools already support that.
+
+Primary navigation entry points:
+Add Rent a Buddy entry points in:
+- Home / Discover
+- City Pulse
+- Trip detail screen
+- Passport/Profile
+- Telegraph booking thread
+- Active trip tools
+- Safety tools if an active booking exists
+
+Home / Discover card:
+Add a polished card:
+Title: Rent a Buddy
+Subtitle: Book a verified local Buddy to explore the city with you.
+CTA: Find a Buddy
+Secondary CTA: Become a Buddy
+
+Card policy note:
+Travel/social/local guidance only. Not dating or adult services.
+
+City Pulse module:
+Add a city-aware module:
+“Available Buddies in [City]”
+Show:
+- Available now count
+- Top categories
+- 3 Buddy preview cards
+- CTA: View all Buddies
+
+Trip detail integration:
+If user has an active/upcoming trip, show:
+“Need someone local?”
+Options:
+- Arrival Buddy
+- City Buddy
+- Nightlife Buddy
+- Language Buddy
+- Content Buddy
+
+Booking from a trip should prefill:
+- City
+- Trip date window
+- Traveler language
+- Group size if trip crew exists
+- Safety preferences if already set
+
+Telegraph integration:
+For each confirmed Rent a Buddy booking, create or link a temporary Telegraph booking thread.
+
+Thread header should show:
+- Booking status
+- Start time
+- Meetup location
+- Safety button
+- View booking
+- Add time
+- Translate enabled if Telegraph translation exists
+
+Thread behavior:
+- Thread opens after booking is confirmed.
+- Thread remains active until booking completion.
+- After completion, archive by default unless both users choose to stay connected.
+- System messages should show booking milestones:
+  - Booking confirmed
+  - Buddy accepted
+  - Deposit paid
+  - Meetup started
+  - Route approved
+  - Extra time added
+  - Booking completed
+  - Review requested
+
+Traveler UI screens:
+Build or wire these screens:
+
+1. Rent a Buddy Landing
+Sections:
+- Search bar
+- Available Now
+- Match Me With a Buddy
+- Top Buddies in This City
+- Categories
+- Safety explainer
+- Become a Buddy CTA
+
+2. Category Picker
+Categories:
+- City Buddy
+- Nightlife Buddy
+- Language Buddy
+- Shopping Buddy
+- Arrival Buddy
+- Content Buddy
+- Group Buddy
+- Custom Buddy
+
+3. Match Quiz
+Use the matching questions from the marketplace command.
+After quiz:
+- Show ranked Buddy results
+- Show compatibility score
+- Show why matched:
+  “Matches your language, budget, nightlife preference, and public meetup setting.”
+
+4. Search Results
+Each Buddy card should show:
+- Photo
+- Name
+- City
+- Buddy level
+- Verification badge
+- Trust Score
+- Category tags
+- Languages
+- Starting price
+- Availability
+- Review rating/count
+- Compatibility score if available
+- Safety badges
+- Book button
+
+5. Buddy Profile
+Sections:
+- Hero photo/name/city
+- Verification and Buddy level
+- Trust Score/reviews/completed bookings
+- Languages
+- Vibe tags
+- Good for tags
+- Rates
+- Packages
+- Add-ons
+- Availability
+- Suggested public meetup zones
+- Reviews
+- Safety/policy reminder
+- Book button
+- Report profile button
+
+6. Booking Checkout
+Required display:
+- Buddy name
+- Category
+- Date/time
+- Duration
+- Meetup location
+- Public meetup requirement
+- Route preview if available
+- Total price
+- Deposit due today
+- App service fee
+- Cash balance due if deposit_plus_cash
+- Full in-app payment option
+- Cancellation policy
+- Non-dating/adult-service policy acceptance
+- Safety preference summary
+- Confirm and pay button
+
+Checkout must clearly say:
+“Booking is not confirmed until deposit or full in-app payment is completed.”
+
+7. Booking Detail / Status
+Show:
+- Current status
+- Time/date
+- Buddy/traveler
+- Meetup location
+- Route plan
+- Payment summary
+- Cash balance due
+- Telegraph chat button
+- Add time
+- Cancel booking
+- Report issue
+- Safety panel if active
+- Review button after completion
+
+8. Active Booking Screen
+This screen should be easy to access during the meetup.
+
+Show:
+- Buddy/traveler card
+- Timer
+- Current booking status
+- Meetup/route
+- Cash balance reminder if applicable
+- Add time
+- End booking
+- Safety panel
+- Emergency button
+- Safe Return check-in
+- Share with Trusted Circle
+- Report button
+
+9. Review Screen
+Double-blind review UI:
+- Star or rating control
+- Category ratings:
+  - On time
+  - Respectful
+  - Helpful
+  - Local knowledge
+  - Communication
+  - Safety
+  - Matched profile
+  - Worth the price
+  - Would book again
+- Public review text
+- Private note to Travel Buddy
+- Submit review
+
+10. Saved Buddies
+Show saved/repeat Buddies:
+- Book again
+- Request custom booking
+- View past bookings
+- Remove saved Buddy
+
+11. Waitlist Screen
+If no Buddy is available:
+- Join waitlist
+- City
+- Category
+- Desired time
+- Budget
+- Notes
+- Notify me when matched
+
+Buddy UI screens:
+Build or wire these screens:
+
+1. Become a Buddy
+Intro screen:
+- What Rent a Buddy is
+- What Buddies can earn
+- Safety expectations
+- Non-dating/adult-service policy
+- Apply button
+
+2. Buddy Application
+Fields:
+- Display name
+- City/country
+- Languages/fluency
+- Categories
+- Bio
+- Photos/video placeholder
+- Rates
+- Availability
+- Meetup zones
+- Safety agreement
+- Policy agreement
+- Submit for review
+
+3. Buddy Dashboard
+Show:
+- Application status
+- Profile status
+- Upcoming bookings
+- New requests
+- Today’s schedule
+- Earnings estimate
+- Trust Score
+- Reviews
+- Completion rate
+- Safety/training checklist
+- Availability toggle
+
+4. Booking Requests
+Show incoming requests:
+- Traveler name/photo
+- Trust Score
+- Category
+- Time/duration
+- Group size
+- Meetup location
+- Payment mode
+- Cash balance due
+- Notes
+- Safety preferences
+- Accept
+- Decline
+- Suggest changes if supported
+
+5. Offer Creation
+For Request a Buddy:
+- Proposed price
+- Proposed time
+- Meetup location
+- Included services
+- Message
+- Add-ons
+- Send offer
+
+6. Availability Editor
+Support:
+- Weekly availability
+- Available now toggle
+- Vacation/unavailable dates
+- Minimum notice
+- Buffer time
+- Max bookings per day
+- Category-specific availability
+
+7. Package Builder
+Buddy can create:
+- Title
+- Description
+- Category
+- Duration
+- Price
+- Max group size
+- Included stops
+- Add-ons
+- Meetup rules
+- Submit/activate
+
+8. Add-on Manager
+Buddy can add/edit:
+- Extra hour
+- Photo package
+- Translation support
+- Reservation help
+- Arrival setup
+- Custom itinerary
+- Group upgrade
+
+9. Earnings Dashboard
+Show:
+- Estimated earnings
+- Pending earnings
+- Cash balance due
+- Cash balance confirmed
+- In-app collected amount
+- Tips
+- Fees
+- Disputed earnings
+- Completed bookings
+
+Important:
+If payouts are not connected, label everything as estimated or pending. Do not claim money was paid out.
+
+10. Buddy Safety Tools
+During active booking:
+- Report traveler
+- End early
+- Flag unpaid cash balance
+- Flag unapproved extra guest
+- Contact support
+- Emergency button if available
+- Share location if supported
+
+Admin UI screens:
+Add admin Rent a Buddy section:
+
+1. Applications Queue
+- Pending applications
+- Approve/reject
+- Category-specific approval
+- Limit/suspend
+- Notes
+
+2. Buddy Profiles
+- Search Buddies
+- View profile
+- Feature/unfeature
+- Set Buddy level
+- City Ambassador
+- Suspend/limit
+- Disable category
+
+3. Bookings Dashboard
+- All bookings
+- Status filters
+- City/category filters
+- Payment mode
+- Cash balance disputes
+- No-shows
+- Cancellations
+
+4. Safety Flags
+- Open policy flags
+- Severity/category/user filters
+- Confirm/dismiss/escalate
+- Apply limits
+- View related booking/chat/route context
+
+5. Marketplace Analytics
+- City demand
+- Available Buddy supply
+- Revenue/deposit totals
+- Cash balance volume
+- Top categories
+- Top Buddies
+- Disputes
+- Policy flags
+- Conversion metrics
+
+Design requirements:
+Use the current Travel Buddy design system.
+Keep UI clean, modern, social, and safety-forward.
+Avoid dating-style language like:
+- match for romance
+- date
+- companion in a romantic sense
+- girlfriend/boyfriend
+- private fun
+- adult
+- intimate
+
+Use travel-safe language:
+- Buddy
+- local guidance
+- explore
+- social comfort
+- language help
+- city support
+- verified local
+- public meetup
+- safety check-in
+
+Suggested copy:
+Rent a Buddy
+“Book a verified local Buddy to explore the city with you.”
+
+Safety note:
+“Rent a Buddy is for travel and local guidance only. It is not a dating, escort, adult, romantic, or illegal-service feature.”
+
+Available Now:
+“Need help today? Find a verified Buddy nearby.”
+
+Arrival Buddy:
+“Land smoother. Get local help with SIM cards, transport, check-in, and first-day setup.”
+
+Nightlife Buddy:
+“Explore nightlife with a verified Buddy and public meetup safety tools.”
+
+Content Buddy:
+“Book a Buddy who can help capture photos and videos around the city.”
+
+UX safety patterns:
+- Always show verification and Trust Score on Buddy cards.
+- Always show payment breakdown before confirmation.
+- Always show policy reminder before payment.
+- Safety button should be visible during active booking.
+- Emergency button should never be hidden behind multiple screens.
+- Cash balance should never be ambiguous.
+- Full in-app payment should be encouraged as safer.
+- Public meetup should be default.
+- Private hotel room/home should never be allowed as first meetup.
+
+State handling:
+Build empty/error/loading states.
+
+Examples:
+No Buddies available:
+“No verified Buddies are available right now. Join the waitlist or request a Buddy.”
+
+Application pending:
+“Your Buddy application is under review.”
+
+Booking deposit pending:
+“Your booking is not confirmed yet. Complete payment to confirm.”
+
+Cash balance due:
+“Cash due at meetup: $75. Both users must confirm at completion.”
+
+Feature disabled:
+“Rent a Buddy is not available yet.”
+
+Policy flag:
+“This request may violate Rent a Buddy safety rules and has been sent for review.”
+
+Notifications:
+Add notification events:
+- Buddy application submitted
+- Buddy application approved/rejected
+- Booking requested
+- Booking accepted/declined
+- Deposit paid
+- Booking confirmed
+- Booking starting soon
+- Comfort check due
+- Cash balance confirmation needed
+- Extra time request
+- Review requested
+- Dispute opened
+- Policy flag under review
+
+Testing:
+Add UI/component tests where available for:
+- Rent a Buddy entry points hidden when flag off.
+- Landing page renders core sections.
+- Search results show Trust Score, verification, price, and compatibility.
+- Buddy profile shows policy note and booking CTA.
+- Checkout shows total, deposit, service fee, cash balance, and policy acceptance.
+- Booking cannot confirm without policy acceptance.
+- Active booking shows safety panel.
+- Emergency button visible during active booking.
+- Telegraph booking thread shows booking status.
+- Buddy application requires policy acceptance.
+- Buddy dashboard labels earnings as estimated/pending.
+- Admin applications queue supports approve/reject.
+- Admin safety flags queue supports confirm/dismiss.
+- Empty states render correctly.
+- Cash balance messaging is clear.
+
+Acceptance criteria:
+- Rent a Buddy is visible and polished across the app when enabled.
+- Travelers can discover, search, match, book, manage, review, and save Buddies.
+- Buddies can apply, manage availability, accept bookings, create offers/packages, and view estimated earnings.
+- Active bookings have visible safety controls.
+- Telegraph booking thread is connected to confirmed bookings.
+- Admin can review applications, monitor bookings, and handle safety flags.
+- All UI copy clearly keeps Rent a Buddy non-dating, non-adult, and travel-focused.
+- Payment breakdown is always honest and clear.
+- The UI does not break existing Travel Buddy navigation or features.

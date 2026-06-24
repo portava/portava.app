@@ -44,6 +44,7 @@ import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { NotificationService } from '../services/notifications/NotificationService.js';
+import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 
 const router = Router();
 
@@ -1420,7 +1421,48 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   const m = msg as any;
 
-  // Respond immediately, then run translation pipeline in background.
+  // Write-time tagging: extract @mentions, enforce permissions, write rows, dispatch
+  // notifications via NotificationService (privacy guard + dedup) + NotificationRouter.
+  // Non-fatal — must not block the message write.
+  if (body.trim().length > 0) {
+    try {
+      const taggedIds = await processTagging({
+        db: sc,
+        authorId: user.id,
+        sourceType: 'message',
+        sourceId: m.id,
+        content: body,
+        logger: req.log,
+      });
+      if (taggedIds.length > 0) {
+        const { data: taggerProfile } = await sc
+          .from('profiles')
+          .select('handle')
+          .eq('id', user.id)
+          .single();
+        const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter  = new NotificationRouter(sc);
+        await Promise.allSettled(
+          taggedIds.map(async (taggedId) => {
+            const row = await notifSvc.create({
+              userId: taggedId,
+              eventType: 'pulse.user_tagged',
+              actorId: user.id,
+              sourceType: 'message',
+              sourceId: m.id,
+              params: { taggerHandle, context: `@${taggerHandle} mentioned you in a message.` },
+            });
+            if (row) await notifRouter.route(row);
+          }),
+        );
+      }
+    } catch (err) {
+      req.log.warn({ err }, 'message tagging side-effect failed (non-fatal)');
+    }
+  }
+
+  // Respond after tagging side-effects; translation and realtime dispatch remain background.
   res.status(201).json({
     id: m.id,
     threadId: m.thread_id,
@@ -1476,41 +1518,6 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }).catch(() => {
     // Outer safety net — translateMessageForThread already catches internally.
   });
-
-  // Fire-and-forget: extract @mentions and #hashtags from the message body
-  if (body.trim().length > 0) {
-    Promise.resolve().then(async () => {
-      const taggedIds = await processTagging({
-        db: sc,
-        authorId: user.id,
-        sourceType: 'message',
-        sourceId: m.id,
-        content: body,
-        logger: req.log,
-      });
-      if (taggedIds.length > 0) {
-        const { data: taggerProfile } = await sc
-          .from('profiles')
-          .select('handle')
-          .eq('id', user.id)
-          .single();
-        const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
-        const notifSvc = new NotificationService(sc);
-        await Promise.allSettled(
-          taggedIds.map((taggedId) =>
-            notifSvc.create({
-              userId: taggedId,
-              eventType: 'pulse.user_tagged',
-              actorId: user.id,
-              sourceType: 'message',
-              sourceId: m.id,
-              params: { taggerHandle, context: `@${taggerHandle} mentioned you in a message.` },
-            }),
-          ),
-        );
-      }
-    }).catch(() => {});
-  }
 });
 
 /* ---------------------------------------------------------------------------

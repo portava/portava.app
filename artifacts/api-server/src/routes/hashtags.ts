@@ -421,10 +421,12 @@ router.delete('/hashtags/:slug/follow', async (req, res) => {
 // ─── GET /api/hashtags/:slug/feed ────────────────────────────────────────────
 
 /**
+ * Multi-tab hashtag feed.
+ *
  * Query params:
- *   tab    = top | recent (default: recent)
- *   scope  = global | city (default: global)
- *   city   (required when scope=city)
+ *   tab    = top | recent | events | people | places | circles | trips (default: recent)
+ *   scope  = global | city | nearby (default: global)
+ *   city   (required when scope=city or nearby)
  *   limit  (max 50)
  *   before (ISO datetime cursor for pagination)
  */
@@ -434,8 +436,14 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   const slug  = req.params.slug.toLowerCase().replace(/^#/, '');
   const limit = Math.min(Number(req.query.limit ?? 20), 50);
-  const tab   = req.query.tab === 'top' ? 'top' : 'recent';
-  const scope = req.query.scope === 'city' ? 'city' : 'global';
+
+  const VALID_TABS = ['top', 'recent', 'events', 'people', 'places', 'circles', 'trips'] as const;
+  type FeedTab = typeof VALID_TABS[number];
+  const rawTab = req.query.tab as string | undefined;
+  const tab: FeedTab = VALID_TABS.includes(rawTab as FeedTab) ? rawTab as FeedTab : 'recent';
+
+  const rawScope = req.query.scope as string | undefined;
+  const scope = rawScope === 'city' ? 'city' : rawScope === 'nearby' ? 'nearby' : 'global';
   const city  = typeof req.query.city === 'string' ? req.query.city.trim() : null;
   const before = typeof req.query.before === 'string' ? req.query.before : null;
 
@@ -452,14 +460,26 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   const htId = (ht as any).id;
 
-  // Find post source_ids via hashtag_usage
+  // Map tab → source_type for hashtag_usage lookup
+  const SOURCE_TYPE_MAP: Record<FeedTab, string> = {
+    top:     'post',
+    recent:  'post',
+    events:  'event',
+    people:  'profile',
+    places:  'discovery_place',
+    circles: 'circle',
+    trips:   'trip',
+  };
+  const sourceType = SOURCE_TYPE_MAP[tab];
+
+  // Fetch source_ids via hashtag_usage (with optional scope + cursor filters)
   let usageQ = sc
     .from('hashtag_usage')
     .select('source_id, created_at')
     .eq('hashtag_id', htId)
-    .eq('source_type', 'post');
+    .eq('source_type', sourceType);
 
-  if (scope === 'city' && city) usageQ = usageQ.eq('city', city);
+  if ((scope === 'city' || scope === 'nearby') && city) usageQ = usageQ.eq('city', city);
   if (before) usageQ = usageQ.lt('created_at', before);
 
   usageQ = usageQ.order('created_at', { ascending: false }).limit(limit);
@@ -472,60 +492,94 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     return;
   }
 
-  const postIds = (usageRows ?? []).map((u: any) => u.source_id);
+  const sourceIds = (usageRows ?? []).map((u: any) => u.source_id);
 
-  if (postIds.length === 0) {
-    res.status(200).json({ posts: [], hasMore: false, tab, scope });
+  if (sourceIds.length === 0) {
+    res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope });
     return;
   }
 
-  // Fetch public active posts only
-  let postsQ = sc
-    .from('posts')
-    .select('id, author_id, content, media_urls, visibility, created_at, like_count, comment_count')
-    .in('id', postIds)
-    .eq('status', 'active')
-    .eq('visibility', 'public');
+  // Dispatch per tab type — fetch the underlying entities for each source_type
+  if (tab === 'top' || tab === 'recent') {
+    let postsQ = sc
+      .from('posts')
+      .select('id, author_id, content, media_urls, created_at, like_count, comment_count')
+      .in('id', sourceIds)
+      .neq('status', 'deleted');
+    postsQ = tab === 'top'
+      ? postsQ.order('like_count', { ascending: false })
+      : postsQ.order('created_at', { ascending: false });
 
-  // Sort by tab: top = most liked, recent = newest
-  postsQ = tab === 'top'
-    ? postsQ.order('like_count', { ascending: false })
-    : postsQ.order('created_at', { ascending: false });
+    const { data: posts, error: postsErr } = await postsQ;
+    if (postsErr) { req.log.error({ err: postsErr }, 'hashtag feed posts failed'); sendError(res, 'db_error', postsErr.message); return; }
 
-  const { data: posts, error: postsErr } = await postsQ;
+    const authorIds = [...new Set((posts ?? []).map((p: any) => p.author_id))];
+    let profileMap: Record<string, any> = {};
+    if (authorIds.length > 0) {
+      const { data: profiles } = await sc.from('profiles').select('id, handle, name, avatar_url').in('id', authorIds);
+      for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
+    }
 
-  if (postsErr) {
-    req.log.error({ err: postsErr }, 'hashtag feed posts failed');
-    sendError(res, 'db_error', postsErr.message);
-    return;
-  }
+    const items = (posts ?? []).map((p: any) => {
+      const pr = profileMap[p.author_id];
+      return {
+        id: p.id, type: 'post', content: p.content, mediaUrls: p.media_urls ?? [],
+        createdAt: p.created_at, likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
+        author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+      };
+    });
+    res.status(200).json({ items, posts: items, hasMore: items.length === limit, tab, scope });
 
-  const authorIds = [...new Set((posts ?? []).map((p: any) => p.author_id))];
-  let profileMap: Record<string, any> = {};
-  if (authorIds.length > 0) {
+  } else if (tab === 'people') {
     const { data: profiles } = await sc
-      .from('profiles')
-      .select('id, handle, name, avatar_url')
-      .in('id', authorIds);
-    for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
+      .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
+    const items = (profiles ?? []).map((p: any) => ({
+      id: p.id, type: 'user', handle: p.handle, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
+    }));
+    res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+
+  } else if (tab === 'places') {
+    try {
+      const { data: places } = await sc
+        .from('discovery_places').select('id, name, city, place_type, image_url').in('id', sourceIds);
+      const items = (places ?? []).map((p: any) => ({
+        id: p.id, type: 'place', name: p.name, city: p.city ?? null,
+        placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
+      }));
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+
+  } else if (tab === 'trips') {
+    try {
+      const { data: trips } = await sc
+        .from('trips').select('id, name, destination, status').in('id', sourceIds);
+      const items = (trips ?? []).map((t: any) => ({
+        id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
+      }));
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+
+  } else if (tab === 'circles') {
+    try {
+      const { data: circles } = await sc.from('circles').select('id, name').in('id', sourceIds);
+      const items = (circles ?? []).map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+
+  } else if (tab === 'events') {
+    try {
+      const { data: events } = await sc
+        .from('events').select('id, name, location, start_at, end_at').in('id', sourceIds);
+      const items = (events ?? []).map((e: any) => ({
+        id: e.id, type: 'event', name: e.name, location: e.location ?? null,
+        startAt: e.start_at ?? null, endAt: e.end_at ?? null,
+      }));
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+
+  } else {
+    res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope });
   }
-
-  const feedPosts = (posts ?? []).map((p: any) => {
-    const pr = profileMap[p.author_id];
-    return {
-      id: p.id,
-      content: p.content,
-      mediaUrls: p.media_urls ?? [],
-      createdAt: p.created_at,
-      likeCount: p.like_count ?? 0,
-      commentCount: p.comment_count ?? 0,
-      author: pr
-        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
-        : null,
-    };
-  });
-
-  res.status(200).json({ posts: feedPosts, hasMore: feedPosts.length === limit, tab, scope });
 });
 
 // ─── GET /api/me/hashtag-follows ─────────────────────────────────────────────
@@ -707,7 +761,29 @@ router.post('/admin/hashtags/merge', async (req, res) => {
   const srcRow = src as any;
   const tgtRow = tgt as any;
 
-  // Re-point hashtag_usage rows from source → target
+  // Re-point hashtag_usage rows: delete rows that would conflict on the unique
+  // (hashtag_id, source_type, source_id) index, then update the rest.
+  const { data: tgtUsage } = await sc
+    .from('hashtag_usage')
+    .select('source_type, source_id')
+    .eq('hashtag_id', tgtRow.id);
+  const tgtSet = new Set<string>(
+    (tgtUsage ?? []).map((r: any) => `${r.source_type}:${r.source_id}`),
+  );
+
+  const { data: srcUsage } = await sc
+    .from('hashtag_usage')
+    .select('id, source_type, source_id')
+    .eq('hashtag_id', srcRow.id);
+
+  const conflictIds = (srcUsage ?? [])
+    .filter((r: any) => tgtSet.has(`${r.source_type}:${r.source_id}`))
+    .map((r: any) => r.id);
+  if (conflictIds.length > 0) {
+    await sc.from('hashtag_usage').delete().in('id', conflictIds);
+  }
+
+  // Update remaining source rows to point to target
   await sc.from('hashtag_usage')
     .update({ hashtag_id: tgtRow.id })
     .eq('hashtag_id', srcRow.id);
@@ -742,6 +818,7 @@ router.post('/admin/hashtags/merge', async (req, res) => {
 
 const AdminPatchSchema = z.object({
   name: z.string().max(100).optional(),
+  newSlug: z.string().min(2).max(64).regex(/^[A-Za-z0-9]+$/, 'newSlug must be alphanumeric').optional(),
   isHiddenFromTrending: z.boolean().optional(),
 });
 
@@ -761,6 +838,27 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
   if (!ht) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  // Rename: update slug, normalized_name, and (if name not separately supplied) display name
+  if (parsed.data.newSlug !== undefined) {
+    const normalizedSlug = parsed.data.newSlug.toLowerCase();
+    // Conflict check: another hashtag already owns this slug
+    const { data: conflict } = await sc
+      .from('hashtags')
+      .select('id')
+      .eq('slug', normalizedSlug)
+      .neq('id', (ht as any).id)
+      .maybeSingle();
+    if (conflict) {
+      sendError(res, 'invalid_payload', `Slug '${normalizedSlug}' is already in use`);
+      return;
+    }
+    patch.slug = normalizedSlug;
+    // normalized_name strips all non-alphanumeric chars for fuzzy matching
+    patch.normalized_name = normalizedSlug.replace(/[^a-z0-9]/g, '');
+    if (parsed.data.name === undefined) patch.name = parsed.data.newSlug;
+  }
+
   if (parsed.data.name !== undefined) patch.name = parsed.data.name;
   if (parsed.data.isHiddenFromTrending !== undefined) patch.is_hidden_from_trending = parsed.data.isHiddenFromTrending;
 
@@ -768,7 +866,7 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
     .from('hashtags')
     .update(patch)
     .eq('id', (ht as any).id)
-    .select('id, slug, name, is_blocked, is_hidden_from_trending, usage_count')
+    .select('id, slug, name, normalized_name, is_blocked, is_hidden_from_trending, usage_count')
     .single();
 
   if (error) {

@@ -39,13 +39,18 @@ async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: a
 // ─── GET /api/tags/suggestions ────────────────────────────────────────────────
 
 /**
- * Returns up to 10 ranked user suggestions matching the query prefix.
+ * Returns up to 20 ranked suggestions matching the query prefix.
+ * Entity types returned: user, trip, circle, place.
  *
- * Ranking: mutual-follows (friends) first → circle members → one-way follow → everyone else.
- * Filters: excludes nobody tag_permission, excludes blocked users.
+ * User ranking: mutual-follows (friends) first → circle members → one-way follow → everyone else.
+ * tag_permission enforcement at suggestion time:
+ *   nobody        → excluded entirely
+ *   friends_only  → only included when caller and profile are mutual follows
+ *   interacted    → only included when caller follows OR is followed by the profile
+ *   anyone        → always included (after block-list check)
  *
  * Query params:
- *   q        (required) — handle/name prefix
+ *   q        (required) — handle / name prefix
  *   surface  (optional) — 'post' | 'comment' | 'message'
  *   limit    (optional, max 20)
  */
@@ -65,7 +70,7 @@ router.get('/tags/suggestions', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Build block-list (both directions)
+  // ── Block-list (both directions) ────────────────────────────────────────────
   const { data: blockRows } = await sc
     .from('blocks')
     .select('blocker_id, blocked_id')
@@ -77,7 +82,7 @@ router.get('/tags/suggestions', async (req, res) => {
     else blockedSet.add(b.blocker_id);
   }
 
-  // Fetch candidates matching prefix (fetch more than limit to allow filtering)
+  // ── User candidates ──────────────────────────────────────────────────────────
   const { data: rows, error } = await sc
     .from('profiles')
     .select('id, handle, name, avatar_url, tag_permission')
@@ -92,65 +97,110 @@ router.get('/tags/suggestions', async (req, res) => {
     return;
   }
 
-  const profiles = (rows ?? []) as any[];
+  const profiles = ((rows ?? []) as any[]).filter((p) => !blockedSet.has(p.id));
+  const visibleIds = profiles.map((p: any) => p.id);
 
-  // Apply block-list + tag_permission filter
-  const visible = profiles.filter((p) => {
-    if (blockedSet.has(p.id)) return false;
-    const perm: string = p.tag_permission ?? 'anyone';
-    return perm !== 'nobody';
-  });
+  // ── Relationship sets (ranking + privacy enforcement) ────────────────────────
+  let iFollow   = new Set<string>();
+  let followsMe = new Set<string>();
+  let inCircle  = new Set<string>();
 
-  if (visible.length === 0) {
-    res.status(200).json({ suggestions: [] });
-    return;
+  if (visibleIds.length > 0) {
+    const [{ data: authorFollows }, { data: followsAuthor }] = await Promise.all([
+      sc.from('user_follows').select('following_id').eq('follower_id', user.id).in('following_id', visibleIds),
+      sc.from('user_follows').select('follower_id').eq('following_id', user.id).in('follower_id', visibleIds),
+    ]);
+    iFollow   = new Set<string>((authorFollows ?? []).map((r: any) => r.following_id));
+    followsMe = new Set<string>((followsAuthor ?? []).map((r: any) => r.follower_id));
+
+    try {
+      const { data: circleRows } = await sc
+        .from('circle_members')
+        .select('user_id')
+        .eq('owner_id', user.id)
+        .in('user_id', visibleIds);
+      for (const r of (circleRows ?? []) as any[]) inCircle.add(r.user_id);
+    } catch { /* circle_members may not exist on all deployments */ }
   }
 
-  const visibleIds = visible.map((p: any) => p.id);
-
-  // Relationship context for ranking
-  const [{ data: authorFollows }, { data: followsAuthor }] = await Promise.all([
-    sc.from('user_follows').select('following_id').eq('follower_id', user.id).in('following_id', visibleIds),
-    sc.from('user_follows').select('follower_id').eq('following_id', user.id).in('follower_id', visibleIds),
-  ]);
-
-  let inCircle = new Set<string>();
-  try {
-    const { data: circleRows } = await sc
-      .from('circle_members')
-      .select('user_id')
-      .eq('owner_id', user.id)
-      .in('user_id', visibleIds);
-    for (const r of (circleRows ?? []) as any[]) inCircle.add(r.user_id);
-  } catch { /* circle_members may not exist on all deployments */ }
-
-  const iFollow   = new Set<string>((authorFollows ?? []).map((r: any) => r.following_id));
-  const followsMe = new Set<string>((followsAuthor ?? []).map((r: any) => r.follower_id));
-
   function rank(id: string): number {
-    const mutual  = iFollow.has(id) && followsMe.has(id);
-    const circle  = inCircle.has(id);
-    const follows = iFollow.has(id) || followsMe.has(id);
-    if (mutual) return 0;
-    if (circle) return 1;
-    if (follows) return 2;
+    if (iFollow.has(id) && followsMe.has(id)) return 0;
+    if (inCircle.has(id)) return 1;
+    if (iFollow.has(id) || followsMe.has(id)) return 2;
     return 3;
   }
 
-  const ranked = visible
-    .map((p: any) => ({ ...p, _rank: rank(p.id) }))
-    .sort((a: any, b: any) => a._rank - b._rank || a.handle.localeCompare(b.handle))
-    .slice(0, limit);
+  // Apply tag_permission at suggestion time (friends_only and interacted enforced here)
+  const userSuggestions = profiles
+    .filter((p) => {
+      const perm: string = p.tag_permission ?? 'anyone';
+      if (perm === 'nobody') return false;
+      if (perm === 'friends_only') return iFollow.has(p.id) && followsMe.has(p.id);
+      if (perm === 'interacted')  return iFollow.has(p.id) || followsMe.has(p.id);
+      return true;
+    })
+    .map((p: any) => ({
+      id: p.id,
+      type: 'user' as const,
+      handle: p.handle,
+      name: p.name ?? null,
+      avatarUrl: p.avatar_url ?? null,
+      tagPermission: p.tag_permission ?? 'anyone',
+      relationshipRank: rank(p.id),
+    }))
+    .sort((a, b) => a.relationshipRank - b.relationshipRank || a.handle.localeCompare(b.handle));
 
-  const suggestions = ranked.map((p: any) => ({
-    id: p.id,
-    handle: p.handle,
-    name: p.name ?? null,
-    avatarUrl: p.avatar_url ?? null,
-    tagPermission: p.tag_permission ?? 'anyone',
-    relationshipRank: p._rank,
-  }));
+  // ── Entity suggestions: trips, circles, discovery places ────────────────────
+  const entitySuggestions: any[] = [];
 
+  // Trips the caller is a member of
+  try {
+    const { data: memberRows } = await sc
+      .from('trip_members')
+      .select('trip_id, trips(id, name, destination, status)')
+      .eq('user_id', user.id)
+      .limit(100);
+    for (const r of (memberRows ?? []) as any[]) {
+      const t = r.trips;
+      if (t && (t.name ?? '').toLowerCase().includes(q)) {
+        entitySuggestions.push({
+          id: t.id, type: 'trip',
+          name: t.name, destination: t.destination ?? null,
+        });
+      }
+    }
+  } catch { /* trip_members may not exist on all deployments */ }
+
+  // Circles owned by the caller
+  try {
+    const { data: circleRows } = await sc
+      .from('circles')
+      .select('id, name')
+      .eq('owner_id', user.id)
+      .ilike('name', `%${q}%`)
+      .limit(20);
+    for (const c of (circleRows ?? []) as any[]) {
+      entitySuggestions.push({ id: c.id, type: 'circle', name: c.name });
+    }
+  } catch { /* circles may not exist on all deployments */ }
+
+  // Discovery places matching query
+  try {
+    const { data: placeRows } = await sc
+      .from('discovery_places')
+      .select('id, name, city, place_type')
+      .ilike('name', `%${q}%`)
+      .eq('status', 'approved')
+      .limit(10);
+    for (const p of (placeRows ?? []) as any[]) {
+      entitySuggestions.push({
+        id: p.id, type: 'place',
+        name: p.name, city: p.city ?? null, placeType: p.place_type ?? null,
+      });
+    }
+  } catch { /* discovery_places may not exist on all deployments */ }
+
+  const suggestions = [...userSuggestions, ...entitySuggestions].slice(0, limit);
   res.status(200).json({ suggestions });
 });
 
