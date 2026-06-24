@@ -349,19 +349,41 @@ router.get('/hashtags/:slug', async (req, res) => {
   // Blocked hashtags are invisible to regular users
   if (htRow.is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
-  const { data: follow } = await sc
-    .from('user_hashtag_follows')
-    .select('hashtag_id')
-    .eq('user_id', user.id)
-    .eq('hashtag_id', htRow.id)
-    .maybeSingle();
+  const [followRes, cityRes] = await Promise.all([
+    sc
+      .from('user_hashtag_follows')
+      .select('hashtag_id')
+      .eq('user_id', user.id)
+      .eq('hashtag_id', htRow.id)
+      .maybeSingle(),
+    // Find the city that has used this hashtag most in the last 30 days
+    sc
+      .from('hashtag_usage')
+      .select('city')
+      .eq('hashtag_id', htRow.id)
+      .not('city', 'is', null)
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .limit(200),
+  ]);
+
+  // Tally city counts and pick the winner
+  let topCity: string | null = null;
+  if (cityRes.data && cityRes.data.length > 0) {
+    const cityCount: Record<string, number> = {};
+    for (const row of cityRes.data as any[]) {
+      if (row.city) cityCount[row.city] = (cityCount[row.city] ?? 0) + 1;
+    }
+    const topEntry = Object.entries(cityCount).sort((a, b) => b[1] - a[1])[0];
+    if (topEntry) topCity = topEntry[0];
+  }
 
   res.status(200).json({
     id: htRow.id,
     slug: htRow.slug,
     name: htRow.name,
     usageCount: htRow.usage_count,
-    isFollowing: follow !== null,
+    isFollowing: followRes.data !== null,
+    topCity,
     createdAt: htRow.created_at,
   });
 });

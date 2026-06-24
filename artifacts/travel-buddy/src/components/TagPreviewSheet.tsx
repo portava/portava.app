@@ -99,6 +99,7 @@ function HashtagCard({
       <Text style={s.hashtagSlug}>#{data.slug}</Text>
       <Text style={s.entitySub}>
         {data.usageCount.toLocaleString()} {data.usageCount === 1 ? 'post' : 'posts'}
+        {data.topCity ? `  ·  top city: ${data.topCity}` : ''}
       </Text>
       <View style={s.ctaRow}>
         <Pressable

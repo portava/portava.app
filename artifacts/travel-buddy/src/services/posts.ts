@@ -45,6 +45,10 @@ export interface PostRow {
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  /** @mention span annotations from the server whitelist. */
+  tags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
+  /** #hashtag span annotations from the server whitelist. */
+  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
 }
 
 export type PostErrorKind =
@@ -92,6 +96,8 @@ function mapPost(r: any): PostRow {
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
     mediaDurationSeconds: r.media_duration_seconds ?? null,
+    tags: r.tags ?? [],
+    hashtagUsages: r.hashtagUsages ?? [],
   };
 }
 

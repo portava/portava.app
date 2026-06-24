@@ -78,6 +78,8 @@ export interface HashtagMeta {
   name: string;
   usageCount: number;
   isFollowing: boolean;
+  /** Most-active city for this hashtag in the last 30 days (null if no geo-tagged usage). */
+  topCity: string | null;
   createdAt: string;
 }
 

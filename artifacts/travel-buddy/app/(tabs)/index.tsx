@@ -54,6 +54,8 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     canLike: p.canLike,
     canComment: p.canComment,
     canShare: p.canShare,
+    spanTags: p.tags,
+    spanHashtags: p.hashtagUsages,
   };
 }
 
