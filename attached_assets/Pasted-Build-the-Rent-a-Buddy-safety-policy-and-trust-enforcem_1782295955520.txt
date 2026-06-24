@@ -1,0 +1,342 @@
+Build the Rent a Buddy safety, policy, and trust enforcement layer.
+
+Goal:
+Harden the Rent a Buddy feature so it is clearly travel/social/local-guidance only, not dating, escort, adult, romantic, or illegal-service related. Add safety controls, policy flags, Trust Score effects, admin review, and active-booking protection.
+
+Feature flag:
+Use RENT_BUDDY_ENABLED.
+If disabled, all Rent a Buddy safety routes should return feature-disabled responses.
+
+Policy positioning:
+Add this policy language in the Buddy application, traveler booking checkout, booking detail screen, and report flow:
+
+“Rent a Buddy is for travel companionship, city guidance, language support, local help, social exploration, shopping, nightlife guidance, content help, and arrival support only. It is not a dating, escort, adult, romantic, sexual, or illegal-service feature. Requests or offers that violate this policy may lead to account review, suspension, removal, and Trust Score penalties.”
+
+Banned behavior categories:
+Create policy flag categories:
+- adult_or_sexual_request
+- escort_or_romantic_service
+- off_app_payment
+- illegal_activity
+- drugs_or_controlled_substances
+- harassment_or_threats
+- unsafe_private_meetup
+- unapproved_extra_guest
+- refusal_to_pay_cash_balance
+- route_changed_without_approval
+- no_show
+- abandonment
+- fake_profile_or_misrepresentation
+- underage_or_age_policy_violation
+
+Keyword/rule-based flagging:
+Start simple with keyword/rule-based detection. Do not overbuild AI moderation unless already available.
+
+Flag messages, booking notes, route requests, profile bios, and reports for banned terms or patterns.
+
+Examples:
+- escort
+- massage
+- girlfriend experience
+- boyfriend experience
+- adult service
+- private hotel room
+- come to my room
+- off app
+- cash only outside app
+- drugs
+- weed
+- cocaine
+- sex
+- hookup
+- date me
+- romantic service
+
+Important:
+Do not auto-ban only from keywords. Create a policy flag and send it to admin review unless the violation is severe or repeated.
+
+Tables:
+Create or extend these tables as needed:
+
+rent_buddy_policy_flags:
+- id
+- booking_id nullable
+- reporter_user_id nullable
+- flagged_user_id nullable
+- source_type: message, booking_note, profile, route_change, report, payment, review
+- source_id nullable
+- category
+- severity: low, medium, high, critical
+- matched_text_excerpt
+- status: open, reviewing, resolved, dismissed, escalated
+- admin_notes
+- created_at
+- resolved_at
+
+rent_buddy_user_limits:
+- id
+- user_id
+- rent_buddy_disabled boolean
+- buddy_disabled boolean
+- traveler_booking_disabled boolean
+- nightlife_disabled boolean
+- cash_balance_disabled boolean
+- max_booking_duration_minutes
+- public_meetup_required boolean
+- full_in_app_payment_required boolean
+- reason
+- created_by_admin_id nullable
+- created_at
+- updated_at
+
+rent_buddy_safety_events:
+- id
+- booking_id
+- actor_user_id
+- target_user_id nullable
+- event_type
+- event_status
+- metadata JSON
+- created_at
+
+rent_buddy_emergency_contacts_snapshot:
+- id
+- booking_id
+- user_id
+- trusted_circle_shared boolean
+- safe_return_enabled boolean
+- emergency_contact_count
+- created_at
+
+Active booking safety panel:
+During started/in_progress Rent a Buddy bookings, show a safety panel with:
+- Confirm arrival
+- Share live location with Trusted Circle
+- Safe Return check-in
+- I feel unsafe
+- End booking early
+- Report user
+- Contact support
+- Emergency button
+
+Private 30-minute comfort check:
+After booking start, create a scheduled/prompted safety check-in:
+“How is your Rent a Buddy meetup going?”
+
+Options:
+- Everything is good
+- Need help adjusting plan
+- I feel uncomfortable
+- End early
+- Contact support
+- Start Safe Return
+
+If user selects “I feel uncomfortable,” “End early,” “Contact support,” or “Start Safe Return,” create a rent_buddy_safety_events row and surface the case in admin safety review.
+
+Emergency phrase:
+Add a discreet safety phrase system for active Telegraph booking chats.
+
+Default phrase:
+“I need to check my passport.”
+
+If a traveler sends this phrase during an active Rent a Buddy booking, privately trigger a safety prompt:
+“Do you need help ending this meetup?”
+
+Options:
+- I am okay
+- End booking now
+- Share location with Trusted Circle
+- Start Safe Return
+- Contact support
+- Use emergency button
+
+Do not notify the Buddy that the phrase triggered safety mode.
+
+Public meetup rules:
+New Buddies must use public meetup locations.
+Nightlife bookings require public meetup location.
+Arrival Buddy bookings should start at airport arrivals, hotel lobby, transit hub, or public cafe.
+Private hotel room/private home cannot be selected as first meetup location.
+
+Approved meetup examples:
+- Hotel lobby
+- Coffee shop
+- Mall entrance
+- Train station
+- Airport arrivals
+- Tourist landmark
+- Public plaza
+- Coworking space
+- Hostel lobby
+
+Route change safety:
+If the Buddy changes the route during an active booking:
+- Require traveler approval.
+- Store old route and new route.
+- Store reason.
+- If route change suggests private home, hotel room, unsafe area, or unapproved location, create policy flag.
+- If route changes without approval, create safety event and Trust Score penalty.
+
+Cash balance protection:
+If payment_mode is deposit_plus_cash:
+- Show cash balance due clearly before booking confirmation.
+- At booking completion, require both users to confirm:
+  Traveler: “I paid the cash balance.”
+  Buddy: “I received the cash balance.”
+- If one side disagrees, set booking status to disputed.
+- Create dispute reason: cash_balance_disagreement.
+- Send to admin review.
+
+Trust Score events:
+Emit Trust Score events for Rent a Buddy actions.
+
+Positive events:
+- rent_buddy_completed
+- rent_buddy_on_time
+- rent_buddy_positive_review
+- rent_buddy_repeat_booking
+- rent_buddy_safe_return_completed
+- rent_buddy_cash_balance_confirmed
+- rent_buddy_stayed_on_app
+
+Negative events:
+- rent_buddy_no_show
+- rent_buddy_late_cancel
+- rent_buddy_policy_flag_confirmed
+- rent_buddy_off_app_payment_request
+- rent_buddy_unsafe_route_change
+- rent_buddy_harassment_report_confirmed
+- rent_buddy_refused_cash_balance
+- rent_buddy_unapproved_extra_guest
+- rent_buddy_abandoned_booking
+- rent_buddy_private_meetup_violation
+
+Trust Score protection:
+Do not let one good booking immediately erase severe negative behavior.
+If a user has confirmed severe flags, apply a risk hold or review status even if their score is high.
+
+Severity handling:
+Low:
+- warning
+- admin-visible flag
+- no automatic suspension
+
+Medium:
+- warning
+- Trust Score penalty
+- admin review
+
+High:
+- temporary Rent a Buddy limitation
+- require full in-app payment
+- require public meetup
+- disable nightlife bookings until reviewed
+
+Critical:
+- disable Rent a Buddy access pending review
+- alert admin safety queue
+- preserve evidence
+- allow admin to suspend account
+
+Admin safety dashboard:
+Add admin tools for:
+- View open policy flags
+- Filter by severity/category/city/user
+- View booking context
+- View related safety events
+- View cash balance disputes
+- View route changes
+- View review/private notes
+- Dismiss flag
+- Confirm violation
+- Apply user limit
+- Suspend Buddy access
+- Suspend traveler booking access
+- Disable cash balance for user
+- Require full in-app payment
+- Mark resolved with admin notes
+
+User limits:
+When a user is limited:
+- Show honest messaging.
+Example:
+“Rent a Buddy access is limited while your account is under review.”
+or
+“Cash balance is unavailable for this booking. Full in-app payment is required.”
+
+Do not reveal private admin notes to users.
+
+Buddy protection:
+Give Buddies safety tools too:
+- Report traveler
+- End booking early
+- Flag harassment
+- Flag unpaid cash balance
+- Flag unapproved extra guests
+- Flag illegal or adult-service request
+- Contact support
+- Share location with their own trusted contact if supported
+
+Traveler protection:
+Give travelers safety tools:
+- Report Buddy
+- End booking early
+- Flag unsafe location change
+- Flag adult/romantic pressure
+- Flag off-app payment
+- Flag abandonment
+- Contact support
+- Emergency button
+
+Double-blind reviews:
+Hide reviews until both users submit or review window closes.
+Allow private admin-only notes.
+Use reviews as Trust Score inputs only after review window closes or both submit.
+
+Backend APIs:
+Add routes as needed:
+
+POST /api/rent-buddy/bookings/:bookingId/safety/checkin
+POST /api/rent-buddy/bookings/:bookingId/safety/feel-unsafe
+POST /api/rent-buddy/bookings/:bookingId/safety/end-early
+POST /api/rent-buddy/bookings/:bookingId/safety/emergency-phrase
+POST /api/rent-buddy/bookings/:bookingId/report
+POST /api/rent-buddy/bookings/:bookingId/confirm-cash
+POST /api/rent-buddy/bookings/:bookingId/route-change
+GET /api/admin/rent-buddy/safety/flags
+GET /api/admin/rent-buddy/safety/events
+POST /api/admin/rent-buddy/safety/flags/:flagId/dismiss
+POST /api/admin/rent-buddy/safety/flags/:flagId/confirm
+POST /api/admin/rent-buddy/users/:userId/limits
+PATCH /api/admin/rent-buddy/users/:userId/limits
+
+Testing:
+Add tests for:
+- Policy text appears in application and booking checkout.
+- Banned keyword creates policy flag, not automatic ban.
+- Severe repeated flags limit Rent a Buddy access.
+- New Buddy cannot choose private first meetup.
+- Nightlife booking requires public first meetup.
+- Route change requires traveler approval.
+- Unapproved route change creates safety event.
+- Emergency phrase triggers private traveler safety prompt only.
+- Cash balance disagreement creates dispute.
+- Confirmed cash balance emits positive Trust Score event.
+- No-show emits negative Trust Score event.
+- Admin can confirm/dismiss policy flag.
+- Admin can apply full-in-app-payment-required limit.
+- User with cash balance disabled cannot choose deposit_plus_cash.
+- User with Rent a Buddy disabled cannot create or accept bookings.
+- Double-blind review logic works.
+- Comfort check creates safety event when user reports discomfort.
+
+Acceptance criteria:
+- Rent a Buddy has visible safety and policy boundaries.
+- Policy flags are created for risky behavior across messages, profiles, booking notes, reports, and route changes.
+- Active bookings have safety controls.
+- Emergency phrase works privately.
+- Cash balance disputes are trackable.
+- Trust Score receives Rent a Buddy events.
+- Admin can review, confirm, dismiss, limit, or suspend users.
+- Safety rules protect both traveler and Buddy.
+- The feature remains non-dating, non-adult, and travel-focused.

@@ -43,6 +43,7 @@ import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
+import { NotificationService } from '../services/notifications/NotificationService.js';
 
 const router = Router();
 
@@ -1478,16 +1479,37 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   // Fire-and-forget: extract @mentions and #hashtags from the message body
   if (body.trim().length > 0) {
-    Promise.resolve().then(() =>
-      processTagging({
+    Promise.resolve().then(async () => {
+      const taggedIds = await processTagging({
         db: sc,
         authorId: user.id,
         sourceType: 'message',
         sourceId: m.id,
         content: body,
         logger: req.log,
-      }),
-    ).catch(() => {});
+      });
+      if (taggedIds.length > 0) {
+        const { data: taggerProfile } = await sc
+          .from('profiles')
+          .select('handle')
+          .eq('id', user.id)
+          .single();
+        const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+        const notifSvc = new NotificationService(sc);
+        await Promise.allSettled(
+          taggedIds.map((taggedId) =>
+            notifSvc.create({
+              userId: taggedId,
+              eventType: 'pulse.user_tagged',
+              actorId: user.id,
+              sourceType: 'message',
+              sourceId: m.id,
+              params: { taggerHandle, context: `@${taggerHandle} mentioned you in a message.` },
+            }),
+          ),
+        );
+      }
+    }).catch(() => {});
   }
 });
 

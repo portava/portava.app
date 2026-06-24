@@ -1,0 +1,660 @@
+Build the Rent a Buddy matching, pricing, availability, and marketplace layer.
+
+Goal:
+Make Rent a Buddy work like a real marketplace where travelers can find the right Buddy, request custom help, compare prices, book available Buddies, and where Buddies can earn through hourly, half-day, full-day, group, and package bookings.
+
+Feature flag:
+Use RENT_BUDDY_ENABLED.
+If disabled, return honest feature-disabled responses and hide marketplace entry points.
+
+Core marketplace sections:
+Add these Rent a Buddy discovery sections:
+- Available Now
+- Top Buddies in This City
+- Female Traveler Favorites
+- Nightlife Buddies
+- Language Help
+- Arrival Help
+- Content/Photo Buddies
+- Budget-Friendly Buddies
+- Luxury/Concierge Buddies
+- Group Buddies
+- New Verified Buddies
+- City Ambassadors
+- Request a Buddy
+
+Traveler matching quiz:
+Create a short matching flow before search or booking.
+
+Questions:
+1. What do you need help with?
+   - Explore city
+   - Nightlife
+   - Food
+   - Shopping
+   - Language help
+   - Arrival support
+   - Photos/videos
+   - Safety/social comfort
+   - Custom
+
+2. What is your vibe?
+   - Chill
+   - Social
+   - Party
+   - Luxury
+   - Budget
+   - Cultural
+   - Creator/content
+   - Outdoor/adventure
+
+3. Preferred Buddy energy:
+   - Quiet Helper
+   - Friendly Local
+   - Hype Buddy
+   - Safety Buddy
+   - Creator Buddy
+   - Luxury Concierge
+
+4. Preferred language:
+   Use existing user/profile language system if available.
+
+5. Budget:
+   - Under $25
+   - $25–$50
+   - $50–$100
+   - $100+
+   - Custom
+
+6. Booking length:
+   - 1 hour
+   - 2 hours
+   - Half day
+   - Full day
+   - Night block
+   - Custom
+
+7. Safety preferences:
+   - Public meetup only
+   - Female Buddy only
+   - High Trust Score only
+   - Daytime only
+   - No alcohol
+   - No clubs
+   - Share with Trusted Circle
+   - Safe Return required
+
+Compatibility score:
+Create a Buddy compatibility score from 0–100.
+
+Suggested scoring inputs:
+- Category match
+- City match
+- Availability match
+- Language match
+- Budget match
+- Vibe tag match
+- Safety preference match
+- Buddy level
+- Trust Score
+- Review quality
+- Response time
+- Completed booking count
+- Traveler preference match
+- Past positive interactions if available
+
+Display:
+“You and this Buddy are a 92% match.”
+
+Do not allow compatibility score to override safety restrictions.
+If a Buddy is not approved, suspended, limited, or unsafe for the requested category, they should not be bookable even if compatibility score is high.
+
+Search ranking:
+Rank Buddies by:
+1. Safety eligibility
+2. Approval/category eligibility
+3. Availability
+4. Compatibility score
+5. Trust Score
+6. Review quality
+7. Response time
+8. Completed bookings
+9. Distance/location relevance if available
+10. Price fit
+11. City Ambassador/Pro status
+12. New Buddy rotation for fair exposure
+
+Do not rank paid boosts above safety, Trust Score, or eligibility.
+
+Filters:
+Add search filters:
+- City
+- Date
+- Start time
+- Duration
+- Available now
+- Category
+- Language
+- Price range
+- Buddy level
+- Trust Score minimum
+- Review rating
+- Completed booking minimum
+- Vibe tags
+- Buddy energy
+- Female Buddy only
+- Public meetup only
+- Nightlife approved
+- Arrival support
+- Group size
+- Content/photo help
+- Full in-app payment only
+- Deposit + cash accepted
+
+Availability:
+Create a real Buddy availability system.
+
+Buddy can set:
+- Weekly availability
+- One-time available blocks
+- Available now toggle
+- Vacation/unavailable dates
+- Minimum notice time
+- Buffer time between bookings
+- Maximum bookings per day
+- Nightlife availability
+- Arrival support availability
+- Group booking availability
+- Custom booking availability
+
+Availability statuses:
+- available
+- unavailable
+- busy
+- available_now
+- limited
+- pending_request
+- booked
+
+Prevent double booking.
+If a booking is accepted/confirmed for a time block, block that time.
+
+Request expiration:
+Booking requests should expire if not accepted.
+
+Suggested expiration:
+- Available Now request: 15 minutes
+- Same-day request: 1 hour
+- Future request: 12–24 hours
+
+Store expires_at on booking requests.
+
+Request a Buddy:
+Create a “Request a Buddy” flow for travelers who do not want to pick manually.
+
+Traveler fields:
+- City
+- Date/time
+- Duration
+- Category
+- Group size
+- Budget
+- Preferred language
+- Preferred Buddy energy
+- Safety preferences
+- Notes: “Tell Buddies what you need”
+- Payment mode preference
+- Public meetup location
+
+When submitted:
+- Match eligible Buddies
+- Notify top matching available Buddies
+- Let Buddies send offers
+- Traveler can choose an offer
+
+Buddy offers:
+Create offer records.
+
+Offer fields:
+- request_id
+- buddy_user_id
+- proposed_price
+- deposit_amount
+- cash_balance_due
+- proposed_start_time
+- proposed_end_time
+- proposed_meetup_location
+- short_message
+- included_services
+- add-ons offered
+- expires_at
+- status: pending, accepted, declined, expired, withdrawn
+
+Traveler can accept one offer.
+When accepted, convert offer into a booking and require deposit/full payment.
+
+Buddy packages:
+Allow Buddies to create fixed packages.
+
+Package examples:
+- First Night in Tokyo
+- Da Nang Seafood + Beach Walk
+- Seoul Shopping Buddy
+- Bangkok Arrival Setup
+- Manila Mall + Night Market Helper
+- Hidden Bars in Shinjuku
+- Content Day in Bali
+- First 3 Days in City Bundle
+
+Package fields:
+- buddy_user_id
+- title
+- city
+- category
+- description
+- duration_minutes
+- max_group_size
+- base_price
+- deposit_required
+- payment_modes_allowed
+- included_stops JSON
+- included_services
+- add-ons available
+- public_meetup_required
+- active boolean
+- admin_review_status if needed
+
+Package booking:
+Traveler can book a package directly.
+Package still follows all normal safety, payment, availability, and approval rules.
+
+Group bookings:
+Support one Buddy for multiple travelers.
+
+Rules:
+- Buddy must be group-approved.
+- Group size cannot exceed Buddy max_group_size.
+- Public meetup required by default.
+- Traveler who books is group lead.
+- Optional split-pay support can be placeholder if payments are not ready.
+- Group lead is responsible for booking deposit unless split-pay is built.
+- Store guest count and guest names/display names if available.
+
+Group pricing:
+Support:
+- Flat group price
+- Per-person price
+- Additional guest fee
+
+Example:
+Base price: $60 for up to 2 travelers
+Additional guest: $15 each
+Max group: 6
+
+Pricing:
+Support these price types:
+- hourly_rate
+- half_day_rate
+- full_day_rate
+- nightlife_block_rate
+- arrival_support_rate
+- group_base_rate
+- additional_guest_rate
+- package_price
+- custom_offer_price
+
+Smart pricing suggestions:
+Add backend helper to suggest prices by:
+- city
+- category
+- duration
+- Buddy level
+- demand
+- group size
+- nightlife/arrival/content premium
+- day/time
+
+Do not force suggested pricing.
+Show to Buddy as:
+“Suggested range: $20–$35/hr for this category in this city.”
+
+Dynamic deposit rules:
+Calculate deposit based on risk and booking type.
+
+Suggested deposit rules:
+- Standard daytime City Buddy: 20%
+- Arrival Buddy: 25%
+- Content Buddy: 25%
+- Nightlife Buddy: 35%
+- Group Buddy: 35%
+- New Traveler: 35–50%
+- New Buddy: 35–50%
+- High Trust repeat booking: 20%
+- User with cash_balance_disabled: full in-app payment required
+- High-risk flags or safety limits: full in-app payment required
+
+Store:
+- deposit_rule_applied
+- deposit_percent
+- deposit_reason
+
+Payment mode eligibility:
+Allow deposit_plus_cash only when:
+- Traveler is not cash_balance_disabled
+- Buddy accepts cash balance
+- Booking category allows it
+- Risk rules allow it
+- Admin/user limits do not require full in-app payment
+
+Otherwise require full_in_app.
+
+Add-ons:
+Create add-ons Buddies can offer.
+
+Examples:
+- Extra hour
+- Photo package
+- Edited photo delivery
+- Reservation help
+- Translation support
+- Airport arrival setup
+- Nightlife table help
+- Shopping assistance
+- Custom itinerary
+- Group upgrade
+- Transportation coordination
+
+Add-on fields:
+- buddy_user_id
+- title
+- description
+- price
+- category
+- active
+- requires_admin_approval boolean if needed
+
+At checkout:
+Traveler can add optional add-ons.
+Add-ons must be included in total price, deposit calculation, and cash balance calculation.
+
+Tips:
+After completed booking, allow traveler to tip Buddy in app.
+
+Tip options:
+- $5
+- $10
+- $20
+- Custom
+
+Tip is optional.
+Tips should not be requested before completion.
+Tips should not replace agreed cash balance.
+Store tip record.
+
+Repeat Buddy:
+Add “Book again” and “Save Buddy” functionality.
+
+Traveler can:
+- Save Buddy
+- Book Buddy again
+- Add Buddy to trusted Buddies
+- Invite Buddy to future plan
+- Request custom package from Buddy
+
+Store saved_buddies:
+- traveler_user_id
+- buddy_user_id
+- created_at
+- notes optional
+
+Waitlist:
+If no Buddy is available, traveler can join a city/category waitlist.
+
+Waitlist fields:
+- traveler_user_id
+- city
+- category
+- desired_time
+- budget
+- language
+- notes
+- expires_at
+- status
+
+Notify eligible Buddies when a waitlist request matches them.
+
+Earnings dashboard:
+Build Buddy earnings summary.
+
+Show:
+- Today’s bookings
+- Upcoming bookings
+- Completed bookings
+- Deposit collected
+- Cash balance due
+- Cash balance confirmed
+- Full in-app earnings
+- Tips
+- Estimated platform fee
+- Estimated Buddy earnings
+- Completed earnings
+- Disputed earnings
+- Canceled/no-show impact
+- Profile views
+- Search appearances
+- Conversion rate if available
+- Repeat clients
+- Rating
+- Trust Score
+- City ranking
+
+Important:
+If payouts are not actually connected yet, label earnings as estimated/pending.
+Do not claim payout has been sent unless payout system exists.
+
+Platform fees:
+Support configurable platform fee rules.
+
+Examples:
+- New Buddy: 25%
+- Verified Buddy: 22%
+- Trusted Buddy: 20%
+- Pro Buddy: 15%
+- City Ambassador: 12%
+
+Also support traveler service fee:
+- fixed fee
+- percentage fee
+- category-specific fee
+
+Store:
+- platform_fee_amount
+- traveler_service_fee_amount
+- buddy_gross_amount
+- buddy_net_estimated_amount
+- cash_balance_due
+- in_app_amount_collected
+
+Do not double-count cash balance as platform-collected money unless it was paid in app.
+
+Marketplace analytics:
+Add admin analytics:
+- Bookings by city
+- Revenue by city
+- Deposit collected
+- Full app payment collected
+- Cash balance volume
+- Top categories
+- Top Buddies
+- Canceled bookings
+- No-shows
+- Disputes
+- Policy flags
+- Conversion from search to booking
+- Available Buddy supply by city/time
+- Waitlist demand by city/category
+- Average price by category/city
+
+Admin marketplace tools:
+Admin can:
+- Feature a Buddy
+- Remove featured status
+- Mark City Ambassador
+- Approve package
+- Disable package
+- Adjust category approval
+- View price outliers
+- View availability abuse
+- View repeated declines/no-response
+- Force public-meetup-only limit
+- Require full in-app payment for a user
+- Disable deposit_plus_cash for a city/category if needed
+
+Database:
+Add/extend tables as needed:
+
+rent_buddy_saved_buddies
+rent_buddy_match_preferences
+rent_buddy_search_events
+rent_buddy_match_scores
+rent_buddy_requests
+rent_buddy_offers
+rent_buddy_packages
+rent_buddy_package_stops
+rent_buddy_addons
+rent_buddy_booking_addons
+rent_buddy_tips
+rent_buddy_waitlist
+rent_buddy_pricing_rules
+rent_buddy_fee_rules
+rent_buddy_earnings_ledger
+rent_buddy_marketplace_analytics_events
+
+Backend APIs:
+Search/matching:
+- GET /api/rent-buddy/search
+- POST /api/rent-buddy/match
+- POST /api/rent-buddy/match/preferences
+- GET /api/rent-buddy/available-now
+- GET /api/rent-buddy/cities/:city/top
+
+Availability:
+- GET /api/rent-buddy/buddies/:buddyId/availability
+- PATCH /api/rent-buddy/me/availability
+- POST /api/rent-buddy/me/available-now
+- DELETE /api/rent-buddy/me/available-now
+
+Request a Buddy:
+- POST /api/rent-buddy/requests
+- GET /api/rent-buddy/requests/:requestId
+- GET /api/rent-buddy/me/matching-requests
+- POST /api/rent-buddy/requests/:requestId/offers
+- POST /api/rent-buddy/offers/:offerId/accept
+- POST /api/rent-buddy/offers/:offerId/decline
+- POST /api/rent-buddy/offers/:offerId/withdraw
+
+Packages:
+- POST /api/rent-buddy/me/packages
+- GET /api/rent-buddy/buddies/:buddyId/packages
+- GET /api/rent-buddy/packages/:packageId
+- PATCH /api/rent-buddy/me/packages/:packageId
+- POST /api/rent-buddy/packages/:packageId/book
+
+Add-ons/tips:
+- POST /api/rent-buddy/me/addons
+- GET /api/rent-buddy/buddies/:buddyId/addons
+- POST /api/rent-buddy/bookings/:bookingId/addons
+- POST /api/rent-buddy/bookings/:bookingId/tip
+
+Saved/repeat:
+- POST /api/rent-buddy/buddies/:buddyId/save
+- DELETE /api/rent-buddy/buddies/:buddyId/save
+- GET /api/rent-buddy/me/saved-buddies
+- POST /api/rent-buddy/buddies/:buddyId/book-again
+
+Waitlist:
+- POST /api/rent-buddy/waitlist
+- GET /api/rent-buddy/me/waitlist
+- DELETE /api/rent-buddy/waitlist/:waitlistId
+
+Earnings:
+- GET /api/rent-buddy/me/earnings
+- GET /api/rent-buddy/me/earnings/ledger
+
+Admin:
+- GET /api/admin/rent-buddy/marketplace/analytics
+- GET /api/admin/rent-buddy/marketplace/cities
+- POST /api/admin/rent-buddy/profiles/:id/feature
+- DELETE /api/admin/rent-buddy/profiles/:id/feature
+- POST /api/admin/rent-buddy/profiles/:id/city-ambassador
+- POST /api/admin/rent-buddy/packages/:id/approve
+- POST /api/admin/rent-buddy/packages/:id/disable
+- GET /api/admin/rent-buddy/pricing/outliers
+- PATCH /api/admin/rent-buddy/fee-rules
+
+Mobile UI:
+Traveler:
+- Match quiz screen
+- Search results with compatibility score
+- Available Now section
+- Buddy profile with packages/add-ons
+- Request a Buddy flow
+- Buddy offers screen
+- Package booking screen
+- Saved Buddies
+- Book Again
+- Waitlist screen
+- Checkout showing price, fees, deposit, cash balance, and payment mode
+
+Buddy:
+- Availability calendar
+- Available Now toggle
+- Matching requests inbox
+- Offer creation screen
+- Package builder
+- Add-on manager
+- Earnings dashboard
+- Saved/repeat clients view if appropriate
+
+Admin:
+- Marketplace dashboard
+- City supply/demand dashboard
+- Featured Buddy controls
+- Package approval queue
+- Pricing outlier review
+- Fee rules editor
+
+Testing:
+Add tests for:
+- Search excludes unapproved/suspended Buddies.
+- Search ranking prioritizes safety before compatibility.
+- Compatibility score is calculated and displayed.
+- Matching quiz stores preferences.
+- Available Now only shows truly available Buddies.
+- Prevent double booking.
+- Request a Buddy notifies eligible Buddies only.
+- Buddy offer converts into booking after traveler accepts.
+- Offer expiration works.
+- Package booking follows approval, safety, and payment rules.
+- Add-ons affect total price and deposit calculation.
+- Dynamic deposit applies correct risk rules.
+- Cash balance is disallowed when user limit requires full in-app payment.
+- Group booking enforces max group size.
+- New Buddy restrictions affect availability and booking eligibility.
+- Saved Buddy and Book Again work.
+- Waitlist creates and expires correctly.
+- Earnings dashboard labels pending/estimated money honestly.
+- Platform fee calculation does not count cash balance as collected revenue.
+- Admin can feature/unfeature Buddy.
+- Admin can approve/disable package.
+- Analytics events are emitted for search, view, request, booking, completion, cancel, dispute.
+
+Acceptance criteria:
+- Travelers can find Buddies by match, availability, city, category, language, vibe, and safety preferences.
+- Travelers can request a Buddy and compare offers.
+- Buddies can manage availability, create offers, packages, add-ons, and see estimated earnings.
+- Pricing clearly separates in-app collected funds from cash balance.
+- Deposit and fee rules are calculated transparently.
+- Safety eligibility always overrides ranking and paid visibility.
+- Marketplace analytics give admin clear city/category supply and demand.
+- No booking can bypass approval, availability, safety limits, or payment confirmation.

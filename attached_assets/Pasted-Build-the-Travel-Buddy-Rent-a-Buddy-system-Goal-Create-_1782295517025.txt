@@ -1,0 +1,446 @@
+Build the Travel Buddy “Rent a Buddy” system.
+
+Goal:
+Create a safe, verified local companion marketplace where travelers can book verified Buddies for city exploration, nightlife, language help, shopping, arrival support, content/photo help, group support, or custom local guidance.
+
+Important positioning:
+The feature name is “Rent a Buddy.”
+This is NOT a dating, escort, adult, romantic, or illegal-service feature.
+Add clear policy language anywhere users book or apply to become a Buddy:
+“Rent a Buddy is for travel companionship, city guidance, local help, language support, and social exploration only. It is not a dating, escort, adult, romantic, or sexual service. Violations can lead to account review, suspension, or removal.”
+
+Core user roles:
+1. Traveler — books a Buddy.
+2. Buddy — verified user offering local companionship/guidance.
+3. Admin — reviews Buddies, handles disputes, manages flags.
+
+Build these booking categories:
+- City Buddy: landmarks, food, markets, hidden gems, walking around.
+- Nightlife Buddy: bars, lounges, clubs, party areas.
+- Language Buddy: translation and local help.
+- Shopping Buddy: malls, fashion districts, local markets.
+- Arrival Buddy: airport/city setup, SIM card, hotel check-in, transport help.
+- Content Buddy: photos/videos around the city.
+- Group Buddy: one Buddy helping a small group.
+- Custom Buddy: traveler describes what they need.
+
+Buddy application:
+Create a Buddy application flow where a user can apply to become a Buddy.
+
+Application fields:
+- Display name
+- City/country
+- Languages and fluency level
+- Buddy categories requested
+- Short bio
+- Intro video URL or uploaded video placeholder
+- Hourly rate
+- Half-day rate
+- Full-day rate
+- Minimum booking length
+- Max group size
+- Available days/time blocks
+- Preferred meetup zones
+- Safety agreement acceptance
+- Non-dating/adult-service policy acceptance
+- ID verification status reference
+- Admin review status: pending, approved, rejected, suspended, limited
+
+Buddy profile:
+Create a public Buddy profile card/page showing:
+- Name
+- Profile photo
+- City
+- Languages
+- Buddy categories
+- Rates
+- Availability summary
+- Trust Score
+- Verification badges
+- Review count
+- Completed bookings
+- Response time
+- Vibe tags: foodie, nightlife, luxury, budget, chill, culture, creator, shopping, outdoor
+- Safety badges
+- “Good for” tags
+- Book button
+
+Buddy levels:
+Add Buddy levels:
+- New Buddy
+- Verified Buddy
+- Trusted Buddy
+- Pro Buddy
+- City Ambassador
+
+Level rules can be calculated later, but store the level now.
+
+Booking flow:
+Traveler can search/filter Buddies by:
+- City
+- Available now
+- Date/time
+- Category
+- Language
+- Gender preference if already supported by user profile
+- Price range
+- Trust Score minimum
+- Buddy level
+- Vibe tags
+- Female traveler safety mode
+- Public meetup only
+- Nightlife available
+- Group size
+
+Booking statuses:
+- requested
+- accepted
+- deposit_pending
+- confirmed
+- started
+- in_progress
+- completed
+- canceled
+- no_show
+- disputed
+- refunded
+
+Booking required fields:
+- traveler_user_id
+- buddy_user_id
+- city
+- category
+- requested_start_time
+- requested_end_time
+- duration_minutes
+- group_size
+- meetup_location_name
+- meetup_location_lat/lng if available
+- public_meetup_required boolean
+- route_plan JSON
+- traveler_notes
+- buddy_notes
+- total_price
+- deposit_amount
+- app_service_fee
+- cash_balance_due
+- payment_mode: deposit_plus_cash or full_in_app
+- payment_status
+- cash_balance_confirmed_by_traveler
+- cash_balance_confirmed_by_buddy
+- started_at
+- completed_at
+- canceled_at
+- cancel_reason
+- dispute_reason
+- safety_status
+
+Payment rules:
+Support two payment options:
+1. Deposit in app + cash balance due at meetup.
+2. Full payment in app.
+
+Rules:
+- Booking is not confirmed until deposit or full payment is paid in app.
+- Cash balance must be displayed clearly before confirmation.
+- Buddy cannot request more money outside the app.
+- Traveler cannot request unpaid extra time.
+- Extra time must be added and confirmed through the app.
+- Off-app booking/payment avoidance should trigger warnings and Trust Score penalties.
+
+Example checkout text:
+Total price: $100
+Paid today: $25 deposit
+Cash due at meetup: $75
+Travel Buddy service fee: $5
+Booking is confirmed after deposit payment.
+
+Extra time:
+Add “Add Time” flow:
+- Traveler or Buddy can request extra time.
+- Choose 30 min, 1 hour, 2 hours, or custom.
+- Show added price.
+- Choose payment mode: in-app or cash balance.
+- Both users must confirm before extension starts.
+- Store extension records.
+
+Safety:
+During active booking, show a Rent a Buddy safety panel:
+- Start booking
+- Confirm arrival
+- Share live location with Trusted Circle
+- Safe Return check-in
+- I feel unsafe
+- End booking early
+- Report user
+- Emergency button
+- Contact support
+
+Add 30-minute private comfort check:
+After booking starts, trigger a private check-in prompt:
+“How is your Rent a Buddy meetup going?”
+Options:
+- Everything is good
+- Need help adjusting plan
+- I feel uncomfortable
+- End early
+- Contact support
+- Start Safe Return
+
+Public meetup:
+Require first meetup location to be public by default.
+Allowed examples:
+- Hotel lobby
+- Coffee shop
+- Mall entrance
+- Train station
+- Airport arrivals
+- Tourist landmark
+- Public plaza
+
+Route plan:
+Allow Buddy to suggest a route before the booking starts.
+Route plan should include:
+- Stop name
+- Time
+- Notes
+- Optional lat/lng
+Traveler can approve, reject, or request changes.
+
+Route changes:
+During booking, if Buddy wants to change the route, require traveler approval.
+Store route change request and response.
+
+Messaging:
+Create or connect a temporary Telegraph thread for each confirmed Rent a Buddy booking.
+Thread should include traveler and Buddy.
+Thread can archive after booking completion unless both users choose to stay connected.
+Use existing Telegraph translation system if available.
+
+Rules and policy enforcement:
+Flag messages or booking requests containing banned intent:
+- sexual services
+- escort
+- girlfriend/boyfriend experience
+- massage/adult services
+- drugs
+- illegal activity
+- off-app payment
+- private hotel room/private home as first meetup
+- harassment
+- threats
+
+Do not overbuild AI moderation if not already available. Start with keyword/rule-based flags and admin review queue.
+
+Reviews:
+After completion, both sides review each other.
+Use double-blind reviews: hide reviews until both submit or review window closes.
+
+Review categories:
+- On time
+- Respectful
+- Helpful
+- Local knowledge
+- Communication
+- Safety
+- Matched profile
+- Worth the price
+- Would book again
+
+Also allow private notes visible only to admin/safety system.
+
+Trust Score:
+Rent a Buddy should affect Trust Score.
+
+Buddy gains score for:
+- Completed booking
+- On-time arrival
+- Positive reviews
+- Safe Return completed
+- No reports
+- Repeat booking
+- Staying on-app
+- Confirmed cash balance properly
+
+Buddy loses score for:
+- Late cancellation
+- No-show
+- Off-app payment request
+- Unsafe route change
+- Inappropriate request
+- Harassment
+- Misleading profile
+- Confirmed safety report
+- Abandoning traveler
+
+Traveler gains score for:
+- Showing up on time
+- Paying cash balance confirmed
+- Respectful review
+- No reports
+- Staying on-app
+
+Traveler loses score for:
+- No-show
+- Refusing agreed cash balance
+- Harassment
+- Sexual/romantic/adult-service request
+- Illegal request
+- Bringing unapproved people
+- Off-app pressure
+- Threatening bad reviews
+
+Admin:
+Create admin tools for:
+- Review Buddy applications
+- Approve/reject/suspend/limit Buddy
+- View bookings
+- View disputes
+- View safety flags
+- View message/booking policy flags
+- Manually refund/mark resolved placeholder
+- Adjust Buddy level
+- Disable Rent a Buddy for a user
+- Category-specific approval
+
+Category-specific approval:
+A Buddy can be approved for some categories but not others.
+Example:
+Approved: City Buddy, Food/Shopping Buddy
+Not approved: Nightlife Buddy, Arrival Buddy
+
+New Buddy limits:
+For new Buddies, apply default restrictions:
+- Public meetup required
+- Daytime only unless manually approved
+- Max 2-hour booking
+- No group bookings until trusted
+- No nightlife until approved
+- Full in-app payment or higher deposit required if risk rules require it
+
+Database:
+Add migrations/tables as needed.
+
+Suggested tables:
+- rent_buddy_profiles
+- rent_buddy_applications
+- rent_buddy_categories
+- rent_buddy_profile_categories
+- rent_buddy_availability
+- rent_buddy_bookings
+- rent_buddy_booking_extensions
+- rent_buddy_route_stops
+- rent_buddy_route_change_requests
+- rent_buddy_reviews
+- rent_buddy_safety_checkins
+- rent_buddy_disputes
+- rent_buddy_policy_flags
+- rent_buddy_admin_actions
+
+Backend APIs:
+Traveler APIs:
+- GET /api/rent-buddy/search
+- GET /api/rent-buddy/buddies/:buddyId
+- POST /api/rent-buddy/bookings
+- GET /api/rent-buddy/bookings
+- GET /api/rent-buddy/bookings/:bookingId
+- POST /api/rent-buddy/bookings/:bookingId/pay-deposit
+- POST /api/rent-buddy/bookings/:bookingId/pay-full
+- POST /api/rent-buddy/bookings/:bookingId/start
+- POST /api/rent-buddy/bookings/:bookingId/complete
+- POST /api/rent-buddy/bookings/:bookingId/cancel
+- POST /api/rent-buddy/bookings/:bookingId/report
+- POST /api/rent-buddy/bookings/:bookingId/safety-checkin
+- POST /api/rent-buddy/bookings/:bookingId/extensions
+- POST /api/rent-buddy/bookings/:bookingId/reviews
+
+Buddy APIs:
+- POST /api/rent-buddy/apply
+- GET /api/rent-buddy/me/profile
+- PATCH /api/rent-buddy/me/profile
+- PATCH /api/rent-buddy/me/availability
+- GET /api/rent-buddy/me/requests
+- POST /api/rent-buddy/bookings/:bookingId/accept
+- POST /api/rent-buddy/bookings/:bookingId/decline
+- POST /api/rent-buddy/bookings/:bookingId/confirm-cash
+- POST /api/rent-buddy/bookings/:bookingId/route
+- POST /api/rent-buddy/bookings/:bookingId/route-change
+
+Admin APIs:
+- GET /api/admin/rent-buddy/applications
+- POST /api/admin/rent-buddy/applications/:id/approve
+- POST /api/admin/rent-buddy/applications/:id/reject
+- POST /api/admin/rent-buddy/profiles/:id/suspend
+- POST /api/admin/rent-buddy/profiles/:id/limit
+- POST /api/admin/rent-buddy/profiles/:id/set-level
+- GET /api/admin/rent-buddy/bookings
+- GET /api/admin/rent-buddy/disputes
+- POST /api/admin/rent-buddy/disputes/:id/resolve
+- GET /api/admin/rent-buddy/policy-flags
+
+Mobile UI:
+Add Rent a Buddy entry points:
+- Home / Discover card
+- City Pulse module
+- Trip detail screen
+- Messages/Telegraph related booking chat
+- Profile/earnings area for Buddies
+
+Traveler screens:
+- Rent a Buddy landing page
+- Search/filter screen
+- Buddy profile screen
+- Booking checkout screen
+- Booking detail/status screen
+- Active booking safety screen
+- Review screen
+- Dispute/report screen
+
+Buddy screens:
+- Become a Buddy application
+- Buddy dashboard
+- Booking requests
+- Earnings summary
+- Availability editor
+- Profile editor
+- Safety/training checklist
+
+Admin UI:
+- Buddy applications queue
+- Buddy profile moderation
+- Booking/dispute dashboard
+- Policy flags queue
+
+Feature flag:
+Wrap the feature behind a feature flag:
+RENT_BUDDY_ENABLED
+
+Testing:
+Add tests for:
+- Cannot book when feature flag is off.
+- User cannot book themselves.
+- Booking not confirmed until deposit or full payment.
+- Cash balance is recorded clearly.
+- Buddy cannot accept if not approved.
+- Category-specific approval is enforced.
+- New Buddy limits are enforced.
+- Public meetup required for new Buddies.
+- Traveler and Buddy can both cancel with correct status.
+- No-show status works.
+- Review is double-blind.
+- Policy flag is created for banned request keywords.
+- Admin can approve/reject/suspend Buddy.
+- Active booking can trigger safety check-in.
+- Extra time requires both-party confirmation.
+- Trust Score event is emitted for completed booking, no-show, cancellation, and report.
+
+Acceptance criteria:
+- Rent a Buddy exists as a full feature area.
+- Travelers can search, view, request, pay deposit/full payment, and manage bookings.
+- Buddies can apply, manage profile/availability, accept/decline requests, and see earnings.
+- Admin can review applications and handle disputes/flags.
+- Clear non-dating/non-adult-service policy appears in the application and booking flow.
+- Deposit + cash balance and full in-app payment are both supported.
+- Safety tools are available during active bookings.
+- Booking status is honest and never claims completion before both sides complete or admin resolves.
+- All new code is tested and does not break existing Travel Buddy features.
