@@ -143,6 +143,7 @@ export interface ListGemsOptions {
   availableMinutes?: number;
   verificationLevel?: string;
   tripId?: string;
+  submittedBy?: string;
   limit?: number;
 }
 
@@ -156,6 +157,7 @@ export async function listGems(opts: ListGemsOptions = {}): Promise<HiddenGem[]>
   if (opts.availableMinutes)  params.set('availableMinutes', String(opts.availableMinutes));
   if (opts.verificationLevel) params.set('verificationLevel', opts.verificationLevel);
   if (opts.tripId)            params.set('tripId', opts.tripId);
+  if (opts.submittedBy)       params.set('submittedBy', opts.submittedBy);
   if (opts.limit)             params.set('limit', String(opts.limit));
 
   const qs = params.toString();

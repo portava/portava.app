@@ -403,9 +403,10 @@ router.get("/hidden-gems/:id", async (req, res) => {
   try {
     const gem = await getGem(sc, req.params.id);
     if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
-    if ((gem as any).status === "hidden" && (gem as any).submitted_by !== callerId) {
-      sendError(res, "not_found", "Gem not found");
-      return;
+    // Non-active gems (pending / hidden / merged) are only visible to owner or admin
+    if ((gem as any).status !== "active" && (gem as any).submitted_by !== callerId) {
+      const isAdmin = callerId ? await requireAdmin(sc, callerId) : false;
+      if (!isAdmin) { sendError(res, "not_found", "Gem not found"); return; }
     }
 
     const safe = await applyGemPrivacy(gem, sc, callerId, callerTripId);
@@ -623,6 +624,34 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
       })();
     }
 
+    // Fire-and-forget: Pulse post after verified non-suspicious GPS check-in
+    if (result.ok && !result.isSuspicious) {
+      void (async () => {
+        try {
+          const { data: pulseFlag } = await sc
+            .from("feature_flags").select("enabled").eq("key", "hidden_gems_pulse_enabled").maybeSingle();
+          if (!(pulseFlag as any)?.enabled) return;
+
+          const gem = await getGem(sc, req.params.id);
+          if (!gem) return;
+
+          // Insert a Pulse post tagged to the gem's city — no exact coords
+          await sc.from("posts").insert({
+            author_id: user.id,
+            body: `Just verified a hidden gem: "${(gem as any).name}" in ${(gem as any).city} 📍`,
+            visibility: "public",
+            post_type: "hidden_gem_checkin",
+            metadata: {
+              gemId:    (gem as any).id,
+              gemName:  (gem as any).name,
+              city:     (gem as any).city,
+              category: (gem as any).category,
+            },
+          });
+        } catch { /* non-fatal */ }
+      })();
+    }
+
     res.json({
       ok: result.ok,
       visitId: result.visitId,
@@ -684,23 +713,30 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   try {
     const gem = await getGem(sc, req.params.id);
     if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
+    // Enforce active-only for non-owners sharing gems
+    if ((gem as any).status !== "active" && (gem as any).submitted_by !== user.id) {
+      sendError(res, "not_found", "Gem not found"); return;
+    }
 
-    // Privacy: protected gems can share name+city only — no coords, no neighborhood
-    const sensitivityLevel = (gem as any).sensitivity_level;
+    // Run through the privacy guard — single choke-point for all coord/neighborhood disclosure
+    const safe = await applyGemPrivacy(gem, sc, user.id);
+
+    const sensitivityLevel = (safe as any).sensitivity_level ?? (safe as any).sensitivityLabel;
     const isProtected = sensitivityLevel === "protected";
 
     const card: Record<string, unknown> = {
       type: "hidden_gem",
-      gemId: (gem as any).id,
-      name: (gem as any).name,
-      category: (gem as any).category,
-      city: (gem as any).city,
-      country: (gem as any).country ?? null,
-      neighborhood: isProtected ? null : (gem as any).neighborhood,
+      gemId: (safe as any).id,
+      name: (safe as any).name,
+      category: (safe as any).category,
+      city: (safe as any).city,
+      country: (safe as any).country ?? null,
+      // Protected gems: strip neighborhood — exact location must never leak via Telegraph
+      neighborhood: isProtected ? null : ((safe as any).neighborhood ?? null),
       sensitivityLabel: sensitivityLevel,
-      verificationLevel: (gem as any).verification_level,
-      priceRange: (gem as any).price_range ?? null,
-      vibeTags: (gem as any).vibe_tags ?? [],
+      verificationLevel: (safe as any).verificationLevel ?? (safe as any).verification_level,
+      priceRange: (safe as any).priceRange ?? (safe as any).price_range ?? null,
+      vibeTags: (safe as any).vibeTags ?? (safe as any).vibe_tags ?? [],
     };
 
     // Insert Telegraph message with gem card as metadata

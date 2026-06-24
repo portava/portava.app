@@ -95,11 +95,12 @@ function GemCard({ gem, onPress }: { gem: HiddenGem; onPress: () => void }) {
 
 // ── Discover tab ──────────────────────────────────────────────────────────────
 
-function DiscoverTab() {
+function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
   const router = useRouter();
   const [city, setCity]           = useState('');
   const [category, setCategory]   = useState<GemCategory | 'all'>('all');
   const [appliedCity, setApplied] = useState('');
+  const [nearMe, setNearMe]       = useState(false);
 
   const { gems, loading, error, refresh } = useGemList({
     city:     appliedCity || undefined,
@@ -134,8 +135,16 @@ function DiscoverTab() {
         </TouchableOpacity>
       </View>
 
-      {/* Category chips */}
+      {/* Category chips + Near Me */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+        {/* Near Me chip */}
+        <TouchableOpacity
+          style={[styles.chip, nearMe && styles.chipActive]}
+          onPress={() => setNearMe((v) => !v)}
+        >
+          <Ionicons name="navigate-outline" size={14} color={nearMe ? '#fff' : '#8A9BB5'} />
+          <Text style={[styles.chipText, nearMe && styles.chipTextActive]}>Near Me</Text>
+        </TouchableOpacity>
         {CATEGORIES.map((c) => (
           <TouchableOpacity
             key={c.key}
@@ -154,33 +163,46 @@ function DiscoverTab() {
         ))}
       </ScrollView>
 
-      {/* Gem list */}
-      {loading && gems.length === 0 ? (
-        <View style={styles.center}><ActivityIndicator color="#4C8BF5" /></View>
-      ) : error ? (
-        <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={refresh} style={styles.retryBtn}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
+      {/* Map placeholder — shown when map toggle is active */}
+      {viewMode === 'map' && (
+        <View style={styles.mapPlaceholder}>
+          <Ionicons name="map-outline" size={48} color="#4C8BF5" />
+          <Text style={styles.mapPlaceholderText}>Map view</Text>
+          <Text style={styles.mapPlaceholderSub}>
+            {gems.length > 0 ? `${gems.length} gems in this area` : 'No gems to display'}
+          </Text>
         </View>
-      ) : gems.length === 0 ? (
-        <View style={styles.center}>
-          <Ionicons name="diamond-outline" size={48} color="#8A9BB5" />
-          <Text style={styles.emptyTitle}>No hidden gems found</Text>
-          <Text style={styles.emptySubtitle}>Try a different city or category</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={gems}
-          keyExtractor={(g) => g.id}
-          renderItem={({ item }) => (
-            <GemCard gem={item} onPress={() => router.push(`/gems/${item.id}`)} />
-          )}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-        />
+      )}
+
+      {/* Gem list — only shown in list mode */}
+      {viewMode === 'list' && (
+        loading && gems.length === 0 ? (
+          <View style={styles.center}><ActivityIndicator color="#4C8BF5" /></View>
+        ) : error ? (
+          <View style={styles.center}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={refresh} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : gems.length === 0 ? (
+          <View style={styles.center}>
+            <Ionicons name="diamond-outline" size={48} color="#8A9BB5" />
+            <Text style={styles.emptyTitle}>No hidden gems found</Text>
+            <Text style={styles.emptySubtitle}>Try a different city or category</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={gems}
+            keyExtractor={(g) => g.id}
+            renderItem={({ item }) => (
+              <GemCard gem={item} onPress={() => router.push(`/gems/${item.id}`)} />
+            )}
+            contentContainerStyle={styles.list}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
+            ItemSeparatorComponent={() => <View style={styles.sep} />}
+          />
+        )
       )}
     </View>
   );
@@ -288,22 +310,40 @@ function LayoverTab() {
 const TABS = ['Discover', 'Saved', 'Layover'] as const;
 type Tab = typeof TABS[number];
 
+type ViewMode = 'list' | 'map';
+
 export default function GemsScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('Discover');
+  const [viewMode, setViewMode]   = useState<ViewMode>('list');
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Hidden Gems</Text>
-        <TouchableOpacity
-          style={styles.submitBtn}
-          onPress={() => router.push('/gems/submit')}
-        >
-          <Ionicons name="add" size={20} color="#fff" />
-          <Text style={styles.submitBtnText}>Submit</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          {/* Map / List toggle — only shown on Discover tab */}
+          {activeTab === 'Discover' && (
+            <TouchableOpacity
+              style={styles.viewToggle}
+              onPress={() => setViewMode((m) => m === 'list' ? 'map' : 'list')}
+            >
+              <Ionicons
+                name={viewMode === 'list' ? 'map-outline' : 'list-outline'}
+                size={20}
+                color="#4C8BF5"
+              />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.submitBtn}
+            onPress={() => router.push('/gems/submit')}
+          >
+            <Ionicons name="add" size={20} color="#fff" />
+            <Text style={styles.submitBtnText}>Submit</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -321,7 +361,7 @@ export default function GemsScreen() {
 
       {/* Content */}
       <View style={{ flex: 1 }}>
-        {activeTab === 'Discover' && <DiscoverTab />}
+        {activeTab === 'Discover' && <DiscoverTab viewMode={viewMode} />}
         {activeTab === 'Saved'    && <SavedTab />}
         {activeTab === 'Layover'  && <LayoverTab />}
       </View>
@@ -362,6 +402,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#E8F0FE' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  viewToggle: { padding: 8, borderRadius: 20, backgroundColor: '#1E2D45' },
+  mapPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  mapPlaceholderText: { fontSize: 18, fontWeight: '700', color: '#E8F0FE' },
+  mapPlaceholderSub: { fontSize: 14, color: '#8A9BB5' },
   submitBtn: {
     flexDirection: 'row',
     alignItems: 'center',

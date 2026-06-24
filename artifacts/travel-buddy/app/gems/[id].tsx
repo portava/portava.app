@@ -245,6 +245,27 @@ export default function GemDetailScreen() {
     );
   }, [gem]);
 
+  const handleShare = useCallback(async () => {
+    if (!gem) return;
+    Alert.prompt(
+      'Share to Telegraph',
+      'Enter the Thread ID to share this gem into:',
+      async (threadId) => {
+        if (!threadId) return;
+        setSharing(true);
+        try {
+          await shareGemToTelegraph(gem.id, threadId);
+          Alert.alert('Shared!', `${gem.name} shared to your Telegraph thread.`);
+        } catch (e: any) {
+          Alert.alert('Error', e.message ?? 'Failed to share');
+        } finally {
+          setSharing(false);
+        }
+      },
+      'plain-text',
+    );
+  }, [gem]);
+
   if (loading) {
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
@@ -411,6 +432,10 @@ export default function GemDetailScreen() {
           <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlan} disabled={addingPlan}>
             <Ionicons name="calendar-outline" size={20} color="#4CAF7D" />
             <Text style={[styles.actionBtnText, { color: '#4CAF7D' }]}>Add to Plan</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleShare} disabled={sharing}>
+            <Ionicons name="paper-plane-outline" size={20} color="#A78BFA" />
+            <Text style={[styles.actionBtnText, { color: '#A78BFA' }]}>Share</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowReport(true)}>
             <Ionicons name="flag-outline" size={20} color="#FF6B6B" />
