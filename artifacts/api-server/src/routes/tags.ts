@@ -100,10 +100,11 @@ router.get('/tags/suggestions', async (req, res) => {
   const profiles = ((rows ?? []) as any[]).filter((p) => !blockedSet.has(p.id));
   const visibleIds = profiles.map((p: any) => p.id);
 
-  // ── Relationship sets (ranking + privacy enforcement) ────────────────────────
+  // ── Relationship sets (ranking: crew > circle > mutual > any-follow > other) ──
   let iFollow   = new Set<string>();
   let followsMe = new Set<string>();
   let inCircle  = new Set<string>();
+  let inCrew    = new Set<string>(); // trip co-members (highest proximity tier)
 
   if (visibleIds.length > 0) {
     const [{ data: authorFollows }, { data: followsAuthor }] = await Promise.all([
@@ -121,16 +122,36 @@ router.get('/tags/suggestions', async (req, res) => {
         .in('user_id', visibleIds);
       for (const r of (circleRows ?? []) as any[]) inCircle.add(r.user_id);
     } catch { /* circle_members may not exist on all deployments */ }
+
+    // Crew = people who share a trip with the viewer
+    try {
+      const { data: myTripRows } = await sc
+        .from('trip_members').select('trip_id').eq('user_id', user.id);
+      const myTripIds = (myTripRows ?? []).map((r: any) => r.trip_id as string);
+      if (myTripIds.length > 0) {
+        const { data: crewRows } = await sc
+          .from('trip_members').select('user_id')
+          .in('trip_id', myTripIds)
+          .in('user_id', visibleIds)
+          .neq('user_id', user.id);
+        for (const r of (crewRows ?? []) as any[]) inCrew.add(r.user_id);
+      }
+    } catch { /* trip_members may not exist on all deployments */ }
   }
 
+  // rank 0 = crew (trip co-members), 1 = circle, 2 = mutual follow, 3 = any follow, 4 = other
   function rank(id: string): number {
-    if (iFollow.has(id) && followsMe.has(id)) return 0;
+    if (inCrew.has(id)) return 0;
     if (inCircle.has(id)) return 1;
-    if (iFollow.has(id) || followsMe.has(id)) return 2;
-    return 3;
+    if (iFollow.has(id) && followsMe.has(id)) return 2;
+    if (iFollow.has(id) || followsMe.has(id)) return 3;
+    return 4;
   }
+
+  const PER_TYPE_CAP = 10;
 
   // Apply tag_permission at suggestion time (friends_only and interacted enforced here)
+  // Cap at PER_TYPE_CAP users to match per-type cap applied to entity suggestions
   const userSuggestions = profiles
     .filter((p) => {
       const perm: string = p.tag_permission ?? 'anyone';
@@ -148,7 +169,8 @@ router.get('/tags/suggestions', async (req, res) => {
       tagPermission: p.tag_permission ?? 'anyone',
       relationshipRank: rank(p.id),
     }))
-    .sort((a, b) => a.relationshipRank - b.relationshipRank || a.handle.localeCompare(b.handle));
+    .sort((a, b) => a.relationshipRank - b.relationshipRank || a.handle.localeCompare(b.handle))
+    .slice(0, PER_TYPE_CAP);
 
   // ── Entity suggestions: trips, circles, discovery places ────────────────────
   const entitySuggestions: any[] = [];
@@ -215,8 +237,7 @@ router.get('/tags/suggestions', async (req, res) => {
     }
   } catch { /* events table may not exist on all deployments */ }
 
-  // Cap each entity type at 10 before merging; preserve ranking order within users
-  const PER_TYPE_CAP = 10;
+  // Cap each entity type at PER_TYPE_CAP before merging
   const typeCounts: Record<string, number> = {};
   const cappedEntities = entitySuggestions.filter((e) => {
     typeCounts[e.type] = (typeCounts[e.type] ?? 0) + 1;

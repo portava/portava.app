@@ -136,7 +136,21 @@ async function filterByContentVisibility(
 
     if (visibility === 'private') return []; // Only author can see — no notifications
 
-    // For followers/friends-only: only notify tagged users who follow the author
+    if (visibility === 'trip_only') {
+      // Only trip members can see — check membership via posts.trip_id
+      const tripId = (post as any).trip_id ?? null;
+      if (!tripId) return []; // No trip association — suppress
+      const { data: memberRows } = await db
+        .from('trip_members')
+        .select('user_id')
+        .eq('trip_id', tripId)
+        .in('user_id', taggedIds);
+      const memberSet = new Set((memberRows ?? []).map((r: any) => r.user_id as string));
+      return taggedIds.filter(id => memberSet.has(id));
+    }
+
+    // For followers/friends-only and any other restricted visibility:
+    // only notify tagged users who follow the author
     const { data: followers } = await db
       .from('user_follows')
       .select('follower_id')
