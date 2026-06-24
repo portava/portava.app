@@ -4,11 +4,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar, Plane } from 'lucide-react-native';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
+  TripHero, TodayNextUp, SavedIdeas,
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
   TripCrewSection,
-} from '../../src/components/TripPage2';
+} from '../../src/components/TripPage';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';

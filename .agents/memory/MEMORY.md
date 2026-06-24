@@ -7,5 +7,6 @@
 - [Intelligence pack patterns](intelligence-pack-patterns.md) — .catch() invalid on supabase builders; parseIntent word-boundary pitfall; token via freshToken() not prop-drilled
 - [Selective input system](selective-input-system.md) — GlobalCalendarPicker/TimePicker/PlacePicker patterns; getServiceClient() returns null (guard it); sendError takes (res, code, message) not (res, status, code, message)
 - [Admin route test pattern](admin-route-test-pattern.md) — _setTestClient(client, true) needs the ready=true flag; requireAdmin must return sc so routes skip getServiceClient(); fake client ignores .select() columns so strip sensitive fields explicitly
-- [Stray compiled .js shadows .ts](stray-compiled-js.md) — api-server/mockup-sandbox crash "exports is not defined in ES module scope"; delete .js siblings of .ts in src/, keep .mjs build scripts
+- [Stray compiled .js shadows .ts](stray-compiled-js.md) — api-server/mockup-sandbox crash "exports is not defined in ES module scope"; delete .js siblings of .ts in src/, keep .mjs build scripts; mobile src/ also had ~270 shadow .js files across all subdirs
+- [Mock data fixture isolation](fixture-isolation.md) — src/data/ files are thin re-exports from src/__fixtures__/; still imported in live screens as fallbacks; see QA report for screens still using fixture data
 - [Telegraph realtime (SSE)](telegraph-realtime.md) — in-memory bus is single-instance only; mobile uses XHR not EventSource; polling stays as fallback; emission fields must be in the row .select()

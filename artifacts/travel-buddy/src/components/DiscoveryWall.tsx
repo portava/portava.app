@@ -1,13 +1,21 @@
-import React from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
+  Gem, Star, Share2,
 } from 'lucide-react-native';
 import type { DiscoveryItem } from '../data/discovery';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePlanPicker } from './PlanPickerController';
+import { TravelSectionHeader, TravelEmptyState } from './primitives';
+import { DiscoveryShareSheet } from './DiscoveryShareSheet';
+import type { DiscoverySharePayload } from './DiscoveryShareSheet';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 /* ── Header ── */
 export function DiscoveryHeader({
@@ -46,9 +54,9 @@ export function DiscoveryHeader({
 /* ── Provisional label pill ── */
 function ProvNote({ text }: { text: string }) {
   return (
-    <View style={p.row}>
+    <View style={prov.row}>
       <Info size={12} color={color.mute} />
-      <Text style={p.text}>{text}</Text>
+      <Text style={prov.text}>{text}</Text>
     </View>
   );
 }
@@ -58,7 +66,6 @@ export function CompassPickBlock({ pick, side }: { pick: DiscoveryItem; side: Di
   const planPicker = usePlanPicker();
   return (
     <View style={cp.wrap}>
-      {/* hero pick */}
       <Pressable style={cp.hero} onPress={() => router.push('/(tabs)/ai')}>
         <View style={cp.heroMedia}>
           <View style={cp.labelDark}><Text style={cp.labelDarkText}>COMPASS PICK</Text></View>
@@ -80,7 +87,6 @@ export function CompassPickBlock({ pick, side }: { pick: DiscoveryItem; side: Di
         </View>
       </Pressable>
 
-      {/* two side cards */}
       <View style={cp.sideCol}>
         {side.map((s) => (
           <Pressable key={s.id} style={cp.sideCard} onPress={() => router.push('/(tabs)/ai')}>
@@ -155,6 +161,252 @@ export function SectionHead({ title, onViewAll }: { title: string; onViewAll?: (
   );
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   DiscoveryWall2 exports — merged here so DiscoveryWall is the single canonical file.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Shared avatar with optional HighlightRing for Discovery user avatars. */
+function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; avatarUrl: string; size: number }) {
+  const ringState = useHighlightRingState(userId ?? null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const onPress = ringState?.hasActive
+    ? () => setViewerOpen(true)
+    : userId
+    ? () => router.push(`/profile/${userId}` as any)
+    : undefined;
+  return (
+    <>
+      <HighlightRing
+        hasActive={ringState?.hasActive ?? false}
+        allViewed={ringState?.allViewed ?? false}
+        size={size}
+        ringWidth={1.5}
+        gap={1.5}
+        onPress={onPress}
+      >
+        <Image
+          source={{ uri: avatarUrl }}
+          style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+        />
+      </HighlightRing>
+      {ringState?.highlights && (
+        <HighlightViewer
+          visible={viewerOpen}
+          highlights={ringState.highlights}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/* ── Hidden Gems ── */
+export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
+  const planPicker = usePlanPicker();
+  const [shareVisible, setShareVisible] = useState(false);
+  const sharePayload: DiscoverySharePayload = {
+    sourceId: gem.id,
+    sourceType: 'hidden_gem',
+    title: gem.name,
+    category: gem.category ?? 'Hidden Gem',
+    city: gem.city ?? gem.neighborhood ?? '',
+    blurb: gem.blurb,
+  };
+  return (
+    <>
+      <View style={g.card}>
+        <View style={g.media}>
+          <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
+          <Pressable style={g.saveIcon} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving gems is coming in a future update.')}><Bookmark size={15} color={color.onInk} /></Pressable>
+        </View>
+        <View style={g.body}>
+          <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
+          <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
+          <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
+          {gem.submittedBy ? (
+            <View style={g.byRow}>
+              <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
+              <Pressable
+                hitSlop={layout.hitSlop}
+                onPress={gem.submittedBy.id ? () => router.push(`/profile/${gem.submittedBy!.id}` as any) : undefined}
+              >
+                <Text style={g.by}>By {gem.submittedBy.name}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <View style={g.btnRow}>
+            <Pressable style={({ pressed }) => [g.addBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
+              <Text style={g.addText}>Add to Plan</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [g.shareBtn, pressed && { opacity: layout.pressedOpacity }]}
+              hitSlop={layout.hitSlop}
+              onPress={() => setShareVisible(true)}
+            >
+              <Share2 size={13} color={color.mute} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+      <DiscoveryShareSheet
+        visible={shareVisible}
+        item={sharePayload}
+        onClose={() => setShareVisible(false)}
+      />
+    </>
+  );
+}
+
+export function HiddenGemsSection({ gems }: { gems: DiscoveryItem[] }) {
+  return (
+    <View>
+      <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/saved')} />
+      {gems.length === 0 ? (
+        <TravelEmptyState title="No hidden gems yet" sub="Be the first to share a spot travelers should know about." />
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={g.strip}>
+          {gems.slice(0, 5).map((gem) => <HiddenGemCard key={gem.id} gem={gem} />)}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+/* ── Neighborhoods / Areas by Vibe ── */
+export function NeighborhoodCard({ n }: { n: NeighborhoodVibe }) {
+  return (
+    <Pressable style={nb.card} onPress={() => router.push('/(tabs)/ai')}>
+      <View style={nb.media} />
+      <View style={nb.overlay}>
+        <Text style={nb.vibe} numberOfLines={1}>{n.vibe}</Text>
+        <Text style={nb.area} numberOfLines={1}>{n.area}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+export function NeighborhoodsSection({ items }: { items: NeighborhoodVibe[] }) {
+  return (
+    <View>
+      <TravelSectionHeader title="Neighborhoods / Areas by Vibe" onAction={() => router.push('/saved')} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={nb.strip}>
+        {items.slice(0, 5).map((n) => <NeighborhoodCard key={n.id} n={n} />)}
+      </ScrollView>
+      <View style={{ paddingHorizontal: space.lg }}><ProvNote text="Often associated with — starter city notes, provisional" /></View>
+    </View>
+  );
+}
+
+/* ── Traveler Picks ── */
+export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
+  const planPicker = usePlanPicker();
+  return (
+    <View style={tpk.card}>
+      <View style={tpk.head}>
+        <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} />
+        <View style={{ flex: 1 }}>
+          <Pressable
+            hitSlop={layout.hitSlop}
+            onPress={pick.user.id ? () => router.push(`/profile/${pick.user.id}` as any) : undefined}
+          >
+            <Text style={tpk.user}>{pick.user.name}</Text>
+          </Pressable>
+          <Text style={tpk.time}>{pick.timeAgo}</Text>
+        </View>
+        <View style={tpk.tag}><Text style={tpk.tagText}>{pick.tag}</Text></View>
+      </View>
+      <View style={tpk.placeRow}>
+        <Text style={tpk.place} numberOfLines={1}>{pick.place}</Text>
+        {pick.rating ? (
+          <View style={tpk.rating}><Star size={12} color={color.warn} fill={color.warn} /><Text style={tpk.ratingText}>{pick.rating}</Text></View>
+        ) : null}
+      </View>
+      <Text style={tpk.note} numberOfLines={1}>{pick.note}</Text>
+      <View style={tpk.btnRow}>
+        <Pressable style={({ pressed }) => [tpk.saveBtn, pressed && { opacity: layout.pressedOpacity }]} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving traveler picks is coming in a future update.')}>
+          <Bookmark size={14} color={color.mute} /><Text style={tpk.saveText}>Save</Text>
+        </Pressable>
+        <Pressable style={({ pressed }) => [tpk.addBtn, pressed && { opacity: layout.pressedOpacity }]}
+          onPress={() => planPicker.open({ id: pick.id, type: 'place', title: pick.place, city: pick.city, category: pick.tag })}>
+          <Text style={tpk.addText}>Add to Plan</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export function TravelerPicksSection({ picks }: { picks: TravelerPick[] }) {
+  return (
+    <View>
+      <TravelSectionHeader title="Traveler Picks" onAction={() => router.push('/saved')} />
+      {picks.length === 0 ? (
+        <TravelEmptyState title="No traveler picks yet" sub="Recommendations from travelers will show up here." />
+      ) : (
+        <View style={tpk.strip}>
+          {picks.slice(0, 3).map((p) => <TravelerPickCard key={p.id} pick={p} />)}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/* ── Saved Ideas ── */
+export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
+  const planPicker = usePlanPicker();
+  return (
+    <View>
+      <TravelSectionHeader title="Saved Ideas" onAction={() => router.push('/saved')} />
+      {items.length === 0 ? (
+        <TravelEmptyState title="Nothing saved yet" sub="Save places, gems, and experiences to build your trip." action="Explore the city" onAction={() => router.push('/(tabs)/discovery')} />
+      ) : (
+        <View style={sv.list}>
+          {items.map((it) => (
+            <View key={it.id} style={sv.row}>
+              <View style={sv.thumb} />
+              <View style={{ flex: 1 }}>
+                <Text style={sv.name} numberOfLines={1}>{it.name}</Text>
+                <Text style={sv.meta} numberOfLines={1}>{it.type} · {it.neighborhood}</Text>
+              </View>
+              <Pressable style={({ pressed }) => [sv.addBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => planPicker.open({ id: it.id, type: 'place', title: it.name, city: it.neighborhood, category: it.type })}>
+                <Plus size={13} color={color.signal} /><Text style={sv.addText}>Add to Plan</Text>
+              </Pressable>
+              <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving places is coming in a future update.')}><Bookmark size={17} color={color.signal} fill={color.signal} /></Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/* ── Ask Compass card ── */
+export function AskCompassCard() {
+  const prompts = ['Build a night from these', 'Find more like this', 'Turn saved ideas into a plan', "What matches my vibe?"];
+  return (
+    <View style={ac.card}>
+      <View style={ac.head}>
+        <View style={ac.icon}><Sparkles size={18} color={color.onInk} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={ac.title}>Ask Compass</Text>
+          <Text style={ac.sub}>Turn discoveries into a plan. Uses your saved ideas and interests.</Text>
+        </View>
+      </View>
+      <View style={ac.prompts}>
+        {prompts.map((p) => (
+          <Pressable key={p} style={({ pressed }) => [ac.prompt, pressed && { opacity: layout.pressedOpacity }]} onPress={() => router.push('/(tabs)/ai')}>
+            <Text style={ac.promptText}>{p}</Text>
+            <ChevronRight size={14} color={color.signal} />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/* ─── Styles ─────────────────────────────────────────────────────────────── */
+
 const h = StyleSheet.create({
   wrap: { backgroundColor: color.paper, paddingHorizontal: space.lg, paddingBottom: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
@@ -170,7 +422,7 @@ const h = StyleSheet.create({
   savedText: { ...t.bodyStrong, color: color.signal },
 });
 
-const p = StyleSheet.create({
+const prov = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   text: { ...t.small, color: color.mute, fontSize: 11, fontStyle: 'italic' },
 });
@@ -194,7 +446,6 @@ const cp = StyleSheet.create({
   ghostText: { ...t.small, fontWeight: '700', color: color.onInk },
   addBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.sm },
   addText: { ...t.small, fontWeight: '800', color: color.onInk },
-
   sideCol: { flex: 1, gap: space.md },
   sideCard: { flex: 1, flexDirection: 'row', backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
   sideBody: { flex: 1, padding: space.sm, gap: 3 },
@@ -239,4 +490,73 @@ const sh = StyleSheet.create({
   title: { ...t.title, color: color.ink, fontSize: 20 },
   viewAll: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   viewAllText: { ...t.small, color: color.signal, fontWeight: '700' },
+});
+
+const g = StyleSheet.create({
+  strip: { gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.xs },
+  card: { width: 200, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
+  media: { height: 120, backgroundColor: color.deep, padding: space.sm, justifyContent: 'space-between', flexDirection: 'row' },
+  gemBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
+  saveIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(17,17,15,0.4)', alignItems: 'center', justifyContent: 'center' },
+  body: { padding: space.md, gap: 3 },
+  name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  locRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  loc: { ...t.small, color: color.mute, fontSize: 11 },
+  blurb: { ...t.small, color: color.mute, fontSize: 12, marginTop: 2 },
+  byRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  by: { ...t.small, color: color.mute, fontSize: 11 },
+  btnRow: { marginTop: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  addBtn: { flex: 1, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
+  addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
+  shareBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+});
+
+const nb = StyleSheet.create({
+  strip: { gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.xs },
+  card: { width: 150, height: 96, borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.ink, ...shadow.card },
+  media: { ...StyleSheet.absoluteFillObject, backgroundColor: color.deep },
+  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'flex-end', padding: space.sm, backgroundColor: 'rgba(17,17,15,0.28)' },
+  vibe: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
+  area: { ...t.small, color: color.onInkMute, fontSize: 11 },
+});
+
+const tpk = StyleSheet.create({
+  strip: { gap: space.md, paddingHorizontal: space.lg },
+  card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: 6, ...shadow.card },
+  head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  user: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  time: { ...t.small, color: color.faint, fontSize: 11 },
+  tag: { backgroundColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.sm },
+  tagText: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 11 },
+  placeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  place: { ...t.bodyStrong, color: color.ink, flex: 1 },
+  rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingText: { ...t.small, color: color.ink, fontWeight: '700' },
+  note: { ...t.small, color: color.mute },
+  btnRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
+  saveBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+  saveText: { ...t.small, color: color.mute, fontWeight: '700' },
+  addBtn: { flex: 1, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
+  addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
+});
+
+const sv = StyleSheet.create({
+  list: { gap: space.sm, paddingHorizontal: space.lg },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.sm },
+  thumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: color.deep },
+  name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  meta: { ...t.small, color: color.mute, fontSize: 11 },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+  addText: { ...t.small, fontWeight: '700', color: color.signal, fontSize: 12 },
+});
+
+const ac = StyleSheet.create({
+  card: { marginHorizontal: space.lg, marginTop: space.xl, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
+  head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  title: { ...t.title, color: color.onInk, fontSize: 18 },
+  sub: { ...t.small, color: color.onInkMute, marginTop: 1 },
+  prompts: { gap: space.sm },
+  prompt: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md },
+  promptText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
 });

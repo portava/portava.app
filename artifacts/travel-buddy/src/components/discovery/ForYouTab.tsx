@@ -22,7 +22,7 @@ import { PlaceDetailSheet } from './PlaceDetailSheet';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
-import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall2';
+import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall';
 
 // ── Convert a Telegraph recommendation to DiscoveryPlace shape ────────────────
 

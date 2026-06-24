@@ -3,7 +3,7 @@
  * from /api/discovery/community for a given city.
  *
  * Returns items in the shapes expected by HiddenGemsSection (DiscoveryItem)
- * and TravelerPicksSection (TravelerPick) from DiscoveryWall2. The submitted_by
+ * and TravelerPicksSection (TravelerPick) from DiscoveryWall. The submitted_by
  * profile id is a real Supabase UUID so HighlightRing activates correctly.
  */
 import { useEffect, useState, useRef, useCallback } from 'react';

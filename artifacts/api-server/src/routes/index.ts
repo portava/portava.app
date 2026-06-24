@@ -35,6 +35,7 @@ import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
 import airportRouter from "./airport";
+import featureFlagsRouter from "./featureFlags";
 
 const router: IRouter = Router();
 
@@ -74,5 +75,6 @@ router.use(adminRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
 router.use(airportRouter);
+router.use(featureFlagsRouter);
 
 export default router;
