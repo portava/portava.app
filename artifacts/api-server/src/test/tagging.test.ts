@@ -436,6 +436,18 @@ describe('processTagging enforcement', () => {
       blocks: [],
       user_follows: [],
       message_thread_members: [],
+      // posts table: provides visibility for filterByContentVisibility checks
+      posts: [
+        { id: 'post-test-0001-0000000001', author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-test-0002-0000000002', author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-test-0003-0000000003', author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-test-0004-0000000004', author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-test-cap-000000005',   author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-test-ratelimit-06',    author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-dedup-007',            author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-notif-dedup-09',       author_id: authorId, visibility: 'public', status: 'active' },
+        { id: 'post-private-visibility-10', author_id: authorId, visibility: 'private', status: 'active' },
+      ],
     };
   });
 
@@ -551,6 +563,18 @@ describe('processTagging enforcement', () => {
       (t: any) => t.source_id === 'post-dedup-007' && t.tagged_user_id === aliceId,
     );
     assert.equal(aliceTagRows.length, 1, 'duplicate upsert must produce exactly one row');
+    store.tags = [];
+  });
+
+  it('visibility suppression: private post → processTagging returns [] (no notification dispatched)', async () => {
+    const { processTagging } = await import('../services/tagging/TaggingService.js');
+    const sc = makeClient(store, { userId: authorId });
+    const taggedIds = await processTagging({
+      db: sc as any, authorId,
+      sourceType: 'post', sourceId: 'post-private-visibility-10',
+      content: '@alice',
+    });
+    assert.deepEqual(taggedIds, [], 'private post must suppress all tag notifications');
     store.tags = [];
   });
 

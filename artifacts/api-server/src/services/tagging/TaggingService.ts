@@ -80,12 +80,75 @@ export async function processTagging(ctx: TaggingContext): Promise<string[]> {
         : Promise.resolve(),
     ]);
 
-    taggedUserIds.push(...tagIds);
+    // Content-visibility filter: suppress notifications for tagged users who
+    // cannot access the source content (post/comment visibility; message is
+    // already gated by thread membership inside processMentions).
+    const visibleIds = await filterByContentVisibility(db, authorId, sourceType, sourceId, tagIds, logger);
+    taggedUserIds.push(...visibleIds);
   } catch (err) {
     logger?.error({ err }, 'processTagging outer error');
   }
 
   return taggedUserIds;
+}
+
+/**
+ * Returns the subset of taggedIds whose users can actually see the source content.
+ * For messages this is always a pass-through (gated earlier by thread membership).
+ * For posts: filter out users who cannot see the post visibility level.
+ * For comments: resolve the parent post, then apply the same post visibility check.
+ */
+async function filterByContentVisibility(
+  db: SupabaseClient,
+  authorId: string,
+  sourceType: 'post' | 'comment' | 'message',
+  sourceId: string,
+  taggedIds: string[],
+  logger?: Logger,
+): Promise<string[]> {
+  if (taggedIds.length === 0 || sourceType === 'message') return taggedIds;
+
+  try {
+    let postId = sourceId;
+
+    if (sourceType === 'comment') {
+      // Resolve comment → parent post
+      const { data: comment } = await db
+        .from('posts_comments')
+        .select('post_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (!comment) return []; // Comment not found — suppress all
+      postId = (comment as any).post_id;
+    }
+
+    const { data: post } = await db
+      .from('posts')
+      .select('visibility, author_id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (!post) return taggedIds; // Post not found — pass through (can't determine visibility)
+
+    const visibility = (post as any).visibility ?? 'public';
+
+    if (visibility === 'public') return taggedIds; // All can see it
+
+    if (visibility === 'private') return []; // Only author can see — no notifications
+
+    // For followers/friends-only: only notify tagged users who follow the author
+    const { data: followers } = await db
+      .from('user_follows')
+      .select('follower_id')
+      .eq('following_id', authorId)
+      .in('follower_id', taggedIds);
+
+    const followerSet = new Set((followers ?? []).map((r: any) => r.follower_id as string));
+    return taggedIds.filter(id => followerSet.has(id));
+  } catch (err) {
+    logger?.warn({ err }, 'filterByContentVisibility failed — suppressing all notifications');
+    return []; // Safe default on error
+  }
 }
 
 // ─── Mentions ─────────────────────────────────────────────────────────────────
@@ -161,8 +224,9 @@ async function processMentions(
 
   // Prefetch follows for interacted/friends_only checks
   const profileIds = (profiles as any[]).map((p: any) => p.id);
-  let mutualFollowSet = new Set<string>(); // IDs that mutually follow author
-  let followsAuthorSet = new Set<string>(); // IDs that follow author
+  let mutualFollowSet = new Set<string>();    // IDs that mutually follow author
+  let followsAuthorSet = new Set<string>();   // IDs that follow author
+  let authorFollowsSet = new Set<string>();   // IDs that the author follows
 
   if (profileIds.length > 0) {
     // Who does the author follow?
@@ -171,7 +235,7 @@ async function processMentions(
       .select('following_id')
       .eq('follower_id', authorId)
       .in('following_id', profileIds);
-    const authorFollowsSet = new Set<string>((authorFollows ?? []).map((r: any) => r.following_id));
+    authorFollowsSet = new Set<string>((authorFollows ?? []).map((r: any) => r.following_id));
 
     // Who follows the author (among the tagged profiles)?
     const { data: followsAuthor } = await db
@@ -202,8 +266,11 @@ async function processMentions(
     if (perm === 'friends_only' && !mutualFollowSet.has(profile.id)) continue;
 
     if (perm === 'interacted') {
-      // Accept if they follow each other (mutual) OR tagged follows author
-      const hasInteracted = mutualFollowSet.has(profile.id) || followsAuthorSet.has(profile.id);
+      // Accept if either follow direction exists (mutual, author→target, target→author)
+      const hasInteracted =
+        mutualFollowSet.has(profile.id) ||
+        followsAuthorSet.has(profile.id) ||
+        authorFollowsSet.has(profile.id);
       if (!hasInteracted) {
         // Also check if there's a message thread (quick heuristic)
         const { data: threadCheck } = await db
@@ -289,6 +356,17 @@ async function processHashtags(
       const htRow = ht as any;
       if (htRow.is_blocked) continue;
 
+      // Dedup guard: only count new usage rows (prevents over-incrementing on re-process)
+      const { data: existingUsage } = await db
+        .from('hashtag_usage')
+        .select('id')
+        .eq('hashtag_id', htRow.id)
+        .eq('source_type', sourceType)
+        .eq('source_id', sourceId)
+        .maybeSingle();
+
+      if (existingUsage) continue; // Already counted — skip upsert and increment
+
       const { error: usageErr } = await db
         .from('hashtag_usage')
         .upsert(
@@ -308,7 +386,7 @@ async function processHashtags(
         continue;
       }
 
-      // Atomic increment via DB helper (migration 0043)
+      // Atomic increment via DB helper — only reached for newly inserted rows
       await db.rpc('increment_hashtag_usage_count', { p_hashtag_id: htRow.id });
     } catch (err) {
       logger?.warn({ err, slug }, 'processHashtags item error');
