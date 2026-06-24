@@ -21,6 +21,16 @@ export interface TelegraphHashtagSpan {
   isBlocked?: boolean;
 }
 
+/** Minimal @mention span returned by the Telegraph recommend endpoint (permission-filtered). */
+export interface TelegraphTagSpan {
+  type: 'user';
+  id: string;
+  matchToken: string;
+  startChar: number;
+  endChar: number;
+  isBlocked?: boolean;
+}
+
 export interface TelegraphRecommendation {
   id: string;
   title: string;
@@ -32,6 +42,8 @@ export interface TelegraphRecommendation {
   imageUrl: string | null;
   /** Server-resolved positioned #hashtag spans for the `reason` field. */
   hashtagSpans?: TelegraphHashtagSpan[];
+  /** Server-resolved, permission-filtered @mention spans for the `reason` field. */
+  tagSpans?: TelegraphTagSpan[];
 }
 
 export interface ForYouParams {

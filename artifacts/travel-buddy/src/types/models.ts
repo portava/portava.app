@@ -239,6 +239,16 @@ export interface HashtagSpan {
   isBlocked?: boolean;
 }
 
+/** Minimal @mention span used for RichText rendering (compatible with RichTextTag). */
+export interface TagSpan {
+  type: 'user';
+  id: string;
+  matchToken: string;
+  startChar: number;
+  endChar: number;
+  isBlocked?: boolean;
+}
+
 /** An AI-generated activity card surfaced inside a Telegraph thread. */
 export interface TelegraphActivityRecommendation {
   id: ID;
@@ -253,6 +263,8 @@ export interface TelegraphActivityRecommendation {
   activityId?: ID;           // attached activity entity (future)
   /** Positioned #hashtag spans in the `reason` text, resolved server-side by Telegraph. */
   hashtagSpans?: HashtagSpan[];
+  /** Positioned @mention spans in the `reason` text, permission-filtered server-side. */
+  tagSpans?: TagSpan[];
 }
 
 /**

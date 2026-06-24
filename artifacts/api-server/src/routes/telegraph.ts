@@ -16,7 +16,7 @@ import { getServiceClient } from "../lib/supabase";
 import { openai } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
-import type { SpanHashtag } from "../lib/enrichSpans";
+import type { SpanHashtag, SpanTag } from "../lib/enrichSpans";
 
 const router = Router();
 
@@ -185,24 +185,27 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
     const arr = Array.isArray(parsed) ? parsed : [];
     const recommendations = arr.slice(0, count).map(sanitizeRec);
 
-    // ── Compass hashtag span enrichment ──────────────────────────────────────
-    // Scan each recommendation's reason/title text for #slug patterns produced
-    // by the AI (e.g. when the user follows #foodie and the AI echoes it back).
-    // Resolve slugs → hashtag IDs and blocked status so the mobile client can
-    // render them as tappable links via RichText.hashtagUsages.
+    // ── Compass span enrichment ───────────────────────────────────────────────
+    // Scan each recommendation's reason text for #slug and @handle patterns.
+    // #hashtags  → resolved against `hashtags` table; is_blocked suppresses link.
+    // @mentions  → resolved against `profiles`; tag_permission + blocks + follows
+    //              are enforced using the same rules as the tag-suggestions endpoint.
+    //              Handles that fail the permission check are excluded entirely so
+    //              a user with tag_permission='nobody' never appears in AI output.
     let enrichedRecommendations: typeof recommendations = recommendations;
     try {
       const sc = getServiceClient();
       if (sc && recommendations.length > 0) {
-        // Collect all unique slugs across all reason + title fields
-        const allSlugs = new Set<string>();
+        // ── 1. Collect unique tokens ─────────────────────────────────────────
+        const allSlugs  = new Set<string>();
+        const allHandles = new Set<string>();
         for (const r of recommendations) {
-          const text = `${r.reason ?? ""} ${r.title ?? ""}`;
-          for (const m of text.matchAll(/#([a-z0-9_]+)/gi)) {
-            allSlugs.add(m[1].toLowerCase());
-          }
+          const text = r.reason ?? "";
+          for (const m of text.matchAll(/#([a-z0-9_]+)/gi))  allSlugs.add(m[1].toLowerCase());
+          for (const m of text.matchAll(/@([a-z0-9_]+)/gi)) allHandles.add(m[1].toLowerCase());
         }
 
+        // ── 2. Resolve hashtags ──────────────────────────────────────────────
         const slugMetaMap: Record<string, { id: string; isBlocked: boolean }> = {};
         if (allSlugs.size > 0) {
           const { data: htRows } = await sc
@@ -214,16 +217,73 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
           }
         }
 
-        // Compute positioned spans for each recommendation's reason text,
-        // skipping permission check for AI-generated content (no real tagger).
+        // ── 3. Resolve @handles with permission enforcement ──────────────────
+        // Mirrors the tag_permission checks in GET /api/tags/suggestions.
+        const allowedMentionMap: Record<string, { userId: string; handle: string }> = {};
+        if (allHandles.size > 0) {
+          const { data: profiles } = await sc
+            .from("profiles")
+            .select("id, handle, tag_permission")
+            .in("handle", [...allHandles]);
+
+          const profileIds: string[] = ((profiles ?? []) as any[]).map((p: any) => p.id as string);
+
+          // Block check (both directions)
+          const blockedSet = new Set<string>();
+          if (profileIds.length > 0) {
+            const ids = profileIds.join(",");
+            const { data: blockRows } = await sc
+              .from("blocks")
+              .select("blocker_id, blocked_id")
+              .or(
+                `and(blocker_id.eq.${auth.user.id},blocked_id.in.(${ids})),` +
+                `and(blocked_id.eq.${auth.user.id},blocker_id.in.(${ids}))`,
+              );
+            for (const row of (blockRows ?? []) as any[]) {
+              blockedSet.add(
+                row.blocker_id === auth.user.id ? row.blocked_id : row.blocker_id,
+              );
+            }
+
+            // Follow sets for friends_only / interacted checks
+            const { data: followRows } = await sc
+              .from("user_follows")
+              .select("follower_id, following_id")
+              .or(
+                `and(follower_id.eq.${auth.user.id},following_id.in.(${ids})),` +
+                `and(following_id.eq.${auth.user.id},follower_id.in.(${ids}))`,
+              );
+            const iFollow   = new Set<string>();
+            const followsMe = new Set<string>();
+            for (const row of (followRows ?? []) as any[]) {
+              if (row.follower_id === auth.user.id) iFollow.add(row.following_id);
+              else followsMe.add(row.follower_id);
+            }
+
+            for (const p of (profiles ?? []) as any[]) {
+              if (!p.handle) continue;
+              const uid  = p.id as string;
+              const perm = (p.tag_permission ?? "anyone") as string;
+              if (blockedSet.has(uid))   continue; // blocked — exclude
+              if (perm === "nobody")     continue; // user opted out entirely
+              if (perm === "friends_only" && !(iFollow.has(uid) && followsMe.has(uid))) continue;
+              if (perm === "interacted"   && !(iFollow.has(uid) || followsMe.has(uid))) continue;
+              allowedMentionMap[(p.handle as string).toLowerCase()] = { userId: uid, handle: p.handle as string };
+            }
+          }
+        }
+
+        // ── 4. Compute positioned spans per recommendation ───────────────────
         enrichedRecommendations = recommendations.map((r) => {
           const reasonText = r.reason ?? "";
-          const reasonSpans: SpanHashtag[] = [];
+          const hashtagSpans: SpanHashtag[] = [];
+          const tagSpans: SpanTag[] = [];
+
           for (const m of reasonText.matchAll(/#([a-z0-9_]+)/gi)) {
             const slug = m[1].toLowerCase();
             const meta = slugMetaMap[slug];
             if (meta) {
-              reasonSpans.push({
+              hashtagSpans.push({
                 slug,
                 hashtagId: meta.id,
                 startChar: m.index!,
@@ -232,7 +292,25 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
               });
             }
           }
-          return reasonSpans.length > 0 ? { ...r, hashtagSpans: reasonSpans } : r;
+
+          for (const m of reasonText.matchAll(/@([a-z0-9_]+)/gi)) {
+            const handle = m[1].toLowerCase();
+            const meta = allowedMentionMap[handle];
+            if (meta) {
+              tagSpans.push({
+                type: "user",
+                id: meta.userId,
+                matchToken: meta.handle,
+                startChar: m.index!,
+                endChar: m.index! + m[0].length,
+              });
+            }
+          }
+
+          const extras: Record<string, unknown> = {};
+          if (hashtagSpans.length > 0) extras.hashtagSpans = hashtagSpans;
+          if (tagSpans.length > 0)     extras.tagSpans     = tagSpans;
+          return Object.keys(extras).length > 0 ? { ...r, ...extras } : r;
         });
       }
     } catch { /* non-fatal — degrade to undecorated recommendations */ }

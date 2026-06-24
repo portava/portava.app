@@ -66,9 +66,10 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
         <Text style={[styles.badgeText, { color: accent }]}>{rec.category.toUpperCase()}</Text>
       </View>
 
-      {/* Reason — RichText renders tappable #hashtag spans when present */}
+      {/* Reason — RichText renders tappable @mention and #hashtag spans when present */}
       <RichText
         content={rec.reason}
+        tags={rec.tagSpans}
         hashtagUsages={rec.hashtagSpans}
         style={styles.reason}
       />
