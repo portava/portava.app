@@ -249,6 +249,14 @@ export default function AdminBuddiesScreen() {
                   <Text style={detail.label}>JOINED</Text>
                   <Text style={detail.value}>{new Date(selected.createdAt).toLocaleDateString()}</Text>
 
+                  <Pressable style={detail.profileLink}
+                    onPress={() => {
+                      setSelected(null);
+                      router.push(`/profile/${selected.userId}` as any);
+                    }}>
+                    <Text style={detail.profileLinkText}>View Traveler Profile →</Text>
+                  </Pressable>
+
                   <View style={detail.actions}>
                     <Pressable style={[detail.btn, { backgroundColor: '#F59E0B20' }]}
                       onPress={() => handleAction('suspend')} disabled={acting}>
@@ -327,7 +335,9 @@ const modal = StyleSheet.create({
 const detail = StyleSheet.create({
   label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, marginTop: space.md },
   value: { ...t.body, color: color.ink },
-  actions: { flexDirection: 'row', gap: space.md, marginTop: space.xl },
-  btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: space.md, borderRadius: radius.md },
+  profileLink: { marginTop: space.lg, padding: space.md, borderRadius: radius.sm, backgroundColor: color.haze, alignItems: 'center' },
+  profileLinkText: { ...t.bodyStrong, color: color.ink },
+  actions: { flexDirection: 'row', gap: space.md, marginTop: space.xl, flexWrap: 'wrap' },
+  btn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.md },
   btnText: { ...t.small, fontWeight: '700' },
 });

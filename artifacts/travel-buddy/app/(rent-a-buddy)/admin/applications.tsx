@@ -16,7 +16,7 @@ import { ArrowLeft, Check, X, Clock, Eye } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import {
-  listAdminApplications, reviewApplication,
+  listAdminApplications, reviewApplication, limitApplication,
   type AdminApplication,
 } from '../../../src/services/rentABuddyAdmin';
 
@@ -85,17 +85,9 @@ function ApplicationRow({
 }
 
 export default function AdminApplicationsScreen() {
+  // ── ALL hooks before any conditional return ─────────────────────────────────
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
-  if (!flagLoading && !featureEnabled) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
-          Rent a Buddy is not enabled in this environment.
-        </Text>
-      </View>
-    );
-  }
   const [tab, setTab] = useState<Tab>('pending');
   const [items, setItems] = useState<AdminApplication[]>([]);
   const [total, setTotal] = useState(0);
@@ -106,6 +98,8 @@ export default function AdminApplicationsScreen() {
   const [notes, setNotes] = useState('');
   const [actionTarget, setActionTarget] = useState<{ id: string; action: 'approved' | 'rejected' | 'under_review' } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
+  const [limiting, setLimiting] = useState(false);
 
   const load = useCallback(async (p = 1, append = false) => {
     try {
@@ -113,7 +107,9 @@ export default function AdminApplicationsScreen() {
       setItems(prev => append ? [...prev, ...data.applications] : data.applications);
       setTotal(data.total);
       setPage(p);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      if (e?.message === 'forbidden') setForbidden(true);
+    }
   }, [tab]);
 
   useEffect(() => {
@@ -126,6 +122,18 @@ export default function AdminApplicationsScreen() {
     await load(1);
     setRefreshing(false);
   }, [load]);
+
+  // ── Conditional return AFTER all hooks ─────────────────────────────────────
+  if (!flagLoading && (forbidden || !featureEnabled)) {
+    const msg = forbidden
+      ? 'Admin access required.\nYour account does not have admin privileges.'
+      : 'Rent a Buddy is not enabled in this environment.';
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>{msg}</Text>
+      </View>
+    );
+  }
 
   function initiateAction(id: string, action: 'approved' | 'rejected' | 'under_review') {
     setNotes('');
@@ -143,6 +151,21 @@ export default function AdminApplicationsScreen() {
     }
     setActionTarget(null);
     load(1);
+  }
+
+  async function handleLimit(id: string) {
+    Alert.alert('Limit Buddy', 'Restrict this buddy\'s booking capacity?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Limit', style: 'destructive', onPress: async () => {
+          setLimiting(true);
+          await limitApplication(id);
+          setLimiting(false);
+          setSelected(null);
+          load(1);
+        },
+      },
+    ]);
   }
 
   return (
@@ -223,30 +246,52 @@ export default function AdminApplicationsScreen() {
             <Text style={modal.title}>Application Detail</Text>
             {selected && (
               <ScrollView showsVerticalScrollIndicator={false}>
-                <Text style={detail.label}>User ID</Text>
+                <Text style={detail.label}>USER ID</Text>
                 <Text style={detail.value}>{selected.userId}</Text>
-                <Text style={detail.label}>City</Text>
+                <Text style={detail.label}>CITY</Text>
                 <Text style={detail.value}>{selected.city}{selected.country ? `, ${selected.country}` : ''}</Text>
-                <Text style={detail.label}>Categories</Text>
+                <Text style={detail.label}>CATEGORIES</Text>
                 <Text style={detail.value}>{selected.categories.join(', ') || '—'}</Text>
-                <Text style={detail.label}>Languages</Text>
+                <Text style={detail.label}>LANGUAGES</Text>
                 <Text style={detail.value}>{selected.languages.join(', ') || '—'}</Text>
-                <Text style={detail.label}>Motivation</Text>
+                <Text style={detail.label}>MOTIVATION</Text>
                 <Text style={detail.value}>{selected.motivation || '—'}</Text>
-                <Text style={detail.label}>Policy Accepted</Text>
-                <Text style={detail.value}>{selected.policyAccepted ? 'Yes' : 'No'}</Text>
-                <Text style={detail.label}>Status</Text>
+                <Text style={detail.label}>POLICY ACCEPTED</Text>
+                <Text style={[detail.value, { color: selected.policyAccepted ? '#10B981' : '#EF4444' }]}>
+                  {selected.policyAccepted ? '✓ Yes' : '✗ No'}
+                </Text>
+                <Text style={detail.label}>PHOTO VERIFIED</Text>
+                <Text style={[detail.value, { color: (selected as any).photoVerified ? '#10B981' : color.mute }]}>
+                  {(selected as any).photoVerified ? '✓ Verified' : 'Not submitted'}
+                </Text>
+                <Text style={detail.label}>STATUS</Text>
                 <Text style={detail.value}>{selected.status}</Text>
                 {selected.reviewNotes && (<>
-                  <Text style={detail.label}>Review Notes</Text>
+                  <Text style={detail.label}>REVIEW NOTES</Text>
                   <Text style={detail.value}>{selected.reviewNotes}</Text>
                 </>)}
-                <Text style={detail.label}>Submitted</Text>
+                <Text style={detail.label}>SUBMITTED</Text>
                 <Text style={detail.value}>{new Date(selected.createdAt).toLocaleString()}</Text>
+                <View style={detail.actions}>
+                  <Pressable style={[detail.btn, { backgroundColor: '#F59E0B20' }]}
+                    onPress={() => handleLimit(selected.id)} disabled={limiting}>
+                    <Text style={[detail.btnText, { color: '#F59E0B' }]}>Limit</Text>
+                  </Pressable>
+                  <Pressable style={[detail.btn, { backgroundColor: '#10B98120' }]}
+                    onPress={() => initiateAction(selected.id, 'approved')} disabled={saving}>
+                    <Check size={14} color='#10B981' />
+                    <Text style={[detail.btnText, { color: '#10B981' }]}>Approve</Text>
+                  </Pressable>
+                  <Pressable style={[detail.btn, { backgroundColor: '#EF444420' }]}
+                    onPress={() => initiateAction(selected.id, 'rejected')} disabled={saving}>
+                    <X size={14} color='#EF4444' />
+                    <Text style={[detail.btnText, { color: '#EF4444' }]}>Reject</Text>
+                  </Pressable>
+                </View>
               </ScrollView>
             )}
-            <Pressable style={[modal.btn, modal.confirm, { marginTop: space.lg }]} onPress={() => setSelected(null)}>
-              <Text style={modal.confirmText}>Close</Text>
+            <Pressable style={[modal.btn, modal.cancel, { marginTop: space.lg }]} onPress={() => setSelected(null)}>
+              <Text style={modal.cancelText}>Close</Text>
             </Pressable>
           </View>
         </View>
@@ -306,4 +351,7 @@ const modal = StyleSheet.create({
 const detail = StyleSheet.create({
   label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 1.5, marginTop: space.md },
   value: { ...t.body, color: color.ink },
+  actions: { flexDirection: 'row', gap: space.sm, marginTop: space.lg, flexWrap: 'wrap' },
+  btn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.sm },
+  btnText: { ...t.small, fontWeight: '700' },
 });

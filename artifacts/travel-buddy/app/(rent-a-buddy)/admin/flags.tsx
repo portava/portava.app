@@ -291,6 +291,15 @@ export default function AdminFlagsScreen() {
                 </>)}
                 <Text style={detail.label}>CREATED</Text>
                 <Text style={detail.value}>{new Date(selected.createdAt).toLocaleString()}</Text>
+                {selected.bookingId && (
+                  <Pressable style={detail.threadLink}
+                    onPress={() => {
+                      setSelected(null);
+                      router.push(`/(rent-a-buddy)/bookings/${selected.bookingId}` as any);
+                    }}>
+                    <Text style={detail.threadLinkText}>View Booking & Chat Context →</Text>
+                  </Pressable>
+                )}
               </ScrollView>
             )}
             <Pressable style={modal.closeBtn} onPress={() => setSelected(null)}>
@@ -355,4 +364,6 @@ const modal = StyleSheet.create({
 const detail = StyleSheet.create({
   label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, marginTop: space.md },
   value: { ...t.body, color: color.ink },
+  threadLink: { marginTop: space.lg, padding: space.md, borderRadius: radius.sm, backgroundColor: color.haze, alignItems: 'center' },
+  threadLinkText: { ...t.bodyStrong, color: color.ink },
 });

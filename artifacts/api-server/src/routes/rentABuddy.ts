@@ -923,6 +923,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     }
   }
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_accepted", "Buddy accepted — your booking is confirmed!");
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
 
   return res.json({ ok: true });
@@ -1058,20 +1059,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
-  // Archive the booking thread for both parties unless they opted to stay connected.
-  // stayConnected=true means both users want to keep the conversation open.
-  const { stayConnected = false } = req.body as { stayConnected?: boolean };
-  if (!stayConnected) {
-    const telegraphThreadId: string | null = (booking as any).telegraph_thread_id ?? null;
-    if (telegraphThreadId) {
-      const archiveNow = new Date().toISOString();
-      await serviceClient
-        .from("message_thread_members")
-        .update({ archived_at: archiveNow })
-        .eq("thread_id", telegraphThreadId)
-        .is("archived_at", null);
-    }
-  }
+  // Thread stays open after completion so both parties can continue the conversation.
+  // Either user can independently archive their own view via POST /api/messages/threads/:threadId/archive.
+  // We only archive on explicit mutual request (both parties calling the archive endpoint).
 
   return res.json({ ok: true });
 });

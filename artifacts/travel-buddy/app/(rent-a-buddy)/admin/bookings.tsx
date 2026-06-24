@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, FlatList, Pressable, Modal,
+  View, Text, FlatList, Pressable, Modal, TextInput,
   StyleSheet, ActivityIndicator, RefreshControl, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -71,6 +71,7 @@ export default function AdminBookingsScreen() {
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [cityFilter, setCityFilter] = useState('');
   const [items, setItems] = useState<AdminBooking[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -83,15 +84,17 @@ export default function AdminBookingsScreen() {
     try {
       const data = await listAdminBookings({
         status: statusFilter === 'all' ? undefined : statusFilter,
+        city: cityFilter.trim() || undefined,
         page: p,
       });
+
       setItems(prev => append ? [...prev, ...data.bookings] : data.bookings);
       setTotal(data.total);
       setPage(p);
     } catch (e: any) {
       if (e?.message === 'forbidden') setForbidden(true);
     }
-  }, [statusFilter]);
+  }, [statusFilter, cityFilter]);
 
   useEffect(() => {
     setLoading(true);
@@ -136,6 +139,16 @@ export default function AdminBookingsScreen() {
           </Pressable>
         ))}
       </ScrollView>
+      <View style={styles.cityRow}>
+        <TextInput
+          style={styles.cityInput}
+          placeholder="Filter by city…"
+          placeholderTextColor={color.faint}
+          value={cityFilter}
+          onChangeText={setCityFilter}
+          returnKeyType="search"
+        />
+      </View>
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
@@ -185,6 +198,15 @@ export default function AdminBookingsScreen() {
                   </>)}
                   <Text style={detail.label}>CREATED</Text>
                   <Text style={detail.value}>{new Date(selected.createdAt).toLocaleString()}</Text>
+                  {selected.telegraphThreadId && (
+                    <Pressable style={detail.threadBtn}
+                      onPress={() => {
+                        setSelected(null);
+                        router.push(`/messages/${selected.telegraphThreadId}` as any);
+                      }}>
+                      <Text style={detail.threadBtnText}>View Booking Thread →</Text>
+                    </Pressable>
+                  )}
                 </ScrollView>
                 <Pressable style={modal.closeBtn} onPress={() => setSelected(null)}>
                   <Text style={modal.closeBtnText}>Close</Text>
@@ -213,6 +235,8 @@ const styles = StyleSheet.create({
   list: { padding: space.lg, gap: space.md, paddingBottom: 48 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { ...t.body, color: color.mute, textAlign: 'center', paddingVertical: space.xxl },
+  cityRow: { paddingHorizontal: space.lg, paddingVertical: space.sm, borderBottomWidth: 1, borderColor: color.haze },
+  cityInput: { backgroundColor: color.haze, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8, ...t.body, color: color.ink },
 });
 
 const row = StyleSheet.create({
@@ -242,4 +266,6 @@ const modal = StyleSheet.create({
 const detail = StyleSheet.create({
   label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, marginTop: space.md },
   value: { ...t.body, color: color.ink },
+  threadBtn: { marginTop: space.lg, padding: space.md, borderRadius: radius.sm, backgroundColor: color.haze, alignItems: 'center' },
+  threadBtnText: { ...t.bodyStrong, color: color.ink },
 });

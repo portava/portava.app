@@ -132,6 +132,7 @@ export interface AdminBooking {
   cashBalanceConfirmedByBuddy: boolean | null;
   cashBalanceConfirmedByTraveler: boolean | null;
   safetyStatus: string | null;
+  telegraphThreadId: string | null;
   createdAt: string;
 }
 
@@ -172,6 +173,7 @@ export async function listAdminApplications(
   const res = await adminGet<{ applications: AdminApplication[]; total: number }>(
     `/api/rent-a-buddy/admin/applications?${qs}`,
   );
+  if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : { applications: [], total: 0 };
 }
 
@@ -185,6 +187,13 @@ export async function reviewApplication(
     reviewNotes: reviewNotes ?? null,
   });
   return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function limitApplication(appId: string): Promise<{ ok: boolean }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/applications/${appId}`, {
+    adminStatus: 'limited',
+  });
+  return res.ok ? { ok: true } : { ok: false };
 }
 
 // ── Buddies ────────────────────────────────────────────────────────────────────
