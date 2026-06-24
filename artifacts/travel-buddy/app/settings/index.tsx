@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Zap, Brain, Globe } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
+import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
@@ -12,6 +13,17 @@ import { useLanguagePreference } from '../../src/context/LanguagePreferenceConte
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const userId = data.session?.user?.id;
+      if (!userId) return;
+      supabase.from('profiles').select('role').eq('id', userId).maybeSingle().then(({ data: p }) => {
+        if ((p as any)?.role === 'admin') setIsAdmin(true);
+      });
+    });
+  }, []);
 
   const [telegraphDM, setTelegraphDM] = useState(true);
   const [telegraphTrip, setTelegraphTrip] = useState(true);
@@ -395,8 +407,8 @@ export default function Settings() {
           </View>
         )}
 
-        {/* Rent a Buddy Admin (visible only to admin-role users; server enforces access) */}
-        {configured && isAuthed && (
+        {/* Rent a Buddy Admin — only visible to users with admin role in profiles */}
+        {isAdmin && (
           <View style={{ gap: space.sm }}>
             <Text style={styles.h}>Admin</Text>
             <Pressable

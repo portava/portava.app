@@ -12,7 +12,7 @@ import { color, space, radius, type as t, shadow, layout } from '../../src/theme
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import {
-  getBuddyProfile, createBooking,
+  getBuddyProfile, createBooking, getOrCreateBookingThread,
   type BuddyProfile, type BuddyPackage, type BuddyCategory,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -144,6 +144,7 @@ export default function RentABuddyCheckout() {
     if (!res.ok) { Alert.alert('Booking failed', res.error); return; }
     const bookingId = res.data.booking?.id;
     if (bookingId) {
+      void getOrCreateBookingThread(bookingId);
       router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId } });
     }
   };

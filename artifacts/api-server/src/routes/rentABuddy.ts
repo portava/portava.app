@@ -398,6 +398,35 @@ function mapApplication(row: any) {
   };
 }
 
+// ── Booking system message helper ─────────────────────────────────────────────
+// Fire-and-forget: inserts a system message into the booking's Telegraph thread.
+// Called after key booking state transitions. Silent no-op if no thread exists.
+
+async function emitBookingMilestone(
+  client: any,
+  bookingId: string,
+  actorId: string,
+  subtype: string,
+  body: string,
+): Promise<void> {
+  try {
+    const { data: bk } = await client
+      .from("rent_buddy_bookings")
+      .select("telegraph_thread_id")
+      .eq("id", bookingId)
+      .maybeSingle();
+    const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
+    if (!threadId) return;
+    await client.from("messages").insert({
+      thread_id: threadId,
+      sender_id: actorId,
+      body,
+      msg_type: "system",
+      subtype,
+    });
+  } catch { /* non-critical — never fail the main request */ }
+}
+
 // ── Search ────────────────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/search", async (req, res) => {
@@ -817,6 +846,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     sourceId: bookingId,
   });
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
+
   return res.json({ ok: true });
 });
 
@@ -870,6 +901,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     sourceType: "booking",
     sourceId: bookingId,
   });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
 
   return res.json({ ok: true });
 });
@@ -937,6 +970,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
     emergency_contact_count: req.body?.emergencyContactCount ?? 0,
   });
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_started", "Meetup started — enjoy your time together!");
+
   return res.json({ ok: true });
 });
 
@@ -999,6 +1034,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
       sourceId: bookingId,
     });
   }
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
   return res.json({ ok: true });
 });

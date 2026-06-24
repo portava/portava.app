@@ -12,7 +12,7 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, type BuddyBooking } from '../../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -361,7 +361,22 @@ export default function BookingDetail() {
 
           <Pressable
             style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => router.push(`/messages/${booking.buddyId}` as any)}
+            onPress={async () => {
+              const threadRes = await getOrCreateBookingThread(id as string);
+              if (threadRes.ok && threadRes.data?.threadId) {
+                router.push({
+                  pathname: '/messages/[id]' as any,
+                  params: {
+                    id: threadRes.data.threadId,
+                    threadType: 'rent_buddy_booking',
+                    contextId: id,
+                    title: `Booking with ${booking.city}`,
+                  },
+                });
+              } else {
+                router.push(`/messages/${booking.buddyId}` as any);
+              }
+            }}
           >
             <MessageCircle size={16} color={color.ink} />
             <Text style={styles.actionBtnText}>Message your Buddy</Text>
