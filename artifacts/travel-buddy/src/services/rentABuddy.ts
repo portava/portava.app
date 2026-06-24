@@ -427,6 +427,19 @@ export async function declineBooking(bookingId: string): Promise<ApiResult<{ ok:
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/decline`, { method: 'POST' });
 }
 
+export async function suggestChanges(bookingId: string, payload: {
+  proposedDate?: string;
+  proposedTime?: string;
+  proposedDurationH?: number;
+  proposedLocation?: string;
+  message?: string;
+}): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/suggest`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function startBooking(bookingId: string, payload?: {
   trustedCircleShared?: boolean;
   safeReturnEnabled?: boolean;
@@ -477,6 +490,26 @@ export async function requestRouteChange(
   payload: { newStops: Array<{ name: string; notes?: string; eta?: string }>; reason?: string },
 ): Promise<ApiResult<{ routeChangeRequest: any }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/route-change`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── Buddy-initiated offers ─────────────────────────────────────────────────────
+
+export interface BuddyOffer {
+  category: BuddyCategory;
+  priceUsd: number;
+  proposedDate: string;
+  proposedTime?: string;
+  meetupLocation?: string;
+  includedServices: string[];
+  message?: string;
+  addonIds?: string[];
+}
+
+export async function createBuddyOffer(payload: BuddyOffer): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/dashboard/offers', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -539,4 +572,22 @@ export async function updateMyBuddyProfile(patch: Partial<BuddyProfile>): Promis
 
 export async function getMyRequests(): Promise<ApiResult<{ requests: BuddyBooking[] }>> {
   return apiFetch('/api/rent-a-buddy/me/requests');
+}
+
+// ── Availability settings ──────────────────────────────────────────────────────
+
+export interface AvailabilitySettings {
+  availableNow?: boolean;
+  minNoticeHours?: number;
+  bufferMinutes?: number;
+  maxBookingsPerDay?: number;
+  blockedFrom?: string;
+  blockedTo?: string;
+}
+
+export async function setAvailabilitySettings(settings: AvailabilitySettings): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/dashboard/availability/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
 }

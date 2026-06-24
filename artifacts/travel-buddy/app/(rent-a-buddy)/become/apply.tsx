@@ -1,20 +1,647 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { color, space, type as t } from '../../../src/theme/tokens';
+import React, { useState } from 'react';
+import {
+  View, Text, ScrollView, TextInput, Pressable, StyleSheet,
+  Alert, Switch, ActivityIndicator,
+} from 'react-native';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, ArrowRight, Check, Camera, Plus, X } from 'lucide-react-native';
+import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
+import { Stamp } from '../../../src/components/ui';
+import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import * as rentABuddy from '../../../src/services/rentABuddy';
+import type { BuddyCategory } from '../../../src/services/rentABuddy';
 
-export default function ApplyToBeBuddy() {
+const TOTAL_STEPS = 7;
+
+const ALL_CATEGORIES: { value: BuddyCategory; label: string; emoji: string }[] = [
+  { value: 'arrival', label: 'Arrival Support', emoji: '✈️' },
+  { value: 'city', label: 'City Tours', emoji: '🗺️' },
+  { value: 'nightlife', label: 'Nightlife', emoji: '🌙' },
+  { value: 'food', label: 'Food & Markets', emoji: '🍜' },
+  { value: 'content', label: 'Content & Photo', emoji: '📸' },
+  { value: 'nature', label: 'Nature & Adventure', emoji: '🌿' },
+  { value: 'culture', label: 'Culture & Arts', emoji: '🎭' },
+  { value: 'shopping', label: 'Shopping', emoji: '🛍️' },
+  { value: 'language', label: 'Language Help', emoji: '💬' },
+  { value: 'wellness', label: 'Wellness', emoji: '🧘' },
+  { value: 'adventure', label: 'Adventure', emoji: '🏔️' },
+  { value: 'other', label: 'Other', emoji: '✨' },
+];
+
+const FLUENCY = ['Conversational', 'Proficient', 'Native / Fluent'];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const TIME_BLOCKS = ['Morning\n6am–12pm', 'Afternoon\n12pm–6pm', 'Evening\n6pm–10pm', 'Late Night\n10pm–2am'];
+
+function ProgressBar({ step }: { step: number }) {
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.label}>RENT A BUDDY</Text>
-      <Text style={styles.title}>Apply to Be a Buddy</Text>
-      <Text style={styles.sub}>Application form — coming soon.</Text>
+    <View style={pb.wrap}>
+      {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+        <View
+          key={i}
+          style={[pb.seg, i < step ? pb.done : i === step - 1 ? pb.active : pb.todo]}
+        />
+      ))}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md },
-  label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 2 },
-  title: { ...t.title, fontSize: 26, color: color.ink, textAlign: 'center' },
-  sub: { ...t.body, color: color.mute, textAlign: 'center' },
+function StepHeader({ step, title, sub }: { step: number; title: string; sub?: string }) {
+  return (
+    <View style={sh.wrap}>
+      <Text style={sh.step}>STEP {step} OF {TOTAL_STEPS}</Text>
+      <Text style={sh.title}>{title}</Text>
+      {sub ? <Text style={sh.sub}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+function FieldLabel({ label, optional }: { label: string; optional?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.xs }}>
+      <Text style={fl.label}>{label}</Text>
+      {optional && <Text style={fl.opt}>(optional)</Text>}
+    </View>
+  );
+}
+
+function Field({
+  label, value, onChangeText, placeholder, optional, multiline, keyboardType,
+}: {
+  label: string; value: string; onChangeText: (v: string) => void;
+  placeholder?: string; optional?: boolean; multiline?: boolean; keyboardType?: any;
+}) {
+  return (
+    <View style={{ marginBottom: space.lg }}>
+      <FieldLabel label={label} optional={optional} />
+      <TextInput
+        style={[fi.input, multiline && fi.multiline]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder ?? ''}
+        placeholderTextColor={color.faint}
+        multiline={multiline}
+        keyboardType={keyboardType}
+        autoCapitalize="none"
+      />
+    </View>
+  );
+}
+
+export default function ApplyToBeBuddy() {
+  const insets = useSafeAreaInsets();
+  const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  // Step 1
+  const [displayName, setDisplayName] = useState('');
+  const [city, setCity] = useState('');
+  const [country, setCountry] = useState('');
+  const [languages, setLanguages] = useState<{ lang: string; fluency: string }[]>([
+    { lang: '', fluency: 'Proficient' },
+  ]);
+
+  // Step 2
+  const [categories, setCategories] = useState<BuddyCategory[]>([]);
+
+  // Step 3
+  const [bio, setBio] = useState('');
+
+  // Step 4
+  const [hourlyRate, setHourlyRate] = useState('');
+  const [motivation, setMotivation] = useState('');
+
+  // Step 5 — weekly grid: day x time block
+  const [availability, setAvailability] = useState<Record<string, Record<string, boolean>>>({});
+
+  // Step 6
+  const [zones, setZones] = useState<string[]>(['']);
+
+  // Step 7
+  const [agreedSafety, setAgreedSafety] = useState(false);
+  const [agreedPolicy, setAgreedPolicy] = useState(false);
+
+  function toggleSlot(day: string, block: string) {
+    setAvailability((prev) => {
+      const dayCopy = { ...(prev[day] ?? {}) };
+      dayCopy[block] = !dayCopy[block];
+      return { ...prev, [day]: dayCopy };
+    });
+  }
+
+  function toggleCategory(cat: BuddyCategory) {
+    setCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat],
+    );
+  }
+
+  function canAdvance(): boolean {
+    if (step === 1) return displayName.trim().length > 0 && city.trim().length > 0 && languages.some((l) => l.lang.trim().length > 0);
+    if (step === 2) return categories.length > 0;
+    if (step === 3) return bio.trim().length >= 30;
+    if (step === 7) return agreedSafety && agreedPolicy;
+    return true;
+  }
+
+  async function handleSubmit() {
+    if (!canAdvance()) return;
+    setSubmitting(true);
+    const result = await rentABuddy.submitApplication({
+      city,
+      country: country || undefined,
+      categories,
+      languages: languages.filter((l) => l.lang.trim()).map((l) => l.lang.trim()),
+      motivation: motivation || undefined,
+    });
+    setSubmitting(false);
+    if (result.ok) {
+      setSubmitted(true);
+    } else {
+      Alert.alert('Could not submit', result.error ?? 'Please try again.');
+    }
+  }
+
+  if (submitted) {
+    return (
+      <View style={[done.wrap, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={done.circle}>
+          <Check size={32} color={color.onInk} />
+        </View>
+        <Stamp label="APPLICATION SENT" tone="deep" rotate={-2} />
+        <Text style={done.title}>Application submitted!</Text>
+        <Text style={done.sub}>
+          Our team reviews applications within 3–5 business days. We'll notify you when your Buddy profile is activated.
+        </Text>
+        <TravelButton
+          label="Back to home"
+          onPress={() => router.replace('/(tabs)/' as any)}
+          variant="primary"
+          full
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: color.paper }}>
+      {/* Header */}
+      <View style={[hdr.wrap, { paddingTop: insets.top + space.sm }]}>
+        <Pressable
+          onPress={() => step === 1 ? router.back() : setStep((s) => s - 1)}
+          style={hdr.back}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <ArrowLeft size={20} color={color.ink} />
+        </Pressable>
+        <ProgressBar step={step} />
+      </View>
+
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: insets.bottom + 120 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* STEP 1 — Identity */}
+        {step === 1 && (
+          <View>
+            <StepHeader step={1} title="About you" sub="This is how travellers will find you." />
+            <Field label="Display name" value={displayName} onChangeText={setDisplayName} placeholder="e.g. Marco from Bangkok" />
+            <Field label="City you guide in" value={city} onChangeText={setCity} placeholder="e.g. Bangkok" />
+            <Field label="Country" value={country} onChangeText={setCountry} placeholder="e.g. Thailand" optional />
+
+            <FieldLabel label="Languages you speak" />
+            {languages.map((l, i) => (
+              <View key={i} style={lang.row}>
+                <TextInput
+                  style={[fi.input, { flex: 1 }]}
+                  value={l.lang}
+                  onChangeText={(v) => {
+                    const next = [...languages];
+                    next[i] = { ...next[i], lang: v };
+                    setLanguages(next);
+                  }}
+                  placeholder="Language"
+                  placeholderTextColor={color.faint}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: space.sm }}>
+                  <View style={{ flexDirection: 'row', gap: space.xs }}>
+                    {FLUENCY.map((f) => (
+                      <TravelChip
+                        key={f}
+                        label={f}
+                        active={l.fluency === f}
+                        onPress={() => {
+                          const next = [...languages];
+                          next[i] = { ...next[i], fluency: f };
+                          setLanguages(next);
+                        }}
+                      />
+                    ))}
+                  </View>
+                </ScrollView>
+                {languages.length > 1 && (
+                  <Pressable
+                    onPress={() => setLanguages((prev) => prev.filter((_, j) => j !== i))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <X size={16} color={color.mute} />
+                  </Pressable>
+                )}
+              </View>
+            ))}
+            <Pressable style={addBtn.row} onPress={() => setLanguages((prev) => [...prev, { lang: '', fluency: 'Proficient' }])}>
+              <Plus size={14} color={color.signal} />
+              <Text style={addBtn.text}>Add another language</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* STEP 2 — Categories */}
+        {step === 2 && (
+          <View>
+            <StepHeader step={2} title="What do you offer?" sub="Select all that apply. You can change this later." />
+            <View style={grid.wrap}>
+              {ALL_CATEGORIES.map((c) => (
+                <Pressable
+                  key={c.value}
+                  onPress={() => toggleCategory(c.value)}
+                  style={[grid.card, categories.includes(c.value) && grid.cardActive]}
+                >
+                  <Text style={grid.emoji}>{c.emoji}</Text>
+                  <Text style={[grid.label, categories.includes(c.value) && grid.labelActive]}>{c.label}</Text>
+                  {categories.includes(c.value) && (
+                    <View style={grid.checkWrap}>
+                      <Check size={12} color={color.onInk} />
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+            {categories.length === 0 && (
+              <Text style={hint.text}>Select at least one category to continue.</Text>
+            )}
+          </View>
+        )}
+
+        {/* STEP 3 — Bio + photos */}
+        {step === 3 && (
+          <View>
+            <StepHeader step={3} title="Your bio & photos" sub="Tell travellers who you are and what makes your tours special." />
+            <FieldLabel label="Bio" />
+            <TextInput
+              style={[fi.input, fi.multiline, { marginBottom: space.lg }]}
+              value={bio}
+              onChangeText={setBio}
+              placeholder="I've lived in Bangkok for 10 years and love showing travellers the hidden side of the city — street food, temples off the tourist trail, and local markets most guides miss..."
+              placeholderTextColor={color.faint}
+              multiline
+              maxLength={600}
+            />
+            <Text style={hint.text}>{bio.length}/600 characters (minimum 30)</Text>
+
+            <FieldLabel label="Profile photos" />
+            <Text style={hint.text}>Upload up to 3 photos showing you in your city. Photo upload will be available after your application is approved.</Text>
+            <View style={photos.row}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={photos.slot}>
+                  <Camera size={22} color={color.faint} />
+                  <Text style={photos.slotText}>Photo {i + 1}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* STEP 4 — Rates */}
+        {step === 4 && (
+          <View>
+            <StepHeader step={4} title="Your rates" sub="Set your hourly rate. You can create packages after approval." />
+            <Field
+              label="Hourly rate (USD)"
+              value={hourlyRate}
+              onChangeText={setHourlyRate}
+              placeholder="e.g. 35"
+              keyboardType="numeric"
+              optional
+            />
+            <TravelCard style={{ padding: space.md, marginBottom: space.lg }}>
+              <Text style={s.infoTitle}>💡 Pricing tips</Text>
+              <Text style={s.infoBody}>
+                New Buddies in popular cities typically start at $20–40/hour. Night-life and content tours often command higher rates ($40–70/hr).
+                You can always adjust your rates after approval.
+              </Text>
+            </TravelCard>
+            <Field
+              label="Why do you want to be a Buddy?"
+              value={motivation}
+              onChangeText={setMotivation}
+              placeholder="Share what drives you to help travellers explore your city..."
+              multiline
+              optional
+            />
+          </View>
+        )}
+
+        {/* STEP 5 — Availability grid */}
+        {step === 5 && (
+          <View>
+            <StepHeader step={5} title="Typical availability" sub="Tap slots to mark when you're generally available. You can update this anytime." />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View>
+                {/* Day headers */}
+                <View style={avail.headerRow}>
+                  <View style={avail.blockLabel} />
+                  {DAYS.map((d) => (
+                    <View key={d} style={avail.dayHeader}>
+                      <Text style={avail.dayText}>{d}</Text>
+                    </View>
+                  ))}
+                </View>
+                {TIME_BLOCKS.map((block) => (
+                  <View key={block} style={avail.row}>
+                    <View style={avail.blockLabel}>
+                      <Text style={avail.blockText}>{block}</Text>
+                    </View>
+                    {DAYS.map((d) => {
+                      const on = availability[d]?.[block] ?? false;
+                      return (
+                        <Pressable
+                          key={d}
+                          style={[avail.cell, on && avail.cellOn]}
+                          onPress={() => toggleSlot(d, block)}
+                        />
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+            <Text style={[hint.text, { marginTop: space.md }]}>
+              Tap cells to toggle. Green = available. You can set specific dates in your dashboard.
+            </Text>
+          </View>
+        )}
+
+        {/* STEP 6 — Meetup zones */}
+        {step === 6 && (
+          <View>
+            <StepHeader step={6} title="Preferred meetup zones" sub="Where do you typically meet travellers? (e.g. Sukhumvit, Old Town, Airport arrivals)" />
+            {zones.map((z, i) => (
+              <View key={i} style={lang.row}>
+                <TextInput
+                  style={[fi.input, { flex: 1 }]}
+                  value={z}
+                  onChangeText={(v) => {
+                    const next = [...zones];
+                    next[i] = v;
+                    setZones(next);
+                  }}
+                  placeholder={`Zone ${i + 1}`}
+                  placeholderTextColor={color.faint}
+                />
+                {zones.length > 1 && (
+                  <Pressable
+                    onPress={() => setZones((prev) => prev.filter((_, j) => j !== i))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <X size={16} color={color.mute} />
+                  </Pressable>
+                )}
+              </View>
+            ))}
+            <Pressable style={addBtn.row} onPress={() => setZones((prev) => [...prev, ''])}>
+              <Plus size={14} color={color.signal} />
+              <Text style={addBtn.text}>Add zone</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* STEP 7 — Policy agreement */}
+        {step === 7 && (
+          <View>
+            <StepHeader step={7} title="Safety agreement" sub="Please read and confirm both policies before submitting." />
+
+            <TravelCard style={{ padding: space.lg, marginBottom: space.lg }}>
+              <Text style={s.policyTitle}>Non-dating & Non-adult-service Policy</Text>
+              <Text style={s.policyBody}>
+                Rent a Buddy is strictly a local guide and travel companionship service. By applying, you confirm that:
+                {'\n\n'}• You will not engage in romantic, sexual, or adult-service activities with travellers.
+                {'\n'}• You will not advertise or imply such services.
+                {'\n'}• You understand that violations result in immediate and permanent removal from the platform.
+                {'\n'}• All meetups are professional in nature and occur in public or agreed safe spaces.
+              </Text>
+              <Pressable
+                style={toggle.row}
+                onPress={() => setAgreedPolicy((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: agreedPolicy }}
+              >
+                <View style={[toggle.box, agreedPolicy && toggle.boxOn]}>
+                  {agreedPolicy && <Check size={12} color={color.onInk} />}
+                </View>
+                <Text style={toggle.label}>I agree to the Non-dating & Non-adult-service Policy</Text>
+              </Pressable>
+            </TravelCard>
+
+            <TravelCard style={{ padding: space.lg, marginBottom: space.lg }}>
+              <Text style={s.policyTitle}>Safety & Community Guidelines</Text>
+              <Text style={s.policyBody}>
+                As a Buddy you agree to:
+                {'\n\n'}• Respond to booking requests within 24 hours.
+                {'\n'}• Meet travellers in agreed locations and honour confirmed bookings.
+                {'\n'}• Use the in-app safety tools if a situation feels unsafe.
+                {'\n'}• Report any policy violations by travellers immediately.
+                {'\n'}• Maintain accurate availability and pricing.
+              </Text>
+              <Pressable
+                style={toggle.row}
+                onPress={() => setAgreedSafety((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: agreedSafety }}
+              >
+                <View style={[toggle.box, agreedSafety && toggle.boxOn]}>
+                  {agreedSafety && <Check size={12} color={color.onInk} />}
+                </View>
+                <Text style={toggle.label}>I agree to the Safety & Community Guidelines</Text>
+              </Pressable>
+            </TravelCard>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Bottom nav */}
+      <View style={[nav.wrap, { paddingBottom: insets.bottom + space.md }]}>
+        {step < TOTAL_STEPS ? (
+          <TravelButton
+            label="Continue"
+            onPress={() => { if (!canAdvance()) return; setStep((s) => s + 1); }}
+            variant={canAdvance() ? 'primary' : 'ghost'}
+            full
+            icon={<ArrowRight size={16} color={canAdvance() ? color.onInk : color.mute} />}
+          />
+        ) : (
+          <TravelButton
+            label={submitting ? 'Submitting…' : 'Submit application'}
+            onPress={handleSubmit}
+            variant={canAdvance() ? 'primary' : 'ghost'}
+            full
+            icon={submitting ? <ActivityIndicator size="small" color={color.onInk} /> : <Check size={16} color={canAdvance() ? color.onInk : color.mute} />}
+          />
+        )}
+        {!canAdvance() && step === 1 && (
+          <Text style={nav.hint}>Fill in your name, city, and at least one language to continue.</Text>
+        )}
+        {!canAdvance() && step === 2 && (
+          <Text style={nav.hint}>Select at least one category.</Text>
+        )}
+        {!canAdvance() && step === 3 && (
+          <Text style={nav.hint}>Bio must be at least 30 characters.</Text>
+        )}
+        {!canAdvance() && step === 7 && (
+          <Text style={nav.hint}>Accept both policies to submit.</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const pb = StyleSheet.create({
+  wrap: { flexDirection: 'row', flex: 1, gap: 4, marginLeft: space.md },
+  seg: { flex: 1, height: 4, borderRadius: 2 },
+  done: { backgroundColor: color.signal },
+  active: { backgroundColor: color.signal, opacity: 0.5 },
+  todo: { backgroundColor: color.haze },
+});
+
+const hdr = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: space.lg, paddingBottom: space.md,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  back: {},
+});
+
+const sh = StyleSheet.create({
+  wrap: { marginTop: space.xl, marginBottom: space.xl },
+  step: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.deep, letterSpacing: 2, marginBottom: space.xs },
+  title: { ...t.heading, color: color.ink, marginBottom: space.xs },
+  sub: { ...t.body, color: color.mute },
+});
+
+const fl = StyleSheet.create({
+  label: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
+  opt: { ...t.small, color: color.faint },
+});
+
+const fi = StyleSheet.create({
+  input: {
+    borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
+    paddingHorizontal: space.md, paddingVertical: space.md,
+    ...t.body, color: color.ink, backgroundColor: color.paperRaised,
+  },
+  multiline: { height: 120, textAlignVertical: 'top' },
+});
+
+const lang = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm },
+});
+
+const addBtn = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: space.xs, marginBottom: space.lg },
+  text: { ...t.small, color: color.signal, fontWeight: '700' },
+});
+
+const grid = StyleSheet.create({
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md },
+  card: {
+    width: '47%', borderRadius: radius.md, borderWidth: 1.5,
+    borderColor: color.haze, padding: space.md, gap: 4,
+    backgroundColor: color.paperRaised, position: 'relative',
+  },
+  cardActive: { borderColor: color.signal, backgroundColor: '#FFF3F0' },
+  emoji: { fontSize: 22 },
+  label: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
+  labelActive: { color: color.signal },
+  checkWrap: {
+    position: 'absolute', top: 8, right: 8,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
+  },
+});
+
+const avail = StyleSheet.create({
+  headerRow: { flexDirection: 'row', marginBottom: 2 },
+  row: { flexDirection: 'row', marginBottom: 2 },
+  blockLabel: {
+    width: 80, paddingRight: space.sm, justifyContent: 'center',
+  },
+  blockText: { fontFamily: 'Courier', fontSize: 9, color: color.mute, lineHeight: 13 },
+  dayHeader: { width: 44, alignItems: 'center', paddingBottom: 4 },
+  dayText: { ...t.stamp, color: color.mute },
+  cell: {
+    width: 44, height: 44, borderRadius: radius.sm,
+    borderWidth: 1, borderColor: color.haze,
+    backgroundColor: color.paperRaised, margin: 1,
+  },
+  cellOn: { backgroundColor: '#E8F5EE', borderColor: color.success },
+});
+
+const photos = StyleSheet.create({
+  row: { flexDirection: 'row', gap: space.md, marginBottom: space.lg },
+  slot: {
+    flex: 1, aspectRatio: 1, borderRadius: radius.md,
+    borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.haze,
+    alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: color.paperRaised,
+  },
+  slotText: { ...t.small, color: color.faint },
+});
+
+const hint = StyleSheet.create({
+  text: { ...t.small, color: color.faint, lineHeight: 17 },
+});
+
+const toggle = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, marginTop: space.lg },
+  box: {
+    width: 22, height: 22, borderRadius: 4, borderWidth: 1.5,
+    borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: color.paperRaised, marginTop: 1,
+  },
+  boxOn: { backgroundColor: color.signal, borderColor: color.signal },
+  label: { ...t.small, color: color.ink, flex: 1, lineHeight: 18 },
+});
+
+const nav = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: space.lg, paddingTop: space.md,
+    borderTopWidth: 1, borderTopColor: color.haze,
+    backgroundColor: color.paper, gap: space.sm,
+  },
+  hint: { ...t.small, color: color.faint, textAlign: 'center' },
+});
+
+const done = StyleSheet.create({
+  wrap: {
+    flex: 1, backgroundColor: color.paper,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: space.xl, gap: space.lg,
+  },
+  circle: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: color.success, alignItems: 'center', justifyContent: 'center',
+    marginBottom: space.sm,
+  },
+  title: { ...t.heading, color: color.ink, textAlign: 'center' },
+  sub: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+});
+
+const s = StyleSheet.create({
+  infoTitle: { ...t.bodyStrong, color: color.ink, marginBottom: space.xs },
+  infoBody: { ...t.small, color: color.mute, lineHeight: 18 },
+  policyTitle: { ...t.bodyStrong, color: color.ink, marginBottom: space.sm },
+  policyBody: { ...t.small, color: color.mute, lineHeight: 18 },
 });
