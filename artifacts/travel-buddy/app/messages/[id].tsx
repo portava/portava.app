@@ -53,6 +53,8 @@ import type { AnyMentionSuggestion } from '../../src/services/tagging';
 import { RichText } from '../../src/components/RichText';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
+import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -1390,6 +1392,9 @@ export default function TelegraphThread() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ThreadHeader />
+      {threadType === 'rent_buddy_booking' && contextId && (
+        <RentABuddyThreadHeader bookingId={contextId} />
+      )}
       <QuickActionBar />
 
       <FlatList
@@ -1408,6 +1413,10 @@ export default function TelegraphThread() {
           }
           const m = item.data;
           const mine = m.senderId === userId;
+          // Rent a Buddy milestone banners
+          if (m.msgType === 'system' && m.subtype?.startsWith('rent_buddy_')) {
+            return <BookingMilestoneMessage subtype={m.subtype} body={m.body ?? undefined} />;
+          }
           // System event messages (non-meetup, non-rich-card) render as centred pill labels
           if (m.msgType === 'system' && m.subtype !== 'discovery_card' && !parseMeetupCard(m.body ?? '', m)) {
             return <TelegraphSystemNotice text={m.body ?? ''} />;

@@ -1,0 +1,499 @@
+Build the Rent a Buddy legal, age, privacy, launch-control, and compliance hardening layer.
+
+Goal:
+Harden Rent a Buddy before launch by adding age rules, ID/verification requirements, city/country/category rollout controls, privacy protections, legal disclaimers, delayed posting integration, tagging consent, transport boundaries, tour-guide wording, support windows, and MVP launch restrictions.
+
+Feature flag:
+Use RENT_BUDDY_ENABLED.
+If disabled, hide all traveler/Buddy entry points and return honest feature-disabled responses.
+
+Age rules:
+Rent a Buddy is 18+ only.
+
+Rules:
+- Travelers must be 18+ to book Rent a Buddy.
+- Buddies must be 18+ to apply.
+- Nightlife Buddy requires 21+ where alcohol/nightclubs are involved or where local rules require it.
+- No minors can book, offer, appear as Buddies, or join a Rent a Buddy group booking.
+- If age is missing or unverified, block booking/application until verified.
+- Admin can configure stricter age rules by country/category.
+
+Add age policy copy:
+“Rent a Buddy is only available to adults 18+. Nightlife bookings may require users to be 21+ depending on location and venue rules.”
+
+Verification requirements:
+Require verification before booking or Buddy approval.
+
+Traveler minimum:
+- Phone verified
+- Email verified if available
+- Age confirmed
+- ID verification required for first booking, nightlife booking, high-value booking, or admin-configured risk rules
+
+Buddy minimum:
+- Phone verified
+- Email verified if available
+- Age confirmed
+- ID verified
+- Selfie match if supported
+- Admin reviewed
+- Policy/training checklist completed
+
+Nightlife Buddy:
+- ID verified
+- Age verified
+- Manual admin approval
+- Public meetup required
+- Safe Return recommended or required by admin setting
+- Higher deposit/full in-app payment if risk rules require it
+
+If existing verification systems are not fully built, add placeholder fields and honest gates. Do not fake verification.
+
+Legal and policy disclaimers:
+Add legal/policy copy to:
+- Rent a Buddy landing page
+- Become a Buddy application
+- Booking checkout
+- Booking confirmation
+- Active booking safety panel
+- Report/dispute flow
+- Terms/legal page if one exists
+
+Required disclaimer:
+“Rent a Buddy connects travelers with verified local Buddies for social exploration, city guidance, language help, shopping help, arrival support, content help, and local navigation. Rent a Buddy is not a dating, escort, adult, romantic, sexual, transportation, emergency, medical, security, or licensed tour-guide service. Users must follow local laws and Travel Buddy safety rules.”
+
+Adult-service disclaimer:
+“Requests or offers involving dating, escorting, romantic companionship, sexual services, private adult activity, illegal activity, drugs, harassment, or off-app payment are not allowed and may result in account review, suspension, removal, and Trust Score penalties.”
+
+Emergency disclaimer:
+“In an emergency, contact local emergency services immediately. Travel Buddy safety tools are not a replacement for police, medical, emergency, or professional security services.”
+
+Transportation disclaimer:
+“Buddies may help with navigation or coordinating third-party transportation, but Rent a Buddy is not a rideshare, taxi, chauffeur, airport transfer, or transportation service. Buddies should not be presented as drivers unless a future verified transport feature is legally supported.”
+
+Tour-guide wording:
+Avoid calling Buddies licensed tour guides unless verified.
+
+Use safer terms:
+- local Buddy
+- local companion
+- city support
+- peer-to-peer local help
+- social exploration
+- language support
+- local navigation
+- arrival support
+
+Do not use:
+- licensed tour guide
+- professional guide
+- security escort
+- driver
+- romantic companion
+
+Add optional future badge:
+Licensed Guide Verified
+Only show this badge if admin verifies a Buddy’s guide credentials.
+
+Launch controls:
+Create admin-configurable launch controls.
+
+Admin can enable/disable Rent a Buddy by:
+- country
+- city
+- category
+- payment mode
+- age requirement
+- nightlife availability
+- group bookings
+- cash balance
+- packages
+- offers/bidding
+- concierge/luxury category
+- arrival support
+- content/photo category
+- Buddy applications open/closed
+- traveler bookings open/closed
+
+Suggested table:
+rent_buddy_launch_controls:
+- id
+- country_code nullable
+- city nullable
+- category nullable
+- rent_buddy_enabled boolean
+- buddy_applications_enabled boolean
+- traveler_bookings_enabled boolean
+- deposit_plus_cash_enabled boolean
+- full_in_app_required boolean
+- nightlife_enabled boolean
+- group_bookings_enabled boolean
+- packages_enabled boolean
+- offers_enabled boolean
+- min_traveler_age
+- min_buddy_age
+- min_nightlife_age
+- public_meetup_required boolean
+- safe_return_required boolean
+- admin_notes
+- created_at
+- updated_at
+
+Default MVP launch controls:
+For MVP, default to conservative settings:
+- City Buddy enabled
+- Language Buddy enabled
+- Arrival Buddy enabled
+- Content Buddy enabled
+- Shopping Buddy enabled
+- Nightlife Buddy disabled or manual approval only
+- Group Buddy disabled until reviewed
+- Concierge/Luxury Buddy disabled until reviewed
+- Packages disabled unless admin-approved
+- Offers/bidding disabled unless admin-enabled
+- Public meetup required
+- Deposit required
+- Full in-app payment encouraged
+- Cash balance can be disabled by city/category
+- Safe Return recommended for all, required for high-risk categories
+
+Country disable switch:
+Add country-level disable option:
+- If Rent a Buddy is not permitted or is too risky in a country, admin can disable all booking/application actions there.
+- UI should say:
+“Rent a Buddy is not available in this location yet.”
+
+City rollout:
+Allow admin to launch city by city.
+
+City status:
+- unavailable
+- waitlist
+- applications_open
+- traveler_bookings_open
+- paused
+- suspended
+
+If city is waitlist only:
+- Travelers can join waitlist.
+- Buddies can apply if applications are open.
+- No paid bookings until traveler_bookings_open.
+
+Privacy protections:
+Because Rent a Buddy uses location, identity, messages, payments, and reviews, add strict privacy controls.
+
+Before payment/deposit:
+Buddy can see:
+- Traveler first name/display name
+- Approximate age range if needed
+- Trust Score
+- Languages
+- Booking request details
+- Public meetup area/neighborhood
+- Safety preferences needed for booking
+
+Buddy should not see:
+- Exact hotel room
+- Exact private address
+- Emergency contact
+- Full legal name
+- ID documents
+- Active precise location before booking starts
+
+Traveler can see:
+- Buddy display profile
+- Verification badges
+- Buddy categories
+- Approximate city/area
+- Reviews
+- Rates
+- Safety badges
+
+Traveler should not see:
+- Buddy legal name
+- ID documents
+- private address
+- personal phone/email unless both users choose to share outside platform, which should be discouraged
+
+Admin privacy:
+Admin access to precise location, ID status, safety events, and chat context should be role-restricted and audit-logged where possible.
+
+Add admin access log table if not already available:
+rent_buddy_admin_access_logs:
+- id
+- admin_user_id
+- accessed_user_id nullable
+- booking_id nullable
+- access_type
+- reason nullable
+- created_at
+
+Delayed posting integration:
+Connect Rent a Buddy with Delayed Location Posting.
+
+Rules:
+If a user creates a geotagged post during an active Rent a Buddy booking:
+- Default to “Post after I leave.”
+- Hide exact location by default.
+- Do not expose live meetup location.
+- Do not tag the Buddy publicly without Buddy approval.
+- Do not tag the traveler publicly without traveler approval.
+- If Safe Return is active, hold public posting until Safe Return ends or safety rules allow publish.
+- For nightlife, hotel, private lodging, or low-crowd venues, default to city/neighborhood only.
+
+Add UI copy:
+“Posts made during Rent a Buddy bookings are delayed by default to protect everyone’s real-time location.”
+
+Tagging consent:
+Add mutual tagging consent for Rent a Buddy posts, photos, videos, and reviews.
+
+Rules:
+- Traveler cannot publicly tag Buddy in a post without Buddy approval.
+- Buddy cannot publicly tag traveler without traveler approval.
+- Either user can hide the tag from their profile.
+- Either user can request removal of a tag.
+- If a booking is disputed or safety-flagged, hold public tags until resolved.
+- If user is blocked/suspended, remove or hide pending tags.
+
+Suggested table:
+rent_buddy_tag_consents:
+- id
+- booking_id
+- post_id nullable
+- requester_user_id
+- tagged_user_id
+- consent_status: pending, approved, declined, removed
+- requested_at
+- responded_at
+- removed_at
+
+Nightlife rules:
+Add stricter controls for Nightlife Buddy.
+
+Rules:
+- Manual category approval required.
+- Public meetup required.
+- Buddy cannot bring unapproved guests.
+- Traveler cannot bring unapproved guests beyond booking group.
+- Safe Return recommended or admin-required.
+- Higher deposit or full in-app payment can be required.
+- Route changes require approval.
+- Venue changes require approval.
+- Late-night end should trigger Safe Return prompt.
+- Repeated nightlife complaints trigger review even if Trust Score is high.
+
+Nightlife prohibited behavior:
+- Pressuring user to drink
+- Taking intoxicated user to unsafe/private location
+- Abandoning user mid-booking
+- Venue kickback scams
+- Surprise cover/table charges without approval
+- Private after-party pressure
+- Adult/romantic/sexual pressure
+- Drug-related requests
+
+Venue scam prevention:
+Track repeated complaints involving:
+- Overpriced bars
+- Forced purchases
+- Surprise charges
+- Buddy repeatedly routing users to same suspicious venue
+- Buddy refusing to leave venue
+- Traveler reporting pressure to buy bottles/items
+- Venue changes without approval
+
+Create policy/safety events for suspected venue scam patterns.
+
+Support/report windows:
+Set clear windows.
+
+Suggested defaults:
+- Review window: 7 days after completion
+- General report window: 7 days after completion
+- Payment/cash dispute window: 72 hours after completion
+- Safety issue report: always allowed, even after normal report window
+- Refund request window: based on cancellation/dispute policy
+
+Do not block serious safety reports because of time window.
+
+Support flows:
+Create structured support/dispute categories:
+- Buddy no-show
+- Traveler no-show
+- Cash not paid
+- Cash not received
+- Unsafe meetup
+- Harassment
+- Adult/romantic/sexual request
+- Off-app payment pressure
+- Illegal activity request
+- Wrong category/service not as described
+- Route changed without approval
+- Venue scam/surprise charges
+- Refund request
+- Fake profile
+- Emergency/safety concern
+- Other
+
+Support script templates:
+Add internal admin response templates for:
+- Buddy no-show
+- Traveler no-show
+- Cash balance dispute
+- Safety complaint
+- Adult-service policy violation
+- Off-app payment violation
+- Refund request
+- Venue scam complaint
+
+Keep templates editable by admin if possible.
+
+Repeat abuse detection:
+Add pattern detection jobs or queries for:
+- Same Buddy gets repeated private meetup complaints
+- Same Buddy gets repeated nightlife complaints
+- Same Buddy repeatedly cancels after acceptance
+- Same Buddy repeatedly routes users to same flagged venue
+- Same traveler repeatedly disputes cash balance
+- Same traveler repeatedly no-shows
+- Same user repeatedly asks for off-app payment
+- Same user repeatedly triggers adult-service keyword flags
+- Same user has high Trust Score but severe recent flags
+
+Important:
+A high Trust Score should not hide severe or repeated safety patterns.
+Create risk review status even if score remains high.
+
+Risk review statuses:
+- normal
+- watch
+- limited
+- under_review
+- suspended
+
+Tax/earnings export placeholder:
+For Buddies, add future-ready earning records.
+
+Show:
+- Monthly earnings summary
+- Yearly earnings summary
+- In-app collected
+- Cash confirmed
+- Platform fees
+- Tips
+- Disputed amounts
+- Pending/estimated payout
+
+If tax document generation is not supported yet:
+Show:
+“Tax documents are not available yet. Earnings summaries are estimates unless confirmed by payment provider.”
+
+Backend APIs:
+Launch/compliance:
+- GET /api/rent-buddy/availability/location
+- GET /api/rent-buddy/policy
+- GET /api/rent-buddy/launch-status
+- POST /api/admin/rent-buddy/launch-controls
+- PATCH /api/admin/rent-buddy/launch-controls/:id
+- GET /api/admin/rent-buddy/launch-controls
+
+Age/verification:
+- GET /api/rent-buddy/me/eligibility
+- GET /api/rent-buddy/bookings/:bookingId/eligibility
+- POST /api/admin/rent-buddy/users/:userId/verification-override if admin override system exists
+
+Privacy/tagging:
+- POST /api/rent-buddy/bookings/:bookingId/tag-consent
+- POST /api/rent-buddy/tag-consents/:id/approve
+- POST /api/rent-buddy/tag-consents/:id/decline
+- POST /api/rent-buddy/tag-consents/:id/remove
+- GET /api/rent-buddy/me/tag-consents
+
+Support:
+- POST /api/rent-buddy/bookings/:bookingId/support/report
+- GET /api/admin/rent-buddy/support/reports
+- POST /api/admin/rent-buddy/support/reports/:id/respond
+- POST /api/admin/rent-buddy/support/reports/:id/close
+
+Admin:
+- GET /api/admin/rent-buddy/risk-review
+- POST /api/admin/rent-buddy/users/:userId/risk-status
+- GET /api/admin/rent-buddy/venue-risk
+- GET /api/admin/rent-buddy/admin-access-logs
+
+UI:
+Traveler:
+- Show eligibility checklist before booking if requirements missing.
+- Show city/category availability status.
+- Show policy disclaimers before checkout.
+- Show delayed-posting safety note during active booking.
+- Show tag consent prompts.
+- Show report window and support categories.
+
+Buddy:
+- Show application eligibility checklist.
+- Show training checklist.
+- Show category-specific approval requirements.
+- Show nightlife requirements if applying for nightlife.
+- Show estimated earnings/tax summary.
+
+Admin:
+- Launch controls dashboard.
+- Country/city/category switches.
+- Age/verification rule controls.
+- Risk review dashboard.
+- Venue scam/risk dashboard.
+- Support report templates.
+- Admin access logs.
+
+Training checklist:
+Before Buddy approval, require checklist completion:
+- Non-dating/adult-service policy
+- Public meetup rules
+- Cash balance rules
+- Route change rules
+- No off-app payment
+- Handling intoxicated travelers
+- Harassment response
+- Emergency/Safe Return process
+- Tagging/photo consent
+- Privacy expectations
+
+Testing:
+Add tests for:
+- Under-18 user cannot book or apply.
+- Missing age verification blocks booking/application.
+- Nightlife category requires stricter age and manual approval.
+- Country-disabled Rent a Buddy blocks booking and application.
+- City waitlist mode allows waitlist but blocks paid booking.
+- Category-disabled state hides category and blocks direct route.
+- Buddy cannot see exact hotel/private location before confirmation.
+- Public APIs do not expose ID documents, legal names, or private coordinates.
+- Admin access to sensitive booking context is logged.
+- Delayed posting defaults on during active Rent a Buddy booking.
+- Buddy tag requires Buddy consent.
+- Traveler tag requires Traveler consent.
+- Disputed booking holds public tags.
+- Nightlife booking requires public meetup.
+- Transportation disclaimer appears on Arrival Buddy flow.
+- Tour-guide language avoids “licensed guide” unless verified.
+- Safety reports remain allowed after normal report window.
+- Payment dispute window works.
+- Repeat complaints trigger risk review even with high Trust Score.
+- High Trust Score does not bypass severe safety limits.
+- Buddy training checklist required before approval.
+- Support categories create structured reports.
+- Launch controls can be changed by admin.
+- MVP default launch controls are conservative.
+
+Acceptance criteria:
+- Rent a Buddy is adult-only and verification-gated.
+- Admin can safely launch by city, country, category, and payment mode.
+- Legal, emergency, adult-service, transportation, and guide disclaimers are visible in the right flows.
+- Privacy rules prevent exposing sensitive user identity/location data.
+- Delayed posting and tagging consent protect both traveler and Buddy.
+- Nightlife has stricter safety and approval rules.
+- Support/report windows and categories are clear.
+- Repeat abuse patterns create risk review even when Trust Score is high.
+- MVP launch defaults are conservative and safe.
+- Tests prove age, privacy, launch controls, compliance copy, delayed posting integration, tagging consent, and risk-review behavior.

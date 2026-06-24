@@ -1,0 +1,409 @@
+Build the Rent a Buddy MVP rollout, QA gate, and phased launch system.
+
+Goal:
+Create a controlled launch plan inside the app so Rent a Buddy can be tested safely city by city, category by category, and user group by user group before opening broadly.
+
+Feature flag:
+Use RENT_BUDDY_ENABLED.
+
+Also add rollout flags:
+- RENT_BUDDY_MVP_MODE
+- RENT_BUDDY_ADMIN_ONLY_MODE
+- RENT_BUDDY_BETA_ONLY_MODE
+- RENT_BUDDY_NIGHTLIFE_ENABLED
+- RENT_BUDDY_GROUP_BOOKINGS_ENABLED
+- RENT_BUDDY_CASH_BALANCE_ENABLED
+- RENT_BUDDY_PACKAGES_ENABLED
+- RENT_BUDDY_OFFERS_ENABLED
+- RENT_BUDDY_DELAYED_POSTING_REQUIRED
+
+MVP default:
+When MVP mode is enabled, only allow:
+- City Buddy
+- Language Buddy
+- Arrival Buddy
+- Shopping Buddy
+- Content Buddy
+
+Disable by default:
+- Nightlife Buddy
+- Group Buddy
+- Concierge/Luxury Buddy
+- Buddy packages
+- Buddy bidding/offers
+- Instant Buddy
+- Cash balance in high-risk cities/categories
+- Private meetup locations
+- Unverified travelers
+- Unverified Buddies
+
+MVP safety defaults:
+- 18+ only
+- Buddy ID verification required
+- Traveler phone/email verification required
+- Public meetup required
+- Deposit or full in-app payment required
+- Delayed geotag posting required during active bookings
+- Tagging consent required
+- Safe Return suggested for all bookings
+- Safe Return required for Arrival Buddy and any evening booking if admin enables it
+- Telegraph booking thread required
+- Admin review required for Buddy applications
+- Admin can manually approve early testers
+
+Beta access:
+Add Rent a Buddy beta access controls.
+
+Suggested table:
+rent_buddy_beta_access:
+- id
+- user_id
+- access_type: traveler, buddy, admin_tester, city_manager
+- city nullable
+- country_code nullable
+- status: invited, active, paused, revoked
+- invited_by_admin_id nullable
+- notes nullable
+- created_at
+- updated_at
+
+Rules:
+- If RENT_BUDDY_BETA_ONLY_MODE is true, only beta-approved users can use Rent a Buddy.
+- Traveler beta access allows booking.
+- Buddy beta access allows applying/accepting bookings.
+- Admin tester access allows testing flows without public visibility.
+- Revoked beta access immediately blocks new Rent a Buddy actions.
+
+City rollout dashboard:
+Admin can manage each launch city.
+
+City statuses:
+- disabled
+- waitlist_only
+- buddy_applications_open
+- internal_testing
+- beta_testing
+- public_mvp
+- paused
+- suspended
+
+For each city, admin can configure:
+- Enabled categories
+- Payment modes allowed
+- Cash balance allowed yes/no
+- Nightlife allowed yes/no
+- Group bookings allowed yes/no
+- Packages allowed yes/no
+- Minimum traveler age
+- Minimum Buddy age
+- Public meetup required
+- Safe Return required
+- Max booking duration
+- Max daily bookings per Buddy
+- Max active Buddies
+- Max daily traveler bookings
+- Manual review required
+
+Suggested table:
+rent_buddy_city_rollouts:
+- id
+- city
+- country_code
+- status
+- enabled_categories JSON
+- payment_modes_allowed JSON
+- cash_balance_enabled boolean
+- nightlife_enabled boolean
+- group_bookings_enabled boolean
+- packages_enabled boolean
+- min_traveler_age
+- min_buddy_age
+- public_meetup_required boolean
+- safe_return_required boolean
+- max_booking_duration_minutes
+- max_daily_bookings_per_buddy
+- max_active_buddies
+- max_daily_city_bookings
+- manual_review_required boolean
+- admin_notes
+- created_at
+- updated_at
+
+QA checklist:
+Create a Rent a Buddy launch QA checklist per city.
+
+Suggested table:
+rent_buddy_launch_checklists:
+- id
+- city_rollout_id
+- checklist_status: not_started, in_progress, passed, failed, blocked
+- buddy_application_flow_passed boolean
+- traveler_booking_flow_passed boolean
+- payment_flow_passed boolean
+- deposit_cash_flow_passed boolean
+- full_in_app_flow_passed boolean
+- safety_panel_passed boolean
+- telegraph_thread_passed boolean
+- delayed_posting_passed boolean
+- tagging_consent_passed boolean
+- admin_dispute_flow_passed boolean
+- policy_flag_flow_passed boolean
+- refund_placeholder_passed boolean
+- public_api_privacy_passed boolean
+- mobile_navigation_passed boolean
+- notes
+- tested_by_admin_id nullable
+- tested_at nullable
+- created_at
+- updated_at
+
+Launch gate:
+A city cannot move to public_mvp unless required QA checklist items pass.
+
+Required to pass:
+- Buddy application flow
+- Traveler booking flow
+- Payment/deposit confirmation
+- Public meetup enforcement
+- Active booking safety panel
+- Telegraph booking thread
+- Delayed posting protection
+- Tagging consent
+- Admin policy flag queue
+- Admin dispute queue
+- Public API privacy check
+- Feature flag behavior
+- Age/verification gate
+
+Admin can override only with:
+- OWNER role
+- Reason required
+- Audit log required
+
+Suggested table:
+rent_buddy_launch_audit_logs:
+- id
+- admin_user_id
+- action
+- city
+- country_code
+- previous_status nullable
+- new_status nullable
+- reason nullable
+- metadata JSON
+- created_at
+
+Internal test bookings:
+Allow admin testers to create test Rent a Buddy bookings without public visibility.
+
+Rules:
+- Test bookings must be clearly marked.
+- Test bookings should not affect public Trust Score.
+- Test bookings should not create real charges unless explicitly in payment test mode.
+- Test bookings should not appear in public Buddy completed booking count.
+- Test bookings can exercise safety, Telegraph, delayed posting, review, and dispute flows.
+
+Add field:
+is_test_booking boolean default false
+
+Test mode payment:
+If payment provider is not configured:
+- Test payment can simulate deposit/full payment only in development/test/admin test mode.
+- UI must show “Test payment” clearly.
+- Production public users cannot fake payment success.
+
+Smoke tests:
+Add an automated Rent a Buddy smoke test suite.
+
+Test these flows:
+1. Feature flag off hides entry points.
+2. City disabled blocks booking.
+3. City waitlist allows waitlist only.
+4. Underage user blocked.
+5. Unverified Buddy cannot accept booking.
+6. Public meetup required.
+7. Traveler cannot book themselves.
+8. Deposit required before confirmation.
+9. Active booking safety panel appears.
+10. Telegraph booking thread created.
+11. Delayed post created during booking stays pending.
+12. Tagging consent required.
+13. Report creates policy flag.
+14. Cash dispute creates dispute.
+15. Admin can pause city.
+16. Paused city blocks new bookings but preserves existing bookings.
+17. Admin can revoke beta access.
+
+Kill switch / pause behavior:
+Admin needs emergency controls.
+
+Add controls:
+- Pause all Rent a Buddy bookings globally
+- Pause new bookings in a city
+- Pause Buddy applications in a city
+- Pause a category
+- Disable cash balance globally
+- Disable nightlife globally
+- Force full in-app payment
+- Force public meetup only
+- Force delayed posting only
+- Put all active bookings into safety-monitor mode
+
+Pause behavior:
+When paused:
+- Existing confirmed bookings remain visible.
+- Users can still access safety tools.
+- Users can still access Telegraph booking thread.
+- Users can still complete/cancel/report existing bookings.
+- New bookings are blocked.
+- New applications are blocked if applications pause is enabled.
+- Admin sees reason for pause.
+
+Emergency global controls table:
+rent_buddy_global_controls:
+- id
+- rent_buddy_paused boolean
+- pause_reason nullable
+- new_bookings_paused boolean
+- applications_paused boolean
+- cash_balance_paused boolean
+- nightlife_paused boolean
+- force_full_in_app_payment boolean
+- force_public_meetup boolean
+- force_delayed_posting boolean
+- safety_monitor_mode boolean
+- updated_by_admin_id nullable
+- updated_at
+
+Honest user messages:
+If blocked:
+- “Rent a Buddy is not available in this city yet.”
+- “This category is not open in this city yet.”
+- “Rent a Buddy is paused while we review safety settings.”
+- “Cash balance is temporarily unavailable. Full in-app payment is required.”
+- “Nightlife Buddy is not available during the MVP launch.”
+- “Your beta access has been paused.”
+
+Metrics for launch decision:
+Admin dashboard should show:
+- Number of Buddy applications
+- Approved Buddies
+- Active Buddies by city
+- Traveler waitlist count
+- Booking requests
+- Confirmed bookings
+- Completed bookings
+- Cancellations
+- No-shows
+- Reports
+- Policy flags
+- Disputes
+- Cash balance disputes
+- Safety check-ins triggered
+- Delayed posts created
+- Tag consent requests
+- Average response time
+- Average rating
+- Repeat booking rate
+- Revenue collected in app
+- Cash balance confirmed
+- Refund requests
+
+MVP graduation rules:
+Add admin-facing checklist for when a city can graduate from MVP.
+
+Suggested graduation criteria:
+- At least 20 completed bookings
+- Less than 5% serious safety reports
+- Less than 10% dispute rate
+- At least 80% Buddy response rate
+- At least 4.5 average rating
+- No unresolved critical safety incident
+- Payment/cash disputes manageable
+- Admin support workflow tested
+- Delayed posting/privacy tests passed
+
+Do not auto-graduate cities. Show recommendations only.
+
+Backend APIs:
+Admin rollout:
+- GET /api/admin/rent-buddy/rollout/cities
+- POST /api/admin/rent-buddy/rollout/cities
+- PATCH /api/admin/rent-buddy/rollout/cities/:id
+- POST /api/admin/rent-buddy/rollout/cities/:id/advance-status
+- POST /api/admin/rent-buddy/rollout/cities/:id/pause
+- POST /api/admin/rent-buddy/rollout/cities/:id/resume
+
+Beta access:
+- GET /api/admin/rent-buddy/beta-access
+- POST /api/admin/rent-buddy/beta-access
+- PATCH /api/admin/rent-buddy/beta-access/:id
+- POST /api/admin/rent-buddy/beta-access/:id/revoke
+
+QA:
+- GET /api/admin/rent-buddy/qa/checklists
+- POST /api/admin/rent-buddy/qa/checklists
+- PATCH /api/admin/rent-buddy/qa/checklists/:id
+- POST /api/admin/rent-buddy/qa/checklists/:id/mark-passed
+- POST /api/admin/rent-buddy/qa/checklists/:id/mark-failed
+
+Global controls:
+- GET /api/admin/rent-buddy/global-controls
+- PATCH /api/admin/rent-buddy/global-controls
+
+Traveler:
+- GET /api/rent-buddy/launch-status
+- GET /api/rent-buddy/me/beta-status
+- POST /api/rent-buddy/waitlist
+
+UI:
+Admin:
+- Rent a Buddy Rollout Dashboard
+- City rollout status board
+- Beta access manager
+- QA checklist screen
+- Global pause/safety controls
+- MVP graduation metrics
+- Launch audit log
+
+Traveler:
+- City availability banner
+- Waitlist screen for unavailable cities
+- Clear blocked-state messaging
+
+Buddy:
+- Application availability by city
+- “Applications are closed/open in this city”
+- Beta invitation status
+
+Testing:
+Add tests for:
+- MVP mode disables non-MVP categories.
+- Beta-only mode blocks non-beta users.
+- Revoked beta access blocks new actions immediately.
+- City disabled blocks booking/application.
+- Waitlist mode allows waitlist but blocks paid booking.
+- Applications-open mode allows Buddy applications but blocks traveler bookings.
+- Beta-testing mode allows beta users only.
+- Public MVP requires QA checklist pass.
+- Owner override requires reason and audit log.
+- Global pause blocks new bookings but preserves existing booking safety tools.
+- City pause blocks new bookings in that city only.
+- Cash balance pause forces full in-app payment.
+- Nightlife pause hides/blocks Nightlife Buddy.
+- Test bookings do not affect public Trust Score or completed booking count.
+- Test payment cannot be used by public production users.
+- Launch metrics calculate correctly.
+- Admin rollout actions create audit logs.
+- Honest blocked-state messages render correctly.
+
+Acceptance criteria:
+- Rent a Buddy can launch safely city by city.
+- Admin can restrict by category, payment mode, age, city, country, beta access, and safety status.
+- MVP mode is conservative by default.
+- QA checklist gates public launch.
+- Admin has emergency pause controls.
+- Existing bookings remain safety-accessible during pauses.
+- Beta testers and internal test bookings are clearly separated from public users.
+- Launch dashboard shows enough data to decide whether to expand.
+- Tests prove rollout, pause, beta, QA, and MVP behavior.

@@ -395,6 +395,19 @@ export default function Settings() {
           </View>
         )}
 
+        {/* Rent a Buddy Admin (visible only to admin-role users; server enforces access) */}
+        {configured && isAuthed && (
+          <View style={{ gap: space.sm }}>
+            <Text style={styles.h}>Admin</Text>
+            <Pressable
+              style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => router.push('/(rent-a-buddy)/admin' as any)}
+            >
+              <Text style={styles.item}>Rent a Buddy Admin</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Standard settings groups */}
         {BASIC_GROUPS.map((g) => (
           <View key={g.h} style={{ gap: space.sm }}>

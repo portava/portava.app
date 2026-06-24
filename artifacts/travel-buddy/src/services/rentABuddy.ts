@@ -591,3 +591,16 @@ export async function setAvailabilitySettings(settings: AvailabilitySettings): P
     body: JSON.stringify(settings),
   });
 }
+
+/**
+ * Get or create a Telegraph thread for a rent-a-buddy booking.
+ * Returns the thread ID to navigate to messages/[id].tsx with
+ * threadType='rent_buddy_booking' and contextId=bookingId.
+ */
+export async function getOrCreateBookingThread(bookingId: string): Promise<ApiResult<{
+  threadId: string;
+  bookingId: string;
+  isNew: boolean;
+}>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/thread`, { method: 'POST' });
+}

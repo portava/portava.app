@@ -1003,6 +1003,89 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   return res.json({ ok: true });
 });
 
+// ── Bookings — Telegraph thread ───────────────────────────────────────────────
+// POST /api/rent-a-buddy/bookings/:bookingId/thread
+// Gets or creates the Telegraph thread for a rent-a-buddy booking.
+// Both the traveler and the buddy can call this to get the thread ID.
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+
+  // Fetch the booking — user must be the traveler or the buddy's user
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id, telegraph_thread_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  // Resolve the buddy's user_id so either party can access
+  const { data: buddyProfile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", (booking as any).buddy_id)
+    .maybeSingle();
+
+  const buddyUserId: string = (buddyProfile as any)?.user_id ?? "";
+  const isTraveler = (booking as any).traveler_id === auth.user.id;
+  const isBuddy = buddyUserId === auth.user.id;
+
+  if (!isTraveler && !isBuddy) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  // If a thread already exists, return it
+  if ((booking as any).telegraph_thread_id) {
+    return res.json({
+      threadId: (booking as any).telegraph_thread_id,
+      bookingId,
+      isNew: false,
+    });
+  }
+
+  // Create a new direct thread between traveler and buddy
+  // First look up or create a thread_members row
+  const otherUserId = isTraveler ? buddyUserId : (booking as any).traveler_id;
+
+  // Create a new message_threads row with type='direct' (rent_buddy context stored via booking link)
+  const { data: thread, error: threadErr } = await serviceClient
+    .from("message_threads")
+    .insert({
+      type: "direct",
+      created_by: auth.user.id,
+      title: null,
+    })
+    .select("id")
+    .single();
+
+  if (threadErr || !thread) {
+    req.log?.error({ err: threadErr }, "Failed to create booking thread");
+    return res.status(500).json({ error: "thread_creation_failed" });
+  }
+
+  const threadId: string = (thread as any).id;
+
+  // Add both members
+  await serviceClient.from("message_thread_members").insert([
+    { thread_id: threadId, user_id: auth.user.id },
+    { thread_id: threadId, user_id: otherUserId },
+  ]);
+
+  // Store thread ID on booking
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ telegraph_thread_id: threadId })
+    .eq("id", bookingId);
+
+  return res.json({ threadId, bookingId, isNew: true });
+});
+
 // ── Bookings — Cash balance confirmation ──────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) => {
