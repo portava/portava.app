@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { Sparkles, Send } from 'lucide-react-native';
+import { Sparkles, Send, Plane } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { aiOpening } from '../../src/data/cebu';
 import type { ChatMessage, AiRecommendation } from '../../src/types/models';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -28,6 +29,7 @@ function mockReply(prompt: string): ChatMessage {
 export default function AiChat() {
   const [msgs, setMsgs] = useState<ChatMessage[]>(aiOpening);
   const [input, setInput] = useState('');
+  const [layoverOpen, setLayoverOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
 
   function send() {
@@ -57,6 +59,9 @@ export default function AiChat() {
         )}
       </ScrollView>
       <View style={styles.inputBar}>
+        <Pressable style={styles.layoverBtn} onPress={() => setLayoverOpen(true)}>
+          <Plane size={16} color="#fff" />
+        </Pressable>
         <TextInput
           style={styles.input}
           placeholder="Ask about Cebu, your saves, or a plan…"
@@ -68,6 +73,11 @@ export default function AiChat() {
         />
         <Pressable style={styles.sendBtn} onPress={send}><Send size={18} color={color.onInk} /></Pressable>
       </View>
+
+      <LayoverModeSheet
+        visible={layoverOpen}
+        onClose={() => setLayoverOpen(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -110,4 +120,5 @@ const styles = StyleSheet.create({
   inputBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: color.haze, backgroundColor: color.paper },
   input: { flex: 1, ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.lg, paddingVertical: space.md },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  layoverBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#1565C0', alignItems: 'center', justifyContent: 'center' },
 });
