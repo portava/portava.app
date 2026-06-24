@@ -10,10 +10,12 @@ import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
+import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
+  const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -407,8 +409,8 @@ export default function Settings() {
           </View>
         )}
 
-        {/* Rent a Buddy Admin — only visible to users with admin role in profiles */}
-        {isAdmin && (
+        {/* Rent a Buddy Admin — only visible to admins when the feature flag is on */}
+        {isAdmin && rentBuddyEnabled && (
           <View style={{ gap: space.sm }}>
             <Text style={styles.h}>Admin</Text>
             <Pressable

@@ -765,6 +765,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res
   }
 
   // Record deposit intent — real Stripe integration wires here
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Deposit paid — your booking is secured.");
   return res.json({
     ok: true,
     depositUsd: Number(b.deposit_usd),
@@ -798,6 +799,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) =
     return res.status(400).json({ error: "invalid_payload", message: "Full payment can only be made for pending or confirmed bookings." });
   }
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Payment confirmed — your booking is fully secured.");
   return res.json({
     ok: true,
     totalUsd: Number(b.total_usd),
@@ -1324,6 +1326,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approv
     .eq("event_type", "route_change_unapproved")
     .eq("event_status", "open");
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_route_approved", "Route change approved — your itinerary has been updated.");
   return res.json({ ok: true });
 });
 
@@ -1453,6 +1456,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
     });
   }
 
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_review_requested", "Review submitted — helping build trust in the community.");
   return res.status(201).json({ review, unblinded });
 });
 
@@ -2299,6 +2303,55 @@ router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
   return res.json({ buddies: (data ?? []).map(mapProfile), total: count ?? 0 });
 });
 
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { buddyId } = req.params;
+  const { reason } = req.body ?? {};
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  if (!buddy) return res.status(404).json({ error: "not_found" });
+  await serviceClient.from("rent_buddy_profiles").update({ admin_status: "disabled", status: "suspended", updated_at: new Date().toISOString() }).eq("id", buddyId);
+  await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "suspended", notes: reason ?? null });
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reactivate", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { buddyId } = req.params;
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  if (!buddy) return res.status(404).json({ error: "not_found" });
+  await serviceClient.from("rent_buddy_profiles").update({ admin_status: "active", status: "active", updated_at: new Date().toISOString() }).eq("id", buddyId);
+  await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "reactivated", notes: null });
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/feature", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { buddyId } = req.params;
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  if (!buddy) return res.status(404).json({ error: "not_found" });
+  await serviceClient.from("rent_buddy_profiles").update({ featured: true, updated_at: new Date().toISOString() }).eq("id", buddyId);
+  await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "featured", notes: null });
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unfeature", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { buddyId } = req.params;
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  if (!buddy) return res.status(404).json({ error: "not_found" });
+  await serviceClient.from("rent_buddy_profiles").update({ featured: false, updated_at: new Date().toISOString() }).eq("id", buddyId);
+  await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "unfeatured", notes: null });
+  return res.json({ ok: true });
+});
+
 router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -2339,13 +2392,36 @@ router.get("/api/rent-a-buddy/admin/analytics", async (req, res) => {
 
   const totalRevenueUsd = (revenueData ?? []).reduce((s: number, r: any) => s + Number(r.total_usd ?? 0), 0);
 
+  const [{ data: bookingsForBreakdown }, { count: openFlagsCount }] = await Promise.all([
+    serviceClient.from("rent_buddy_bookings").select("status, city, category"),
+    serviceClient.from("rent_buddy_policy_flags").select("id", { count: "exact" }).eq("status", "open"),
+  ]);
+
+  const statusMap: Record<string, number> = {};
+  const cityMap: Record<string, number> = {};
+  const categoryMap: Record<string, number> = {};
+  for (const bk of bookingsForBreakdown ?? []) {
+    const b = bk as any;
+    statusMap[b.status] = (statusMap[b.status] ?? 0) + 1;
+    if (b.city) cityMap[b.city] = (cityMap[b.city] ?? 0) + 1;
+    if (b.category) categoryMap[b.category] = (categoryMap[b.category] ?? 0) + 1;
+  }
+  const bookingsByStatus = Object.entries(statusMap).map(([status, count]) => ({ status, count }));
+  const bookingsByCity = Object.entries(cityMap).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([city, count]) => ({ city, count }));
+  const bookingsByCategory = Object.entries(categoryMap).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([category, count]) => ({ category, count }));
+
   return res.json({
     totalBuddies: totalBuddies.count ?? 0,
     activeBuddies: activeBuddies.count ?? 0,
     totalBookings: totalBookings.count ?? 0,
     completedBookings: completedBookings.count ?? 0,
+    totalRevenue: totalRevenueUsd,
     totalRevenueUsd,
     pendingApplications: pendingApps.count ?? 0,
+    openFlags: openFlagsCount ?? 0,
+    bookingsByStatus,
+    bookingsByCity,
+    bookingsByCategory,
   });
 });
 
