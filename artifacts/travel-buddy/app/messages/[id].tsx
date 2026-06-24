@@ -774,8 +774,12 @@ function MessageBubble({
         />
         <RichText
           content={bodyToShow}
-          tags={item.tags}
-          hashtagUsages={item.hashtagUsages}
+          // Span positions are computed from the original body server-side.
+          // When showing a translation (isTranslated), the translated text has
+          // different character offsets, so we suppress spans to avoid
+          // misaligned or missing interactive links.
+          tags={isTranslated ? undefined : item.tags}
+          hashtagUsages={isTranslated ? undefined : item.hashtagUsages}
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}

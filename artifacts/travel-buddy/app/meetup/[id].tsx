@@ -24,6 +24,7 @@ import {
 import { DatePickerField } from '../../src/components/DateTimePickerField';
 import { useSession } from '../../src/context/SessionContext';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
+import { RichText } from '../../src/components/RichText';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
 
@@ -641,7 +642,14 @@ export default function MeetupScreen() {
               )}
             </View>
             <Text style={s.title}>{meetup.title}</Text>
-            {meetup.description ? <Text style={s.desc}>{meetup.description}</Text> : null}
+            {meetup.description ? (
+              <RichText
+                content={meetup.description}
+                tags={meetup.descriptionTags}
+                hashtagUsages={meetup.descriptionHashtags}
+                style={s.desc}
+              />
+            ) : null}
 
             {/* Creator row */}
             {meetup.creator ? (

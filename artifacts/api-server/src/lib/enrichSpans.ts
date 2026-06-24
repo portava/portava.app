@@ -10,8 +10,19 @@
  * that the client's RichText component uses for precise inline rendering.
  */
 
+/**
+ * Supported @mention entity types.
+ *
+ * **Current scope: `'user'` only.**
+ * The `tags` table stores only `tagged_user_id` (UUID), so only user-mention
+ * spans are emitted by `enrichSpans`.  The `event`, `circle`, `trip`, and
+ * `place` entity types are reserved for future schema extensions; this module
+ * will never emit those types until the backing DB tables support them.
+ */
+export type SpanEntityType = 'user';
+
 export interface SpanTag {
-  type: 'user';
+  type: SpanEntityType;
   /** User UUID — used for profile API calls. */
   id: string;
   /** The handle that appears after @ in the text — used for navigation + TagPreviewSheet. */

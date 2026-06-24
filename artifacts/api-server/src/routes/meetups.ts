@@ -21,6 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushNotification } from "../lib/push.js";
 import {
   getAgeEligibilityReason,
@@ -367,11 +368,19 @@ router.get("/meetups/:meetupId", async (req, res) => {
     }));
   }
 
+  // Enrich meetup description with positioned @mention + #hashtag spans
+  const descContent = meetup.description ?? '';
+  const descSpans = (sc && descContent)
+    ? (await enrichSpans(sc, 'meetup', [{ id: meetup.id, content: descContent }], user.id))[meetup.id]
+    : { tags: [], hashtagUsages: [] };
+
   res.json({
     id:              meetup.id,
     creatorId:       meetup.creator_id,
     title:           meetup.title,
     description:     meetup.description ?? null,
+    descriptionTags:     descSpans?.tags ?? [],
+    descriptionHashtags: descSpans?.hashtagUsages ?? [],
     locationName:    meetup.location_name ?? null,
     approximateDate: meetup.approximate_date ?? null,
     timeBlock:       meetup.time_block ?? null,

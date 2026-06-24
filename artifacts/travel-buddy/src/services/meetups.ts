@@ -17,6 +17,10 @@ export interface MeetupSummary {
   creatorId: string;
   title: string;
   description: string | null;
+  /** Positioned @mention spans for the description field (type: 'user' only). */
+  descriptionTags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
+  /** Positioned #hashtag spans for the description field. */
+  descriptionHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
   locationName: string | null;
   approximateDate: string | null;
   timeBlock: TimeBlock | null;
