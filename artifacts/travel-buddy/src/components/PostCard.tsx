@@ -7,6 +7,7 @@ import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui';
 import { ActionBar } from './ActionBar';
+import { RichText } from './RichText';
 
 /** Routes a post to the right card by kind. Hero falls back to standard if image too bright. */
 export function PostCard({ post }: { post: Post }) {
@@ -115,7 +116,7 @@ function StandardCard({ post }: { post: Post }) {
           {post.safetyNote && <Stamp label="safety" tone="signal" rotate={2} />}
           {post.rating != null && <Stamp label={'★'.repeat(post.rating)} tone="deep" rotate={2} />}
         </View>
-        {post.caption && <Text style={styles.caption}>{post.caption}</Text>}
+        {post.caption && <RichText content={post.caption} style={styles.caption} numberOfLines={5} />}
         <ActionBar
           liked={post.liked} saved={post.saved}
           likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
@@ -139,7 +140,7 @@ function QuestionCard({ post }: { post: Post }) {
         <Text style={styles.qLabel}>Question</Text>
       </View>
       <Text style={styles.qTitle}>{post.title}</Text>
-      {post.caption && <Text style={styles.qBody} numberOfLines={4}>{post.caption}</Text>}
+      {post.caption && <RichText content={post.caption} style={styles.qBody} numberOfLines={4} />}
       <View style={styles.qFooter}>
         <Text style={styles.qMeta}>{post.commentCount} answers</Text>
         <View style={{ flex: 1 }} />

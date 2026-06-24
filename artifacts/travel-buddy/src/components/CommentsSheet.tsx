@@ -32,6 +32,7 @@ import {
   deleteComment,
   type EngagementComment,
 } from '../services/postEngagement';
+import { RichText } from './RichText';
 
 interface Props {
   visible: boolean;
@@ -100,7 +101,7 @@ function CommentItem({
           <Text style={s.commentAuthor}>{comment.author.name}</Text>
           <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
         </View>
-        <Text style={s.commentText}>{comment.body}</Text>
+        <RichText content={comment.body} style={s.commentText} />
       </View>
       {comment.canDelete && (
         <Pressable

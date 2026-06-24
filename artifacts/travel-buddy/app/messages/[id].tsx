@@ -50,6 +50,7 @@ import { TranslationSettingsSheet } from '../../src/components/TranslationSettin
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
 import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
 import type { AnyMentionSuggestion } from '../../src/services/tagging';
+import { RichText } from '../../src/components/RichText';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 
@@ -771,9 +772,12 @@ function MessageBubble({
           style={[styles.translationFlash, StyleSheet.absoluteFillObject, { opacity: flashAnim }]}
           pointerEvents="none"
         />
-        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>
-          {bodyToShow}
-        </Text>
+        <RichText
+          content={bodyToShow}
+          style={[styles.bubbleText, mine && styles.bubbleTextMine]}
+          mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
+          hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
+        />
 
         <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
           {formatTime(item.createdAt)}
