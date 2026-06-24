@@ -11,6 +11,12 @@ import {
   createPostSchema,
   updatePostSchema,
   listPostsQuerySchema,
+  locationPrivacyPatchSchema,
+  sensitivityLevel,
+  defaultPrivacyMode,
+  geofenceRadius,
+  safeLocationLabel,
+  type LocationPrivacyMode,
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
@@ -82,9 +88,14 @@ router.post(
   },
 );
 
-// Columns returned to clients (never expose nothing extra; these are all safe).
+// Columns returned to clients. NEVER include original_lat/original_lng or
+// user_gps_lat/user_gps_lng — those are stored privately and must not leak.
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at";
+  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
+  "location_name, location_city, location_country, " +
+  "location_privacy_mode, post_status, " +
+  "public_lat, public_lng, public_location_label, venue_name, geofence_radius_meters, " +
+  "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level";
 
 /* ===========================================================================
  * POST /posts  — create a standalone or trip-attached post
@@ -107,10 +118,32 @@ router.post("/posts", async (req, res) => {
   const { content, mediaUrls, tripId, visibility } = parsed.data;
   const {
     mediaType, addToPassport, locationName, locationPlaceId, locationCity,
-    locationCountry, locationLat, locationLng, userGpsLat, userGpsLng, locationSource,
+    locationCountry, locationLat, locationLng, userGpsLat, userGpsLng,
+    locationSource: locationSrc,
     locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
+    locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
+    venueName, venueId,
   } = parsed.data;
+  const locationSource = locationSrc ?? 'none';
+
+  // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
+  const sens = sensitivityLevel(venueName ?? null);
+  const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);
+  const radius = geofenceRadius(sens, geofenceRadiusMeters ?? undefined);
+  const publicLabel = safeLocationLabel(locationName ?? null, locationCity ?? null, locationCountry ?? null, privacyMode, sens);
+
+  // Determine delayed-publish status from chosen privacy mode
+  let delayedStatus: string = 'published';
+  let publishAfterExitFlag = false;
+  let publishEligibleAt: string | null = null;
+  if (privacyMode === 'delayed_until_exit') {
+    delayedStatus = 'pending_location_exit';
+    publishAfterExitFlag = true;
+  } else if (privacyMode === 'delayed_until_time' && publishAfterTime) {
+    delayedStatus = 'pending_delay';
+    publishEligibleAt = publishAfterTime;
+  }
 
   // Trip-attached: verify existence + accepted membership BEFORE writing.
   if (tripId) {
@@ -155,7 +188,7 @@ router.post("/posts", async (req, res) => {
       // private GPS (internal only; never in public projections)
       user_gps_lat: userGpsLat ?? null,
       user_gps_lng: userGpsLng ?? null,
-      location_source: locationSource ?? 'none',
+      location_source: locationSource,
       // server-decided verification
       location_verified: verdict.locationVerified,
       location_verified_at: verdict.locationVerified ? new Date().toISOString() : null,
@@ -169,6 +202,21 @@ router.post("/posts", async (req, res) => {
       filter_intensity: filterIntensity ?? 100,
       media_thumbnail_url: mediaThumbnailUrl ?? null,
       media_duration_seconds: mediaDurationSeconds ?? null,
+      // ── delayed geotag fields ──────────────────────────────────────────────
+      location_privacy_mode: privacyMode,
+      geotag_verified: verdict.locationVerified,
+      geotag_credit_awarded: false, // set to true below after anti-abuse check
+      original_lat: locationLat ?? null,   // private — never in public SELECTs
+      original_lng: locationLng ?? null,   // private — never in public SELECTs
+      venue_id: venueId ?? null,
+      venue_name: venueName ?? null,
+      public_location_label: publicLabel,
+      geofence_radius_meters: radius,
+      publish_after_exit: publishAfterExitFlag,
+      publish_after_time: publishAfterTime ?? null,
+      publish_eligible_at: publishEligibleAt,
+      location_sensitivity_level: sens,
+      post_status: delayedStatus,
     })
     .select(POST_COLUMNS)
     .single();
@@ -306,10 +354,55 @@ router.post("/posts", async (req, res) => {
   });
 });
 
-// Safe public location labels (no GPS coordinates).
-const FOLLOWING_POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
-  "location_name, location_city, location_country";
+// Safe public location labels (no GPS coordinates). Same privacy contract as POST_COLUMNS.
+const FOLLOWING_POST_COLUMNS = POST_COLUMNS;
+
+// ── Delayed geotag helpers ────────────────────────────────────────────────────
+
+/** Append an event to the delayed_post_location_events table. Non-fatal. */
+async function logDelayedEvent(
+  db: any,
+  postId: string,
+  userId: string,
+  eventType: string,
+  extra?: { lat?: number; lng?: number; metadata?: Record<string, unknown> },
+): Promise<void> {
+  try {
+    await db.from("delayed_post_location_events").insert({
+      post_id: postId,
+      user_id: userId,
+      event_type: eventType,
+      lat: extra?.lat ?? null,
+      lng: extra?.lng ?? null,
+      metadata: extra?.metadata ?? null,
+    });
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Anti-abuse: check if the user has already received 3 geotag credits at the
+ * same venue in the last 24 hours. Returns true when the cap is hit.
+ */
+async function isGeotagCreditRateLimited(
+  db: any,
+  userId: string,
+  venueName: string | null,
+): Promise<boolean> {
+  if (!venueName) return false;
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+  try {
+    const { count } = await db
+      .from("delayed_post_location_events")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("event_type", "geotag_credit_awarded")
+      .gte("created_at", since)
+      .filter("metadata->>venue_name", "eq", venueName);
+    return (count ?? 0) >= 3;
+  } catch {
+    return false;
+  }
+}
 
 /* ===========================================================================
  * GET /posts  — global feed OR following feed
