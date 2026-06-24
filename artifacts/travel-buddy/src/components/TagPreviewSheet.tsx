@@ -25,11 +25,16 @@ import {
 } from '../services/hashtag';
 import type { RichTextEntityType } from './RichText';
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+/** Entity types that can be previewed in this sheet (superset of RichTextEntityType). */
+export type PreviewEntityType = RichTextEntityType | 'hashtag';
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 interface Props {
   visible: boolean;
-  type: RichTextEntityType;
+  type: PreviewEntityType;
   /** entity id — handle for users, slug for hashtags, UUID for everything else */
   id: string;
   /** display text from the span (used as fallback label for minimal cards) */

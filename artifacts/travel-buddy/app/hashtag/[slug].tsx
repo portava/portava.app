@@ -24,6 +24,7 @@ import {
   type FeedPlaceItem, type FeedCircleItem, type FeedTripItem,
 } from '../../src/services/hashtag';
 import { RichText } from '../../src/components/RichText';
+import { useLocationContext } from '../../src/context/LocationContext';
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
 
@@ -209,6 +210,7 @@ function FeedRow({ item }: { item: FeedItem }) {
 export default function HashtagFeedScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const insets = useSafeAreaInsets();
+  const { locationState } = useLocationContext();
 
   const [meta, setMeta] = useState<HashtagMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
@@ -249,7 +251,9 @@ export default function HashtagFeedScreen() {
         setFeedLoading(true);
         setFeedError(null);
       }
-      const res = await getHashtagFeed(slug, tab, sc, null, before ?? null);
+      // Pass city for scoped requests — locationState.city comes from GPS or manual selection.
+      const city = (sc === 'city' || sc === 'nearby') ? (locationState.city ?? null) : null;
+      const res = await getHashtagFeed(slug, tab, sc, city, before ?? null);
       if (before) {
         setLoadingMore(false);
       } else {
@@ -270,7 +274,7 @@ export default function HashtagFeedScreen() {
         setFeedError(res.error ?? 'Failed to load feed');
       }
     },
-    [slug],
+    [slug, locationState.city],
   );
 
   useEffect(() => {

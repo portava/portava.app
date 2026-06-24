@@ -1,122 +1,173 @@
 /**
- * RichText — inline renderer that turns @mention and #hashtag tokens into
- * tappable, styled spans. Short-press navigates; long-press opens TagPreviewSheet.
+ * RichText — renders user-generated text with tappable @mention and #hashtag spans.
  *
- * Two modes:
- *  1. Positional (preferred) — caller passes `spans` with startChar/endChar positions,
- *     allowing multi-word entity names (e.g. "@Trip Title") to render correctly.
- *  2. Regex fallback — when no spans are provided; handles @handle + #slug tokens only
- *     (single-word tokens, fine for user handles and hashtag slugs).
+ * Data model:
+ *   - `tags`          — @entity mentions from the `tags` table (start/end indices).
+ *   - `hashtagUsages` — #hashtag spans from the `hashtag_usage` table (start/end indices).
  *
- * Usage:
- *   // Regex fallback (no span data from backend yet)
- *   <RichText content={post.content} style={styles.caption} numberOfLines={4} />
+ * Fallback behaviour:
+ *   - When BOTH `tags` and `hashtagUsages` are absent (or empty), the content is
+ *     rendered as **plain text** with no interactivity. No regex auto-linking is applied.
+ *     This ensures that content without saved metadata is never spuriously linked.
  *
- *   // With positional spans from API
- *   <RichText content={msg.body} spans={msg.richSpans} style={styles.bubble} />
+ * Blocked / deleted / private entities:
+ *   - Tags or hashtags flagged as `isBlocked`, `isDeleted`, or `isPrivate` are
+ *     rendered as plain, non-interactive text with normal body styling.
+ *
+ * Short-press → navigate; long-press → TagPreviewSheet mini-card.
  */
 import React, { useState } from 'react';
 import { Text, StyleSheet, type TextStyle, type StyleProp } from 'react-native';
 import { router } from 'expo-router';
 import { color } from '../theme/tokens';
-import { TagPreviewSheet } from './TagPreviewSheet';
+import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Public types ───────────────────────────────────────────────────────────────
 
-export type RichTextEntityType = 'user' | 'event' | 'circle' | 'trip' | 'place' | 'hashtag';
+export type RichTextEntityType = 'user' | 'event' | 'circle' | 'trip' | 'place';
 
-/**
- * A positional span annotation from the API (e.g. from `tags` / `hashtag_usage` tables).
- * `id` is the entity's UUID for trips/circles/events/places, the handle for users,
- * and the slug for hashtags.
- */
-export interface RichTextSpan {
+/** A persisted @mention annotation returned by the API. */
+export interface RichTextTag {
+  /** The entity type of the tagged target. */
   type: RichTextEntityType;
+  /**
+   * For `user`: the handle (used for navigation and preview fetch).
+   * For all other types: the entity UUID (used for navigation).
+   */
   id: string;
-  displayText: string; // e.g. "@alice", "#travel", "@Sunset Dinner"
+  /** The text slice as it appears in `content`, e.g. "@alice" or "@Sunset Dinner". */
+  displayText: string;
   startChar: number;
   endChar: number;
+  /** When true the target is blocked by (or blocking) the viewer → render as plain text. */
+  isBlocked?: boolean;
+  /** When true the target has been deleted → render as plain text. */
+  isDeleted?: boolean;
+  /** When true the target is private/inaccessible → render as plain text. */
+  isPrivate?: boolean;
 }
 
-// ── Segment model ──────────────────────────────────────────────────────────────
-
-type TextSegment = { kind: 'text'; text: string };
-type SpanSegment = { kind: 'span'; span: RichTextSpan };
-type Segment = TextSegment | SpanSegment;
-
-function buildSegmentsFromSpans(content: string, spans: RichTextSpan[]): Segment[] {
-  const sorted = [...spans].sort((a, b) => a.startChar - b.startChar);
-  const segs: Segment[] = [];
-  let cursor = 0;
-  for (const span of sorted) {
-    const start = Math.max(0, Math.min(span.startChar, content.length));
-    const end   = Math.max(start, Math.min(span.endChar, content.length));
-    if (start > cursor) segs.push({ kind: 'text', text: content.slice(cursor, start) });
-    segs.push({ kind: 'span', span });
-    cursor = end;
-  }
-  if (cursor < content.length) segs.push({ kind: 'text', text: content.slice(cursor) });
-  return segs;
-}
-
-const SPAN_RE = /(@\w+|#[a-zA-Z0-9_]+)/g;
-
-function buildSegmentsFromRegex(content: string): Segment[] {
-  const parts = content.split(SPAN_RE);
-  return parts
-    .filter((p) => p.length > 0)
-    .map((p): Segment => {
-      if (p[0] === '@' && p.length > 1) {
-        return {
-          kind: 'span',
-          span: { type: 'user', id: p.slice(1), displayText: p, startChar: -1, endChar: -1 },
-        };
-      }
-      if (p[0] === '#' && p.length > 1) {
-        return {
-          kind: 'span',
-          span: { type: 'hashtag', id: p.slice(1), displayText: p, startChar: -1, endChar: -1 },
-        };
-      }
-      return { kind: 'text', text: p };
-    });
-}
-
-// ── Navigation helper ──────────────────────────────────────────────────────────
-
-function navigateTo(span: RichTextSpan) {
-  switch (span.type) {
-    case 'user':    router.push(`/u/${span.id}` as any); break;
-    case 'trip':    router.push(`/trip/${span.id}` as any); break;
-    case 'circle':  router.push(`/circle/${span.id}` as any); break;
-    case 'hashtag': router.push(`/hashtag/${span.id}` as any); break;
-    // event and place have no dedicated route yet — long-press preview only
-    default:        break;
-  }
-}
-
-// ── Component ──────────────────────────────────────────────────────────────────
-
-interface PreviewState {
-  span: RichTextSpan;
+/** A persisted #hashtag annotation returned by the API. */
+export interface RichTextHashtag {
+  /** The canonical slug without the `#` prefix. */
+  slug: string;
+  /** The text slice as it appears in `content`, e.g. "#travel". */
+  displayText: string;
+  startChar: number;
+  endChar: number;
+  /** When true the hashtag is blocked by the viewer → render as plain text. */
+  isBlocked?: boolean;
 }
 
 export interface RichTextProps {
   content: string;
-  /** Positional span annotations from the API. When provided, multi-word entity names work. */
-  spans?: RichTextSpan[];
+  /** @mention spans from the API. When absent and hashtagUsages also absent, renders plain text. */
+  tags?: RichTextTag[];
+  /** #hashtag spans from the API. When absent and tags also absent, renders plain text. */
+  hashtagUsages?: RichTextHashtag[];
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
   /** Suppress short-press navigation (long-press preview still works). */
   disableNavigation?: boolean;
-  /** Colour overrides for dark/inverted backgrounds (e.g. mine-bubble on signal red). */
+  /** Colour override for @mentions on dark/inverted backgrounds. */
   mentionColor?: string;
+  /** Colour override for #hashtags on dark/inverted backgrounds. */
   hashtagColor?: string;
 }
 
+// ── Internal segment types ─────────────────────────────────────────────────────
+
+type PlainSegment = { kind: 'plain'; text: string };
+type MentionSegment = {
+  kind: 'mention';
+  tag: RichTextTag;
+  interactive: boolean; // false when blocked/deleted/private
+};
+type HashtagSegment = {
+  kind: 'hashtag';
+  hashtag: RichTextHashtag;
+  interactive: boolean;
+};
+type Segment = PlainSegment | MentionSegment | HashtagSegment;
+
+// ── Segment builder ────────────────────────────────────────────────────────────
+
+type AnySpan =
+  | { kind: 'mention'; start: number; end: number; tag: RichTextTag }
+  | { kind: 'hashtag'; start: number; end: number; hashtag: RichTextHashtag };
+
+function buildSegments(
+  content: string,
+  tags: RichTextTag[],
+  hashtagUsages: RichTextHashtag[],
+): Segment[] {
+  const spans: AnySpan[] = [
+    ...tags.map((t) => ({
+      kind: 'mention' as const,
+      start: Math.max(0, Math.min(t.startChar, content.length)),
+      end:   Math.max(0, Math.min(t.endChar,   content.length)),
+      tag: t,
+    })),
+    ...hashtagUsages.map((h) => ({
+      kind: 'hashtag' as const,
+      start: Math.max(0, Math.min(h.startChar, content.length)),
+      end:   Math.max(0, Math.min(h.endChar,   content.length)),
+      hashtag: h,
+    })),
+  ].sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const segs: Segment[] = [];
+  let cursor = 0;
+
+  for (const sp of spans) {
+    if (sp.start < cursor) continue; // overlapping span — skip
+    if (sp.start > cursor) {
+      segs.push({ kind: 'plain', text: content.slice(cursor, sp.start) });
+    }
+    if (sp.kind === 'mention') {
+      const blocked = !!(sp.tag.isBlocked || sp.tag.isDeleted || sp.tag.isPrivate);
+      segs.push({ kind: 'mention', tag: sp.tag, interactive: !blocked });
+    } else {
+      segs.push({ kind: 'hashtag', hashtag: sp.hashtag, interactive: !sp.hashtag.isBlocked });
+    }
+    cursor = sp.end;
+  }
+
+  if (cursor < content.length) {
+    segs.push({ kind: 'plain', text: content.slice(cursor) });
+  }
+
+  return segs;
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────────
+
+function navigateTag(tag: RichTextTag) {
+  switch (tag.type) {
+    case 'user':   router.push(`/u/${tag.id}` as any); break;
+    case 'trip':   router.push(`/trip/${tag.id}` as any); break;
+    case 'circle': router.push(`/circle/${tag.id}` as any); break;
+    // event and place have no dedicated detail route yet
+    default: break;
+  }
+}
+
+function navigateHashtag(slug: string) {
+  router.push(`/hashtag/${slug}` as any);
+}
+
+// ── Preview state ──────────────────────────────────────────────────────────────
+
+type PreviewState =
+  | { kind: 'tag'; tag: RichTextTag }
+  | { kind: 'hashtag'; hashtag: RichTextHashtag };
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export function RichText({
   content,
-  spans,
+  tags,
+  hashtagUsages,
   style,
   numberOfLines,
   disableNavigation,
@@ -125,56 +176,89 @@ export function RichText({
 }: RichTextProps) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
-  const segments: Segment[] =
-    spans && spans.length > 0
-      ? buildSegmentsFromSpans(content, spans)
-      : buildSegmentsFromRegex(content);
+  const hasTags     = (tags?.length ?? 0) > 0;
+  const hasHashtags = (hashtagUsages?.length ?? 0) > 0;
 
-  const hasInteractiveSpan = segments.some((seg) => seg.kind === 'span');
-
-  function spanStyle(type: RichTextEntityType): { color: string; fontWeight: '600' } {
-    if (type === 'hashtag') return { color: hashtagColor ?? color.deep, fontWeight: '600' };
-    return { color: mentionColor ?? color.signal, fontWeight: '600' };
+  // ── Plain-text fast-path ─────────────────────────────────────────────────────
+  if (!hasTags && !hasHashtags) {
+    return <Text style={style} numberOfLines={numberOfLines}>{content}</Text>;
   }
 
-  const canNavigate = (span: RichTextSpan) =>
-    !disableNavigation && (span.type === 'user' || span.type === 'trip' ||
-      span.type === 'circle' || span.type === 'hashtag');
+  // ── Span-based rendering ─────────────────────────────────────────────────────
+  const segments = buildSegments(content, tags ?? [], hashtagUsages ?? []);
+
+  const canNavTag = (tag: RichTextTag) =>
+    !disableNavigation && (tag.type === 'user' || tag.type === 'trip' || tag.type === 'circle');
+
+  function renderSegment(seg: Segment, i: number): React.ReactNode {
+    if (seg.kind === 'plain') {
+      return <Text key={i}>{seg.text}</Text>;
+    }
+    if (seg.kind === 'mention') {
+      if (!seg.interactive) {
+        // Blocked / deleted / private → plain text
+        return <Text key={i}>{seg.tag.displayText}</Text>;
+      }
+      return (
+        <Text
+          key={i}
+          style={[_s.mention, mentionColor ? { color: mentionColor } : null]}
+          onPress={canNavTag(seg.tag) ? () => navigateTag(seg.tag) : undefined}
+          onLongPress={() => setPreview({ kind: 'tag', tag: seg.tag })}
+          suppressHighlighting={canNavTag(seg.tag)}
+        >
+          {seg.tag.displayText}
+        </Text>
+      );
+    }
+    // hashtag
+    if (!seg.interactive) {
+      return <Text key={i}>{seg.hashtag.displayText}</Text>;
+    }
+    return (
+      <Text
+        key={i}
+        style={[_s.hashtag, hashtagColor ? { color: hashtagColor } : null]}
+        onPress={!disableNavigation ? () => navigateHashtag(seg.hashtag.slug) : undefined}
+        onLongPress={() => setPreview({ kind: 'hashtag', hashtag: seg.hashtag })}
+        suppressHighlighting={!disableNavigation}
+      >
+        {seg.hashtag.displayText}
+      </Text>
+    );
+  }
+
+  function handleSheetNavigate() {
+    const p = preview;
+    setPreview(null);
+    if (!p) return;
+    if (p.kind === 'tag') navigateTag(p.tag);
+    else navigateHashtag(p.hashtag.slug);
+  }
+
+  const sheetType: PreviewEntityType = preview
+    ? preview.kind === 'tag' ? preview.tag.type : 'hashtag'
+    : 'hashtag';
+  const sheetId = preview
+    ? preview.kind === 'tag' ? preview.tag.id : preview.hashtag.slug
+    : '';
+  const sheetLabel = preview
+    ? preview.kind === 'tag' ? preview.tag.displayText : preview.hashtag.displayText
+    : '';
 
   return (
     <>
       <Text style={style} numberOfLines={numberOfLines}>
-        {segments.map((seg, i) => {
-          if (seg.kind === 'text') return <Text key={i}>{seg.text}</Text>;
-          const { span } = seg;
-          return (
-            <Text
-              key={i}
-              style={spanStyle(span.type)}
-              onPress={canNavigate(span) ? () => navigateTo(span) : undefined}
-              onLongPress={() => setPreview({ span })}
-              suppressHighlighting={canNavigate(span)}
-            >
-              {span.displayText}
-            </Text>
-          );
-        })}
+        {segments.map(renderSegment)}
       </Text>
-
-      {hasInteractiveSpan && (
-        <TagPreviewSheet
-          visible={!!preview}
-          type={preview?.span.type ?? 'hashtag'}
-          id={preview?.span.id ?? ''}
-          label={preview?.span.displayText ?? ''}
-          onClose={() => setPreview(null)}
-          onNavigate={() => {
-            const p = preview;
-            setPreview(null);
-            if (p) navigateTo(p.span);
-          }}
-        />
-      )}
+      <TagPreviewSheet
+        visible={!!preview}
+        type={sheetType}
+        id={sheetId}
+        label={sheetLabel}
+        onClose={() => setPreview(null)}
+        onNavigate={handleSheetNavigate}
+      />
     </>
   );
 }
