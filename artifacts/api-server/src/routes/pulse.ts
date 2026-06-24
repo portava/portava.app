@@ -20,7 +20,7 @@ import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
 
-const VALID_TABS = ["all", "city", "nearby", "neighborhood", "trip", "crew"] as const;
+const VALID_TABS = ["all", "city", "nearby", "neighborhood", "trip", "crew", "airport"] as const;
 type PulseTab = typeof VALID_TABS[number];
 
 // Visibility levels that each tab considers visible
@@ -31,12 +31,15 @@ const TAB_VISIBILITY: Record<PulseTab, string[] | null> = {
   neighborhood: ["neighborhood", "venue_tagged"],
   trip:         null,                                                       // trip_id IS NOT NULL filter instead
   crew:         null,                                                       // followed-users filter instead
+  airport:      null,                                                       // airport city filter from query param
 };
 
 const pulseQuerySchema = z.object({
   tab:    z.enum(VALID_TABS).optional().default("all"),
   limit:  z.coerce.number().int().min(1).max(50).optional().default(20),
   before: z.string().datetime().optional(),
+  // airport tab: filter by airport city
+  airportCity: z.string().max(100).optional(),
 });
 
 // Safe columns — exact GPS is never projected
@@ -60,7 +63,7 @@ router.get("/pulse", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
     return;
   }
-  const { tab, limit, before } = parsed.data;
+  const { tab, limit, before, airportCity } = parsed.data;
 
   // For crew tab we need the followed-user IDs first
   let crewIds: string[] | null = null;
@@ -101,6 +104,8 @@ router.get("/pulse", async (req, res) => {
     query = query.not("trip_id", "is", null);
   } else if (tab === "crew" && crewIds) {
     query = query.in("author_id", crewIds);
+  } else if (tab === "airport" && airportCity) {
+    query = query.ilike("location_city", `%${airportCity}%`);
   }
 
   const { data, error } = await query;

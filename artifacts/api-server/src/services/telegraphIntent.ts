@@ -7,7 +7,8 @@
  * Intent types (stable string enum used across backend + DB):
  *   find_place | suggest_activity | create_meetup | add_to_plan |
  *   time_poll | availability_match | nightlife | food |
- *   attraction | beach | transport | general_plan
+ *   attraction | beach | transport | general_plan |
+ *   layover_activity | layover_food | layover_meetup
  */
 
 export type IntentType =
@@ -22,7 +23,10 @@ export type IntentType =
   | 'attraction'
   | 'beach'
   | 'transport'
-  | 'general_plan';
+  | 'general_plan'
+  | 'layover_activity'
+  | 'layover_food'
+  | 'layover_meetup';
 
 export interface IntentResult {
   intent: IntentType;
@@ -151,6 +155,42 @@ const PATTERNS: Array<{
       /\bhow\s+far\s+is\b/i,
     ],
   },
+  // ── Layover intents ──────────────────────────────────────────────────────────
+  {
+    intent: 'layover_activity',
+    confidence: 0.9,
+    patterns: [
+      /\blayover\b/i,
+      /\bstopover\b/i,
+      /\bconnecting\s+flight\b/i,
+      /\bhours?\s+(at|in)\s+the\s+airport\b/i,
+      /\bcan\s+i\s+leave\s+the\s+airport\b/i,
+      /\bwhat\s+can\s+i\s+do\s+(at|in|during)\s+(the\s+)?airport\b/i,
+      /\bairport\s+layover\b/i,
+      /\btransit\s+(visa|time)\b/i,
+    ],
+  },
+  {
+    intent: 'layover_food',
+    confidence: 0.85,
+    patterns: [
+      /\beat\s+(at|near|around)\s+the\s+airport\b/i,
+      /\bgood\s+(food|restaurant|dining)\s+at\s+the\s+airport\b/i,
+      /\blayover\s+(food|lunch|dinner|breakfast)\b/i,
+      /\bairport\s+(restaurant|food|eat)\b/i,
+    ],
+  },
+  {
+    intent: 'layover_meetup',
+    confidence: 0.85,
+    patterns: [
+      /\bmeet\s+(at|near)\s+the\s+airport\b/i,
+      /\blayover\s+meetup\b/i,
+      /\bconnect\s+(at|near|during)\s+(my\s+)?layover\b/i,
+      /\bcatch\s+up\s+(at|near)\s+the\s+airport\b/i,
+    ],
+  },
+
   {
     intent: 'find_place',
     confidence: 0.6,
