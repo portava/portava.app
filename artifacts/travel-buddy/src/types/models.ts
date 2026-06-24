@@ -640,7 +640,8 @@ export interface TripDetail {
 
 export type PulseItemType =
   | 'post' | 'question' | 'plan' | 'hidden_gem' | 'itinerary'
-  | 'circle_activity' | 'compass_suggestion' | 'city_note' | 'safety';
+  | 'circle_activity' | 'compass_suggestion' | 'city_note' | 'safety'
+  | 'rent_a_buddy';
 
 export type PulseSource = 'user' | 'circle' | 'compass' | 'seed' | 'editorial';
 

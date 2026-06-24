@@ -308,6 +308,28 @@ function SafetyCard({ item }: { item: PulseFeedItem }) {
   );
 }
 
+/* ── Rent a Buddy promotional card ── */
+function RentABuddyCard({ item }: { item: PulseFeedItem }) {
+  return (
+    <View style={[s.card, rab.card]}>
+      <View style={rab.head}>
+        <View style={rab.stamp}><Text style={rab.stampText}>RENT A BUDDY</Text></View>
+        <Text style={rab.title}>Connect with a local who knows the city</Text>
+        <Text style={rab.sub}>Arrival help, city tours, nightlife, language support & more in {item.city}.</Text>
+      </View>
+      <View style={rab.ctaRow}>
+        <Pressable style={rab.ctaSolid} onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
+          <Users size={13} color="#fff" />
+          <Text style={rab.ctaSolidText}>Find a Buddy</Text>
+        </Pressable>
+        <Pressable style={rab.ctaOutline} onPress={() => router.push('/(rent-a-buddy)/become' as any)}>
+          <Text style={rab.ctaOutlineText}>Become a Buddy</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 /* ── Unified renderer: switch on type ── */
 export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
   switch (item.type) {
@@ -320,6 +342,7 @@ export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
     case 'compass_suggestion': return item.reason ? <CompassCard item={item} /> : null; // stub: only with real reason
     case 'city_note': return item.isProvisional ? <CityNoteCard item={item} /> : null;  // stub: only provisional-labeled
     case 'safety': return item.blurb ? <SafetyCard item={item} /> : null;               // stub: only when condition exists
+    case 'rent_a_buddy': return <RentABuddyCard item={item} />;
     default: return null;
   }
 }
@@ -393,4 +416,18 @@ const s = StyleSheet.create({
   safetyCard: { backgroundColor: '#FBF6EC', borderColor: '#EAD9B5' },
   safetyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   safetyLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.warn, letterSpacing: 1 },
+});
+
+const rab = StyleSheet.create({
+  card: { backgroundColor: '#FFF5F5', borderColor: '#E53935' + '30' },
+  head: { gap: 4 },
+  stamp: { alignSelf: 'flex-start', backgroundColor: '#E53935', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, transform: [{ rotate: '-1deg' }], marginBottom: 4 },
+  stampText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: '#fff', letterSpacing: 1.5 },
+  title: { ...t.bodyStrong, color: color.ink, fontSize: 16 },
+  sub: { ...t.small, color: color.mute, fontSize: 12 },
+  ctaRow: { flexDirection: 'row', gap: space.sm, marginTop: 2 },
+  ctaSolid: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#E53935', borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8 },
+  ctaSolidText: { ...t.small, fontWeight: '800', color: '#fff', fontSize: 12 },
+  ctaOutline: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#E53935', borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8 },
+  ctaOutlineText: { ...t.small, fontWeight: '800', color: '#E53935', fontSize: 12 },
 });

@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, MessageCircle } from 'lucide-react-native';
+import { Share2, MessageCircle, Users } from 'lucide-react-native';
+import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { NotificationBell } from '../../src/components/NotificationBell';
@@ -45,6 +46,7 @@ const TABS: { key: Tab; label: string }[] = [
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
   const { userId: ownUserId } = useSession();
+  const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const [tab, setTab] = useState<Tab>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -198,6 +200,7 @@ export default function PassportScreen() {
           allHighlightsViewed={allOwnHighlightsViewed}
           onHighlightRingPress={handleOwnRingPress}
           onNewHighlightPress={handleNewHighlightPress}
+          rentBuddyEnabled={rentBuddyEnabled}
         />
         <HighlightViewer
           visible={highlightViewerOpen}
@@ -251,6 +254,7 @@ export default function PassportScreen() {
         allHighlightsViewed={allOwnHighlightsViewed}
         onHighlightRingPress={handleOwnRingPress}
         onNewHighlightPress={handleNewHighlightPress}
+        rentBuddyEnabled={rentBuddyEnabled}
       />
       <HighlightViewer
         visible={highlightViewerOpen}
@@ -280,7 +284,7 @@ function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
   settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
-  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
+  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress, rentBuddyEnabled,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -305,6 +309,7 @@ function PassportContent({
   allHighlightsViewed?: boolean;
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
+  rentBuddyEnabled?: boolean;
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
@@ -355,6 +360,20 @@ function PassportContent({
             </View>
           )}
         </Pressable>
+
+        {/* Rent a Buddy entry point — flag-gated */}
+        {rentBuddyEnabled && (
+          <Pressable style={styles.buddyRow} onPress={() => router.push('/(rent-a-buddy)/become' as any)}>
+            <View style={[styles.telegraphIcon, { backgroundColor: '#FFF0ED' }]}>
+              <Users size={18} color={color.signal} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.telegraphTitle}>Rent a Buddy</Text>
+              <Text style={styles.telegraphSub}>Become a local Buddy or find one for your trip</Text>
+            </View>
+            <Text style={styles.buddyArrow}>→</Text>
+          </Pressable>
+        )}
 
         {/* Profile completion prompt (owner only) */}
         <ProfileCompletionCard
@@ -544,6 +563,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
   },
   telegraphBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+
+  buddyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginHorizontal: space.lg,
+    marginTop: space.xs,
+    marginBottom: space.xs,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: color.signal + '30',
+    borderRadius: 14,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+  },
+  buddyArrow: { ...t.bodyStrong, color: color.signal, fontSize: 16 },
 
   tabBarWrap: { marginTop: space.md },
   tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },

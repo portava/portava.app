@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar, Plane } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users } from 'lucide-react-native';
+import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas,
@@ -30,6 +31,7 @@ export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const { configured, isAuthed, userId } = useSession();
+  const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const { invites } = usePendingTripInvites();
@@ -205,6 +207,17 @@ export default function TripDetail() {
           <Text style={styles.layoverBannerText}>Got a layover at this destination? Plan it →</Text>
         </Pressable>
 
+        {/* Need someone local? — Rent a Buddy entry (flag-gated) */}
+        {rentBuddyEnabled && (
+          <NeedSomeoneLocalSection
+            city={trip.destinationCity}
+            tripId={trip.id}
+            startDate={realTrip?.startDate ?? undefined}
+            endDate={realTrip?.endDate ?? undefined}
+            groupSize={String((Array.isArray(tripCircle.inCity) ? tripCircle.inCity.length : tripCircle.inCity) + 1)}
+          />
+        )}
+
         <CompassTripBrief />
         <TripStamps stamps={tripStamps} />
         <TripMapPlaceholder />
@@ -234,6 +247,64 @@ export default function TripDetail() {
     </View>
   );
 }
+
+function NeedSomeoneLocalSection({
+  city, tripId, startDate, endDate, groupSize, travelerLanguage,
+}: {
+  city?: string | null;
+  tripId: string;
+  startDate?: string;
+  endDate?: string;
+  groupSize?: string;
+  travelerLanguage?: string;
+}) {
+  const CATEGORIES = [
+    { key: 'arrival', label: 'Arrival Buddy' },
+    { key: 'city', label: 'City Buddy' },
+    { key: 'nightlife', label: 'Nightlife Buddy' },
+    { key: 'language', label: 'Language Buddy' },
+    { key: 'content', label: 'Content Buddy' },
+  ] as const;
+
+  function handleCategoryPress(category: string) {
+    const params = new URLSearchParams({ city: city ?? '', category, tripId });
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    if (groupSize) params.set('groupSize', groupSize);
+    if (travelerLanguage) params.set('lang', travelerLanguage);
+    router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+  }
+
+  return (
+    <View style={nl.wrap}>
+      <View style={nl.head}>
+        <View style={nl.stamp}><Text style={nl.stampText}>RENT A BUDDY</Text></View>
+        <Text style={nl.title}>Need someone local?</Text>
+        <Text style={nl.sub}>{city ? `Find a buddy in ${city}` : 'Find a local buddy for your trip'}</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={nl.chips}>
+        {CATEGORIES.map((c) => (
+          <Pressable key={c.key} style={nl.chip} onPress={() => handleCategoryPress(c.key)}>
+            <Users size={12} color={color.signal} />
+            <Text style={nl.chipText}>{c.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+const nl = StyleSheet.create({
+  wrap: { marginHorizontal: space.lg, marginTop: space.xl, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: color.signal + '30', padding: space.md, gap: space.sm },
+  head: { gap: 4 },
+  stamp: { alignSelf: 'flex-start', backgroundColor: color.signal, paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: 4, transform: [{ rotate: '-1deg' }], marginBottom: space.xs },
+  stampText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: '#fff', letterSpacing: 1.5 },
+  title: { ...t.bodyStrong, color: color.ink, fontSize: 16 },
+  sub: { ...t.small, color: color.mute },
+  chips: { gap: space.sm, paddingVertical: space.xs },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1.5, borderColor: color.signal, borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 7, backgroundColor: '#fff' },
+  chipText: { ...t.small, fontWeight: '700', color: color.signal, fontSize: 12 },
+});
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm, backgroundColor: color.paper, borderBottomWidth: 1, borderBottomColor: color.haze },

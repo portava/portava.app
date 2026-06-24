@@ -12,6 +12,7 @@ import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
 import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
+import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import { filterPulseFeed } from '../../src/lib/recommend';
@@ -23,7 +24,7 @@ import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { Plane } from 'lucide-react-native';
+import { Plane, Users, MapPin } from 'lucide-react-native';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -76,6 +77,7 @@ export default function Pulse() {
   const [createOpen, setCreateOpen] = useState(false);
   const [layoverSheetOpen, setLayoverSheetOpen] = useState(false);
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
+  const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? 'Cebu City';
@@ -131,7 +133,23 @@ export default function Pulse() {
     [followingFeed.data],
   );
 
-  const feed = feedMode === 'following' ? followingItems : forYouFeed;
+  const baseFeed = feedMode === 'following' ? followingItems : forYouFeed;
+
+  // Inject a synthetic rent_a_buddy feed item (rendered by PulseFeedCard switch) at position 3
+  const feed = useMemo<PulseFeedItem[]>(() => {
+    if (!rentBuddyEnabled || feedMode === 'following') return baseFeed;
+    const buddyItem: PulseFeedItem = {
+      id: '__rent_a_buddy__',
+      type: 'rent_a_buddy',
+      city: activeCity,
+      createdAt: new Date().toISOString(),
+      tags: [],
+      source: 'editorial',
+    };
+    const insertAt = Math.min(3, baseFeed.length);
+    return [...baseFeed.slice(0, insertAt), buddyItem, ...baseFeed.slice(insertAt)];
+  }, [baseFeed, rentBuddyEnabled, feedMode, activeCity]);
+
   const filterCount = active.filter((f) => f !== 'All').length;
 
   function toggleQuick(f: PulseFilter) {
@@ -179,6 +197,55 @@ export default function Pulse() {
         <Plane size={16} color="#1565C0" />
         <Text style={styles.layoverBannerText}>Got a layover? Get activities, safety tips & more →</Text>
       </Pressable>
+
+      {/* Available Buddies in [City] — city-level buddy module shown below Layover banner */}
+      {rentBuddyEnabled && (
+        <View style={styles.buddyModule}>
+          {/* Module header */}
+          <View style={styles.buddyModuleHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity}</Text>
+              <Text style={styles.buddyModuleCount}>12 locals ready to help</Text>
+            </View>
+            <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
+              <Text style={styles.buddyModuleViewAll}>View all →</Text>
+            </Pressable>
+          </View>
+          {/* Top category chips */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.buddyCategoryRow}>
+            {['Arrival Help', 'City Tour', 'Nightlife', 'Language', 'Content'].map((cat) => (
+              <Pressable
+                key={cat}
+                style={styles.buddyCategoryChip}
+                onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity)}&category=${cat.toLowerCase().replace(/\s+/g, '_')}` as any)}
+              >
+                <Text style={styles.buddyCategoryText}>{cat}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          {/* 3 preview buddy cards */}
+          <View style={styles.buddyPreviewRow}>
+            {[
+              { name: 'Marco T.', category: 'City Tour', rating: '4.9' },
+              { name: 'Ana R.', category: 'Arrival Help', rating: '5.0' },
+              { name: 'Jin S.', category: 'Nightlife', rating: '4.8' },
+            ].map((buddy) => (
+              <Pressable
+                key={buddy.name}
+                style={styles.buddyPreviewCard}
+                onPress={() => router.push('/(rent-a-buddy)/search' as any)}
+              >
+                <View style={styles.buddyPreviewAvatar} />
+                <Text style={styles.buddyPreviewName} numberOfLines={1}>{buddy.name}</Text>
+                <Text style={styles.buddyPreviewCat} numberOfLines={1}>{buddy.category}</Text>
+                <View style={styles.buddyPreviewRating}>
+                  <Text style={styles.buddyPreviewRatingText}>★ {buddy.rating}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* Pulse Wall — feed mode toggle + quick filters */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
@@ -341,4 +408,20 @@ const styles = StyleSheet.create({
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  /* Available Buddies in [City] module */
+  buddyModule: { marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: '#E5393530', padding: space.md, gap: space.sm },
+  buddyModuleHead: { flexDirection: 'row', alignItems: 'flex-start' },
+  buddyModuleTitle: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  buddyModuleCount: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
+  buddyModuleViewAll: { ...t.small, color: '#E53935', fontWeight: '700', fontSize: 12 },
+  buddyCategoryRow: { gap: space.sm },
+  buddyCategoryChip: { borderWidth: 1.5, borderColor: '#E53935', borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 5, backgroundColor: '#fff' },
+  buddyCategoryText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 11 },
+  buddyPreviewRow: { flexDirection: 'row', gap: space.sm },
+  buddyPreviewCard: { flex: 1, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: color.haze, padding: space.sm, alignItems: 'center', gap: 3 },
+  buddyPreviewAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: color.haze, marginBottom: 2 },
+  buddyPreviewName: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 11 },
+  buddyPreviewCat: { ...t.small, color: color.mute, fontSize: 10 },
+  buddyPreviewRating: { backgroundColor: '#FFF3CD', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+  buddyPreviewRatingText: { ...t.small, color: '#9A6700', fontWeight: '700', fontSize: 10 },
 });
