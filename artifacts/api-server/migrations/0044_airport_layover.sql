@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS layover_recommendations (
   rec_type          TEXT        NOT NULL
                       CHECK (rec_type IN (
                         'inside_airport','near_airport','food','rest',
-                        'quick_city_escape','meetup','hidden_gem','activity'
+                        'quick_city_escape','meetup','hidden_gem','activity',
+                        'nightlife'
                       )),
   title             TEXT        NOT NULL,
   description       TEXT,

@@ -74,6 +74,51 @@ async function requireAdminGuard(req: any, res: any): Promise<{ userId: string; 
 
 const router = Router();
 
+// ── Airport profile resolution helper ────────────────────────────────────────
+/**
+ * Resolves airport profile from session.airportId (real DB row with admin-
+ * configured buffers), falling back to a defaults profile built from manual
+ * fields. Used by safety, compass, return-deadline, and plan endpoints.
+ */
+async function resolveAirportForSession(sc: any, session: any) {
+  if (session.airportId) {
+    try {
+      const { data } = await sc
+        .from("airport_profiles")
+        .select("*")
+        .eq("id", session.airportId)
+        .maybeSingle();
+      if (data) {
+        return {
+          id: (data as any).id,
+          iataCode: (data as any).iata_code,
+          name: (data as any).name,
+          city: (data as any).city,
+          country: (data as any).country,
+          countryCode: (data as any).country_code,
+          timezone: (data as any).timezone ?? "UTC",
+          lat: Number((data as any).lat),
+          lng: Number((data as any).lng),
+          domesticBufferMin: (data as any).domestic_buffer_min ?? 60,
+          domesticBufferMax: (data as any).domestic_buffer_max ?? 90,
+          internationalBufferMin: (data as any).international_buffer_min ?? 120,
+          internationalBufferMax: (data as any).international_buffer_max ?? 180,
+          immigrationExtraMin: (data as any).immigration_extra_min ?? 30,
+          checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
+          trafficExtraMin: (data as any).traffic_extra_min ?? 20,
+          verified: Boolean((data as any).verified),
+        };
+      }
+    } catch { /* fall through to fallback */ }
+  }
+  return buildFallbackProfile({
+    iataCode: session.manualIata    ?? "UNK",
+    city:     session.manualCity    ?? "Unknown",
+    country:  session.manualCountry ?? "Unknown",
+    name:     session.manualAirportName ?? "Unknown Airport",
+  });
+}
+
 // ── Feature flag helper ────────────────────────────────────────────────────────
 
 async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<boolean> {
@@ -360,14 +405,14 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     res.json({ featureEnabled: false }); return;
   }
 
+  if (!await isFlagEnabled(sc, "layover_safety_engine_enabled")) {
+    res.json({ featureEnabled: false }); return;
+  }
+
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = buildFallbackProfile({
-    iataCode: session.manualIata ?? "UNK",
-    city:     session.manualCity ?? "Unknown",
-    country:  session.manualCountry ?? "Unknown",
-  });
+  const airport = await resolveAirportForSession(sc, session);
 
   // Assess a generic "leaving airport" activity to get overall safety
   const a = assess(airport, session, {
@@ -416,11 +461,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = buildFallbackProfile({
-    iataCode: session.manualIata ?? "UNK",
-    city:     session.manualCity ?? "Unknown",
-    country:  session.manualCountry ?? "Unknown",
-  });
+  const airport = await resolveAirportForSession(sc, session);
 
   const answer = await answerLayoverQuestion(sc, { question: parsed.data.question, session, airport });
 
@@ -503,11 +544,7 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = buildFallbackProfile({
-    iataCode: session.manualIata ?? "UNK",
-    city:     session.manualCity ?? "Unknown",
-    country:  session.manualCountry ?? "Unknown",
-  });
+  const airport = await resolveAirportForSession(sc, session);
 
   const { computeBuffer: compute } = await import("../services/airport/LayoverSafetyEngine.js");
   const breakdown = compute(airport, session, new Date(session.departureTime));
@@ -682,6 +719,108 @@ router.get("/admin/airport/profiles", async (req, res) => {
 
   const { data } = await sc.from("airport_profiles").select("*").order("name");
   res.json({ profiles: data ?? [] });
+});
+
+// ── Admin: PATCH /api/admin/airport/profiles/:id ────────────────────────────
+
+const patchProfileSchema = z.object({
+  name:                    z.string().min(1).max(200).optional(),
+  city:                    z.string().max(100).optional(),
+  country:                 z.string().max(100).optional(),
+  timezone:                z.string().max(50).optional(),
+  domesticBufferMin:       z.number().int().min(0).max(240).optional(),
+  domesticBufferMax:       z.number().int().min(0).max(360).optional(),
+  internationalBufferMin:  z.number().int().min(0).max(360).optional(),
+  internationalBufferMax:  z.number().int().min(0).max(480).optional(),
+  immigrationExtraMin:     z.number().int().min(0).max(120).optional(),
+  checkedBagsExtraMin:     z.number().int().min(0).max(60).optional(),
+  trafficExtraMin:         z.number().int().min(0).max(60).optional(),
+  verified:                z.boolean().optional(),
+});
+
+router.patch("/admin/airport/profiles/:id", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = patchProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const updates: Record<string, unknown> = {};
+  const d = parsed.data;
+  if (d.name !== undefined)                   updates.name                    = d.name;
+  if (d.city !== undefined)                   updates.city                    = d.city;
+  if (d.country !== undefined)                updates.country                 = d.country;
+  if (d.timezone !== undefined)               updates.timezone                = d.timezone;
+  if (d.domesticBufferMin !== undefined)      updates.domestic_buffer_min     = d.domesticBufferMin;
+  if (d.domesticBufferMax !== undefined)      updates.domestic_buffer_max     = d.domesticBufferMax;
+  if (d.internationalBufferMin !== undefined) updates.international_buffer_min = d.internationalBufferMin;
+  if (d.internationalBufferMax !== undefined) updates.international_buffer_max = d.internationalBufferMax;
+  if (d.immigrationExtraMin !== undefined)    updates.immigration_extra_min   = d.immigrationExtraMin;
+  if (d.checkedBagsExtraMin !== undefined)    updates.checked_bags_extra_min  = d.checkedBagsExtraMin;
+  if (d.trafficExtraMin !== undefined)        updates.traffic_extra_min       = d.trafficExtraMin;
+  if (d.verified !== undefined)               updates.verified                = d.verified;
+  updates.updated_at = new Date().toISOString();
+
+  if (Object.keys(updates).length === 1) {
+    sendError(res, "invalid_payload", "No fields to update");
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("airport_profiles")
+    .update(updates)
+    .eq("id", req.params.id)
+    .select("id, iata_code, name, verified, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Airport profile not found"); return; }
+  res.json({ ok: true, profile: data });
+});
+
+// ── Admin: DELETE /api/admin/airport/profiles/:id ───────────────────────────
+
+router.delete("/admin/airport/profiles/:id", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { error } = await sc
+    .from("airport_profiles")
+    .delete()
+    .eq("id", req.params.id);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true });
+});
+
+// ── Admin: GET /api/admin/airport/sessions ──────────────────────────────────
+// Lists active layover sessions for monitoring (city-level only, no GPS).
+
+router.get("/admin/airport/sessions", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limitRaw = parseInt(String(req.query.limit ?? "50"), 10);
+  const limit    = isNaN(limitRaw) || limitRaw < 1 ? 50 : Math.min(limitRaw, 200);
+
+  const { data, error } = await sc
+    .from("layover_sessions")
+    .select(
+      "id, user_id, status, flight_type, layover_minutes, manual_city, manual_country, manual_iata, " +
+      "wants_to_leave, comfort_level, created_at, arrival_time, departure_time"
+    )
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ sessions: data ?? [], count: (data ?? []).length });
 });
 
 export default router;

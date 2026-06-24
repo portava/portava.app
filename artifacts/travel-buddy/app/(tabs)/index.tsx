@@ -22,6 +22,8 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import { Plane } from 'lucide-react-native';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -70,6 +72,7 @@ export default function Pulse() {
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [layoverSheetOpen, setLayoverSheetOpen] = useState(false);
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
 
   const { locationState, openCityPicker } = useLocationContext();
@@ -168,6 +171,12 @@ export default function Pulse() {
 
       {/* When you're flexible */}
       <FlexibleStrip events={buckets.flexible} />
+
+      {/* Layover Mode entry point */}
+      <Pressable style={styles.layoverBanner} onPress={() => setLayoverSheetOpen(true)}>
+        <Plane size={16} color="#1565C0" />
+        <Text style={styles.layoverBannerText}>Got a layover? Get activities, safety tips & more →</Text>
+      </Pressable>
 
       {/* Pulse Wall — feed mode toggle + quick filters */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
@@ -294,6 +303,13 @@ export default function Pulse() {
       {/* Location overlays */}
       <LocationPermissionPrompt />
       <ManualCityPicker />
+
+      {/* Layover Mode */}
+      <LayoverModeSheet
+        visible={layoverSheetOpen}
+        onClose={() => setLayoverSheetOpen(false)}
+        initialCity={activeCity}
+      />
     </View>
   );
 }
@@ -321,4 +337,6 @@ const styles = StyleSheet.create({
   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
 });

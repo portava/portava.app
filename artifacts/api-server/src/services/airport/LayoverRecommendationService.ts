@@ -165,7 +165,7 @@ async function fetchDiscoveryPlaces(
 
 function mapPlaceTypeToRecType(placeType: string): string {
   const map: Record<string, string> = {
-    restaurant: "food", cafe: "food", bar: "nightlife",
+    restaurant: "food", cafe: "food", bar: "nightlife", pub: "nightlife",
     museum: "activity", park: "activity", shopping: "activity",
     hotel: "rest", spa: "rest", attraction: "activity",
   };
