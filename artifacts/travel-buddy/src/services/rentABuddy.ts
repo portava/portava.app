@@ -416,3 +416,127 @@ export async function deleteAddon(addonId: string): Promise<ApiResult<{ ok: bool
 export async function getDashboardEarnings(): Promise<ApiResult<BuddyEarnings>> {
   return apiFetch('/api/rent-a-buddy/dashboard/earnings');
 }
+
+// ── Booking lifecycle — Buddy side ────────────────────────────────────────────
+
+export async function acceptBooking(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/accept`, { method: 'POST' });
+}
+
+export async function declineBooking(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/decline`, { method: 'POST' });
+}
+
+export async function startBooking(bookingId: string, payload?: {
+  trustedCircleShared?: boolean;
+  safeReturnEnabled?: boolean;
+  emergencyContactCount?: number;
+}): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/start`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function completeBooking(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/complete`, { method: 'POST' });
+}
+
+export async function confirmCashBalance(
+  bookingId: string,
+  confirmed: boolean,
+): Promise<ApiResult<{ ok: boolean; disputed: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/confirm-cash`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmed }),
+  });
+}
+
+export async function reportBooking(
+  bookingId: string,
+  payload: { reason?: string; details?: string },
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/report`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function setRoutePlan(
+  bookingId: string,
+  stops: Array<{ name: string; notes?: string; eta?: string; lat?: number; lng?: number }>,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/route`, {
+    method: 'POST',
+    body: JSON.stringify({ stops }),
+  });
+}
+
+export async function requestRouteChange(
+  bookingId: string,
+  payload: { newStops: Array<{ name: string; notes?: string; eta?: string }>; reason?: string },
+): Promise<ApiResult<{ routeChangeRequest: any }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/route-change`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── Safety routes ─────────────────────────────────────────────────────────────
+
+export async function safetyCheckin(
+  bookingId: string,
+  payload: { checkinType: string; response?: string },
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/safety/checkin`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function feelUnsafe(bookingId: string, details?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/safety/feel-unsafe`, {
+    method: 'POST',
+    body: JSON.stringify({ details }),
+  });
+}
+
+export async function endBookingEarly(bookingId: string, reason?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/safety/end-early`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export type EmergencyPhraseOption = {
+  id: string;
+  label: string;
+};
+
+export async function triggerEmergencyPhrase(bookingId: string): Promise<ApiResult<{
+  travelerOnly: boolean;
+  prompt: string;
+  options: EmergencyPhraseOption[];
+}>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/safety/emergency-phrase`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+// ── My Buddy profile ──────────────────────────────────────────────────────────
+
+export async function getMyBuddyProfile(): Promise<ApiResult<{ profile: BuddyProfile | null }>> {
+  return apiFetch('/api/rent-a-buddy/me/profile');
+}
+
+export async function updateMyBuddyProfile(patch: Partial<BuddyProfile>): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/me/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function getMyRequests(): Promise<ApiResult<{ requests: BuddyBooking[] }>> {
+  return apiFetch('/api/rent-a-buddy/me/requests');
+}
