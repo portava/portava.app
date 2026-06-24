@@ -1178,6 +1178,24 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // Fetch bookingId for rent_buddy_booking threads so inbox can pass contextId on navigation
+  const rentBuddyThreadIds = (threadsRes.data ?? [])
+    .filter((t: any) => t.thread_type === 'rent_buddy_booking')
+    .map((t: any) => t.id as string);
+
+  const bookingIdByThread: Record<string, string> = {};
+  if (rentBuddyThreadIds.length > 0) {
+    const { data: bookingRows } = await sc
+      .from('rent_buddy_bookings')
+      .select('id, telegraph_thread_id')
+      .in('telegraph_thread_id', rentBuddyThreadIds);
+    for (const bk of bookingRows ?? []) {
+      if ((bk as any).telegraph_thread_id) {
+        bookingIdByThread[(bk as any).telegraph_thread_id] = (bk as any).id;
+      }
+    }
+  }
+
   const threads = (threadsRes.data ?? []).map((t: any) => {
     const lm = lastMsgByThread[t.id];
     const mem = membershipMap[t.id] ?? {};
@@ -1218,7 +1236,7 @@ router.get('/me/threads', async (req, res) => {
 
     return {
       id: t.id,
-      threadType: (t.thread_type ?? 'direct') as 'direct' | 'trip' | 'circle',
+      threadType: (t.thread_type ?? 'direct') as 'direct' | 'trip' | 'circle' | 'rent_buddy_booking',
       tripId: t.trip_id ?? null,
       circleOwnerId: t.circle_owner_id ?? null,
       title: t.title ?? null,
@@ -1232,6 +1250,7 @@ router.get('/me/threads', async (req, res) => {
       unreadCount,
       tripCity,
       isAiLastMessage,
+      bookingId: bookingIdByThread[t.id] ?? null,
     };
   });
 

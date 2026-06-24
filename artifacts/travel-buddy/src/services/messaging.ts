@@ -70,7 +70,7 @@ export interface ThreadOtherMember {
 
 export interface ThreadSummary {
   id: string;
-  threadType: 'direct' | 'trip' | 'circle';
+  threadType: 'direct' | 'trip' | 'circle' | 'rent_buddy_booking';
   tripId: string | null;
   circleOwnerId: string | null;
   title: string | null;

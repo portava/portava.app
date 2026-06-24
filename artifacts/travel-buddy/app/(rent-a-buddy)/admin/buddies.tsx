@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Search, Shield, ShieldOff, Star } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import { listAdminBuddies, type AdminBuddy } from '../../../src/services/rentABuddyAdmin';
 import { supabase } from '../../../src/lib/supabase';
 
@@ -93,8 +94,19 @@ function BuddyRow({ item, onPress }: { item: AdminBuddy; onPress: () => void }) 
   );
 }
 
+function FeatureDisabled() {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+        Rent a Buddy is not enabled in this environment.
+      </Text>
+    </View>
+  );
+}
+
 export default function AdminBuddiesScreen() {
   const insets = useSafeAreaInsets();
+  const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [items, setItems] = useState<AdminBuddy[]>([]);
@@ -142,6 +154,8 @@ export default function AdminBuddiesScreen() {
     setSelected(null);
     load(1);
   }
+
+  if (!flagLoading && !featureEnabled) return <FeatureDisabled />;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

@@ -958,7 +958,8 @@ export default function TelegraphThread() {
   const [mentionVisible, setMentionVisible] = useState(false);
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
-  const [isAcceptedMember, setIsAcceptedMember] = useState(threadType === 'direct');
+  const isDirect = threadType === 'direct' || threadType === 'rent_buddy_booking';
+  const [isAcceptedMember, setIsAcceptedMember] = useState(isDirect);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false);
@@ -1049,7 +1050,7 @@ export default function TelegraphThread() {
 
   // Fetch DM partner's profile for the rich Direct header
   useEffect(() => {
-    if (threadType !== 'direct' || !otherUserId) return;
+    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !otherUserId) return;
     supabase
       .from('profiles')
       .select('name, handle, avatar_url, city')
@@ -1069,7 +1070,7 @@ export default function TelegraphThread() {
 
   // Fetch other party's last_read_at for DM read receipts
   useEffect(() => {
-    if (threadType !== 'direct' || !id || !otherUserId) return;
+    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !id || !otherUserId) return;
     supabase
       .from('message_thread_members')
       .select('last_read_at')
@@ -1083,7 +1084,7 @@ export default function TelegraphThread() {
 
   // Fetch member count for trip / circle threads
   useEffect(() => {
-    if (threadType === 'direct' || !id) return;
+    if (isDirect || !id) return;
     supabase
       .from('message_thread_members')
       .select('*', { count: 'exact', head: true })
@@ -1095,7 +1096,7 @@ export default function TelegraphThread() {
   // Permission gate: accepted thread members only (DMs always pass; trip/circle
   // check message_thread_members — only accepted members are in the thread).
   useEffect(() => {
-    if (threadType === 'direct') { setIsAcceptedMember(true); return; }
+    if (isDirect) { setIsAcceptedMember(true); return; }
     if (!id || !userId) return;
     supabase.from('message_thread_members')
       .select('user_id')
@@ -1122,9 +1123,9 @@ export default function TelegraphThread() {
   // that normal friends/followers who simply haven't replied yet are never
   // blocked. The status clears automatically once the recipient accepts.
   const { pending: hasOutgoingRequest } = useOutgoingRequestStatus(
-    threadType === 'direct' ? (otherUserId ?? null) : null,
+    isDirect ? (otherUserId ?? null) : null,
   );
-  const isWaitingForReply = threadType === 'direct' && hasOutgoingRequest === true;
+  const isWaitingForReply = isDirect && hasOutgoingRequest === true;
 
   const headerTitle = title && title.trim() ? title : 'Chat';
 
@@ -1167,7 +1168,7 @@ export default function TelegraphThread() {
     const lastMsg = messages.find(m => m.id === lastOwnMsgId);
     if (!lastMsg) return null;
     // DM: check if the other party has read past this message
-    if (threadType === 'direct' && dmOtherLastRead) {
+    if (isDirect && dmOtherLastRead) {
       if (new Date(dmOtherLastRead) >= new Date(lastMsg.createdAt)) return 'read';
     }
     // Delivered heuristic: message is older than 3 seconds (broadcast confirmed)
@@ -1248,7 +1249,7 @@ export default function TelegraphThread() {
 
   // Shared back + title header element (used in loading/error states too)
   function ThreadHeader({ compact }: { compact?: boolean }) {
-    const displayName = threadType === 'direct'
+    const displayName = isDirect
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
     // Direct: show "City · Last active" subtitle
@@ -1266,7 +1267,7 @@ export default function TelegraphThread() {
         </Pressable>
 
         {/* Direct: small avatar */}
-        {threadType === 'direct' && (
+        {isDirect && (
           <View style={styles.dmAvatarWrap}>
             {dmProfile?.avatarUrl ? (
               <Image source={{ uri: dmProfile.avatarUrl }} style={styles.dmAvatar} />
@@ -1295,7 +1296,7 @@ export default function TelegraphThread() {
         <View style={styles.headerMeta}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
-            {threadType === 'direct' && dmProfile?.name && (
+            {isDirect && dmProfile?.name && (
               <CheckCircle size={13} color={color.signal} />
             )}
           </View>
@@ -1607,14 +1608,14 @@ export default function TelegraphThread() {
         }}
         hideAiSuggestions={hideAiSuggestions}
         onToggleHideAi={toggleHideAiSuggestions}
-        onBlock={threadType === 'direct' && otherUserId ? async () => {
+        onBlock={isDirect && otherUserId ? async () => {
           setShowSafetySheet(false);
           setBlockingUser(true);
           await blockUser(otherUserId);
           setBlockingUser(false);
           router.replace('/messages');
         } : undefined}
-        onLeave={threadType !== 'direct' ? async () => {
+        onLeave={!isDirect ? async () => {
           await clearTelegraphSuggestionsCache(id ?? '');
           await leaveThread(id ?? '');
           router.replace('/messages');

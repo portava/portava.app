@@ -904,6 +904,25 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     sourceId: bookingId,
   });
 
+  // Ensure a booking thread exists before emitting the confirmation milestone
+  if (!(booking as any).telegraph_thread_id) {
+    const otherUserId = (booking as any).traveler_id;
+    const buddyUserId = auth.user.id;
+    const { data: newThread } = await serviceClient
+      .from("message_threads")
+      .insert({ thread_type: "rent_buddy_booking", created_by: buddyUserId, title: null })
+      .select("id")
+      .single();
+    if (newThread) {
+      const tid: string = (newThread as any).id;
+      await serviceClient.from("message_thread_members").insert([
+        { thread_id: tid, user_id: buddyUserId },
+        { thread_id: tid, user_id: otherUserId },
+      ]);
+      await serviceClient.from("rent_buddy_bookings").update({ telegraph_thread_id: tid }).eq("id", bookingId);
+    }
+  }
+
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
 
   return res.json({ ok: true });
@@ -1092,11 +1111,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => 
   // First look up or create a thread_members row
   const otherUserId = isTraveler ? buddyUserId : (booking as any).traveler_id;
 
-  // Create a new message_threads row with type='direct' (rent_buddy context stored via booking link)
+  // Create a message_threads row with thread_type='rent_buddy_booking' so inbox can detect and route correctly
   const { data: thread, error: threadErr } = await serviceClient
     .from("message_threads")
     .insert({
-      type: "direct",
+      thread_type: "rent_buddy_booking",
       created_by: auth.user.id,
       title: null,
     })

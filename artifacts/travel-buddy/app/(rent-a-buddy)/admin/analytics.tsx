@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, RefreshCw } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import { fetchAdminAnalytics, type AdminAnalytics } from '../../../src/services/rentABuddyAdmin';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
 const DATE_RANGES = [7, 30, 90] as const;
 type DateRange = typeof DATE_RANGES[number];
@@ -42,6 +43,7 @@ function BarRow({ label, count, max }: { label: string; count: number; max: numb
 
 export default function AdminAnalyticsScreen() {
   const insets = useSafeAreaInsets();
+  const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [days, setDays] = useState<DateRange>(30);
   const [data, setData] = useState<AdminAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +69,16 @@ export default function AdminAnalyticsScreen() {
 
   const maxCityCount = data?.bookingsByCity.reduce((m, r) => Math.max(m, r.count), 0) ?? 1;
   const maxCatCount = data?.bookingsByCategory.reduce((m, r) => Math.max(m, r.count), 0) ?? 1;
+
+  if (!flagLoading && !featureEnabled) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+          Rent a Buddy is not enabled in this environment.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

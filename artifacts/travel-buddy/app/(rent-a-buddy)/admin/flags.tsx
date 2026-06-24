@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ShieldAlert, ShieldCheck, ShieldOff } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import {
   listAdminFlags, confirmFlag, dismissFlag,
   type AdminPolicyFlag,
@@ -83,6 +84,7 @@ function FlagRow({
 
 export default function AdminFlagsScreen() {
   const insets = useSafeAreaInsets();
+  const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [items, setItems] = useState<AdminPolicyFlag[]>([]);
   const [total, setTotal] = useState(0);
@@ -132,6 +134,16 @@ export default function AdminFlagsScreen() {
     }
     setActionTarget(null);
     load(1);
+  }
+
+  if (!flagLoading && !featureEnabled) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+          Rent a Buddy is not enabled in this environment.
+        </Text>
+      </View>
+    );
   }
 
   return (

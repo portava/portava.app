@@ -39,22 +39,25 @@ function timeAgo(iso: string): string {
 }
 
 function navigateToThread(item: ThreadSummary) {
-  const title = item.threadType !== 'direct'
-    ? (item.title ?? '')
-    : (item.otherMembers[0]?.name ?? '');
+  const isRentBuddy = item.threadType === 'rent_buddy_booking';
+  const title = item.threadType === 'direct' || isRentBuddy
+    ? (item.otherMembers[0]?.name ?? (isRentBuddy ? 'Buddy Booking' : ''))
+    : (item.title ?? '');
   const params = new URLSearchParams({ title, threadType: item.threadType });
   if (item.tripId) params.set('contextId', item.tripId);
   else if (item.circleOwnerId) params.set('contextId', item.circleOwnerId);
-  if (item.threadType === 'direct' && item.otherMembers[0]?.id) {
+  else if (isRentBuddy && (item as any).bookingId) params.set('contextId', (item as any).bookingId);
+  if ((item.threadType === 'direct' || isRentBuddy) && item.otherMembers[0]?.id) {
     params.set('otherUserId', item.otherMembers[0].id);
   }
   router.push(`/messages/${item.id}?${params.toString()}`);
 }
 
 const TYPE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  direct:  { bg: '#E6EEF8', text: '#2B5EA7', label: 'Direct' },
-  trip:    { bg: '#E0EFEC', text: '#0A3D4A', label: 'Trip' },
-  circle:  { bg: '#F2EBE0', text: '#7A4C20', label: 'Circle' },
+  direct:              { bg: '#E6EEF8', text: '#2B5EA7', label: 'Direct' },
+  trip:                { bg: '#E0EFEC', text: '#0A3D4A', label: 'Trip' },
+  circle:              { bg: '#F2EBE0', text: '#7A4C20', label: 'Circle' },
+  rent_buddy_booking:  { bg: '#F0EBF9', text: '#6B21A8', label: 'Buddy' },
 };
 
 function TypeBadge({ threadType }: { threadType: string }) {
@@ -259,7 +262,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   }, [reload, reloadRequests]));
 
   const filtered = threads.filter((th) => {
-    if (filter === 'direct' && th.threadType !== 'direct') return false;
+    if (filter === 'direct' && th.threadType !== 'direct' && th.threadType !== 'rent_buddy_booking') return false;
     if (filter === 'trips' && th.threadType !== 'trip') return false;
     if (filter === 'circles' && th.threadType !== 'circle') return false;
     if (filter === 'unread' && !(th.unreadCount && th.unreadCount > 0)) return false;

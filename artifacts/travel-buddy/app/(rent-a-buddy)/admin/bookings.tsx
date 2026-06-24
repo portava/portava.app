@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import { listAdminBookings, type AdminBooking } from '../../../src/services/rentABuddyAdmin';
 
 const STATUS_FILTERS = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'disputed'] as const;
@@ -68,6 +69,7 @@ function BookingRow({ item, onPress }: { item: AdminBooking; onPress: () => void
 
 export default function AdminBookingsScreen() {
   const insets = useSafeAreaInsets();
+  const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [items, setItems] = useState<AdminBooking[]>([]);
   const [total, setTotal] = useState(0);
@@ -98,6 +100,16 @@ export default function AdminBookingsScreen() {
     await load(1);
     setRefreshing(false);
   }, [load]);
+
+  if (!flagLoading && !featureEnabled) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+          Rent a Buddy is not enabled in this environment.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

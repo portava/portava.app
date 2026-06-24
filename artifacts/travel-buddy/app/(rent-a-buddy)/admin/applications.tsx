@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Check, X, Clock, Eye } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import {
   listAdminApplications, reviewApplication,
   type AdminApplication,
@@ -85,6 +86,16 @@ function ApplicationRow({
 
 export default function AdminApplicationsScreen() {
   const insets = useSafeAreaInsets();
+  const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
+  if (!flagLoading && !featureEnabled) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+          Rent a Buddy is not enabled in this environment.
+        </Text>
+      </View>
+    );
+  }
   const [tab, setTab] = useState<Tab>('pending');
   const [items, setItems] = useState<AdminApplication[]>([]);
   const [total, setTotal] = useState(0);

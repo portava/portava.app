@@ -8,6 +8,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
 const SECTIONS = [
   {
@@ -49,6 +50,16 @@ const SECTIONS = [
 
 export default function RentABuddyAdminHub() {
   const insets = useSafeAreaInsets();
+  const { enabled, loading: flagLoading } = useRentABuddyFlag();
+  if (!flagLoading && !enabled) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+          Rent a Buddy is not enabled in this environment.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
