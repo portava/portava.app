@@ -1,3 +1,5 @@
+import { enrichSpans } from '../lib/enrichSpans';
+
 /**
  * Pulse feed routes
  *
@@ -128,6 +130,10 @@ router.get("/pulse", async (req, res) => {
     });
   }
 
+  // Enrich posts with saved @mention tags and #hashtag annotations
+  const postIds  = rows.map((r: any) => r.id as string);
+  const spansMap = await enrichSpans(sc, 'post', postIds);
+
   // Shape responses — NEVER include exact coords
   const posts = rows.map((row: any) => {
     const geoTag = Array.isArray(row.pulse_geo_tags)
@@ -136,6 +142,7 @@ router.get("/pulse", async (req, res) => {
     const profile = Array.isArray(row.profiles)
       ? row.profiles[0]
       : row.profiles;
+    const spans = spansMap[row.id] ?? { tags: [], hashtagUsages: [] };
     return {
       id:          row.id,
       authorId:    row.author_id,
@@ -159,6 +166,9 @@ router.get("/pulse", async (req, res) => {
         name:      profile.full_name ?? profile.username,
         avatarUrl: profile.avatar_url ?? null,
       } : null,
+      // Rich-text span whitelists
+      spanTags:         spans.tags,
+      spanHashtags:     spans.hashtagUsages,
     };
   });
 

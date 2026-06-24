@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { enrichSpans } from "../lib/enrichSpans";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
   requireUser,
@@ -822,14 +823,20 @@ router.get("/posts/:postId/comments", async (req, res) => {
     for (const p of profiles ?? []) profileMap[p.id] = p;
   }
 
+  const commentIds = commentRows.map((c) => c.id);
+  const commentSpansMap = await enrichSpans(sc, 'comment', commentIds);
+
   const comments = commentRows.map((c) => {
-    const pr = profileMap[c.user_id];
+    const pr    = profileMap[c.user_id];
+    const spans = commentSpansMap[c.id] ?? { tags: [], hashtagUsages: [] };
     return {
       id: c.id,
       body: c.body,
       createdAt: c.created_at,
       updatedAt: c.updated_at ?? null,
       canDelete: c.user_id === user.id,
+      tags: spans.tags,
+      hashtagUsages: spans.hashtagUsages,
       author: pr
         ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
         : { id: c.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },

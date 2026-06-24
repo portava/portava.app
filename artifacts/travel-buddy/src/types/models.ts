@@ -118,6 +118,10 @@ export interface Post {
   filterId?: string;
   filterIntensity?: number;
   mediaType?: string;
+  /** Saved @mention annotations from the `tags` table — whitelist for RichText. */
+  tags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
+  /** Saved #hashtag annotations from `hashtag_usage` — whitelist for RichText. */
+  hashtagUsages?: Array<{ slug: string; isBlocked?: boolean }>;
 }
 
 export interface Comment {
@@ -698,6 +702,10 @@ export interface PulseFeedItem {
   locationDistrict?: string | null;
   /** Country name for display. */
   locationCountry?: string | null;
+  /** Saved @mention annotations from `tags` table — whitelist for RichText. */
+  spanTags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
+  /** Saved #hashtag annotations from `hashtag_usage` — whitelist for RichText. */
+  spanHashtags?: Array<{ slug: string; isBlocked?: boolean }>;
 }
 
 export const PULSE_FILTERS = [

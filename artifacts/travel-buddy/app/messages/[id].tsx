@@ -774,6 +774,8 @@ function MessageBubble({
         />
         <RichText
           content={bodyToShow}
+          tags={item.tags}
+          hashtagUsages={item.hashtagUsages}
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}

@@ -116,7 +116,7 @@ function StandardCard({ post }: { post: Post }) {
           {post.safetyNote && <Stamp label="safety" tone="signal" rotate={2} />}
           {post.rating != null && <Stamp label={'★'.repeat(post.rating)} tone="deep" rotate={2} />}
         </View>
-        {post.caption && <RichText content={post.caption} style={styles.caption} numberOfLines={5} />}
+        {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} style={styles.caption} numberOfLines={5} />}
         <ActionBar
           liked={post.liked} saved={post.saved}
           likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
@@ -140,7 +140,7 @@ function QuestionCard({ post }: { post: Post }) {
         <Text style={styles.qLabel}>Question</Text>
       </View>
       <Text style={styles.qTitle}>{post.title}</Text>
-      {post.caption && <RichText content={post.caption} style={styles.qBody} numberOfLines={4} />}
+      {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} style={styles.qBody} numberOfLines={4} />}
       <View style={styles.qFooter}>
         <Text style={styles.qMeta}>{post.commentCount} answers</Text>
         <View style={{ flex: 1 }} />

@@ -86,7 +86,7 @@ function PostRow({ item }: { item: FeedPostItem }) {
             <Text style={fr.meta}>{timeAgo(item.createdAt)}</Text>
           </Pressable>
         )}
-        <RichText content={item.content} style={fr.postContent} numberOfLines={3} />
+        <RichText content={item.content} tags={item.tags} hashtagUsages={item.hashtagUsages} style={fr.postContent} numberOfLines={3} />
         <View style={fr.statRow}>
           <Text style={fr.stat}>♡ {item.likeCount}</Text>
           <Text style={fr.stat}>💬 {item.commentCount}</Text>
@@ -251,8 +251,8 @@ export default function HashtagFeedScreen() {
         setFeedLoading(true);
         setFeedError(null);
       }
-      // Pass city for scoped requests — locationState.city comes from GPS or manual selection.
-      const city = (sc === 'city' || sc === 'nearby') ? (locationState.city ?? null) : null;
+      // Pass city for scoped requests — locationState.place.city comes from GPS or manual selection.
+      const city = (sc === 'city' || sc === 'nearby') ? (locationState.place.city ?? null) : null;
       const res = await getHashtagFeed(slug, tab, sc, city, before ?? null);
       if (before) {
         setLoadingMore(false);
@@ -274,7 +274,7 @@ export default function HashtagFeedScreen() {
         setFeedError(res.error ?? 'Failed to load feed');
       }
     },
-    [slug, locationState.city],
+    [slug, locationState.place.city],
   );
 
   useEffect(() => {

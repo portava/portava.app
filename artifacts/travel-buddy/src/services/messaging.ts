@@ -136,6 +136,10 @@ export interface Message {
   clientId?: string | null;
   /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
   deliveryStatus?: 'sending' | 'sent' | 'failed';
+  /** Saved @mention annotations — whitelist for RichText rendering. */
+  tags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
+  /** Saved #hashtag annotations — whitelist for RichText rendering. */
+  hashtagUsages?: Array<{ slug: string; isBlocked?: boolean }>;
 }
 
 export type MsgErrorKind =

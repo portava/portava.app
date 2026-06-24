@@ -1,3 +1,5 @@
+import { enrichSpans } from '../lib/enrichSpans';
+
 /**
  * Hashtag routes
  *
@@ -552,12 +554,18 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
     }
 
+    const visibleIds = visiblePosts.map((p: any) => p.id);
+    const spansMap = await enrichSpans(sc, 'post', visibleIds);
+
     const items = visiblePosts.map((p: any) => {
-      const pr = profileMap[p.author_id];
+      const pr    = profileMap[p.author_id];
+      const spans = spansMap[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
         id: p.id, type: 'post', content: p.content, mediaUrls: p.media_urls ?? [],
         createdAt: p.created_at, likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
         author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+        tags: spans.tags,
+        hashtagUsages: spans.hashtagUsages,
       };
     });
     res.status(200).json({ items, posts: items, hasMore: items.length === limit, nextCursor, tab, scope });

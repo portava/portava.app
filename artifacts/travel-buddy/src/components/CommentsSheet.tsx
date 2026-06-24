@@ -101,7 +101,7 @@ function CommentItem({
           <Text style={s.commentAuthor}>{comment.author.name}</Text>
           <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
         </View>
-        <RichText content={comment.body} style={s.commentText} />
+        <RichText content={comment.body} tags={comment.tags} hashtagUsages={comment.hashtagUsages} style={s.commentText} />
       </View>
       {comment.canDelete && (
         <Pressable
