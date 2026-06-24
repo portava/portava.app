@@ -84,28 +84,46 @@ async function countInWindow(
 
 interface EarningCaps { daily: number; weekly: number }
 
+/**
+ * Canonical event-type → cap bucket map.
+ * Keys are lower-cased for case-insensitive matching.
+ * "plan_attend" | "guide_verify" | "gem_save" — unlimited otherwise.
+ */
+const EVENT_TYPE_CAP_BUCKET: Record<string, "plan_attend" | "guide_verify" | "gem_save"> = {
+  // Plan attendance
+  plan_attended:           "plan_attend",
+  plan_attend_positive:    "plan_attend",
+  plan_attend_weekly:      "plan_attend",
+  // Guide verification
+  guide_verify_positive:   "guide_verify",
+  gem_verified_by_guide:   "guide_verify",
+  guide_verification:      "guide_verify",
+  // Gem save
+  gem_save_positive:       "gem_save",
+  gem_saved:               "gem_save",
+  checkin_verified:        "gem_save",
+};
+
 /** Returns daily and weekly caps for an event type from trust_settings */
 async function getEarningCaps(
   db: SupabaseClient,
   eventType: string,
 ): Promise<EarningCaps> {
   try {
-    const { data } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
-    if (!data) return { daily: 999, weekly: 999 };
+    const bucket = EVENT_TYPE_CAP_BUCKET[eventType.toLowerCase()];
+    if (!bucket) return { daily: 999, weekly: 999 };
+    const { data } = await db.from("trust_settings").select(
+      "daily_cap_plan_attend,daily_cap_guide_verify,daily_cap_gem_save," +
+      "weekly_cap_plan_attend,weekly_cap_guide_verify,weekly_cap_gem_save",
+    ).eq("id", 1).maybeSingle();
+    if (!data) {
+      const defaults = { plan_attend: { daily: 3, weekly: 10 }, guide_verify: { daily: 5, weekly: 20 }, gem_save: { daily: 10, weekly: 40 } };
+      return defaults[bucket];
+    }
     const s = data as any;
-    if (eventType.includes("plan_attend")) return {
-      daily:  s.daily_cap_plan_attend  ?? 3,
-      weekly: s.weekly_cap_plan_attend ?? 10,
-    };
-    if (eventType.includes("guide_verify")) return {
-      daily:  s.daily_cap_guide_verify  ?? 5,
-      weekly: s.weekly_cap_guide_verify ?? 20,
-    };
-    if (eventType.includes("gem_save")) return {
-      daily:  s.daily_cap_gem_save  ?? 10,
-      weekly: s.weekly_cap_gem_save ?? 40,
-    };
-    return { daily: 999, weekly: 999 }; // unlimited by default
+    if (bucket === "plan_attend")  return { daily: s.daily_cap_plan_attend  ?? 3,  weekly: s.weekly_cap_plan_attend  ?? 10 };
+    if (bucket === "guide_verify") return { daily: s.daily_cap_guide_verify ?? 5,  weekly: s.weekly_cap_guide_verify ?? 20 };
+    /* gem_save */                 return { daily: s.daily_cap_gem_save     ?? 10, weekly: s.weekly_cap_gem_save     ?? 40 };
   } catch {
     return { daily: 999, weekly: 999 };
   }
@@ -148,10 +166,12 @@ export async function recordTrustEvent(
   }
 
   const {
-    userId, eventType, category, delta, severity,
+    userId, category, delta, severity,
     sourceType = "system", sourceId, dedupWindowHours = 24,
     metadata = {},
   } = input;
+  // Normalize to lowercase so "PLAN_ATTENDED" and "plan_attended" are the same bucket
+  const eventType = input.eventType.toLowerCase();
 
   // Deduplication check
   const dup = await isDuplicate(db, userId, eventType, sourceType, sourceId, dedupWindowHours);

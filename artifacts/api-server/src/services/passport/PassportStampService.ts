@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
 
 export type StampType =
   | "city"
@@ -127,7 +128,21 @@ export async function createStamp(
     .single();
 
   if (error) return null;
-  return { id: (data as any).id, isNew: true };
+  const stampId = (data as any).id;
+
+  // Feed new passport stamp into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(db, {
+    userId,
+    eventType: "passport_stamp_earned",
+    category: "passport_authenticity",
+    delta: 2,
+    severity: "minor",
+    sourceType: "passport",
+    sourceId: stampId,
+    dedupWindowHours: 48,
+  });
+
+  return { id: stampId, isNew: true };
 }
 
 /**

@@ -180,6 +180,41 @@ export async function adminOverrideScore(
   return { ok: true };
 }
 
+/**
+ * Remove a previously applied score override for a category.
+ * Lifts the admin_override cap, then triggers a full recalculation so the
+ * score returns to its naturally-computed value.
+ */
+export async function adminRemoveOverride(
+  db: SupabaseClient,
+  adminId: string,
+  targetUserId: string,
+  category: TrustCategory,
+  reason: string,
+): Promise<{ ok: boolean }> {
+  // Find the active admin_override cap for this user+category
+  const { data: caps } = await db
+    .from("trust_caps")
+    .select("id")
+    .eq("user_id", targetUserId)
+    .eq("category", category)
+    .eq("reason_code", "admin_override")
+    .is("lifted_at", null);
+
+  if (caps && Array.isArray(caps)) {
+    await Promise.all((caps as any[]).map(cap =>
+      liftCap(db, (cap as any).id, adminId).catch(() => {}),
+    ));
+  }
+
+  // Recompute from raw events — no override cap ceiling any more
+  await recalculateTrustScore(db, targetUserId).catch(() => {});
+
+  await logAdminAction(db, adminId, targetUserId, "score_override", reason,
+    { action: "remove_override", category });
+  return { ok: true };
+}
+
 /** Resolve a trust_review item */
 export async function adminResolveReview(
   db: SupabaseClient,

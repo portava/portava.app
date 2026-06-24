@@ -8,6 +8,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
 
 const logger = rootLogger.child({ service: "SafeReturnService" });
 
@@ -285,6 +286,17 @@ export async function confirmSafe(
 
     if (error || !data) { logger.warn({ err: error }, "confirmSafe: update failed"); return null; }
     await writeEvent(db, sessionId, userId, "safe_confirmed");
+    // Feed into Trust Engine (fire-and-forget; flag-gated internally)
+    void recordTrustEvent(db, {
+      userId,
+      eventType: "safe_return_completed",
+      category: "respect_safety",
+      delta: 3,
+      severity: "minor",
+      sourceType: "safe_return",
+      sourceId: sessionId,
+      dedupWindowHours: 12,
+    });
     return mapSession(data);
   } catch (err) {
     logger.warn({ err }, "confirmSafe: threw");

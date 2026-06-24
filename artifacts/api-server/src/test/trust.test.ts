@@ -31,6 +31,8 @@ import {
   dismissEvent,
   adminApplyRestriction,
   adminLiftRestriction,
+  adminOverrideScore,
+  adminRemoveOverride,
   getPendingEvents,
 } from "../services/trust/TrustAdminService.js";
 import {
@@ -272,6 +274,29 @@ describe("TrustEventService", () => {
       userId: USER_A, eventType: "plan_attend_positive",
       category: "plan_attendance", delta: 5, severity: "minor",
       sourceType: "plan", sourceId: "plan-daily-4",
+    });
+    assert.equal(capped.ok, false);
+    assert.equal(capped.skipReason, "daily_cap");
+  });
+
+  it("canonical uppercase event type PLAN_ATTENDED enforces daily cap", async () => {
+    const tables = makeTables();
+    tables.trust_settings[0].daily_cap_plan_attend = 2;
+    const db = makeTrustClient(tables);
+    // Fill 2 events using canonical uppercase name
+    for (let i = 0; i < 2; i++) {
+      tables.trust_events.push({
+        id: `canonical-ev-${i}`, user_id: USER_A,
+        event_type: "plan_attended", // lowercase stored — cap lookup is case-insensitive
+        category: "plan_attendance", delta: 5, severity: "minor", status: "applied",
+        created_at: new Date().toISOString(),
+      });
+    }
+    // Now attempt with uppercase canonical name — must hit daily cap
+    const capped = await recordTrustEvent(db, {
+      userId: USER_A, eventType: "PLAN_ATTENDED",
+      category: "plan_attendance", delta: 5, severity: "minor",
+      sourceType: "plan", sourceId: "plan-canonical-cap",
     });
     assert.equal(capped.ok, false);
     assert.equal(capped.skipReason, "daily_cap");
@@ -568,6 +593,32 @@ describe("TrustAdminService", () => {
     const queue = await getPendingEvents(db);
     assert.equal(queue.length, 1);
     assert.equal(queue[0].id, "ev-a");
+  });
+
+  it("adminOverrideScore creates a cap and adminRemoveOverride lifts it + recalcs", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Apply override — cap should exist
+    const applyResult = await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 45, "Testing override");
+    assert.equal(applyResult.ok, true);
+    const capAfterApply = tables.trust_caps.filter(
+      (c: any) => c.user_id === USER_A && c.reason_code === "admin_override" && c.lifted_at == null,
+    );
+    assert.equal(capAfterApply.length, 1, "cap should exist after adminOverrideScore");
+    assert.equal(capAfterApply[0].ceiling_score, 45);
+
+    // Remove override — cap should be lifted
+    const removeResult = await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Removing test override");
+    assert.equal(removeResult.ok, true);
+    const capAfterRemove = tables.trust_caps.filter(
+      (c: any) => c.user_id === USER_A && c.reason_code === "admin_override" && c.lifted_at == null,
+    );
+    assert.equal(capAfterRemove.length, 0, "cap should be lifted after adminRemoveOverride");
+
+    // Admin action audit log entries should exist for both operations
+    const overrideActions = tables.trust_admin_actions.filter((a: any) => a.action_type === "score_override");
+    assert.ok(overrideActions.length >= 2, "both apply and remove should be logged");
   });
 });
 

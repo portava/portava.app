@@ -18,6 +18,7 @@ import { calculateDistanceMeters } from "../lib/locationVerify.js";
 import { checkAndRecordSnapshot } from "../services/location/LocationSafetyService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
+import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 
 const router = Router();
 
@@ -536,6 +537,18 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
     status:    arrivalStatus,
     eventType,
     metadata:  { distanceBucket: distanceM <= 100 ? "same_venue" : "inside_radius" },
+  });
+
+  // Feed plan attendance into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(db, {
+    userId: user.id,
+    eventType: "plan_attended",
+    category: "plan_attendance",
+    delta: isLate ? 2 : 5,
+    severity: "minor",
+    sourceType: "geofence_checkin",
+    sourceId: geofenceId,
+    dedupWindowHours: 24,
   });
 
   // Fire-and-forget: award a plan check-in stamp + suggested memory behind feature flag

@@ -2,6 +2,7 @@
  * HiddenGemService — CRUD, save/unsave, ranking helpers.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
 
 const GEM_SELECT_COLS = `
   id, name, category, city, country, neighborhood,
@@ -240,6 +241,18 @@ export async function saveGem(
     const next = ((cur as any)?.save_count ?? 0) + 1;
     await db.from("hidden_gems").update({ save_count: next }).eq("id", gemId);
   }
+
+  // Feed into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(db, {
+    userId,
+    eventType: "gem_saved",
+    category: "community_value",
+    delta: 1,
+    severity: "minor",
+    sourceType: "hidden_gem",
+    sourceId: gemId,
+    dedupWindowHours: 48,
+  });
 
   return { alreadySaved: false };
 }

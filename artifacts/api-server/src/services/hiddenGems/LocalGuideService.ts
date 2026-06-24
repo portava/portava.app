@@ -6,6 +6,7 @@
  * No payout logic — level is tracked but monetisation is out of scope.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
 
 /** Compute guide level 0–5 from stats. */
 function computeGuideLevel(
@@ -105,6 +106,18 @@ export async function recordContribution(
       updated_at: new Date().toISOString(),
     })
     .eq("user_id", guideId);
+
+  // Feed guide contribution into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(db, {
+    userId: guideId,
+    eventType: "guide_verification",
+    category: "guide_accuracy",
+    delta: 3,
+    severity: "minor",
+    sourceType: "local_guide",
+    sourceId: gemId ?? undefined,
+    dedupWindowHours: 6,
+  });
 }
 
 /** Admin: approve or demote a guide. */

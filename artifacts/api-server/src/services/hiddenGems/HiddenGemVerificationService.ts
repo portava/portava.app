@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getUserTrustLevel, checkAndRecordSnapshot } from "../location/LocationSafetyService.js";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
 
 const GPS_PROXIMITY_THRESHOLD_M = 200; // within 200 m → valid check-in
 const COMMUNITY_CONFIRMATIONS_NEEDED = 5; // upgrades unverified → community
@@ -102,6 +103,17 @@ export async function recordGpsCheckin(
   let verificationUpgraded = false;
 
   if (!isSuspicious) {
+    // Feed GPS checkin into Trust Engine (fire-and-forget; flag-gated internally)
+    void recordTrustEvent(db, {
+      userId,
+      eventType: "checkin_verified",
+      category: "location_honesty",
+      delta: 2,
+      severity: "minor",
+      sourceType: "hidden_gem",
+      sourceId: gemId,
+      dedupWindowHours: 24,
+    });
     // Record GPS verification event (ignore duplicate constraint)
     try {
       await db
@@ -194,6 +206,18 @@ export async function recordGuideVerification(
         updated_at: new Date().toISOString(),
       })
       .eq("id", gemId);
+
+    // Feed guide verification into Trust Engine (fire-and-forget; flag-gated internally)
+    void recordTrustEvent(db, {
+      userId: guideId,
+      eventType: "gem_verified_by_guide",
+      category: "guide_accuracy",
+      delta: 5,
+      severity: "minor",
+      sourceType: "hidden_gem",
+      sourceId: gemId,
+      dedupWindowHours: 24,
+    });
   }
 }
 

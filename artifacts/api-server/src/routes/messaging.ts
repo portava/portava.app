@@ -40,6 +40,7 @@ import {
   syncCircleChatMembers,
 } from '../services/groupChatSync';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
+import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 
 const router = Router();
 
@@ -584,6 +585,28 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     .eq('id', requestId);
 
   res.status(200).json({ status: 'accepted', threadId, requestId });
+
+  // Feed connection event into Trust Engine for both parties (fire-and-forget; flag-gated)
+  void recordTrustEvent(sc, {
+    userId: user.id,
+    eventType: "telegraph_connection_accepted",
+    category: "communication",
+    delta: 1,
+    severity: "minor",
+    sourceType: "message_request",
+    sourceId: requestId,
+    dedupWindowHours: 72,
+  });
+  void recordTrustEvent(sc, {
+    userId: req_.sender_id,
+    eventType: "telegraph_connection_accepted",
+    category: "communication",
+    delta: 1,
+    severity: "minor",
+    sourceType: "message_request",
+    sourceId: requestId,
+    dedupWindowHours: 72,
+  });
 
   // Realtime: notify the original sender that their request was accepted and a
   // thread now exists. Members of the (possibly new) thread get a thread.updated.

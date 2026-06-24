@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
   requireUser,
   sendError,
@@ -244,6 +245,18 @@ router.post("/posts", async (req, res) => {
   }
 
   res.status(201).json({ ...(data as any), postcard });
+
+  // Feed Pulse post creation into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(client, {
+    userId: user.id,
+    eventType: "pulse_post_created",
+    category: "content_quality",
+    delta: 1,
+    severity: "minor",
+    sourceType: "pulse_post",
+    sourceId: (data as any).id,
+    dedupWindowHours: 2,
+  });
 });
 
 // Safe public location labels (no GPS coordinates).
