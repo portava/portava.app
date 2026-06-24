@@ -41,6 +41,7 @@ import {
 } from '../services/groupChatSync';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
+import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 
 const router = Router();
 
@@ -380,6 +381,13 @@ router.post('/users/:userId/message-request', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Trust Engine: check if sender is restricted from messaging
+  const senderRestrictions = await getRestrictionState(sc, user.id);
+  if (!senderRestrictions.canMessage) {
+    sendError(res, 'forbidden', 'Your account is currently restricted from sending messages.');
+    return;
+  }
 
   const verdict = await canMessage(sc, user.id, recipientId);
   if (verdict.verdict === 'denied') {

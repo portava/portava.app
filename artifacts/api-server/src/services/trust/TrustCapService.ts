@@ -126,20 +126,26 @@ export async function applyEventCaps(
   severity: string,
   eventId: string,
 ): Promise<void> {
-  // Standard caps by event type
+  // Standard caps by event type.
+  // Keys are lowercase — callers must have already lowercased eventType
+  // (TrustEventService.recordTrustEvent normalizes on entry; confirmEvent passes the
+  // stored value which is always lowercase after that normalization).
   const capMap: Record<string, { category: TrustCategory; ceiling: number; reasonCode: string; expiresInDays?: number }[]> = {
-    PLAN_NO_SHOW:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
-    BEHAVIOR_REPORT_CONFIRMED: [{ category: "respect_safety" as TrustCategory, ceiling: 40, reasonCode: "behavior_confirmed" }],
-    FAKE_GPS_CONFIRMED:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
-    GPS_IMPOSSIBLE_SPEED:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
-    CONTENT_REMOVED:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
-    MESSAGE_REPORT_CONFIRMED:  [{ category: "communication",    ceiling: 45, reasonCode: "message_report",       expiresInDays: 60 }],
+    plan_no_show:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
+    behavior_report_confirmed: [{ category: "respect_safety",  ceiling: 40, reasonCode: "behavior_confirmed" }],
+    fake_gps_confirmed:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
+    gps_impossible_speed:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
+    coordinate_jump:           [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
+    content_removed:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
+    message_report_confirmed:  [{ category: "communication",    ceiling: 45, reasonCode: "message_report",       expiresInDays: 60 }],
   };
 
-  const toApply = capMap[eventType] ?? [];
-  // For severe events, also cap overall by restricting the primary category to 40
+  // Normalize so callers that pass uppercase names still work
+  const normalizedType = eventType.toLowerCase();
+  const toApply = capMap[normalizedType] ?? [];
+  // For severe events, also cap respect_safety to 40 if no specific map entry
   if (severity === "severe" && toApply.length === 0) {
-    toApply.push({ category: "respect_safety", ceiling: 40, reasonCode: `severe_${eventType.toLowerCase()}` });
+    toApply.push({ category: "respect_safety", ceiling: 40, reasonCode: `severe_${normalizedType}` });
   }
 
   for (const cap of toApply) {

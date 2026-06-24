@@ -521,11 +521,41 @@ describe("TrustRestrictionService", () => {
 });
 
 describe("TrustAdminService", () => {
+  it("end-to-end: recordTrustEvent → confirmEvent → applyEventCaps sets correct cap category and reasonCode", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // recordTrustEvent normalizes to lowercase and routes serious events to pending_review
+    const result = await recordTrustEvent(db, {
+      userId: USER_A, eventType: "GPS_IMPOSSIBLE_SPEED",
+      category: "location_honesty", delta: -10, severity: "serious",
+      sourceType: "system",
+    });
+    assert.equal(result.ok, true, "event should record");
+    assert.equal(result.pendingReview, true, "serious event should be pending_review");
+
+    // Event stored with lowercase eventType
+    const storedEvent = tables.trust_events.find((e: any) => e.user_id === USER_A);
+    assert.ok(storedEvent, "event should be in store");
+    assert.equal(storedEvent.event_type, "gps_impossible_speed", "event_type must be normalized to lowercase");
+    assert.equal(storedEvent.status, "pending_review");
+
+    // Admin confirms event — applyEventCaps should use lowercase stored value
+    const confirmResult = await confirmEvent(db, ADMIN, storedEvent.id, "Confirmed fake GPS");
+    assert.equal(confirmResult.ok, true);
+
+    // Cap should be created for location_honesty with reason "impossible_speed"
+    const cap = tables.trust_caps.find(
+      (c: any) => c.user_id === USER_A && c.category === "location_honesty" && c.reason_code === "impossible_speed",
+    );
+    assert.ok(cap, "location_honesty cap with reason 'impossible_speed' must exist after confirmEvent");
+  });
+
   it("confirm_event moves status to confirmed and logs admin action", async () => {
     const tables = makeTables();
     tables.trust_events.push({
       id: "ev-pending", user_id: USER_A,
-      event_type: "GPS_IMPOSSIBLE_SPEED", category: "location_honesty",
+      event_type: "gps_impossible_speed", category: "location_honesty",
       delta: -8, severity: "serious", status: "pending_review",
       created_at: new Date().toISOString(),
     });

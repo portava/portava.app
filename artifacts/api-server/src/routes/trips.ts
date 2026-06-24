@@ -4,6 +4,7 @@ import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 
 const router = Router();
 
@@ -27,6 +28,13 @@ router.post("/trips", async (req, res) => {
   const { data: { user }, error: authError } = await client.auth.getUser(token);
   if (authError || !user) {
     res.status(401).json({ error: authError?.message ?? "Invalid or expired token" });
+    return;
+  }
+
+  // Trust Engine: check if user is restricted from hosting
+  const trustState = await getRestrictionState(client, user.id);
+  if (!trustState.canHost) {
+    res.status(403).json({ error: "trust_restriction", message: "Your account is currently restricted from creating trips." });
     return;
   }
 

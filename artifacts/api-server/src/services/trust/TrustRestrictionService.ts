@@ -130,11 +130,15 @@ export async function getRestrictionState(
       activeRestrictions:   [...activeTypes],
     };
   } catch {
-    // Fail-open: don't block users when DB is unavailable
+    // Fail-safe: for high-risk actions (messaging, hosting) return false on DB error
+    // so a transient failure cannot bypass an active restriction.
+    // Low-risk actions (private_plan_access, location_plan_join) stay open.
     return {
-      canHost: true, canJoinPrivatePlans: true,
-      canMessage: true, canJoinLocationPlans: true,
-      activeRestrictions: [],
+      canHost:              false,
+      canJoinPrivatePlans:  true,
+      canMessage:           false,
+      canJoinLocationPlans: true,
+      activeRestrictions:   [],
     };
   }
 }
