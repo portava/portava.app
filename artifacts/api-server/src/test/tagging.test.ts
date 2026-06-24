@@ -553,4 +553,24 @@ describe('processTagging enforcement', () => {
     assert.equal(aliceTagRows.length, 1, 'duplicate upsert must produce exactly one row');
     store.tags = [];
   });
+
+  it('notification dedup: second processTagging call returns [] taggedIds (at-most-once notification guaranteed)', async () => {
+    const { processTagging } = await import('../services/tagging/TaggingService.js');
+    const sc1 = makeClient(store, { userId: authorId });
+    const firstIds = await processTagging({
+      db: sc1 as any, authorId,
+      sourceType: 'post', sourceId: 'post-notif-dedup-09',
+      content: '@alice',
+    });
+    assert.ok(firstIds.includes(aliceId), 'first call must return tagged id so caller dispatches notification');
+
+    const sc2 = makeClient(store, { userId: authorId });
+    const secondIds = await processTagging({
+      db: sc2 as any, authorId,
+      sourceType: 'post', sourceId: 'post-notif-dedup-09',
+      content: '@alice',
+    });
+    assert.deepEqual(secondIds, [], 'second call must return [] — tag already exists, no duplicate notification dispatched');
+    store.tags = [];
+  });
 });

@@ -433,6 +433,7 @@ router.delete('/hashtags/:slug/follow', async (req, res) => {
 router.get('/hashtags/:slug/feed', async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
+  const { user } = auth;
 
   const slug  = req.params.slug.toLowerCase().replace(/^#/, '');
   const limit = Math.min(Number(req.query.limit ?? 20), 50);
@@ -499,12 +500,25 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     return;
   }
 
+  // ── Viewer block-list (needed for post-tab visibility filtering) ────────────
+  const { data: feedBlockRows } = await sc
+    .from('blocks')
+    .select('blocker_id, blocked_id')
+    .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+  const feedBlockedSet = new Set<string>();
+  for (const b of (feedBlockRows ?? []) as any[]) {
+    if (b.blocker_id === user.id) feedBlockedSet.add(b.blocked_id);
+    else feedBlockedSet.add(b.blocker_id);
+  }
+
   // Dispatch per tab type — fetch the underlying entities for each source_type
   if (tab === 'top' || tab === 'recent') {
+    // Posts: public-only + exclude blocked authors (RLS-equivalent visibility guard)
     let postsQ = sc
       .from('posts')
       .select('id, author_id, content, media_urls, created_at, like_count, comment_count')
       .in('id', sourceIds)
+      .eq('visibility', 'public')
       .neq('status', 'deleted');
     postsQ = tab === 'top'
       ? postsQ.order('like_count', { ascending: false })
@@ -513,14 +527,16 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     const { data: posts, error: postsErr } = await postsQ;
     if (postsErr) { req.log.error({ err: postsErr }, 'hashtag feed posts failed'); sendError(res, 'db_error', postsErr.message); return; }
 
-    const authorIds = [...new Set((posts ?? []).map((p: any) => p.author_id))];
+    const visiblePosts = (posts ?? []).filter((p: any) => !feedBlockedSet.has(p.author_id));
+
+    const authorIds = [...new Set(visiblePosts.map((p: any) => p.author_id))];
     let profileMap: Record<string, any> = {};
     if (authorIds.length > 0) {
       const { data: profiles } = await sc.from('profiles').select('id, handle, name, avatar_url').in('id', authorIds);
       for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
     }
 
-    const items = (posts ?? []).map((p: any) => {
+    const items = visiblePosts.map((p: any) => {
       const pr = profileMap[p.author_id];
       return {
         id: p.id, type: 'post', content: p.content, mediaUrls: p.media_urls ?? [],

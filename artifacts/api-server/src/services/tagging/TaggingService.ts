@@ -200,6 +200,18 @@ async function processMentions(
       }
     }
 
+    // Dedup guard: if this (source, tagged_user) pair already exists,
+    // skip — callers should not dispatch a second notification for re-processing.
+    const { data: existing } = await db
+      .from('tags')
+      .select('id')
+      .eq('source_type', sourceType)
+      .eq('source_id', sourceId)
+      .eq('tagged_user_id', profile.id)
+      .maybeSingle();
+
+    if (existing) continue; // Already tagged — at-most-once notification guaranteed
+
     const { error: insErr } = await db
       .from('tags')
       .upsert(

@@ -200,6 +200,21 @@ router.get('/tags/suggestions', async (req, res) => {
     }
   } catch { /* discovery_places may not exist on all deployments */ }
 
+  // Events matching query
+  try {
+    const { data: eventRows } = await sc
+      .from('events')
+      .select('id, name, location, start_at')
+      .ilike('name', `%${q}%`)
+      .limit(10);
+    for (const e of (eventRows ?? []) as any[]) {
+      entitySuggestions.push({
+        id: e.id, type: 'event',
+        name: e.name, location: e.location ?? null, startAt: e.start_at ?? null,
+      });
+    }
+  } catch { /* events table may not exist on all deployments */ }
+
   const suggestions = [...userSuggestions, ...entitySuggestions].slice(0, limit);
   res.status(200).json({ suggestions });
 });
