@@ -78,6 +78,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0044_hashtag_reports.sql` | Creates `hashtag_reports` table (hashtag_id, reporter_id, reason enum: spam/misleading/abusive, created_at); RLS: auth users insert own rows, service role reads all; indexes on hashtag_id and reporter_id | pending |
 | `0047_rent_buddy.sql` | Creates all `rent_buddy_*` tables: profiles, applications, availability, packages, addons, saved, waitlist, bookings, booking_extensions, route_stops, route_change_requests, safety_checkins, safety_events, user_limits, emergency_contacts_snapshot, reviews, disputes, policy_flags, admin_actions; seeds `rent_buddy_enabled` feature flag | pending |
 | `0046_tag_suppression.sql` | Adds `suppressed BOOLEAN NOT NULL DEFAULT FALSE` + `suppressed_at TIMESTAMPTZ NULL` to `tags`; partial indexes for active-by-source and suppressed-by-user lookups; used by soft-delete self-tag removal flow | pending |
+| `0048_booking_stay_connected.sql` | Adds `stay_connected_traveler BOOLEAN NOT NULL DEFAULT FALSE` and `stay_connected_buddy BOOLEAN NOT NULL DEFAULT FALSE` to `rent_buddy_bookings`; replaces ephemeral in-memory Map so stay-connected opt-ins survive server restarts and work across multiple API instances | pending |
 
 ## Gotchas
 

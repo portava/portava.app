@@ -22,10 +22,6 @@ import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 
 const router = Router();
 
-// In-memory stay-connected opt-in store: bookingId → Set<userId>
-// Both the traveler and the buddy must call POST /stay-connected before/at completion
-// for the thread to remain open. Single-instance server; data is ephemeral across restarts.
-const rentBuddyStayConnected = new Map<string, Set<string>>();
 
 // ── Policy language ────────────────────────────────────────────────────────────
 
@@ -1067,13 +1063,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   // Archive the booking thread unless BOTH parties opted to stay connected.
   // Either party may call POST /api/rent-a-buddy/bookings/:bookingId/stay-connected before or after
   // completion to record their preference. We check both here.
-  const travelerId: string = (booking as any).traveler_id;
-  const buddyProfileId: string = (booking as any).buddy_id;
-  const { data: bProf } = await serviceClient.from("rent_buddy_profiles").select("user_id").eq("id", buddyProfileId).maybeSingle();
-  const buddyUserId2: string = (bProf as any)?.user_id ?? "";
-
-  const staySet = rentBuddyStayConnected.get(bookingId);
-  const bothStayConnected = !!(staySet?.has(travelerId) && staySet?.has(buddyUserId2));
+  // Read durable stay-connected opt-ins from DB (not in-memory — survives restarts).
+  const bothStayConnected = !!((booking as any).stay_connected_traveler && (booking as any).stay_connected_buddy);
 
   if (!bothStayConnected) {
     const telegraphThreadId2: string | null = (booking as any).telegraph_thread_id ?? null;
@@ -1086,9 +1077,6 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
         .is("archived_at", null);
     }
   }
-  // Clean up the in-memory stay-connected opt-in after completion
-  rentBuddyStayConnected.delete(bookingId);
-
   return res.json({ ok: true });
 });
 
@@ -1174,10 +1162,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/stay-connected", async (req, 
   const isBuddy = buddyUserId === auth.user.id;
   if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
 
-  if (!rentBuddyStayConnected.has(bookingId)) {
-    rentBuddyStayConnected.set(bookingId, new Set());
-  }
-  rentBuddyStayConnected.get(bookingId)!.add(auth.user.id);
+  // Persist opt-in to DB so it survives server restarts and works across instances.
+  const column = isTraveler ? "stay_connected_traveler" : "stay_connected_buddy";
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ [column]: true, updated_at: new Date().toISOString() })
+    .eq("id", bookingId);
 
   return res.json({ ok: true, optedIn: true });
 });
@@ -1212,6 +1202,16 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => 
 
   if (!isTraveler && !isBuddy) {
     return res.status(403).json({ error: "forbidden" });
+  }
+
+  // Enforce lifecycle: thread may only be created once the booking is confirmed or later.
+  // Pending and cancelled bookings have no chat thread yet.
+  const threadAllowedStatuses = ["confirmed", "in_progress", "completed", "disputed"];
+  if (!threadAllowedStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "thread_not_available",
+      message: "The chat thread opens once the Buddy confirms the booking.",
+    });
   }
 
   // If a thread already exists, return it

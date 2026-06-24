@@ -2,7 +2,7 @@
  * RentABuddyThreadHeader
  *
  * Shown at the top of a Telegraph thread when threadType === 'rent_buddy_booking'.
- * Displays booking status, start time, meetup location, and quick-action buttons.
+ * Displays booking status bar, start time, meetup location, and quick-action buttons.
  */
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
@@ -11,22 +11,31 @@ import { Shield, ExternalLink, Clock, MapPin, Plus, Languages } from 'lucide-rea
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { getBooking, type BuddyBooking } from '../../services/rentABuddy';
 
+// Ordered lifecycle stages used by the status progress bar
+const STAGES: Array<{ key: string; label: string }> = [
+  { key: 'pending',     label: 'Pending' },
+  { key: 'confirmed',   label: 'Confirmed' },
+  { key: 'in_progress', label: 'Active' },
+  { key: 'completed',   label: 'Done' },
+];
+
+// Statuses that fall outside the linear lifecycle get a special badge colour
 const STATUS_COLORS: Record<string, string> = {
-  pending: '#F59E0B',
-  confirmed: '#3B82F6',
+  pending:     '#F59E0B',
+  confirmed:   '#3B82F6',
   in_progress: '#8B5CF6',
-  completed: '#10B981',
-  cancelled: '#9CA3AF',
-  disputed: '#EF4444',
+  completed:   '#10B981',
+  cancelled:   '#9CA3AF',
+  disputed:    '#EF4444',
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  confirmed: 'Confirmed',
+  pending:     'Pending',
+  confirmed:   'Confirmed',
   in_progress: 'In Progress',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  disputed: 'Disputed',
+  completed:   'Completed',
+  cancelled:   'Cancelled',
+  disputed:    'Disputed',
 };
 
 interface Props {
@@ -60,8 +69,11 @@ export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTran
   const statusColor = STATUS_COLORS[booking.status] ?? color.mute;
   const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
   const isActive = booking.status === 'in_progress';
-  // Safety is relevant for both confirmed (about to meet) and in-progress (currently active)
   const showSafety = booking.status === 'confirmed' || isActive;
+
+  // Determine which linear stage index the booking is at (−1 for out-of-band statuses)
+  const currentStageIdx = STAGES.findIndex((s) => s.key === booking.status);
+  const isLinearStatus = currentStageIdx !== -1;
 
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -69,6 +81,7 @@ export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTran
 
   return (
     <View style={styles.wrap}>
+      {/* ── Status badge + meta row ── */}
       <View style={styles.top}>
         <View style={[styles.statusBadge, { backgroundColor: statusColor + '22', borderColor: statusColor }]}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -95,6 +108,35 @@ export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTran
         )}
       </View>
 
+      {/* ── Milestone progress bar (only for the 4 linear stages) ── */}
+      {isLinearStatus && (
+        <View style={styles.progressRow}>
+          {STAGES.map((stage, idx) => {
+            const done = idx <= currentStageIdx;
+            const isLast = idx === STAGES.length - 1;
+            return (
+              <React.Fragment key={stage.key}>
+                {/* Stage dot */}
+                <View style={styles.stageCol}>
+                  <View style={[styles.stageDot, done && { backgroundColor: statusColor, borderColor: statusColor }]} />
+                  <Text style={[styles.stageLabel, done && { color: statusColor }]}>{stage.label}</Text>
+                </View>
+                {/* Connector line between dots */}
+                {!isLast && (
+                  <View
+                    style={[
+                      styles.connector,
+                      idx < currentStageIdx && { backgroundColor: statusColor },
+                    ]}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </View>
+      )}
+
+      {/* ── Action buttons ── */}
       <View style={styles.actions}>
         {showSafety && (
           <Pressable
@@ -186,6 +228,40 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 12,
   },
+
+  // ── Progress bar ──
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 2,
+  },
+  stageCol: {
+    alignItems: 'center',
+    gap: 3,
+  },
+  stageDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  stageLabel: {
+    fontFamily: 'Courier',
+    fontSize: 8,
+    fontWeight: '700',
+    color: color.haze,
+    letterSpacing: 0.3,
+  },
+  connector: {
+    flex: 1,
+    height: 1.5,
+    backgroundColor: color.haze,
+    marginTop: 4,
+  },
+
+  // ── Action buttons ──
   actions: {
     flexDirection: 'row',
     gap: space.sm,
