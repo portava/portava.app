@@ -42,6 +42,7 @@ import {
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
+import { processTagging } from '../services/tagging/TaggingService.js';
 
 const router = Router();
 
@@ -1474,6 +1475,20 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }).catch(() => {
     // Outer safety net — translateMessageForThread already catches internally.
   });
+
+  // Fire-and-forget: extract @mentions and #hashtags from the message body
+  if (body.trim().length > 0) {
+    Promise.resolve().then(() =>
+      processTagging({
+        db: sc,
+        authorId: user.id,
+        sourceType: 'message',
+        sourceId: m.id,
+        content: body,
+        logger: req.log,
+      }),
+    ).catch(() => {});
+  }
 });
 
 /* ---------------------------------------------------------------------------

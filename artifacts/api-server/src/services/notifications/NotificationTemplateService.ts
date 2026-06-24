@@ -753,6 +753,18 @@ export const TEMPLATES: NotificationTemplate[] = [
     actionUrl: () => '/(tabs)/trips',
   }),
 
+  // ── Tagging ────────────────────────────────────────────────────────────────
+  tpl({
+    eventType: 'pulse.user_tagged',
+    category: 'pulse',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ taggerHandle }) => `@${taggerHandle ?? 'someone'} mentioned you`,
+    body: ({ context }) => context ?? 'You were mentioned in a post.',
+    actionUrl: ({ sourceType, sourceId }) =>
+      sourceType && sourceId ? `/${sourceType}/${sourceId}` : '/feed',
+  }),
+
   // ── Admin / Moderation ─────────────────────────────────────────────────────
   tpl({
     eventType: 'admin.account_notice',

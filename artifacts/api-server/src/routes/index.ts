@@ -37,6 +37,8 @@ import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
 import airportRouter from "./airport";
 import featureFlagsRouter from "./featureFlags";
+import tagsRouter from "./tags";
+import hashtagsRouter from "./hashtags";
 
 const router: IRouter = Router();
 
@@ -78,5 +80,7 @@ router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
 router.use(airportRouter);
 router.use(featureFlagsRouter);
+router.use(tagsRouter);
+router.use(hashtagsRouter);
 
 export default router;

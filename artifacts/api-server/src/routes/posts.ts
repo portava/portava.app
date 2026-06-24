@@ -15,6 +15,8 @@ import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
 import { getServiceClient } from "../lib/supabase";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
+import { processTagging } from "../services/tagging/TaggingService.js";
+import { NotificationService } from "../services/notifications/NotificationService.js";
 
 const router = Router();
 
@@ -245,6 +247,42 @@ router.post("/posts", async (req, res) => {
   }
 
   res.status(201).json({ ...(data as any), postcard });
+
+  // Fire-and-forget: extract @mentions and #hashtags, dispatch user_tagged notifications
+  {
+    const sc = getServiceClient();
+    if (sc && (content ?? '').trim().length > 0) {
+      Promise.resolve().then(async () => {
+        const taggedIds = await processTagging({
+          db: sc,
+          authorId: user.id,
+          sourceType: 'post',
+          sourceId: (data as any).id,
+          content: content ?? '',
+          city: locationCity ?? null,
+          country: locationCountry ?? null,
+          logger: req.log,
+        });
+        if (taggedIds.length > 0) {
+          const { data: taggerProfile } = await sc.from('profiles').select('handle').eq('id', user.id).single();
+          const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+          const notifSvc = new NotificationService(sc);
+          await Promise.allSettled(
+            taggedIds.map((taggedId) =>
+              notifSvc.create({
+                userId: taggedId,
+                eventType: 'pulse.user_tagged',
+                actorId: user.id,
+                sourceType: 'post',
+                sourceId: (data as any).id,
+                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a post.` },
+              }),
+            ),
+          );
+        }
+      }).catch(() => {});
+    }
+  }
 
   // Feed Pulse post creation into Trust Engine (fire-and-forget; flag-gated internally)
   void recordTrustEvent(client, {
@@ -840,6 +878,40 @@ router.post("/posts/:postId/comments", async (req, res) => {
     },
     commentCount: count ?? 0,
   });
+
+  // Fire-and-forget: extract @mentions and #hashtags from the comment body
+  {
+    const sc = getServiceClient();
+    if (sc && body.trim().length > 0) {
+      Promise.resolve().then(async () => {
+        const taggedIds = await processTagging({
+          db: sc,
+          authorId: user.id,
+          sourceType: 'comment',
+          sourceId: (comment as any).id,
+          content: body,
+          logger: req.log,
+        });
+        if (taggedIds.length > 0) {
+          const { data: taggerProfile } = await sc.from('profiles').select('handle').eq('id', user.id).single();
+          const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+          const notifSvc = new NotificationService(sc);
+          await Promise.allSettled(
+            taggedIds.map((taggedId) =>
+              notifSvc.create({
+                userId: taggedId,
+                eventType: 'pulse.user_tagged',
+                actorId: user.id,
+                sourceType: 'comment',
+                sourceId: (comment as any).id,
+                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a comment.` },
+              }),
+            ),
+          );
+        }
+      }).catch(() => {});
+    }
+  }
 });
 
 router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
