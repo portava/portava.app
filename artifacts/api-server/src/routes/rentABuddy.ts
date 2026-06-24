@@ -1117,6 +1117,15 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) =
   const isBuddy = buddyUserId === auth.user.id;
   if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
 
+  // Add-time is only valid while the booking is active; reject all other states.
+  const addTimeAllowedStatuses = ["confirmed", "in_progress"];
+  if (!addTimeAllowedStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_booking_status",
+      message: "Extra time can only be added to confirmed or in-progress bookings.",
+    });
+  }
+
   const newDurationH = Number((booking as any).duration_h) + hours;
   await serviceClient
     .from("rent_buddy_bookings")

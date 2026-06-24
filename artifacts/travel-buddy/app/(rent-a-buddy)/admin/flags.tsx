@@ -295,7 +295,7 @@ export default function AdminFlagsScreen() {
                   <Pressable style={detail.threadLink}
                     onPress={() => {
                       setSelected(null);
-                      router.push(`/(rent-a-buddy)/bookings/${selected.bookingId}` as any);
+                      router.push({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: selected.bookingId } });
                     }}>
                     <Text style={detail.threadLinkText}>View Booking & Chat Context →</Text>
                   </Pressable>
