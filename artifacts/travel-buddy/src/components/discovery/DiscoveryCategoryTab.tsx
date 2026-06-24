@@ -205,6 +205,9 @@ interface DiscoveryCategoryTabProps {
   onPickDestination?: (city: string) => void;
   contextMode?: DiscoveryContextMode | null;
   viewMode?: 'list' | 'map';
+  ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
+  customMinAge?: number | null;
+  customMaxAge?: number | null;
 }
 
 export function DiscoveryCategoryTab({
@@ -215,6 +218,9 @@ export function DiscoveryCategoryTab({
   onPickDestination,
   contextMode,
   viewMode = 'list',
+  ageFilter,
+  customMinAge,
+  customMaxAge,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -244,7 +250,7 @@ export function DiscoveryCategoryTab({
     if (reset) setLoading(true);
     setError(null);
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode);
+    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge);
 
     setLoading(false);
     setRefreshing(false);
@@ -259,13 +265,13 @@ export function DiscoveryCategoryTab({
     setTotal(res.data.total);
     setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
-  }, [destination, category, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPlaces([]);
     setPage(1);
     load(1, filters, true);
-  }, [destination, category, filters, load]);
+  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
     setRefreshing(true);

@@ -41,6 +41,8 @@ export interface RequestResult<T = null> {
   data: T | null;
   errorKind?: RequestErrorKind;
   message?: string;
+  /** Server-supplied detail code, e.g. 'dob_missing' | 'age_not_eligible' */
+  reason?: string;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -56,7 +58,14 @@ async function freshToken(): Promise<string | null> {
 function mapApiError<T>(status: number, body: any): RequestResult<T> {
   const code = (body?.error as RequestErrorKind) ?? 'db_error';
   const known: RequestErrorKind[] = ['unauthenticated', 'forbidden', 'not_found', 'invalid_payload', 'db_error'];
-  return { ok: false, data: null, errorKind: known.includes(code) ? code : 'db_error', message: body?.message ?? `API ${status}` };
+  const result: RequestResult<T> = {
+    ok: false,
+    data: null,
+    errorKind: known.includes(code) ? code : 'db_error',
+    message: body?.message ?? `API ${status}`,
+  };
+  if (body?.reason != null) result.reason = body.reason as string;
+  return result;
 }
 
 function isNetworkError(e: unknown): boolean {

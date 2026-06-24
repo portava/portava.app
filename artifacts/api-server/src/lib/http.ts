@@ -1,7 +1,6 @@
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { getServiceClient, isServiceClientReady } from "./supabase";
-export { _setTestServiceClient } from "./supabase";
+import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Test-only client injection — lets unit tests pass a fake Supabase client
@@ -10,10 +9,13 @@ export { _setTestServiceClient } from "./supabase";
 let _testClient: any = null;
 let _testReady: boolean | null = null;
 
-/** Call from test helpers before each test to inject a fake client. */
+/** Call from test helpers before each test to inject a fake client.
+ *  Also overrides the service client so routes that call getServiceClient()
+ *  directly (e.g. for DOB lookups) hit the same fake instead of the real DB. */
 export function _setTestClient(client: any, ready: boolean): void {
   _testClient = client;
   _testReady = ready;
+  _setTestServiceClient(client);
 }
 /** Reset after tests if needed (makeApp re-injects, so usually unnecessary). */
 export function _clearTestClient(): void {

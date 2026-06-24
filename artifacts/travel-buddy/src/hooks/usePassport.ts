@@ -83,6 +83,8 @@ export function usePassport(): PassportState {
         planningStyle: null,
         publicSocialLinks: {},
         preferredLanguage: null,
+        dateOfBirth: null,
+        dobVerified: false,
       };
       setTimeout(() => {
         if (alive) {

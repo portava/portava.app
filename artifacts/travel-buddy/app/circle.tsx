@@ -1,16 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert } from 'react-native';
+import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert, TextInput } from 'react-native';
 import { router } from 'expo-router';
 import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { openCircleChat } from '../src/services/messaging';
+import {
+  getMyCircleAgeSettings, updateCircleAgeSettings,
+  type CircleAgeSettings,
+} from '../src/services/circleAgeSettings';
 import { getCircleAvailability, type MemberAvailability } from '../src/services/availability';
 import { AvailabilityGrid } from '../src/components/AvailabilityGrid';
 import { BestDaysBanner } from '../src/components/BestDaysBanner';
 import { MeetupCreationSheet } from '../src/components/MeetupCreationSheet';
 import { useSession } from '../src/context/SessionContext';
-import { color, space, radius, type as t } from '../src/theme/tokens';
+import { color, space, radius, type as t, shadow } from '../src/theme/tokens';
 import { HighlightRing } from '../src/components/HighlightRing';
 import { HighlightViewer } from '../src/components/HighlightViewer';
 import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
@@ -79,6 +83,14 @@ export default function Circle() {
   const [meetupDate,  setMeetupDate]  = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
+  // Circle age settings
+  const [ageSettings, setAgeSettings] = useState<CircleAgeSettings | null>(null);
+  const [ageSettingsOpen, setAgeSettingsOpen] = useState(false);
+  const [ageEnabled, setAgeEnabled] = useState(false);
+  const [minAgeStr, setMinAgeStr] = useState('');
+  const [maxAgeStr, setMaxAgeStr] = useState('');
+  const [ageSaving, setAgeSaving] = useState(false);
+
   const live = configured && isAuthed;
   const circleDays = useMemo(() => next14Days(), []);
 
@@ -99,6 +111,37 @@ export default function Circle() {
   }, [live, userId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!live) return;
+    getMyCircleAgeSettings().then((res) => {
+      if (res.ok && res.data) {
+        setAgeSettings(res.data);
+        setAgeEnabled(res.data.ageLimitEnabled);
+        setMinAgeStr(res.data.minAge != null ? String(res.data.minAge) : '');
+        setMaxAgeStr(res.data.maxAge != null ? String(res.data.maxAge) : '');
+      }
+    });
+  }, [live]);
+
+  async function handleSaveAgeSettings() {
+    if (ageSaving) return;
+    setAgeSaving(true);
+    const minAge = ageEnabled && minAgeStr ? parseInt(minAgeStr) : null;
+    const maxAge = ageEnabled && maxAgeStr ? parseInt(maxAgeStr) : null;
+    const res = await updateCircleAgeSettings({
+      ageLimitEnabled: ageEnabled,
+      minAge,
+      maxAge,
+    });
+    setAgeSaving(false);
+    if (res.ok && res.data) {
+      setAgeSettings(res.data);
+      Alert.alert('Saved', 'Your circle age settings have been updated.');
+    } else {
+      Alert.alert('Error', res.message ?? 'Could not save age settings');
+    }
+  }
 
   const list = tab === 'circle' ? following : followers;
 
@@ -190,6 +233,81 @@ export default function Circle() {
           <Text style={styles.chatBannerText}>Circle Group Chat</Text>
           <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
         </Pressable>
+      )}
+
+      {/* Circle age settings — only shown in circle tab for the logged-in owner */}
+      {tab === 'circle' && live && (
+        <View style={styles.ageSection}>
+          <Pressable style={styles.ageHead} onPress={() => setAgeSettingsOpen((v) => !v)}>
+            <Text style={styles.ageTitle}>Circle Age Limit</Text>
+            {ageSettings?.ageLimitEnabled && ageSettings.label && (
+              <View style={styles.ageBadge}>
+                <Text style={styles.ageBadgeText}>{ageSettings.label}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }} />
+            {ageSettingsOpen
+              ? <ChevronUp size={16} color={color.mute} />
+              : <ChevronDown size={16} color={color.mute} />}
+          </Pressable>
+          {ageSettingsOpen && (
+            <View style={styles.ageBody}>
+              <View style={styles.ageToggleRow}>
+                <Text style={styles.ageToggleLabel}>Enable age restriction</Text>
+                <Pressable
+                  style={[styles.toggle, ageEnabled && styles.toggleOn]}
+                  onPress={() => setAgeEnabled((v) => !v)}
+                  hitSlop={8}
+                >
+                  <View style={[styles.toggleThumb, ageEnabled && styles.toggleThumbOn]} />
+                </Pressable>
+              </View>
+              {ageEnabled && (
+                <View style={styles.ageRangeRow}>
+                  <View style={styles.ageRangeField}>
+                    <Text style={styles.ageHint}>Min age</Text>
+                    <TextInput
+                      style={styles.ageInput}
+                      value={minAgeStr}
+                      onChangeText={setMinAgeStr}
+                      placeholder="e.g. 18"
+                      placeholderTextColor={color.faint}
+                      keyboardType="number-pad"
+                      maxLength={3}
+                    />
+                  </View>
+                  <Text style={styles.ageDash}>–</Text>
+                  <View style={styles.ageRangeField}>
+                    <Text style={styles.ageHint}>Max age</Text>
+                    <TextInput
+                      style={styles.ageInput}
+                      value={maxAgeStr}
+                      onChangeText={setMaxAgeStr}
+                      placeholder="e.g. 35"
+                      placeholderTextColor={color.faint}
+                      keyboardType="number-pad"
+                      maxLength={3}
+                    />
+                  </View>
+                </View>
+              )}
+              {ageEnabled && (
+                <Text style={styles.ageHint}>
+                  People outside this range will be blocked from accepting circle invites. Leave a field blank for no bound.
+                </Text>
+              )}
+              <Pressable
+                style={[styles.ageSaveBtn, ageSaving && { opacity: 0.6 }]}
+                onPress={handleSaveAgeSettings}
+                disabled={ageSaving}
+              >
+                {ageSaving
+                  ? <ActivityIndicator size="small" color={color.onInk} />
+                  : <Text style={styles.ageSaveBtnText}>Save</Text>}
+              </Pressable>
+            </View>
+          )}
+        </View>
       )}
 
       {tab === 'circle' && following.length > 0 && (
@@ -337,4 +455,24 @@ const styles = StyleSheet.create({
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
   emptyNote: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 18 },
   discoverBtn: { padding: 4 },
+
+  ageSection: { marginHorizontal: space.lg, marginTop: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
+  ageHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
+  ageTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  ageBadge: { backgroundColor: '#FEF3C7', paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1, borderColor: '#F59E0B' },
+  ageBadgeText: { fontSize: 11, fontWeight: '700', color: '#92400E' },
+  ageBody: { borderTopWidth: 1, borderTopColor: color.haze, padding: space.md, gap: space.sm },
+  ageToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  ageToggleLabel: { ...t.body, color: color.ink, fontWeight: '600', fontSize: 13 },
+  ageHint: { ...t.small, color: color.mute, fontSize: 11 },
+  ageRangeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm },
+  ageRangeField: { flex: 1, gap: 4 },
+  ageInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paper, textAlign: 'center' },
+  ageDash: { ...t.bodyStrong, color: color.mute, marginBottom: 8 },
+  ageSaveBtn: { backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.sm + 2, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  ageSaveBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 13 },
+  toggle: { width: 44, height: 26, borderRadius: 13, backgroundColor: color.haze, justifyContent: 'center', paddingHorizontal: 2 },
+  toggleOn: { backgroundColor: color.signal },
+  toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: color.paperRaised },
+  toggleThumbOn: { alignSelf: 'flex-end' },
 });

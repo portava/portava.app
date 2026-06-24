@@ -23,6 +23,7 @@ import { sendError } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
+import { calculateUserAge } from "../lib/ageEligibility";
 
 const router = Router();
 
@@ -376,6 +377,13 @@ function scoreWithContext(places: DiscoveryPlace[], ctx: DiscoveryContext): Disc
 const VALID_CATEGORIES = ["for_you", "places", "food", "nightlife", "activities", "events", "beaches", "transport"];
 const VALID_CONTEXT_MODES = ["near_me", "in_city", "going_soon", "around_crew", "safe_nearby"];
 
+// OSM venue types considered adult-only (require 18+). Used to filter results
+// for callers whose effective age resolves to under 18.
+const ADULT_OSM_VENUE_TYPES = new Set([
+  "nightclub", "casino", "stripclub", "adult_gaming_centre",
+  "brothel", "swingerclub", "bar", "pub",
+]);
+
 /**
  * Context mode labels returned to the client. Never includes exact coords.
  */
@@ -398,6 +406,7 @@ router.get("/discovery", async (req, res) => {
   // the effective destination so context-driven modes (near_me/going_soon) work
   // without requiring the client to geocode first.
   let discoveryCtx: DiscoveryContext | null = null;
+  let callerUserId: string | null = null;
 
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ") && isServiceClientReady) {
@@ -406,6 +415,7 @@ router.get("/discovery", async (req, res) => {
       const sc = getServiceClient()!;
       const { data: authData } = await sc.auth.getUser(token);
       if (authData?.user) {
+        callerUserId = authData.user.id;
         const rawMode = (req.query.context as string | undefined) ?? "";
         const mode: DiscoveryContextMode = VALID_CONTEXT_MODES.includes(rawMode)
           ? (rawMode as DiscoveryContextMode)
@@ -460,9 +470,50 @@ router.get("/discovery", async (req, res) => {
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
 
+  // ── Age filter params ──────────────────────────────────────────────────────
+  const VALID_AGE_FILTERS = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
+  type AgeFilterType = typeof VALID_AGE_FILTERS[number];
+  const rawAgeFilter = req.query.ageFilter as string | undefined;
+  const ageFilter: AgeFilterType = VALID_AGE_FILTERS.includes(rawAgeFilter as any)
+    ? (rawAgeFilter as AgeFilterType)
+    : "any";
+  const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
+  const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
+
+  // Resolve caller age when ageFilter = open_to_me
+  let callerAge: number | null = null;
+  let callerDobMissing = false;
+  if (ageFilter === "open_to_me" && callerUserId) {
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: profileRow } = await sc
+        .from("profiles")
+        .select("date_of_birth")
+        .eq("id", callerUserId)
+        .maybeSingle();
+      const dob = (profileRow as any)?.date_of_birth ?? null;
+      callerAge = calculateUserAge(dob);
+      if (callerAge === null) callerDobMissing = true;
+    }
+  }
+
+  /** Derive effective min/max age from the chosen filter preset */
+  function ageFilterBounds(): { min: number | null; max: number | null } | null {
+    switch (ageFilter) {
+      case "any":        return null;
+      case "18_plus":    return { min: 18, max: null };
+      case "21_plus":    return { min: 21, max: null };
+      case "under_30":   return { min: null, max: 29 };
+      case "30_plus":    return { min: 30, max: null };
+      case "custom":     return { min: customMinAge, max: customMaxAge };
+      case "open_to_me": return callerAge !== null ? { min: callerAge, max: callerAge } : null;
+      default:           return null;
+    }
+  }
+
   const key    = cacheKey(destination, category, radiusKm);
   const cached = cache.get(key);
-  /** Apply openNow / minRating filters to a set of places */
+  /** Apply openNow / minRating / age filters to a set of places */
   function applyFilters(raw: DiscoveryPlace[]): DiscoveryPlace[] {
     let list = raw;
     if (openNow) {
@@ -477,6 +528,17 @@ router.get("/discovery", async (req, res) => {
         return p.rating >= minRating!;
       });
     }
+    // Age-based category filter: OSM venues don't store explicit age limits, so
+    // we proxy by known adult-only venue types. Filter them out only when the
+    // effective caller age resolves to < 18 (e.g. open_to_me for a minor, or
+    // custom range capped below 18).
+    const ageBounds = ageFilterBounds();
+    if (ageBounds !== null) {
+      const effectiveMin = ageBounds.min ?? (ageBounds.max !== null && ageBounds.max < 18 ? ageBounds.max : null);
+      if (effectiveMin !== null && effectiveMin < 18) {
+        list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+      }
+    }
     return list;
   }
 
@@ -484,17 +546,23 @@ router.get("/discovery", async (req, res) => {
   // discoveryCtx.label (from DiscoveryLocationContext) takes precedence over generic label
   const ctxLabel  = discoveryCtx?.label ?? (contextMode ? contextModeLabel(contextMode, cityLabel) : null);
 
+  const ageFilterMeta = {
+    ageFilter,
+    callerDobMissing: ageFilter === "open_to_me" ? callerDobMissing : false,
+    bounds: ageFilterBounds(),
+  };
+
   if (cached && isFresh(cached)) {
     const filtered = applyFilters(cached.places);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: true });
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta });
     return;
   }
 
   try {
     const coords = await geocode(destination);
     if (!coords) {
-      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false });
+      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta });
       return;
     }
 
@@ -509,10 +577,10 @@ router.get("/discovery", async (req, res) => {
     const ranked  = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
     const filtered = applyFilters(ranked);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false });
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
-    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false });
+    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null });
   }
 });
 
@@ -562,6 +630,58 @@ router.get("/discovery/community", async (req, res) => {
   const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
   const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
 
+  // Age filter params for community discovery
+  const VALID_AGE_FILTERS_COMM = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
+  const rawAgeFilter = req.query.ageFilter as string | undefined;
+  const ageFilterComm = VALID_AGE_FILTERS_COMM.includes(rawAgeFilter as any)
+    ? (rawAgeFilter as typeof VALID_AGE_FILTERS_COMM[number])
+    : "any";
+  const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
+  const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
+
+  // Optional auth — needed only for open_to_me to resolve caller DOB
+  let commCallerAge: number | null = null;
+  let commCallerDobMissing = false;
+  if (ageFilterComm === "open_to_me" && isServiceClientReady) {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      const sc = getServiceClient();
+      if (sc) {
+        try {
+          const token = authHeader.slice(7).trim();
+          const { data: authData } = await sc.auth.getUser(token);
+          if (authData?.user) {
+            const { data: profileRow } = await sc
+              .from("profiles")
+              .select("date_of_birth")
+              .eq("id", authData.user.id)
+              .maybeSingle();
+            const dob = (profileRow as any)?.date_of_birth ?? null;
+            commCallerAge = calculateUserAge(dob);
+          }
+        } catch { /* degrade gracefully */ }
+      }
+    }
+    if (commCallerAge === null) commCallerDobMissing = true;
+  }
+
+  function communityAgeBounds(): { min: number | null; max: number | null } | null {
+    switch (ageFilterComm) {
+      case "any":        return null;
+      case "18_plus":    return { min: 18, max: null };
+      case "21_plus":    return { min: 21, max: null };
+      case "under_30":   return { min: null, max: 29 };
+      case "30_plus":    return { min: 30, max: null };
+      case "custom":     return (customMinAge !== null || customMaxAge !== null)
+                           ? { min: customMinAge, max: customMaxAge }
+                           : null;
+      case "open_to_me": return commCallerAge !== null
+                           ? { min: commCallerAge, max: commCallerAge }
+                           : null;
+      default:           return null;
+    }
+  }
+
   try {
     const sc = getServiceClient()!;
 
@@ -593,6 +713,20 @@ router.get("/discovery/community", async (req, res) => {
 
     if (typeFilter !== "all") {
       query = query.eq("place_type", typeFilter);
+    }
+
+    // Age filtering: show only places accessible to the effective caller age.
+    // Interpretation: a place is accessible to someone of age X when
+    //   min_age IS NULL OR min_age <= X  (place doesn't require more than X years)
+    //   max_age IS NULL OR max_age >= X  (place doesn't cap at below X years)
+    const ageBoundsComm = communityAgeBounds();
+    if (ageBoundsComm) {
+      if (ageBoundsComm.min !== null) {
+        query = query.or(`min_age.is.null,min_age.lte.${ageBoundsComm.min}`);
+      }
+      if (ageBoundsComm.max !== null) {
+        query = query.or(`max_age.is.null,max_age.gte.${ageBoundsComm.max}`);
+      }
     }
 
     const { data, error } = await query;
@@ -632,7 +766,16 @@ router.get("/discovery/community", async (req, res) => {
       };
     });
 
-    res.json({ items, city, total: items.length });
+    res.json({
+      items,
+      city,
+      total: items.length,
+      ageFilterMeta: {
+        ageFilter:         ageFilterComm,
+        callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
+        bounds:            communityAgeBounds(),
+      },
+    });
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");
     res.json({ items: [], city, total: 0 });

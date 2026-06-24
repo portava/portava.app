@@ -170,6 +170,7 @@ export default function PassportScreen() {
       travelPace: null, budgetStyle: null, travelGroupStyle: [],
       lookingFor: [], comfortLevel: null, availabilityTags: [],
       planningStyle: null, publicSocialLinks: {}, preferredLanguage: null,
+      dateOfBirth: null, dobVerified: false,
     };
     return (
       <View style={{ flex: 1 }}>

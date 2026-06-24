@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
-  AppState, type AppStateStatus, Image, Modal, Linking, Animated,
+  AppState, type AppStateStatus, Image, Modal, Linking, Animated, Switch,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -231,6 +231,9 @@ export default function MeetupScreen() {
   const [editExactTime, setEditExactTime] = useState<Date | null>(null);
   const [editTimeBlock, setEditTimeBlock] = useState<TimeBlock | null>(null);
   const [editFocusField, setEditFocusField] = useState<'title' | 'location'>('title');
+  const [editAgeLimitEnabled, setEditAgeLimitEnabled] = useState(false);
+  const [editMinAge, setEditMinAge] = useState('');
+  const [editMaxAge, setEditMaxAge] = useState('');
   const locationInputRef = useRef<TextInput>(null);
 
   function startEdit(focusField: 'title' | 'location' = 'title') {
@@ -247,6 +250,9 @@ export default function MeetupScreen() {
     }
     setEditExactTime(meetup.startsAt ? new Date(meetup.startsAt) : null);
     setEditTimeBlock(meetup.startsAt ? null : (meetup.timeBlock ?? null));
+    setEditAgeLimitEnabled(meetup.ageLimitEnabled ?? false);
+    setEditMinAge(meetup.minAge != null ? String(meetup.minAge) : '');
+    setEditMaxAge(meetup.maxAge != null ? String(meetup.maxAge) : '');
     setEditFocusField(focusField);
     setEditing(true);
   }
@@ -264,24 +270,32 @@ export default function MeetupScreen() {
     const newStartsAt = (editDate && editExactTime)
       ? combineDateTime(editDate, editExactTime)
       : null;
+    const minAgeNum = editMinAge ? parseInt(editMinAge, 10) : undefined;
+    const maxAgeNum = editMaxAge ? parseInt(editMaxAge, 10) : undefined;
     const res = await updateMeetup(id, {
-      title:           editTitle.trim() || meetup.title,
-      locationName:    editLocation.trim() || null,
-      description:     editDesc.trim() || null,
-      approximateDate: editDate ? toISODate(editDate) : null,
-      timeBlock:       editExactTime ? null : editTimeBlock,
-      startsAt:        newStartsAt,
+      title:            editTitle.trim() || meetup.title,
+      locationName:     editLocation.trim() || null,
+      description:      editDesc.trim() || null,
+      approximateDate:  editDate ? toISODate(editDate) : null,
+      timeBlock:        editExactTime ? null : editTimeBlock,
+      startsAt:         newStartsAt,
+      ageLimitEnabled:  editAgeLimitEnabled,
+      minAge:           editAgeLimitEnabled && minAgeNum ? minAgeNum : undefined,
+      maxAge:           editAgeLimitEnabled && maxAgeNum ? maxAgeNum : undefined,
     });
     setActioning(null);
     if (res.ok) {
       setMeetup((prev) => prev ? {
         ...prev,
-        title:           editTitle.trim() || prev.title,
-        locationName:    editLocation.trim() || null,
-        description:     editDesc.trim() || null,
-        approximateDate: editDate ? toISODate(editDate) : null,
-        timeBlock:       editExactTime ? null : editTimeBlock,
-        startsAt:        newStartsAt,
+        title:            editTitle.trim() || prev.title,
+        locationName:     editLocation.trim() || null,
+        description:      editDesc.trim() || null,
+        approximateDate:  editDate ? toISODate(editDate) : null,
+        timeBlock:        editExactTime ? null : editTimeBlock,
+        startsAt:         newStartsAt,
+        ageLimitEnabled:  editAgeLimitEnabled,
+        minAge:           editAgeLimitEnabled && minAgeNum ? minAgeNum : null,
+        maxAge:           editAgeLimitEnabled && maxAgeNum ? maxAgeNum : null,
       } : prev);
       setEditing(false);
     } else {
@@ -337,8 +351,17 @@ export default function MeetupScreen() {
     const res = await rsvpMeetup(id, status);
     if (res.ok && res.data) {
       setMeetup((prev) => prev ? { ...prev, myRsvp: res.data!.status, counts: res.data!.counts } : prev);
+    } else if (!res.ok && res.reason === 'dob_missing') {
+      Alert.alert(
+        'Date of birth required',
+        'This meetup has an age limit. Add your date of birth to your profile to join.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Go to profile', onPress: () => router.push('/profile/edit' as any) },
+        ],
+      );
     } else {
-      Alert.alert('Error', res.message ?? 'Could not RSVP');
+      Alert.alert('Cannot join', res.message ?? 'Could not RSVP');
     }
     setActioning(null);
   }
@@ -565,16 +588,57 @@ export default function MeetupScreen() {
                 multiline
                 numberOfLines={3}
               />
+              <View style={s.ageLimitRow}>
+                <Text style={s.editLabel}>Age limit</Text>
+                <Switch
+                  value={editAgeLimitEnabled}
+                  onValueChange={setEditAgeLimitEnabled}
+                  trackColor={{ true: color.signal }}
+                />
+              </View>
+              {editAgeLimitEnabled && (
+                <View style={s.ageRangeRow}>
+                  <View style={s.ageRangeField}>
+                    <Text style={s.ageRangeLabel}>Min age</Text>
+                    <TextInput
+                      style={s.ageRangeInput}
+                      value={editMinAge}
+                      onChangeText={setEditMinAge}
+                      keyboardType="number-pad"
+                      placeholder="e.g. 18"
+                      placeholderTextColor={color.faint}
+                      maxLength={3}
+                    />
+                  </View>
+                  <View style={s.ageRangeField}>
+                    <Text style={s.ageRangeLabel}>Max age (opt.)</Text>
+                    <TextInput
+                      style={s.ageRangeInput}
+                      value={editMaxAge}
+                      onChangeText={setEditMaxAge}
+                      keyboardType="number-pad"
+                      placeholder="no limit"
+                      placeholderTextColor={color.faint}
+                      maxLength={3}
+                    />
+                  </View>
+                </View>
+              )}
             </View>
           </KeyboardAvoidingView>
         ) : (
           <View style={s.card}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm, flexWrap: 'wrap' }}>
               <View style={[s.statusPill, { backgroundColor: sc.bg }]}>
                 <Text style={[s.statusText, { color: sc.fg }]}>{meetup.status.toUpperCase()}</Text>
               </View>
               {meetup.tripId && <Text style={s.scopeTag}>🗺 Trip meetup</Text>}
               {meetup.circleOwnerId && <Text style={s.scopeTag}>⭕ Circle meetup</Text>}
+              {meetup.ageLimitEnabled && meetup.ageLimitLabel && (
+                <View style={s.ageBadge}>
+                  <Text style={s.ageBadgeText}>🔞 {meetup.ageLimitLabel}</Text>
+                </View>
+              )}
             </View>
             <Text style={s.title}>{meetup.title}</Text>
             {meetup.description ? <Text style={s.desc}>{meetup.description}</Text> : null}
@@ -662,6 +726,19 @@ export default function MeetupScreen() {
             ))}
           </View>
         </View>
+
+        {/* Age requirement info card */}
+        {meetup.ageLimitEnabled && (
+          <View style={[s.card, s.ageGate]}>
+            <Text style={s.ageGateTitle}>Age Requirement</Text>
+            <Text style={s.ageGateText}>
+              {meetup.ageLimitLabel
+                ? `This meetup is restricted to ${meetup.ageLimitLabel.toLowerCase()}.`
+                : 'This meetup has an age restriction.'}
+              {' '}You must meet the requirement to RSVP.
+            </Text>
+          </View>
+        )}
 
         {/* RSVP — single unconfirmed slot: 2 options only (Going / Can't go) */}
         {!isCancelled && isAuthed ? (
@@ -880,6 +957,11 @@ const s = StyleSheet.create({
   blockBtnTextActive: { color: color.onInk },
   clearTimeText:  { ...t.small, color: color.signal, fontWeight: '700', textAlign: 'right', marginTop: 2 },
   editLabelRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  ageLimitRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.sm },
+  ageRangeRow:    { flexDirection: 'row', gap: space.md, marginTop: space.xs },
+  ageRangeField:  { flex: 1 },
+  ageRangeLabel:  { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 4 },
+  ageRangeInput:  { ...t.body, color: color.ink, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm, minHeight: 42, textAlign: 'center' },
 
   scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxxl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
@@ -891,6 +973,11 @@ const s = StyleSheet.create({
   statusPill: { paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.6 },
   scopeTag: { ...t.small, color: color.mute, fontSize: 11 },
+  ageBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B' },
+  ageBadgeText: { fontSize: 11, fontWeight: '700', color: '#92400E' },
+  ageGate: { backgroundColor: '#FEF9C3', borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: '#FCD34D', gap: 6 },
+  ageGateTitle: { ...t.bodyStrong, color: '#92400E', fontWeight: '700', fontSize: 13 },
+  ageGateText: { ...t.small, color: '#78350F', fontSize: 12 },
   title: { ...t.title, color: color.ink, fontSize: 22 },
   desc: { ...t.body, color: color.mute, lineHeight: 20 },
   creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },

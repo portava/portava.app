@@ -461,6 +461,8 @@ export interface OwnProfile {
   planningStyle: string | null;
   publicSocialLinks: Record<string, string>;
   preferredLanguage: string | null;
+  dateOfBirth: string | null;
+  dobVerified: boolean;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

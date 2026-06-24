@@ -40,7 +40,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, date_of_birth, dob_verified";
 
 /** Fallback: select everything that exists; mapProfile handles every field with ?? null. */
 const PROFILE_COLUMNS_FALLBACK = "*";
@@ -80,6 +80,8 @@ function mapProfile(r: any) {
     planningStyle: r.planning_style ?? null,
     publicSocialLinks: r.public_social_links ?? {},
     preferredLanguage: r.preferred_language ?? null,
+    dateOfBirth: r.date_of_birth ?? null,
+    dobVerified: r.dob_verified ?? false,
   };
 }
 
@@ -147,6 +149,7 @@ const patchProfileSchema = z.object({
   planningStyle: z.string().max(50).nullish(),
   publicSocialLinks: z.record(z.string().max(300)).optional(),
   preferredLanguage: z.string().max(20).nullish(),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateOfBirth must be YYYY-MM-DD").nullable().optional(),
 });
 
 router.patch("/me/profile", async (req, res) => {
@@ -190,6 +193,28 @@ router.patch("/me/profile", async (req, res) => {
       return;
     }
     row.preferred_language = p.preferredLanguage ?? null;
+  }
+  if (p.dateOfBirth !== undefined) {
+    if (p.dateOfBirth !== null) {
+      const dob = new Date(p.dateOfBirth);
+      if (isNaN(dob.getTime())) {
+        sendError(res, "invalid_payload", "Invalid dateOfBirth");
+        return;
+      }
+      const now = new Date();
+      if (dob >= now) {
+        sendError(res, "invalid_payload", "dateOfBirth must be in the past");
+        return;
+      }
+      const ageYears = now.getFullYear() - dob.getFullYear() - (
+        now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate()) ? 1 : 0
+      );
+      if (ageYears < 13) {
+        sendError(res, "invalid_payload", "You must be at least 13 years old");
+        return;
+      }
+    }
+    row.date_of_birth = p.dateOfBirth;
   }
 
   if (p.username !== undefined) {

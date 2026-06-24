@@ -103,12 +103,24 @@ export type DiscoveryContextMode =
   | 'around_crew'
   | 'safe_nearby';
 
+export type DiscoveryAgeFilter =
+  | 'any'
+  | 'open_to_me'
+  | '18_plus'
+  | '21_plus'
+  | 'under_30'
+  | '30_plus'
+  | 'custom';
+
 export async function getDiscoveryPlaces(
   destination: string,
   category: DiscoveryCategory,
   filters: DiscoveryFilters,
   page = 1,
   contextMode?: DiscoveryContextMode | null,
+  ageFilter?: DiscoveryAgeFilter | null,
+  customMinAge?: number | null,
+  customMaxAge?: number | null,
 ): Promise<{ ok: true; data: DiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -121,6 +133,9 @@ export async function getDiscoveryPlaces(
     ...(filters.openNow ? { openNow: '1' } : {}),
     ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
     ...(contextMode ? { context: contextMode } : {}),
+    ...(ageFilter && ageFilter !== 'any' ? { ageFilter } : {}),
+    ...(ageFilter === 'custom' && customMinAge != null ? { customMinAge: String(customMinAge) } : {}),
+    ...(ageFilter === 'custom' && customMaxAge != null ? { customMaxAge: String(customMaxAge) } : {}),
   });
 
   try {

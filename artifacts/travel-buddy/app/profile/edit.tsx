@@ -62,6 +62,7 @@ interface FormState {
   avatarUrl: string | null;
   coverUrl: string | null;
   preferredLanguage: string | null;
+  dateOfBirth: string | null;
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -84,6 +85,7 @@ export default function EditProfileScreen() {
     avatarUrl: null,
     coverUrl: null,
     preferredLanguage: null,
+    dateOfBirth: null,
   });
 
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
@@ -107,7 +109,8 @@ export default function EditProfileScreen() {
     form.visibility !== originalForm.visibility ||
     form.avatarUri !== originalForm.avatarUri ||
     form.coverUri !== originalForm.coverUri ||
-    form.preferredLanguage !== originalForm.preferredLanguage
+    form.preferredLanguage !== originalForm.preferredLanguage ||
+    form.dateOfBirth !== originalForm.dateOfBirth
   );
 
   useEffect(() => {
@@ -129,6 +132,7 @@ export default function EditProfileScreen() {
           avatarUrl: p.avatarUrl,
           coverUrl: p.coverPhotoUrl,
           preferredLanguage: langFromCtx,
+          dateOfBirth: p.dateOfBirth ?? null,
         };
         setForm(initial);
         setOriginalForm(initial);
@@ -310,6 +314,24 @@ export default function EditProfileScreen() {
         return;
       }
       patch.coverUrl = upRes.data!.url;
+    }
+
+    if (form.dateOfBirth !== (originalForm?.dateOfBirth ?? null)) {
+      const dob = form.dateOfBirth;
+      if (dob !== null) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+          setSaveError('Date of birth must be in YYYY-MM-DD format');
+          setSaving(false);
+          return;
+        }
+        const d = new Date(dob);
+        if (isNaN(d.getTime()) || d >= new Date()) {
+          setSaveError('Date of birth must be a valid past date');
+          setSaving(false);
+          return;
+        }
+      }
+      (patch as any).dateOfBirth = dob;
     }
 
     const langChanged = form.preferredLanguage !== (originalForm?.preferredLanguage ?? null);
@@ -505,6 +527,24 @@ export default function EditProfileScreen() {
                   maxLength={BIO_MAX}
                   returnKeyType="default"
                 />
+              </View>
+
+              {/* Date of Birth */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Date of Birth</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={form.dateOfBirth ?? ''}
+                  onChangeText={(text) => setForm((f) => ({ ...f, dateOfBirth: text || null }))}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={color.faint}
+                  maxLength={10}
+                  keyboardType="numeric"
+                  returnKeyType="next"
+                />
+                <Text style={styles.fieldHint}>
+                  Used to enforce age limits on meetups and circles. Not shown publicly.
+                </Text>
               </View>
 
               {/* Visibility */}

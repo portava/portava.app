@@ -22,6 +22,11 @@ import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { sendPushNotification } from "../lib/push.js";
+import {
+  getAgeEligibilityReason,
+  formatAgeLimitLabel,
+  validateAgeRange,
+} from "../lib/ageEligibility.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -109,6 +114,9 @@ const CreateMeetupSchema = z.object({
   circleOwnerId: z.string().regex(UUID).optional(),
   visibility:   z.enum(["invitees","trip","circle","friends"]).default("invitees"),
   inviteeIds:   z.array(z.string().regex(UUID)).optional(),
+  ageLimitEnabled: z.boolean().optional(),
+  minAge:       z.number().int().nullable().optional(),
+  maxAge:       z.number().int().nullable().optional(),
 });
 
 router.post("/meetups", async (req, res) => {
@@ -138,20 +146,33 @@ router.post("/meetups", async (req, res) => {
     }
   }
 
+  // Validate age limit range when provided
+  if (b.ageLimitEnabled) {
+    const rangeErr = validateAgeRange(b.minAge, b.maxAge);
+    if (rangeErr) { sendError(res, "invalid_payload", rangeErr); return; }
+    if ((b.minAge == null) && (b.maxAge == null)) {
+      sendError(res, "invalid_payload", "At least one of minAge or maxAge must be set when ageLimitEnabled is true");
+      return;
+    }
+  }
+
   const { data: meetup, error } = await client
     .from("meetups")
     .insert({
-      creator_id:       user.id,
-      title:            b.title,
-      description:      b.description ?? null,
-      location_name:    b.locationName ?? null,
-      approximate_date: b.approximateDate ?? null,
-      time_block:       b.startsAt ? null : (b.timeBlock ?? null),
-      starts_at:        b.startsAt ?? null,
-      trip_id:          b.tripId ?? null,
-      circle_owner_id:  b.circleOwnerId ?? null,
-      visibility:       b.visibility,
-      status:           "active",
+      creator_id:        user.id,
+      title:             b.title,
+      description:       b.description ?? null,
+      location_name:     b.locationName ?? null,
+      approximate_date:  b.approximateDate ?? null,
+      time_block:        b.startsAt ? null : (b.timeBlock ?? null),
+      starts_at:         b.startsAt ?? null,
+      trip_id:           b.tripId ?? null,
+      circle_owner_id:   b.circleOwnerId ?? null,
+      visibility:        b.visibility,
+      status:            "active",
+      age_limit_enabled: b.ageLimitEnabled ?? false,
+      min_age:           b.ageLimitEnabled ? (b.minAge ?? null) : null,
+      max_age:           b.ageLimitEnabled ? (b.maxAge ?? null) : null,
     })
     .select("*")
     .single();
@@ -228,6 +249,25 @@ router.post("/meetups", async (req, res) => {
       approximateDate: b.approximateDate ?? null,
       timeBlock: b.timeBlock ?? null,
     });
+  }
+
+  // Audit log: age limit set on creation (fire-and-forget)
+  if (b.ageLimitEnabled) {
+    const auditSc = getServiceClient();
+    if (auditSc) {
+      void (async () => {
+        try {
+          await auditSc.from("age_limit_audit_log").insert({
+            actor_user_id: user.id,
+            target_type:   "meetup",
+            target_id:     meetupId,
+            action:        "age_limit_set",
+            new_min_age:   b.minAge ?? null,
+            new_max_age:   b.maxAge ?? null,
+          });
+        } catch {}
+      })();
+    }
   }
 
   res.status(201).json({ ...(meetup as any), inviteErrors });
@@ -345,6 +385,10 @@ router.get("/meetups/:meetupId", async (req, res) => {
     chatMessageId:   meetup.chat_message_id ?? null,
     createdAt:       meetup.created_at,
     updatedAt:       meetup.updated_at,
+    ageLimitEnabled: meetup.age_limit_enabled ?? false,
+    minAge:          meetup.min_age ?? null,
+    maxAge:          meetup.max_age ?? null,
+    ageLimitLabel:   formatAgeLimitLabel(meetup.age_limit_enabled ?? false, meetup.min_age, meetup.max_age),
     counts,
     myRsvp:          (myInvite as any)?.status ?? null,
     isCreator,
@@ -373,6 +417,9 @@ const UpdateMeetupSchema = z.object({
   timeBlock:       z.enum(["morning","afternoon","evening","late"]).nullable().optional(),
   startsAt:        z.string().nullable().optional(),
   status:          z.enum(["draft","active","confirmed","cancelled"]).optional(),
+  ageLimitEnabled: z.boolean().optional(),
+  minAge:          z.number().int().nullable().optional(),
+  maxAge:          z.number().int().nullable().optional(),
 });
 
 router.patch("/meetups/:meetupId", async (req, res) => {
@@ -391,6 +438,16 @@ router.patch("/meetups/:meetupId", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const b = parsed.data;
 
+  // Validate age limit range when provided
+  if (b.ageLimitEnabled) {
+    const rangeErr = validateAgeRange(b.minAge, b.maxAge);
+    if (rangeErr) { sendError(res, "invalid_payload", rangeErr); return; }
+    if ((b.minAge == null) && (b.maxAge == null)) {
+      sendError(res, "invalid_payload", "At least one of minAge or maxAge must be set when ageLimitEnabled is true");
+      return;
+    }
+  }
+
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (b.title           !== undefined) patch.title            = b.title;
   if (b.description     !== undefined) patch.description      = b.description;
@@ -399,11 +456,35 @@ router.patch("/meetups/:meetupId", async (req, res) => {
   if (b.timeBlock       !== undefined) patch.time_block       = b.timeBlock;
   if (b.startsAt        !== undefined) patch.starts_at        = b.startsAt;
   if (b.status          !== undefined) patch.status           = b.status;
+  if (b.ageLimitEnabled !== undefined) {
+    patch.age_limit_enabled = b.ageLimitEnabled;
+    patch.min_age = b.ageLimitEnabled ? (b.minAge ?? null) : null;
+    patch.max_age = b.ageLimitEnabled ? (b.maxAge ?? null) : null;
+  }
 
   const { data: updated, error } = await client
     .from("meetups").update(patch).eq("id", meetupId).select("*").single();
 
   if (error) { req.log.error({ err: error }, "update meetup"); sendError(res, "db_error", error.message); return; }
+
+  // Audit log: age limit updated (fire-and-forget)
+  if (b.ageLimitEnabled !== undefined) {
+    const auditSc = getServiceClient();
+    if (auditSc) {
+      void (async () => {
+        try {
+          await auditSc.from("age_limit_audit_log").insert({
+            actor_user_id: user.id,
+            target_type:   "meetup",
+            target_id:     meetupId,
+            action:        b.ageLimitEnabled ? "age_limit_updated" : "age_limit_removed",
+            new_min_age:   b.ageLimitEnabled ? (b.minAge ?? null) : null,
+            new_max_age:   b.ageLimitEnabled ? (b.maxAge ?? null) : null,
+          });
+        } catch {}
+      })();
+    }
+  }
 
   res.json(toCamelMeetup(updated));
 });
@@ -459,7 +540,7 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
 
   const { data: meetup } = await client
     .from("meetups")
-    .select("creator_id, title, status, trip_id, circle_owner_id, visibility")
+    .select("creator_id, title, status, trip_id, circle_owner_id, visibility, age_limit_enabled, min_age, max_age")
     .eq("id", meetupId)
     .maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
@@ -534,12 +615,39 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
   const alreadyInvited = new Set((existing ?? []).map((r: any) => r.user_id as string));
   const toInvite = candidateIds.filter((id) => !alreadyInvited.has(id));
 
+  // ── Age pre-check: filter out age-ineligible invitees when meetup has age limit ──
+  let ageIneligible: string[] = [];
+  if ((meetup as any).age_limit_enabled && toInvite.length > 0) {
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: profiles } = await sc
+        .from("profiles")
+        .select("id, date_of_birth")
+        .in("id", toInvite);
+      const dobByUser: Record<string, string | null> = {};
+      for (const row of profiles ?? []) {
+        dobByUser[(row as any).id] = (row as any).date_of_birth ?? null;
+      }
+      const eligible: string[] = [];
+      for (const uid of toInvite) {
+        const dob = dobByUser[uid] ?? null;
+        const result = getAgeEligibilityReason(dob, true, (meetup as any).min_age, (meetup as any).max_age);
+        if (result.eligible) {
+          eligible.push(uid);
+        } else {
+          ageIneligible.push(uid);
+        }
+      }
+      toInvite.splice(0, toInvite.length, ...eligible);
+    }
+  }
+
   if (toInvite.length > 0) {
     await client.from("meetup_invites").insert(toInvite.map((uid) => ({ meetup_id: meetupId, user_id: uid })));
     await createMeetupInboxItems(client, meetupId, (meetup as any).title, toInvite, user.id);
   }
 
-  res.json({ invited: toInvite, skipped: [...alreadyInvited], ineligible });
+  res.json({ invited: toInvite, skipped: [...alreadyInvited], ineligible, ageIneligible });
 });
 
 // ── POST /api/meetups/:meetupId/rsvp ─────────────────────────────────────────
@@ -558,10 +666,45 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
 
   const access = await canAccessMeetup(client, meetupId, user.id);
   if (!access.ok) { sendError(res, "not_found", "Meetup not found or access denied"); return; }
-  if ((access.meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Cannot RSVP to a cancelled meetup"); return; }
+  const meetupRow = access.meetup as any;
+  if (meetupRow.status === "cancelled") { sendError(res, "invalid_payload", "Cannot RSVP to a cancelled meetup"); return; }
 
+  // Age eligibility check — only enforced when the invitee is trying to RSVP going/maybe
   const parsed = RsvpSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  if (meetupRow.age_limit_enabled && parsed.data.status !== "declined") {
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: profileRow } = await sc
+        .from("profiles")
+        .select("date_of_birth")
+        .eq("id", user.id)
+        .maybeSingle();
+      const dob = (profileRow as any)?.date_of_birth ?? null;
+      const eligibility = getAgeEligibilityReason(dob, true, meetupRow.min_age, meetupRow.max_age);
+      if (!eligibility.eligible) {
+        // Write audit log (best-effort)
+        void (async () => {
+          try {
+            await sc.from("age_limit_audit_log").insert({
+              actor_user_id: user.id,
+              target_type:   "meetup",
+              target_id:     meetupId,
+              action:        "rsvp_blocked",
+              reason:        eligibility.reason,
+            });
+          } catch {}
+        })();
+        res.status(403).json({
+          error: "age_not_eligible",
+          reason: eligibility.reason,
+          message: eligibility.publicMessage,
+        });
+        return;
+      }
+    }
+  }
 
   const now = new Date().toISOString();
   const { data, error } = await client
@@ -864,6 +1007,10 @@ function toCamelMeetup(m: any) {
     chatMessageId:   m.chat_message_id ?? null,
     createdAt:       m.created_at,
     updatedAt:       m.updated_at,
+    ageLimitEnabled: m.age_limit_enabled ?? false,
+    minAge:          m.min_age ?? null,
+    maxAge:          m.max_age ?? null,
+    ageLimitLabel:   formatAgeLimitLabel(m.age_limit_enabled ?? false, m.min_age, m.max_age),
   };
 }
 

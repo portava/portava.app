@@ -83,6 +83,7 @@ export interface UpdateProfileInput {
   planningStyle?: string | null;
   publicSocialLinks?: Record<string, string>;
   preferredLanguage?: string | null;
+  dateOfBirth?: string | null;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {

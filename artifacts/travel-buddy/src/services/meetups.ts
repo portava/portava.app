@@ -60,7 +60,15 @@ export interface AttendeePreview {
   avatarUrl: string | null;
 }
 
-export interface MeetupDetail extends MeetupSummary {
+export interface MeetupAgeLimit {
+  ageLimitEnabled: boolean;
+  minAge: number | null;
+  maxAge: number | null;
+  /** Formatted label e.g. "Ages 21+", "Ages 18–30", "Under 35" */
+  ageLimitLabel: string | null;
+}
+
+export interface MeetupDetail extends MeetupSummary, MeetupAgeLimit {
   counts: MeetupCounts;
   myRsvp: RsvpStatus | null;
   isCreator: boolean;
@@ -99,6 +107,7 @@ export interface MeetupResult<T = null> {
   ok: boolean;
   data: T | null;
   message?: string;
+  reason?: string;
 }
 
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
@@ -128,7 +137,7 @@ async function apiCall<T>(
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      return { ok: false, data: null, message: b?.message ?? `API ${res.status}` };
+      return { ok: false, data: null, message: b?.message ?? `API ${res.status}`, reason: b?.reason };
     }
     if (res.status === 204) return { ok: true, data: null };
     return { ok: true, data: await res.json() };
@@ -150,6 +159,9 @@ export async function createMeetup(params: {
   circleOwnerId?: string;
   visibility?: MeetupVisibility;
   inviteeIds?: string[];
+  ageLimitEnabled?: boolean;
+  minAge?: number;
+  maxAge?: number;
 }): Promise<MeetupResult<MeetupSummary & { inviteErrors?: string[] }>> {
   return apiCall('/api/meetups', 'POST', params as Record<string, unknown>);
 }
@@ -175,6 +187,9 @@ export async function updateMeetup(
     timeBlock: TimeBlock | null;
     startsAt: string | null;
     status: MeetupStatus;
+    ageLimitEnabled: boolean;
+    minAge: number;
+    maxAge: number;
   }>,
 ): Promise<MeetupResult<MeetupSummary>> {
   return apiCall(`/api/meetups/${meetupId}`, 'PATCH', patch as Record<string, unknown>);

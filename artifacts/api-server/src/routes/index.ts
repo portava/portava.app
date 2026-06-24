@@ -39,6 +39,7 @@ import airportRouter from "./airport";
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
+import circleAgeSettingsRouter from "./circleAgeSettings";
 
 const router: IRouter = Router();
 
@@ -82,5 +83,6 @@ router.use(airportRouter);
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);
+router.use(circleAgeSettingsRouter);
 
 export default router;

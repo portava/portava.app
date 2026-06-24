@@ -211,6 +211,12 @@ export function MeetupCreationSheet({
   const [exactTime, setExactTime] = useState<Date | null>(null);
   const [timeBlock, setTimeBlock] = useState<TimeBlock | null>(null);
 
+  // ── Age limit ──
+  const [ageLimitEnabled, setAgeLimitEnabled] = useState(false);
+  const [minAgeStr, setMinAgeStr] = useState('');
+  const [maxAgeStr, setMaxAgeStr] = useState('');
+  const [ageLimitOpen, setAgeLimitOpen] = useState(false);
+
   const defaultVisibility: MeetupVisibility =
     tripId ? 'trip' : circleOwnerId ? 'circle' : 'invitees';
 
@@ -369,6 +375,9 @@ export function MeetupCreationSheet({
     setSaving(true);
     setError(null);
 
+    const minAge = ageLimitEnabled && minAgeStr ? parseInt(minAgeStr) : undefined;
+    const maxAge = ageLimitEnabled && maxAgeStr ? parseInt(maxAgeStr) : undefined;
+
     const res = await createMeetup({
       title: trimmed,
       description:     description.trim() || undefined,
@@ -382,6 +391,9 @@ export function MeetupCreationSheet({
       circleOwnerId,
       visibility:      defaultVisibility,
       inviteeIds:      selectedIds.size > 0 ? [...selectedIds] : undefined,
+      ageLimitEnabled: ageLimitEnabled || undefined,
+      minAge,
+      maxAge,
     });
 
     if (!res.ok || !res.data) {
@@ -652,6 +664,71 @@ export function MeetupCreationSheet({
               </View>
             )}
 
+            {/* ── Age limit ── */}
+            <View style={s.divider} />
+            <Pressable style={s.sectionToggle} onPress={() => setAgeLimitOpen((v) => !v)}>
+              <Users size={14} color={color.ink} />
+              <Text style={s.sectionToggleText}>Age Limit</Text>
+              {ageLimitEnabled && (
+                <View style={s.countBadge}>
+                  <Text style={s.countBadgeText}>On</Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }} />
+              {ageLimitOpen
+                ? <ChevronUp size={16} color={color.mute} />
+                : <ChevronDown size={16} color={color.mute} />}
+            </Pressable>
+
+            {ageLimitOpen && (
+              <View style={s.ageLimitBody}>
+                <View style={s.ageLimitToggleRow}>
+                  <Text style={s.ageLimitLabel}>Enable age restriction</Text>
+                  <Pressable
+                    style={[s.toggle, ageLimitEnabled && s.toggleOn]}
+                    onPress={() => setAgeLimitEnabled((v) => !v)}
+                    hitSlop={8}
+                  >
+                    <View style={[s.toggleThumb, ageLimitEnabled && s.toggleThumbOn]} />
+                  </Pressable>
+                </View>
+                {ageLimitEnabled && (
+                  <View style={s.ageRangeRow}>
+                    <View style={s.ageRangeField}>
+                      <Text style={s.ageLimitHint}>Min age</Text>
+                      <TextInput
+                        style={s.ageInput}
+                        value={minAgeStr}
+                        onChangeText={setMinAgeStr}
+                        placeholder="e.g. 18"
+                        placeholderTextColor={color.faint}
+                        keyboardType="number-pad"
+                        maxLength={3}
+                      />
+                    </View>
+                    <Text style={s.ageDash}>–</Text>
+                    <View style={s.ageRangeField}>
+                      <Text style={s.ageLimitHint}>Max age</Text>
+                      <TextInput
+                        style={s.ageInput}
+                        value={maxAgeStr}
+                        onChangeText={setMaxAgeStr}
+                        placeholder="e.g. 35"
+                        placeholderTextColor={color.faint}
+                        keyboardType="number-pad"
+                        maxLength={3}
+                      />
+                    </View>
+                  </View>
+                )}
+                {ageLimitEnabled && (
+                  <Text style={s.ageLimitHint}>
+                    Leave a field blank for no lower / upper bound. Attendees who don't meet the age requirement will be blocked from joining.
+                  </Text>
+                )}
+              </View>
+            )}
+
             {/* ── Time proposals ── */}
             <View style={s.divider} />
             <View style={s.proposeHeader}>
@@ -828,4 +905,13 @@ const s = StyleSheet.create({
   errText:          { ...t.small, color: '#DC2626', textAlign: 'center' },
   createBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
   createBtnText:    { ...t.bodyStrong, color: color.onInk },
+
+  ageLimitBody:      { paddingHorizontal: space.sm, paddingBottom: space.sm, gap: space.sm },
+  ageLimitToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  ageLimitLabel:    { ...t.body, color: color.ink, fontWeight: '600', fontSize: 13 },
+  ageLimitHint:     { ...t.small, color: color.mute, fontSize: 11 },
+  ageRangeRow:      { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm },
+  ageRangeField:    { flex: 1, gap: 4 },
+  ageInput:         { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paper, textAlign: 'center' },
+  ageDash:          { ...t.bodyStrong, color: color.mute, marginBottom: 8 },
 });

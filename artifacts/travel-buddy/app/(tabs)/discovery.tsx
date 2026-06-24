@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Platform,
+  View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane,
+  Calendar, Waves, Navigation, Plane, Users,
 } from 'lucide-react-native';
+import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
@@ -85,6 +86,10 @@ export default function DiscoveryHub() {
     () => locationState.place.city ?? 'Paris'
   );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
+  const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
+  const [customMinAge, setCustomMinAge] = useState<number | null>(null);
+  const [customMaxAge, setCustomMaxAge] = useState<number | null>(null);
+  const [showCustomInputs, setShowCustomInputs] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
@@ -199,6 +204,69 @@ export default function DiscoveryHub() {
         })}
       </ScrollView>
 
+      {/* ── Age filter chip strip ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.ageFilterBar}
+        contentContainerStyle={styles.ageFilterBarContent}
+      >
+        {([
+          { key: 'any',        label: 'Any age' },
+          { key: 'open_to_me', label: 'Open to me' },
+          { key: '18_plus',    label: '18+' },
+          { key: '21_plus',    label: '21+' },
+          { key: 'under_30',   label: 'Under 30' },
+          { key: '30_plus',    label: '30+' },
+          { key: 'custom',     label: 'Custom' },
+        ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
+          const active = ageFilter === opt.key;
+          return (
+            <Pressable
+              key={opt.key}
+              style={[styles.ageChip, active && styles.ageChipActive]}
+              onPress={() => {
+                setAgeFilter(opt.key);
+                if (opt.key === 'custom') setShowCustomInputs(true);
+              }}
+            >
+              {opt.key === 'open_to_me' && (
+                <Users size={10} color={active ? color.signal : color.mute} />
+              )}
+              <Text style={[styles.ageChipLabel, active && styles.ageChipLabelActive]}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {/* ── Custom age range inputs (shown when "Custom" chip is active) ── */}
+      {ageFilter === 'custom' && (
+        <View style={styles.customRangeRow}>
+          <Text style={styles.customRangeLabel}>Min age</Text>
+          <TextInput
+            style={styles.customRangeInput}
+            value={customMinAge != null ? String(customMinAge) : ''}
+            onChangeText={(v) => setCustomMinAge(v ? parseInt(v, 10) || null : null)}
+            keyboardType="number-pad"
+            placeholder="e.g. 18"
+            placeholderTextColor={color.mute}
+            maxLength={3}
+          />
+          <Text style={styles.customRangeLabel}>Max age</Text>
+          <TextInput
+            style={styles.customRangeInput}
+            value={customMaxAge != null ? String(customMaxAge) : ''}
+            onChangeText={(v) => setCustomMaxAge(v ? parseInt(v, 10) || null : null)}
+            keyboardType="number-pad"
+            placeholder="e.g. 35"
+            placeholderTextColor={color.mute}
+            maxLength={3}
+          />
+        </View>
+      )}
+
       {/* ── Tab bar + list/map toggle ── */}
       <View style={styles.tabRow}>
         <ScrollView
@@ -275,6 +343,9 @@ export default function DiscoveryHub() {
             onPickDestination={handlePickDestination}
             contextMode={contextMode}
             viewMode={viewMode}
+            ageFilter={ageFilter}
+            customMinAge={customMinAge}
+            customMaxAge={customMaxAge}
           />
         )}
       </View>
@@ -435,6 +506,67 @@ const styles = StyleSheet.create({
   },
   modeChipLabelActive: {
     color: color.signal,
+  },
+  ageFilterBar: {
+    flexGrow: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  ageFilterBarContent: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    gap: space.xs,
+  },
+  ageChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: color.haze,
+  },
+  ageChipActive: {
+    backgroundColor: color.signal + '14',
+    borderColor: color.signal + '50',
+  },
+  ageChipLabel: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: color.mute,
+  },
+  ageChipLabelActive: {
+    color: color.signal,
+  },
+  customRangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    gap: space.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  customRangeLabel: {
+    fontSize: 12,
+    color: color.mute,
+    fontWeight: '600' as const,
+  },
+  customRangeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    fontSize: 13,
+    color: color.ink,
+    backgroundColor: color.paper,
+    textAlign: 'center',
   },
   layoverFab: {
     position: 'absolute',

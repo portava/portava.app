@@ -1,7 +1,7 @@
 /**
  * Activity Center — unified notification & activity feed.
  *
- * Tabs: All / Plans / Trips / Telegraph / Safety / Compass / Pulse / Passport / Hidden Gems / Trust / Admin
+ * Tabs: All / Plans / Trips / Telegraph / Safety / Compass / Pulse / Passport / Hidden Gems / Trust / Admin / Requests
  *
  * Each ActivityCard shows:
  *   category icon, title, short body, relative time,
@@ -12,14 +12,17 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator,
-  RefreshControl, ScrollView,
+  RefreshControl, ScrollView, Alert, Image,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, CheckCheck } from 'lucide-react-native';
+import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
 import { color, space, type as t, radius, shadow } from '../src/theme/tokens';
 import { useNotifications } from '../src/hooks/useNotifications';
 import type { AppNotification, NotificationCategory } from '../src/services/notifications';
+import { useRequests } from '../src/hooks/useRequests';
+import { acceptRequest, declineRequest } from '../src/services/requests';
+import type { InboxItem } from '../src/services/requests';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -31,6 +34,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { key: 'all',         label: 'All' },
+  { key: 'requests',    label: 'Requests' },
   { key: 'plans',       label: 'Plans',       category: 'plans' },
   { key: 'trips',       label: 'Trips',       category: 'trips' },
   { key: 'telegraph',   label: 'Telegraph',   category: 'telegraph' },
@@ -185,6 +189,7 @@ export default function ActivityCenter() {
   const activeTabDef = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const { notifications, loading, loadingMore, unreadCount, reload, loadMore, markRead, markAllRead, dismiss } =
     useNotifications(activeTabDef.category ? { category: activeTabDef.category } : {});
+  const { incoming: incomingRequests, loading: reqLoading, reload: reloadRequests } = useRequests();
 
   // Mark all read on focus when Activity Center is opened
   useFocusEffect(useCallback(() => {
@@ -245,7 +250,13 @@ export default function ActivityCenter() {
       </ScrollView>
 
       {/* Content */}
-      {loading && notifications.length === 0 ? (
+      {activeTab === 'requests' ? (
+        <SocialRequestsPane
+          items={incomingRequests}
+          loading={reqLoading}
+          onReload={reloadRequests}
+        />
+      ) : loading && notifications.length === 0 ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={color.signal} />
         </View>
@@ -287,6 +298,195 @@ export default function ActivityCenter() {
     </View>
   );
 }
+
+// ── Social requests pane ──────────────────────────────────────────────────────
+
+const REQUEST_TYPE_LABEL: Record<string, string> = {
+  friend_request: 'Friend request',
+  circle_invite:  'Circle invite',
+  trip_invite:    'Trip invite',
+};
+
+function SocialRequestsPane({
+  items,
+  loading,
+  onReload,
+}: {
+  items: InboxItem[];
+  loading: boolean;
+  onReload: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function handleAccept(item: InboxItem) {
+    setBusy(item.id);
+    const res = await acceptRequest(item.type, item.id);
+    setBusy(null);
+    if (res.ok) {
+      onReload();
+      return;
+    }
+    if (res.reason === 'dob_missing') {
+      Alert.alert(
+        'Date of birth required',
+        'This circle requires age verification. Add your date of birth to your profile to join.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          {
+            text: 'Go to profile',
+            onPress: () => router.push('/profile/edit' as any),
+          },
+        ],
+      );
+      return;
+    }
+    if (res.reason === 'age_not_eligible') {
+      Alert.alert('Age limit', res.message ?? 'You do not meet the age requirement for this circle.');
+      return;
+    }
+    Alert.alert('Error', res.message ?? 'Could not accept request.');
+  }
+
+  async function handleDecline(item: InboxItem) {
+    setBusy(item.id);
+    await declineRequest(item.type, item.id);
+    setBusy(null);
+    onReload();
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={color.signal} />
+      </View>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <View style={styles.empty}>
+        <Text style={styles.emptyIcon}>📬</Text>
+        <Text style={styles.emptyTitle}>No pending requests</Text>
+        <Text style={styles.emptyBody}>
+          Friend requests, circle invites, and trip invites will appear here.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={items}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={{ paddingBottom: space.xxxl }}
+      refreshControl={
+        <RefreshControl refreshing={loading} onRefresh={onReload} tintColor={color.signal} />
+      }
+      renderItem={({ item }) => {
+        const isBusy = busy === item.id;
+        const initial = (item.actor?.name?.[0] ?? '?').toUpperCase();
+        return (
+          <View style={srStyles.card}>
+            <View style={srStyles.headerRow}>
+              {item.actor?.avatarUrl ? (
+                <Image source={{ uri: item.actor.avatarUrl }} style={srStyles.avatar} />
+              ) : (
+                <View style={[srStyles.avatar, srStyles.avatarFallback]}>
+                  <Text style={srStyles.avatarInitial}>{initial}</Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={srStyles.name}>{item.actor?.name ?? 'Someone'}</Text>
+                {item.actor?.handle ? (
+                  <Text style={srStyles.handle}>@{item.actor.handle}</Text>
+                ) : null}
+              </View>
+              <View style={srStyles.typeChip}>
+                <Text style={srStyles.typeChipText}>
+                  {REQUEST_TYPE_LABEL[item.type] ?? item.type}
+                </Text>
+              </View>
+            </View>
+            {item.targetName ? (
+              <Text style={srStyles.targetName}>{item.targetName}</Text>
+            ) : null}
+            <View style={srStyles.actions}>
+              <Pressable
+                style={[srStyles.btnAccept, isBusy && { opacity: 0.55 }]}
+                onPress={() => handleAccept(item)}
+                disabled={isBusy}
+              >
+                {isBusy
+                  ? <ActivityIndicator size="small" color={color.onInk} style={{ marginRight: 4 }} />
+                  : <UserCheck size={14} color={color.onInk} />
+                }
+                <Text style={srStyles.btnAcceptText}>Accept</Text>
+              </Pressable>
+              <Pressable
+                style={[srStyles.btnDecline, isBusy && { opacity: 0.55 }]}
+                onPress={() => handleDecline(item)}
+                disabled={isBusy}
+              >
+                <UserMinus size={14} color={color.mute} />
+                <Text style={srStyles.btnDeclineText}>Decline</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      }}
+    />
+  );
+}
+
+const srStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    padding: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    gap: space.sm,
+  },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze, flexShrink: 0 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
+  avatarInitial: { ...t.bodyStrong, color: color.ink, fontSize: 16 } as any,
+  name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' } as any,
+  handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 } as any,
+  typeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: '#E0EFEC',
+  },
+  typeChipText: { fontSize: 11, fontWeight: '600', color: color.deep },
+  targetName: { ...t.small, color: color.mute, fontSize: 13 } as any,
+  actions: { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
+  btnAccept: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+    backgroundColor: color.ink,
+  },
+  btnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700', fontSize: 13 } as any,
+  btnDecline: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+    backgroundColor: color.haze,
+  },
+  btnDeclineText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 13 } as any,
+});
 
 const styles = StyleSheet.create({
   header: {

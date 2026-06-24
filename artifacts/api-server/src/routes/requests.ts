@@ -15,6 +15,8 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { normalizedFriendshipPair, isUuid } from "../lib/friendDecisions";
+import { getServiceClient } from "../lib/supabase";
+import { getAgeEligibilityReason } from "../lib/ageEligibility";
 
 const router = Router();
 
@@ -289,6 +291,49 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
   if (!inv) { sendError(res, "not_found", "Circle invite not found"); return; }
   if (inv.status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${inv.status}`); return; }
   if (inv.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may accept this invite"); return; }
+
+  // Age eligibility check — look up the circle owner's age settings
+  const serviceClient = getServiceClient();
+  if (serviceClient) {
+    const [ageSettingsRes, profileRes] = await Promise.all([
+      serviceClient
+        .from("circle_age_settings")
+        .select("age_limit_enabled, min_age, max_age")
+        .eq("owner_id", inv.owner_id)
+        .maybeSingle(),
+      serviceClient
+        .from("profiles")
+        .select("date_of_birth")
+        .eq("id", user.id)
+        .maybeSingle(),
+    ]);
+
+    const ageSettings = ageSettingsRes.data as any;
+    if (ageSettings?.age_limit_enabled) {
+      const dob = (profileRes.data as any)?.date_of_birth ?? null;
+      const eligibility = getAgeEligibilityReason(dob, true, ageSettings.min_age, ageSettings.max_age);
+      if (!eligibility.eligible) {
+        // Write audit log (best-effort)
+        void (async () => {
+          try {
+            await serviceClient.from("age_limit_audit_log").insert({
+              actor_user_id: user.id,
+              target_type:   "circle",
+              target_id:     inv.owner_id,
+              action:        "circle_invite_accept_blocked",
+              reason:        eligibility.reason,
+            });
+          } catch {}
+        })();
+        res.status(403).json({
+          error: "age_not_eligible",
+          reason: eligibility.reason,
+          message: eligibility.publicMessage,
+        });
+        return;
+      }
+    }
+  }
 
   const now = new Date().toISOString();
   await sc.from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", id);
