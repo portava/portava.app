@@ -768,7 +768,7 @@ router.get('/admin/hashtags', async (req, res) => {
   let query = sc
     .from('hashtags')
     .select(
-      'id, slug, name, usage_count, is_blocked, is_hidden_from_trending, blocked_at, blocked_reason, created_at',
+      'id, slug, name, usage_count, is_blocked, is_hidden_from_trending, blocked_at, blocked_reason, created_at, hashtag_reports(count)',
       { count: 'exact' },
     )
     .order('usage_count', { ascending: false })
@@ -785,7 +785,22 @@ router.get('/admin/hashtags', async (req, res) => {
     return;
   }
 
-  res.status(200).json({ hashtags: data ?? [], total: count ?? 0, limit, offset });
+  const hashtags = (data ?? []).map((h: any) => ({
+    id: h.id,
+    slug: h.slug,
+    name: h.name,
+    usageCount: h.usage_count,
+    isBlocked: h.is_blocked,
+    hideTrending: h.is_hidden_from_trending,
+    blockedAt: h.blocked_at,
+    blockedReason: h.blocked_reason,
+    createdAt: h.created_at,
+    reportCount: Array.isArray(h.hashtag_reports)
+      ? (h.hashtag_reports[0]?.count ?? 0)
+      : 0,
+  }));
+
+  res.status(200).json({ hashtags, total: count ?? 0, limit, offset });
 });
 
 const BlockSchema = z.object({ reason: z.string().max(500).optional() });

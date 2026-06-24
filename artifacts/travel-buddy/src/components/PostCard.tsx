@@ -8,6 +8,7 @@ import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui';
 import { ActionBar } from './ActionBar';
 import { RichText } from './RichText';
+import { useSession } from '../context/SessionContext';
 
 /** Routes a post to the right card by kind. Hero falls back to standard if image too bright. */
 export function PostCard({ post }: { post: Post }) {
@@ -79,6 +80,7 @@ function HeroCard({ post }: { post: Post }) {
 
 /* 2. STANDARD — image first (if any), caption below. Cleaner, readable. */
 function StandardCard({ post }: { post: Post }) {
+  const { userId: currentUserId } = useSession();
   const hasMedia = post.media.length > 0;
   const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
   const hasFilterId = post.filterId && post.filterId !== 'original';
@@ -116,7 +118,7 @@ function StandardCard({ post }: { post: Post }) {
           {post.safetyNote && <Stamp label="safety" tone="signal" rotate={2} />}
           {post.rating != null && <Stamp label={'★'.repeat(post.rating)} tone="deep" rotate={2} />}
         </View>
-        {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} style={styles.caption} numberOfLines={5} />}
+        {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} currentUserId={currentUserId ?? undefined} style={styles.caption} numberOfLines={5} />}
         <ActionBar
           liked={post.liked} saved={post.saved}
           likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
@@ -128,6 +130,7 @@ function StandardCard({ post }: { post: Post }) {
 
 /* 3. QUESTION — no image, text-forward, Ask AI / Answer. */
 function QuestionCard({ post }: { post: Post }) {
+  const { userId: currentUserId } = useSession();
   return (
     <View style={[styles.card, styles.question]}>
       <View style={styles.stdHead}>
@@ -140,7 +143,7 @@ function QuestionCard({ post }: { post: Post }) {
         <Text style={styles.qLabel}>Question</Text>
       </View>
       <Text style={styles.qTitle}>{post.title}</Text>
-      {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} style={styles.qBody} numberOfLines={4} />}
+      {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} currentUserId={currentUserId ?? undefined} style={styles.qBody} numberOfLines={4} />}
       <View style={styles.qFooter}>
         <Text style={styles.qMeta}>{post.commentCount} answers</Text>
         <View style={{ flex: 1 }} />

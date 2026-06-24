@@ -201,7 +201,7 @@ export async function getTrendingHashtags(
   city?: string | null,
 ) {
   const qs = new URLSearchParams({ scope });
-  if (city) qs.set('city', city);
+  if (city) qs.set('city_id', city);
   return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null }>(
     `/api/hashtags/trending?${qs}`,
   );

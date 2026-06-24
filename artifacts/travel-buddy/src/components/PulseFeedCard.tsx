@@ -203,12 +203,13 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
 /* ── Hidden Gem Share ── */
 function GemCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
+  const { userId: currentUserId } = useSession();
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} />
       <View style={s.media}><View style={s.gemIcon}><Gem size={15} color={color.onInk} /></View></View>
       <Text style={s.title}>{item.title}</Text>
-      {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.blurb} /> : null}
+      {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} currentUserId={currentUserId ?? undefined} style={s.blurb} /> : null}
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
@@ -288,11 +289,12 @@ function CompassCard({ item }: { item: PulseFeedItem }) {
 
 /* ── City Note (provisional) ── */
 function CityNoteCard({ item }: { item: PulseFeedItem }) {
+  const { userId: currentUserId } = useSession();
   return (
     <View style={[s.card, s.noteCard]}>
       <View style={s.noteHead}><Text style={s.noteLabel}>STARTER CITY NOTE</Text></View>
       <Text style={s.title}>{item.title}</Text>
-      {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.blurb} /> : null}
+      {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} currentUserId={currentUserId ?? undefined} style={s.blurb} /> : null}
       <View style={s.provRow}><Info size={11} color={color.mute} /><Text style={s.provInline}>Provisional — not verified</Text></View>
     </View>
   );

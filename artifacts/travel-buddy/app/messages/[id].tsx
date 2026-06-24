@@ -647,6 +647,7 @@ function MessageBubble({
   onDismissAiCard,
   deliveryStatus,
   onRetry,
+  currentUserId,
 }: {
   item: Message;
   mine: boolean;
@@ -659,6 +660,7 @@ function MessageBubble({
   onDismissAiCard?: (msgId: string) => void;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
   onRetry?: () => void;
+  currentUserId?: string;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -780,6 +782,7 @@ function MessageBubble({
           // misaligned or missing interactive links.
           tags={isTranslated ? undefined : item.tags}
           hashtagUsages={isTranslated ? undefined : item.hashtagUsages}
+          currentUserId={currentUserId}
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
@@ -1427,6 +1430,7 @@ export default function TelegraphThread() {
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                currentUserId={userId ?? undefined}
               />
             </View>
           );

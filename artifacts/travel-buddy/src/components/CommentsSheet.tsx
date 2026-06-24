@@ -33,6 +33,7 @@ import {
   type EngagementComment,
 } from '../services/postEngagement';
 import { RichText } from './RichText';
+import { useSession } from '../context/SessionContext';
 
 interface Props {
   visible: boolean;
@@ -84,6 +85,7 @@ function CommentItem({
   onDelete: (id: string) => void;
 }) {
   const [imgErr, setImgErr] = useState(false);
+  const { userId: currentUserId } = useSession();
 
   return (
     <View style={s.commentRow}>
@@ -101,7 +103,7 @@ function CommentItem({
           <Text style={s.commentAuthor}>{comment.author.name}</Text>
           <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
         </View>
-        <RichText content={comment.body} tags={comment.tags} hashtagUsages={comment.hashtagUsages} style={s.commentText} />
+        <RichText content={comment.body} tags={comment.tags} hashtagUsages={comment.hashtagUsages} currentUserId={currentUserId ?? undefined} style={s.commentText} />
       </View>
       {comment.canDelete && (
         <Pressable
