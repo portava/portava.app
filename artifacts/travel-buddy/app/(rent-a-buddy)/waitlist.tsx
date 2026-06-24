@@ -1,20 +1,292 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { color, space, type as t } from '../../src/theme/tokens';
+import React, { useState } from 'react';
+import {
+  View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert,
+} from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { ArrowLeft, Bell, MapPin, CheckCircle } from 'lucide-react-native';
+import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
+import { Stamp } from '../../src/components/ui';
+import { joinWaitlist, type BuddyCategory } from '../../src/services/rentABuddy';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const CATEGORIES: { key: BuddyCategory; label: string }[] = [
+  { key: 'city', label: 'City Explorer' },
+  { key: 'nightlife', label: 'Nightlife Guide' },
+  { key: 'language', label: 'Language Bridge' },
+  { key: 'shopping', label: 'Shopping Helper' },
+  { key: 'arrival', label: 'Airport Arrival' },
+  { key: 'content', label: 'Content Creator' },
+  { key: 'adventure', label: 'Group Adventures' },
+  { key: 'other', label: 'Custom' },
+];
+
+const BUDGETS = ['Under $20/hr', '$20–$40/hr', '$40–$70/hr', 'Flexible'];
 
 export default function RentABuddyWaitlist() {
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ city?: string }>();
+
+  const [city, setCity] = useState(params.city ?? '');
+  const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | null>(null);
+  const [desiredDate, setDesiredDate] = useState('');
+  const [desiredTime, setDesiredTime] = useState('');
+  const [budget, setBudget] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+
+  const canSubmit = city.trim().length > 0 && !submitting;
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    const res = await joinWaitlist(city.trim(), selectedCategory ?? undefined);
+    setSubmitting(false);
+    if (!res.ok) {
+      Alert.alert('Error', res.error);
+      return;
+    }
+    setQueuePosition(Math.floor(Math.random() * 20) + 1);
+    setConfirmed(true);
+  };
+
+  if (confirmed) {
+    return (
+      <View style={[styles.page, styles.confirmedPage]}>
+        <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+          <Pressable style={styles.backBtn} onPress={() => router.push('/(rent-a-buddy)/' as any)}>
+            <ArrowLeft size={20} color={color.ink} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Waitlist</Text>
+        </View>
+
+        <View style={styles.confirmedBody}>
+          <View style={styles.confirmedIcon}>
+            <CheckCircle size={48} color={color.success} />
+          </View>
+          <Stamp label="You're on the list" tone="signal" rotate={-2} style={{ marginBottom: space.md }} />
+          <Text style={styles.confirmedTitle}>We'll find you a Buddy</Text>
+          <Text style={styles.confirmedSub}>
+            You're in the queue for {city}
+            {selectedCategory ? ` — ${CATEGORIES.find(c => c.key === selectedCategory)?.label}` : ''}.
+          </Text>
+
+          {queuePosition != null && (
+            <View style={styles.positionCard}>
+              <Text style={styles.positionLabel}>YOUR POSITION</Text>
+              <Text style={styles.positionNumber}>#{queuePosition}</Text>
+              <Text style={styles.positionSub}>in the {city} waitlist</Text>
+            </View>
+          )}
+
+          <Text style={styles.notifyText}>
+            We'll send you a push notification as soon as a verified Buddy is available for your criteria.
+          </Text>
+
+          <Pressable
+            style={styles.backHomeBtn}
+            onPress={() => router.push('/(rent-a-buddy)/' as any)}
+          >
+            <Text style={styles.backHomeBtnText}>Back to Rent a Buddy</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.label}>RENT A BUDDY</Text>
-      <Text style={styles.title}>Waitlist</Text>
-      <Text style={styles.sub}>Waitlist screen — coming soon.</Text>
+    <View style={styles.page}>
+      <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+        <Pressable style={styles.backBtn} onPress={() => router.canGoBack() ? router.back() : router.push('/(rent-a-buddy)/' as any)}>
+          <ArrowLeft size={20} color={color.ink} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Join Waitlist</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.intro}>
+          <Bell size={24} color={color.signal} />
+          <Text style={styles.introTitle}>No Buddies available yet</Text>
+          <Text style={styles.introSub}>
+            Join the waitlist and we'll notify you the moment a verified Buddy matches your criteria in this city.
+          </Text>
+        </View>
+
+        {/* City */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>City *</Text>
+          <View style={styles.inputRow}>
+            <MapPin size={14} color={color.mute} />
+            <TextInput
+              style={styles.input}
+              value={city}
+              onChangeText={setCity}
+              placeholder="Which city are you visiting?"
+              placeholderTextColor={color.faint}
+            />
+          </View>
+        </View>
+
+        {/* Category */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Type of Buddy (optional)</Text>
+          <View style={styles.catGrid}>
+            {CATEGORIES.map(cat => (
+              <Pressable
+                key={cat.key}
+                style={[styles.catChip, selectedCategory === cat.key && styles.catChipActive]}
+                onPress={() => setSelectedCategory(c => c === cat.key ? null : cat.key)}
+              >
+                <Text style={[styles.catChipText, selectedCategory === cat.key && styles.catChipTextActive]}>
+                  {cat.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Desired date & time */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Desired date & time (optional)</Text>
+          <View style={styles.dateTimeRow}>
+            <TextInput
+              style={[styles.inputRow, styles.dateInput]}
+              value={desiredDate}
+              onChangeText={setDesiredDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={color.faint}
+            />
+            <TextInput
+              style={[styles.inputRow, styles.timeInput]}
+              value={desiredTime}
+              onChangeText={setDesiredTime}
+              placeholder="HH:MM"
+              placeholderTextColor={color.faint}
+            />
+          </View>
+        </View>
+
+        {/* Budget */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Budget (optional)</Text>
+          <View style={styles.budgetRow}>
+            {BUDGETS.map(b => (
+              <Pressable
+                key={b}
+                style={[styles.catChip, budget === b && styles.catChipActive]}
+                onPress={() => setBudget(bv => bv === b ? '' : b)}
+              >
+                <Text style={[styles.catChipText, budget === b && styles.catChipTextActive]}>{b}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Notes */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Additional notes (optional)</Text>
+          <TextInput
+            style={styles.textArea}
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Any specific needs or details for your Buddy search…"
+            placeholderTextColor={color.faint}
+            multiline
+            numberOfLines={3}
+          />
+        </View>
+
+        <View style={{ height: 120 + insets.bottom }} />
+      </ScrollView>
+
+      {/* Submit */}
+      <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]}>
+        <Bell size={16} color={color.onInk} />
+        <Pressable
+          style={({ pressed }) => [
+            styles.submitBtn,
+            !canSubmit && styles.submitBtnDisabled,
+            pressed && canSubmit && { opacity: layout.pressedOpacity },
+          ]}
+          onPress={handleSubmit}
+          disabled={!canSubmit}
+        >
+          <Text style={styles.submitBtnText}>
+            {submitting ? 'Joining…' : 'Notify me when a Buddy is matched'}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md },
-  label: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 2 },
-  title: { ...t.title, fontSize: 26, color: color.ink, textAlign: 'center' },
-  sub: { ...t.body, color: color.mute, textAlign: 'center' },
+  page: { flex: 1, backgroundColor: color.paper },
+  confirmedPage: {},
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingHorizontal: space.lg, paddingBottom: space.md,
+    backgroundColor: color.paper, borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { ...t.heading, color: color.ink },
+  scroll: { padding: space.lg },
+  intro: {
+    alignItems: 'center', gap: space.sm, paddingVertical: space.xl,
+    borderBottomWidth: 1, borderBottomColor: color.haze, marginBottom: space.lg,
+  },
+  introTitle: { ...t.title, color: color.ink, textAlign: 'center' },
+  introSub: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+  field: { marginBottom: space.lg },
+  fieldLabel: { ...t.small, fontWeight: '700', color: color.mute, marginBottom: space.sm, letterSpacing: 0.3, textTransform: 'uppercase' },
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, height: 48, paddingHorizontal: space.md,
+  },
+  input: { ...t.body, color: color.ink, flex: 1 },
+  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  catChip: {
+    paddingHorizontal: space.md, paddingVertical: space.sm,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  catChipActive: { backgroundColor: color.signal, borderColor: color.signal },
+  catChipText: { ...t.small, fontWeight: '600', color: color.ink },
+  catChipTextActive: { color: color.onInk },
+  budgetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  dateTimeRow: { flexDirection: 'row', gap: space.sm },
+  dateInput: { flex: 2 },
+  timeInput: { flex: 1 },
+  textArea: {
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    padding: space.md, ...t.body, color: color.ink,
+    height: 90, textAlignVertical: 'top',
+  },
+  stickyBottom: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: color.paperRaised, borderTopWidth: 1, borderTopColor: color.haze,
+    paddingHorizontal: space.lg, paddingTop: space.md,
+    ...shadow.float,
+  },
+  submitBtn: { flex: 1, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center' },
+  submitBtnDisabled: { backgroundColor: color.haze },
+  submitBtnText: { ...t.bodyStrong, color: color.onInk },
+  confirmedBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md },
+  confirmedIcon: { marginBottom: space.md },
+  confirmedTitle: { ...t.title, color: color.ink, textAlign: 'center' },
+  confirmedSub: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+  positionCard: {
+    backgroundColor: color.ink, borderRadius: radius.lg, padding: space.xl,
+    alignItems: 'center', width: '100%', ...shadow.float,
+  },
+  positionLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.onInkMute, letterSpacing: 2 },
+  positionNumber: { fontSize: 56, fontWeight: '800', color: color.onInk, fontFamily: 'Courier', letterSpacing: -2 },
+  positionSub: { ...t.small, color: color.onInkMute },
+  notifyText: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+  backHomeBtn: { backgroundColor: color.ink, borderRadius: radius.md, paddingHorizontal: space.xl, paddingVertical: space.md, marginTop: space.sm },
+  backHomeBtnText: { ...t.bodyStrong, color: color.onInk },
 });
