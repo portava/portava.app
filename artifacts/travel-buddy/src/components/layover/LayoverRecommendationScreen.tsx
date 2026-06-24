@@ -10,7 +10,7 @@ import {
   View, Text, ScrollView, Pressable,
   StyleSheet, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { Shield, Clock, MapPin, AlertTriangle, Plane, Coffee, Building, Compass } from 'lucide-react-native';
+import { Shield, Clock, MapPin, AlertTriangle, Plane, Coffee, Building, Compass, Bookmark, CalendarPlus, Users, Send, PlaneTakeoff } from 'lucide-react-native';
 import {
   getRecommendations,
   getSessionSafety,
@@ -25,6 +25,18 @@ interface Props {
   sessionId: string;
   onAskCompass?: () => void;
   onSafeReturn?: () => void;
+  onAddToPlan?: (rec: LayoverRecommendation) => void;
+  onInviteCrew?: (rec: LayoverRecommendation) => void;
+  onSendTelegraph?: (rec: LayoverRecommendation) => void;
+}
+
+interface RecCardProps {
+  rec: LayoverRecommendation;
+  onAskCompass?: () => void;
+  onSafeReturn?: () => void;
+  onAddToPlan?: (rec: LayoverRecommendation) => void;
+  onInviteCrew?: (rec: LayoverRecommendation) => void;
+  onSendTelegraph?: (rec: LayoverRecommendation) => void;
 }
 
 // ── Safety badge ──────────────────────────────────────────────────────────────
@@ -56,8 +68,9 @@ function SafetyBadge({ rating }: { rating: SafetyRating }) {
   );
 }
 
-function RecCard({ rec, onAskCompass }: { rec: LayoverRecommendation; onAskCompass?: () => void }) {
-  const isRisky = rec.safetyRating === 'not_recommended' || rec.safetyRating === 'possible_but_risky';
+function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, onSendTelegraph }: RecCardProps) {
+  const isRisky      = rec.safetyRating === 'not_recommended' || rec.safetyRating === 'possible_but_risky';
+  const isAirportOnly = rec.safetyRating === 'airport_only';
 
   return (
     <View style={[styles.card, isRisky && styles.cardRisky]}>
@@ -109,11 +122,46 @@ function RecCard({ rec, onAskCompass }: { rec: LayoverRecommendation; onAskCompa
         </View>
       ) : null}
 
+      {/* Primary actions row */}
       <View style={styles.cardActions}>
         <Pressable style={styles.actionBtn} onPress={onAskCompass}>
           <Compass size={14} color="#2196F3" />
           <Text style={styles.actionBtnText}>Ask Compass</Text>
         </Pressable>
+        {onAddToPlan && (
+          <Pressable style={styles.actionBtn} onPress={() => onAddToPlan(rec)}>
+            <CalendarPlus size={14} color="#2196F3" />
+            <Text style={styles.actionBtnText}>Add to Plan</Text>
+          </Pressable>
+        )}
+        {onSafeReturn && !isAirportOnly && (
+          <Pressable style={[styles.actionBtn, styles.actionBtnShield]} onPress={onSafeReturn}>
+            <Shield size={14} color="#2E7D32" />
+            <Text style={[styles.actionBtnText, { color: '#2E7D32' }]}>Safe Return</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Secondary actions row */}
+      <View style={[styles.cardActions, { marginTop: 4 }]}>
+        {onInviteCrew && !isAirportOnly && (
+          <Pressable style={styles.actionBtnSecondary} onPress={() => onInviteCrew(rec)}>
+            <Users size={12} color="#555" />
+            <Text style={styles.actionBtnSecondaryText}>Invite Crew</Text>
+          </Pressable>
+        )}
+        {onSendTelegraph && (
+          <Pressable style={styles.actionBtnSecondary} onPress={() => onSendTelegraph(rec)}>
+            <Send size={12} color="#555" />
+            <Text style={styles.actionBtnSecondaryText}>Send in Chat</Text>
+          </Pressable>
+        )}
+        {isAirportOnly && (
+          <View style={styles.airportOnlyBadge}>
+            <PlaneTakeoff size={12} color="#1565C0" />
+            <Text style={styles.airportOnlyText}>Stay airport-only recommended</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -121,7 +169,7 @@ function RecCard({ rec, onAskCompass }: { rec: LayoverRecommendation; onAskCompa
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn }: Props) {
+export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, onSendTelegraph }: Props) {
   const [recs, setRecs]           = useState<LayoverRecommendation[]>([]);
   const [safety, setSafety]       = useState<LayoverSafetyResult | null>(null);
   const [loading, setLoading]     = useState(true);
@@ -194,7 +242,15 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
         <View key={type} style={styles.group}>
           <Text style={styles.groupLabel}>{GROUP_LABELS[type] ?? type}</Text>
           {items.map((rec, idx) => (
-            <RecCard key={rec.id ?? idx} rec={rec} onAskCompass={onAskCompass} />
+            <RecCard
+              key={rec.id ?? idx}
+              rec={rec}
+              onAskCompass={onAskCompass}
+              onSafeReturn={onSafeReturn}
+              onAddToPlan={onAddToPlan}
+              onInviteCrew={onInviteCrew}
+              onSendTelegraph={onSendTelegraph}
+            />
           ))}
         </View>
       ))}
@@ -245,9 +301,14 @@ const styles = StyleSheet.create({
   warning:     { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: '#FFF3E0', borderRadius: 6, padding: 8, marginTop: 8 },
   warningText: { flex: 1, fontSize: 12, color: '#E65100' },
 
-  cardActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  actionBtn:   { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#2196F3', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-  actionBtnText:{ fontSize: 12, color: '#2196F3', fontWeight: '500' },
+  cardActions:           { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  actionBtn:             { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#2196F3', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  actionBtnText:         { fontSize: 12, color: '#2196F3', fontWeight: '500' },
+  actionBtnShield:       { borderColor: '#2E7D32' },
+  actionBtnSecondary:    { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#ddd', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  actionBtnSecondaryText:{ fontSize: 12, color: '#555', fontWeight: '500' },
+  airportOnlyBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#E3F2FD', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  airportOnlyText:       { fontSize: 12, color: '#1565C0', fontWeight: '500' },
 
   empty:     { alignItems: 'center', padding: 40 },
   emptyText: { marginTop: 12, color: '#aaa', fontSize: 14, textAlign: 'center' },

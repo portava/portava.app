@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar, Plane } from 'lucide-react-native';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { TripHero, TodayNextUp, SavedIdeas } from '../../src/components/TripPage';
 import {
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
@@ -32,6 +33,7 @@ export default function TripDetail() {
   const commandBarY      = useRef<number>(0);
   const [chatLoading, setChatLoading] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
+  const [layoverOpen, setLayoverOpen] = useState(false);
   const [gapDays, setGapDays] = useState<string[]>([]);
   const [gapDestination, setGapDestination] = useState('');
   const handleGapDays = useCallback((days: string[], dest: string) => {
@@ -190,6 +192,13 @@ export default function TripDetail() {
         <SavedIdeas ideas={trip.savedIdeas} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />
+
+        {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
+        <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
+          <Plane size={16} color="#1565C0" />
+          <Text style={styles.layoverBannerText}>Got a layover at this destination? Plan it →</Text>
+        </Pressable>
+
         <CompassTripBrief />
         <TripStamps stamps={tripStamps} />
         <TripMapPlaceholder />
@@ -199,6 +208,13 @@ export default function TripDetail() {
         <TripSafety />
         <TripPostsSection posts={tripPosts} />
       </ScrollView>
+
+      {/* Layover Mode sheet */}
+      <LayoverModeSheet
+        visible={layoverOpen}
+        onClose={() => setLayoverOpen(false)}
+        initialCity={trip.destinationCity ?? undefined}
+      />
 
       {/* Meetup creation — triggered from availability grid "Plan meetup this day" */}
       {meetupDate && (
@@ -221,6 +237,8 @@ const styles = StyleSheet.create({
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
   topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
 });
 
 function formatGapLabel(dateStr: string): string {

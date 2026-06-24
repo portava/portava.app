@@ -24,7 +24,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   resolveByIata,
@@ -474,10 +474,19 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
 
 // ── POST /api/airport/sessions/:id/plan ──────────────────────────────────────
 
+const layoverPlanSchema = z.object({
+  title:        z.string().min(1).max(200),
+  tripId:       z.string().uuid("tripId must be a valid UUID"),
+  startsAt:     z.string().datetime().optional().nullable(),
+  locationName: z.string().max(300).optional().nullable(),
+  city:         z.string().max(100).optional().nullable(),
+  notes:        z.string().max(1000).optional().nullable(),
+});
+
 router.post("/airport/sessions/:id/plan", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
@@ -491,22 +500,23 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const planSchema = z.object({
-    title:        z.string().min(1).max(200),
-    tripId:       z.string().uuid().optional().nullable(),
-    startsAt:     z.string().datetime().optional().nullable(),
-    locationName: z.string().max(300).optional().nullable(),
-    city:         z.string().max(100).optional().nullable(),
-    notes:        z.string().max(1000).optional().nullable(),
-  });
-  const parsed = planSchema.safeParse(req.body);
+  const parsed = layoverPlanSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
 
+  const tripId = parsed.data.tripId;
+
+  // Caller must be an accepted trip member with plan edit permission
+  const member = await isAcceptedTripMember(client, tripId, user.id);
+  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+  const permitted = await canEditPlan(client, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+
   const { data: item, error } = await sc.from("trip_plan_items").insert({
-    trip_id:       parsed.data.tripId ?? session.tripId,
+    trip_id:       tripId,
     title:         parsed.data.title,
     starts_at:     parsed.data.startsAt ?? null,
     location_name: parsed.data.locationName ?? null,
@@ -821,6 +831,215 @@ router.get("/admin/airport/sessions", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ sessions: data ?? [], count: (data ?? []).length });
+});
+
+// ── Admin: GET /api/admin/airport/caution-zones ─────────────────────────────
+// Lists system geo_zones associated with airports (is_system=true, airport ref in metadata).
+
+router.get("/admin/airport/caution-zones", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const iata = req.query.iata ? String(req.query.iata).toUpperCase() : undefined;
+
+  let q = sc
+    .from("geo_zones")
+    .select("id, name, zone_type, center_lat, center_lng, radius_meters, country_code, city, metadata, created_at")
+    .eq("is_system", true)
+    .order("created_at", { ascending: false });
+
+  if (iata) {
+    q = q.contains("metadata", { iata_code: iata });
+  }
+
+  const { data, error } = await q;
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ zones: data ?? [] });
+});
+
+// ── Admin: POST /api/admin/airport/caution-zones ─────────────────────────────
+
+const cautionZoneSchema = z.object({
+  iataCode:     z.string().min(3).max(4).toUpperCase(),
+  name:         z.string().min(1).max(200),
+  zoneType:     z.enum(["safety_zone", "no_go_zone", "caution_zone"]),
+  centerLat:    z.number().min(-90).max(90),
+  centerLng:    z.number().min(-180).max(180),
+  radiusMeters: z.number().int().min(50).max(50000).default(1000),
+  countryCode:  z.string().max(2).optional().nullable(),
+  city:         z.string().max(100).optional().nullable(),
+  note:         z.string().max(1000).optional().nullable(),
+});
+
+router.post("/admin/airport/caution-zones", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc, userId } = admin;
+
+  const parsed = cautionZoneSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const d = parsed.data;
+
+  const { data, error } = await sc.from("geo_zones").insert({
+    name:          d.name,
+    zone_type:     d.zoneType,
+    center_lat:    d.centerLat,
+    center_lng:    d.centerLng,
+    radius_meters: d.radiusMeters,
+    country_code:  d.countryCode ?? null,
+    city:          d.city ?? null,
+    created_by:    userId,
+    is_system:     true,
+    metadata:      { iata_code: d.iataCode, note: d.note ?? null, source: "admin" },
+  }).select("id").maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.status(201).json({ ok: true, id: (data as any)?.id });
+});
+
+// ── Admin: DELETE /api/admin/airport/caution-zones/:id ───────────────────────
+
+router.delete("/admin/airport/caution-zones/:id", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { error } = await sc
+    .from("geo_zones")
+    .delete()
+    .eq("id", req.params.id)
+    .eq("is_system", true);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true });
+});
+
+// ── Admin: GET /api/admin/airport/verified-places ────────────────────────────
+// Lists discovery_places near airports awaiting or already verified by admin.
+
+router.get("/admin/airport/verified-places", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const statusFilter = req.query.status ? String(req.query.status) : "pending";
+  const city         = req.query.city   ? String(req.query.city)   : undefined;
+  const limitRaw     = parseInt(String(req.query.limit ?? "50"), 10);
+  const limit        = isNaN(limitRaw) || limitRaw < 1 ? 50 : Math.min(limitRaw, 200);
+
+  let q = sc
+    .from("discovery_places")
+    .select("id, city, name, place_type, category, blurb, verified, status, created_at, submitted_by")
+    .eq("status", statusFilter)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (city) q = q.ilike("city", `%${city}%`);
+
+  const { data, error } = await q;
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ places: data ?? [] });
+});
+
+// ── Admin: PATCH /api/admin/airport/verified-places/:id ──────────────────────
+
+const verifyPlaceSchema = z.object({
+  status:   z.enum(["approved", "rejected", "pending"]).optional(),
+  verified: z.boolean().optional(),
+  note:     z.string().max(500).optional().nullable(),
+});
+
+router.patch("/admin/airport/verified-places/:id", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = verifyPlaceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (parsed.data.status   !== undefined) updates.status   = parsed.data.status;
+  if (parsed.data.verified !== undefined) updates.verified = parsed.data.verified;
+  if (parsed.data.note     !== undefined) updates.note     = parsed.data.note;
+
+  if (Object.keys(updates).length === 0) {
+    sendError(res, "invalid_payload", "No fields to update"); return;
+  }
+
+  const { data, error } = await sc
+    .from("discovery_places")
+    .update(updates)
+    .eq("id", req.params.id)
+    .select("id, status, verified")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Place not found"); return; }
+  res.json({ ok: true, place: data });
+});
+
+// ── Admin: GET /api/admin/airport/reports ────────────────────────────────────
+// Lists layover_recommendations that are flagged for admin review.
+
+router.get("/admin/airport/reports", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limitRaw = parseInt(String(req.query.limit ?? "50"), 10);
+  const limit    = isNaN(limitRaw) || limitRaw < 1 ? 50 : Math.min(limitRaw, 200);
+
+  const { data, error } = await sc
+    .from("layover_recommendations")
+    .select("id, airport_id, title, description, rec_type, safety_rating, source, status, created_at")
+    .eq("status", "flagged")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ reports: data ?? [], count: (data ?? []).length });
+});
+
+// ── Admin: POST /api/admin/airport/reports/:id/resolve ───────────────────────
+
+const resolveReportSchema = z.object({
+  action: z.enum(["approve", "hide", "keep_flagged"]),
+});
+
+router.post("/admin/airport/reports/:id/resolve", async (req, res) => {
+  const admin = await requireAdminGuard(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = resolveReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", "action must be one of: approve, hide, keep_flagged");
+    return;
+  }
+
+  const newStatus = parsed.data.action === "approve"
+    ? "active"
+    : parsed.data.action === "hide"
+    ? "hidden"
+    : "flagged";
+
+  const { data, error } = await sc
+    .from("layover_recommendations")
+    .update({ status: newStatus })
+    .eq("id", req.params.id)
+    .select("id, status")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Recommendation not found"); return; }
+  res.json({ ok: true, id: (data as any).id, status: (data as any).status });
 });
 
 export default router;

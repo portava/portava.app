@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, Image,
   ActivityIndicator, StyleSheet, Alert,
@@ -7,8 +7,9 @@ import { router } from 'expo-router';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import {
   Plus, Users, CalendarDays, MapPin, CalendarClock,
-  ChevronRight, Check, X, UserCircle,
+  ChevronRight, Check, X, UserCircle, Plane,
 } from 'lucide-react-native';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { trips as mockTrips } from '../../src/data/cebu';
@@ -153,6 +154,7 @@ export default function Trips() {
   const live = configured && isAuthed;
   const { data: realTrips, loading, error, reload } = useMyTrips();
   const { meetups: meetupCount } = useUnreadCounts();
+  const [layoverOpen, setLayoverOpen] = useState(false);
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
 
@@ -172,6 +174,13 @@ export default function Trips() {
       />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
         <MeetupsShortcut count={meetupCount} />
+
+        {/* Layover Mode quick-access banner */}
+        <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
+          <Plane size={16} color="#1565C0" />
+          <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
+        </Pressable>
+
         {live && <PendingInvitesSection onAccepted={reload} />}
         {live ? (
           <LiveTrips trips={realTrips} loading={loading} error={error} />
@@ -196,6 +205,11 @@ export default function Trips() {
           <Text style={styles.emptyText}>Start a new trip</Text>
         </Pressable>
       </ScrollView>
+
+      <LayoverModeSheet
+        visible={layoverOpen}
+        onClose={() => setLayoverOpen(false)}
+      />
     </View>
   );
 }
@@ -345,4 +359,6 @@ const styles = StyleSheet.create({
     backgroundColor: color.ink,
   },
   inviteBtnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700' },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
 });
