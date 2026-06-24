@@ -2365,7 +2365,7 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
   const { sc: serviceClient, userId } = admin;
 
   const { appId } = req.params;
-  const { status, reviewNotes } = req.body ?? {};
+  const { status, reviewNotes, approvedCategories } = req.body ?? {};
 
   const { adminStatus } = req.body ?? {};
   // Handle adminStatus-only updates (limit/suspend) separately from status workflow changes
@@ -2404,10 +2404,16 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
   }).eq("id", appId);
 
   if (status === "approved") {
+    // Use admin-selected subset of categories if provided; fall back to all application categories
+    const categoriesToApprove: string[] = (
+      Array.isArray(approvedCategories) && approvedCategories.length > 0
+        ? approvedCategories
+        : (app as any).categories ?? []
+    );
     await serviceClient.from("rent_buddy_profiles").upsert({
       user_id: (app as any).user_id,
       city: (app as any).city ?? "Unknown",
-      categories: (app as any).categories ?? [],
+      categories: categoriesToApprove,
       languages: (app as any).languages ?? [],
       status: "active",
       admin_status: "active",
