@@ -137,9 +137,9 @@ export interface Message {
   /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
   deliveryStatus?: 'sending' | 'sent' | 'failed';
   /** Saved @mention annotations — whitelist for RichText rendering. */
-  tags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
+  tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText rendering. */
-  hashtagUsages?: Array<{ slug: string; isBlocked?: boolean }>;
+  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
 }
 
 export type MsgErrorKind =

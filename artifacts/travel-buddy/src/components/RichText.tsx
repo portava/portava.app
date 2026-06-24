@@ -1,29 +1,30 @@
 /**
  * RichText — renders user-generated text with tappable @mention and #hashtag spans.
  *
- * Data model (whitelist-based):
+ * Data model (position-based):
  *   - `tags`          — saved @mention annotations from the `tags` table.
- *                       Each entry has a `matchToken` (handle) used to validate
- *                       regex-found `@word` tokens in the raw text.
+ *                       Each entry carries `startChar`/`endChar` (computed server-side
+ *                       by searching the content for the confirmed @handle token).
  *   - `hashtagUsages` — saved #hashtag annotations from the `hashtag_usage` table.
- *                       Each entry has a `slug` used to validate `#word` tokens.
+ *                       Each entry carries `startChar`/`endChar` similarly computed.
  *
  * Rendering pipeline:
- *   1. Split `content` by `@word` / `#word` regex.
- *   2. Each `@word` token is interactive only when its lowercased word matches a
- *      `matchToken` in the `tags` whitelist AND the tag is not blocked/deleted/private.
- *   3. Each `#word` token is interactive only when its lowercased word matches a
- *      `slug` in the `hashtagUsages` whitelist AND the hashtag is not blocked.
- *   4. Unmatched tokens (spurious @/# in text) render as plain text.
+ *   1. All spans (tags + hashtags) are sorted by `startChar`.
+ *   2. The text is sliced into plain and interactive segments using the positions.
+ *   3. Overlapping or out-of-bounds spans are skipped gracefully.
+ *   4. Blocked/deleted/private tags render as plain text (no link, no press).
  *
  * Fallback behaviour:
  *   When BOTH `tags` and `hashtagUsages` are absent (or empty arrays), the content
- *   renders as plain `<Text>` with no interactivity and no regex processing.
- *   This ensures content without saved metadata is never spuriously linked.
+ *   renders as plain `<Text>` with no regex processing and no interactivity.
  *
  * Short-press → navigate; long-press → TagPreviewSheet mini-card.
- * Navigation routes: user → /u/:handle  |  trip → /trip/:id  |  place → /gems/:id
+ * Navigation routes: user → /u/:matchToken  |  trip → /trip/:id  |  place → /gems/:id
  * circle and event have no dedicated detail route — long-press preview only.
+ *
+ * TagPreviewSheet contract:
+ *   For `user` type the sheet expects a *handle* (calls getUserByHandle internally),
+ *   so we pass `tag.matchToken` — NOT `tag.id` — as the sheet `id` prop.
  */
 import React, { useState } from 'react';
 import { Text, StyleSheet, type TextStyle, type StyleProp } from 'react-native';
@@ -39,16 +40,17 @@ export type RichTextEntityType = 'user' | 'event' | 'circle' | 'trip' | 'place';
 export interface RichTextTag {
   /** Entity type of the tagged target. */
   type: RichTextEntityType;
-  /**
-   * UUID of the entity — used for TagPreviewSheet API calls.
-   * For `user` type this is the profile UUID.
-   */
+  /** UUID of the entity — used for trip/place navigation and circle/event preview sheet. */
   id: string;
   /**
    * The token that appears after `@` in the text, e.g. `"alice"` for `@alice`.
-   * Matching is case-insensitive. For user mentions this equals the handle.
+   * For `user` type this equals the handle; used for navigation and TagPreviewSheet.
    */
   matchToken: string;
+  /** Zero-based start character index of the @token in the source text. */
+  startChar: number;
+  /** Zero-based end character index (exclusive) of the @token. */
+  endChar: number;
   /** When true the target is blocked by (or blocking) the viewer → plain text. */
   isBlocked?: boolean;
   /** When true the target has been deleted → plain text. */
@@ -61,15 +63,19 @@ export interface RichTextTag {
 export interface RichTextHashtag {
   /** Canonical slug without the `#` prefix, e.g. `"travel"` for `#travel`. */
   slug: string;
+  /** Zero-based start character index of the #token in the source text. */
+  startChar: number;
+  /** Zero-based end character index (exclusive) of the #token. */
+  endChar: number;
   /** When true the hashtag is blocked by the viewer → plain text. */
   isBlocked?: boolean;
 }
 
 export interface RichTextProps {
   content: string;
-  /** @mention whitelist from the API. When absent AND hashtagUsages absent → plain text. */
+  /** @mention spans from the API. When absent AND hashtagUsages absent → plain text. */
   tags?: RichTextTag[];
-  /** #hashtag whitelist from the API. When absent AND tags absent → plain text. */
+  /** #hashtag spans from the API. When absent AND tags absent → plain text. */
   hashtagUsages?: RichTextHashtag[];
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
@@ -84,55 +90,58 @@ export interface RichTextProps {
 // ── Internal segment types ─────────────────────────────────────────────────────
 
 type PlainSegment   = { kind: 'plain';   text: string };
-type MentionSegment = { kind: 'mention'; tag: RichTextTag;     displayText: string; interactive: boolean };
+type MentionSegment = { kind: 'mention'; tag: RichTextTag;        displayText: string; interactive: boolean };
 type HashtagSegment = { kind: 'hashtag'; hashtag: RichTextHashtag; displayText: string; interactive: boolean };
 type Segment = PlainSegment | MentionSegment | HashtagSegment;
 
-// ── Whitelist-based segment builder ───────────────────────────────────────────
+// ── Position-based segment builder ────────────────────────────────────────────
 
 function buildSegments(
   content: string,
   tags: RichTextTag[],
   hashtagUsages: RichTextHashtag[],
 ): Segment[] {
-  // Build O(1) lookup maps (lowercased keys for case-insensitive matching)
-  const tagMap = new Map<string, RichTextTag>();
-  for (const t of tags) tagMap.set(t.matchToken.toLowerCase(), t);
+  type SpanEntry =
+    | { start: number; end: number; tag: RichTextTag }
+    | { start: number; end: number; hashtag: RichTextHashtag };
 
-  const hashMap = new Map<string, RichTextHashtag>();
-  for (const h of hashtagUsages) hashMap.set(h.slug.toLowerCase(), h);
+  const spans: SpanEntry[] = [
+    ...tags.map((t) => ({ start: t.startChar, end: t.endChar, tag: t })),
+    ...hashtagUsages.map((h) => ({ start: h.startChar, end: h.endChar, hashtag: h })),
+  ];
 
-  // Split on @word / #word boundaries; the capture group keeps the delimiters
-  const parts = content.split(/(@\w+|#[a-zA-Z0-9_]+)/g);
+  // Sort by start position; discard out-of-bounds spans
+  spans.sort((a, b) => a.start - b.start);
+
   const segs: Segment[] = [];
+  let cursor = 0;
 
-  for (const part of parts) {
-    if (!part) continue;
+  for (const span of spans) {
+    // Skip overlapping or out-of-bounds spans
+    if (span.start < cursor || span.end > content.length || span.start >= span.end) continue;
 
-    if (part[0] === '@') {
-      const token = part.slice(1).toLowerCase();
-      const tag   = tagMap.get(token);
-      if (!tag) {
-        segs.push({ kind: 'plain', text: part });
-      } else {
-        const interactive = !(tag.isBlocked || tag.isDeleted || tag.isPrivate);
-        segs.push({ kind: 'mention', tag, displayText: part, interactive });
-      }
-      continue;
+    // Plain text before this span
+    if (span.start > cursor) {
+      segs.push({ kind: 'plain', text: content.slice(cursor, span.start) });
     }
 
-    if (part[0] === '#') {
-      const token  = part.slice(1).toLowerCase();
-      const hashtag = hashMap.get(token);
-      if (!hashtag) {
-        segs.push({ kind: 'plain', text: part });
-      } else {
-        segs.push({ kind: 'hashtag', hashtag, displayText: part, interactive: !hashtag.isBlocked });
-      }
-      continue;
+    const displayText = content.slice(span.start, span.end);
+
+    if ('tag' in span) {
+      const { tag } = span;
+      const interactive = !(tag.isBlocked || tag.isDeleted || tag.isPrivate);
+      segs.push({ kind: 'mention', tag, displayText, interactive });
+    } else {
+      const { hashtag } = span;
+      segs.push({ kind: 'hashtag', hashtag, displayText, interactive: !hashtag.isBlocked });
     }
 
-    segs.push({ kind: 'plain', text: part });
+    cursor = span.end;
+  }
+
+  // Trailing plain text
+  if (cursor < content.length) {
+    segs.push({ kind: 'plain', text: content.slice(cursor) });
   }
 
   return segs;
@@ -144,6 +153,7 @@ function buildSegments(
 function navigateTag(tag: RichTextTag) {
   switch (tag.type) {
     case 'user':
+      // Navigate by handle (matchToken), not UUID
       router.push(`/u/${tag.matchToken}` as any);
       break;
     case 'trip':
@@ -153,7 +163,7 @@ function navigateTag(tag: RichTextTag) {
       // Hidden-gems / discovery place detail screen
       router.push(`/gems/${tag.id}` as any);
       break;
-    // 'circle' — app/circle.tsx is the viewer's own circle, no /circle/:id route
+    // 'circle' — app/circle.tsx is the viewer's own circle; no /circle/:id route exists
     // 'event'  — no event detail route exists yet
     // → long-press preview sheet is available for these types; no short-press nav
     default:
@@ -198,7 +208,7 @@ export function RichText({
     return <Text style={style} numberOfLines={numberOfLines}>{content}</Text>;
   }
 
-  // ── Whitelist-based rendering ─────────────────────────────────────────────
+  // ── Position-based rendering ──────────────────────────────────────────────
   const segments = buildSegments(content, tags ?? [], hashtagUsages ?? []);
 
   function renderSegment(seg: Segment, i: number): React.ReactNode {
@@ -255,9 +265,17 @@ export function RichText({
   const sheetType: PreviewEntityType = preview
     ? preview.kind === 'tag' ? preview.tag.type : 'hashtag'
     : 'hashtag';
+
+  // TagPreviewSheet calls getUserByHandle for 'user' type, so pass the handle
+  // (matchToken), not the UUID.  All other types use the entity UUID.
   const sheetId = preview
-    ? preview.kind === 'tag' ? preview.tag.id : preview.hashtag.slug
+    ? preview.kind === 'tag'
+      ? preview.tag.type === 'user'
+        ? preview.tag.matchToken
+        : preview.tag.id
+      : preview.hashtag.slug
     : '';
+
   const sheetLabel = preview
     ? preview.kind === 'tag'
       ? `@${preview.tag.matchToken}`

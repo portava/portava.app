@@ -118,10 +118,10 @@ export interface Post {
   filterId?: string;
   filterIntensity?: number;
   mediaType?: string;
-  /** Saved @mention annotations from the `tags` table — whitelist for RichText. */
-  tags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
-  /** Saved #hashtag annotations from `hashtag_usage` — whitelist for RichText. */
-  hashtagUsages?: Array<{ slug: string; isBlocked?: boolean }>;
+  /** Saved @mention annotations from the `tags` table — positioned spans for RichText. */
+  tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
+  /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
+  hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
 }
 
 export interface Comment {
@@ -702,10 +702,10 @@ export interface PulseFeedItem {
   locationDistrict?: string | null;
   /** Country name for display. */
   locationCountry?: string | null;
-  /** Saved @mention annotations from `tags` table — whitelist for RichText. */
-  spanTags?: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
-  /** Saved #hashtag annotations from `hashtag_usage` — whitelist for RichText. */
-  spanHashtags?: Array<{ slug: string; isBlocked?: boolean }>;
+  /** Saved @mention annotations from `tags` table — positioned spans for RichText. */
+  spanTags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
+  /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
+  spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
 }
 
 export const PULSE_FILTERS = [

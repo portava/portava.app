@@ -1,27 +1,39 @@
 /**
  * enrichSpans — batch-fetch persisted @mention tags and #hashtag usages for a
- * list of content items, keyed by source_id.
+ * list of content items, then compute character-level positions by searching
+ * each item's text for the confirmed tokens.
  *
  * Both the `tags` and `hashtag_usage` tables store only which users/slugs
- * appeared in a piece of content — they do NOT store character positions.
- * The client's RichText component uses these whitelists to validate regex-found
- * tokens (`@handle`, `#slug`) in the raw text, so only confirmed saved
- * annotations become interactive.
+ * appeared in a piece of content — they do NOT persist character positions.
+ * This module computes positions dynamically by regex-searching the content
+ * text for each confirmed @handle / #slug token, producing positioned spans
+ * that the client's RichText component uses for precise inline rendering.
  */
 
 export interface SpanTag {
   type: 'user';
-  /** User UUID — used for TagPreviewSheet profile API calls. */
+  /** User UUID — used for profile API calls. */
   id: string;
-  /** The handle that appears after @ in the text (case-sensitive to original,
-   *  matching is done case-insensitively on the client). */
+  /** The handle that appears after @ in the text — used for navigation + TagPreviewSheet. */
   matchToken: string;
+  /** Zero-based start character index of the @token in the source text. */
+  startChar: number;
+  /** Zero-based end character index (exclusive) of the @token. */
+  endChar: number;
+  /** True when this user blocks or is blocked by the viewer → render as plain text. */
+  isBlocked?: boolean;
+  /** True when the user's profile no longer exists → render as plain text. */
+  isDeleted?: boolean;
 }
 
 export interface SpanHashtag {
   /** Canonical slug — the word after # in the text. */
   slug: string;
   hashtagId: string;
+  /** Zero-based start character index of the #token in the source text. */
+  startChar: number;
+  /** Zero-based end character index (exclusive) of the #token. */
+  endChar: number;
 }
 
 export interface ContentSpans {
@@ -29,26 +41,107 @@ export interface ContentSpans {
   hashtagUsages: SpanHashtag[];
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+interface RawTag {
+  type: 'user';
+  id: string;
+  matchToken: string;
+  isBlocked?: boolean;
+  isDeleted?: boolean;
+}
+
+interface RawHashtag {
+  slug: string;
+  hashtagId: string;
+}
+
 /**
- * For each id in `sourceIds`, fetch the saved @mention tags (joined to
- * profiles for handles) and #hashtag usages (joined to hashtags for slugs).
+ * Given a content string and raw span whitelists, search for each token in the
+ * text and emit one positioned span per occurrence.  Spans not found in the
+ * text are omitted; the same token appearing multiple times yields multiple
+ * spans (one per occurrence), which is the correct behaviour for position-based
+ * rendering.
+ */
+function computePositions(
+  content: string,
+  rawTags: RawTag[],
+  rawHashtags: RawHashtag[],
+): ContentSpans {
+  const result: ContentSpans = { tags: [], hashtagUsages: [] };
+
+  for (const tag of rawTags) {
+    if (!tag.matchToken) continue;
+    const pattern = new RegExp(`@${escapeRegex(tag.matchToken)}(?=[^\\w]|$)`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+      result.tags.push({
+        type: 'user',
+        id: tag.id,
+        matchToken: tag.matchToken,
+        startChar: m.index,
+        endChar: m.index + m[0].length,
+        ...(tag.isBlocked  ? { isBlocked:  true } : {}),
+        ...(tag.isDeleted  ? { isDeleted:  true } : {}),
+      });
+    }
+  }
+
+  for (const h of rawHashtags) {
+    if (!h.slug) continue;
+    const pattern = new RegExp(`#${escapeRegex(h.slug)}(?=[^\\w]|$)`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+      result.hashtagUsages.push({
+        slug: h.slug,
+        hashtagId: h.hashtagId,
+        startChar: m.index,
+        endChar: m.index + m[0].length,
+      });
+    }
+  }
+
+  return result;
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/**
+ * For each `{id, content}` item in `items`:
+ *   1. Fetch saved @mention tags from the `tags` table (joined to profiles for handles).
+ *   2. Fetch saved #hashtag usages from `hashtag_usage` (joined to `hashtags` for slugs).
+ *   3. Optionally check the `blocks` table when `viewerUserId` is provided, marking
+ *      blocked users' tags with `isBlocked: true` so the client renders them as plain text.
+ *   4. Compute character positions by regex-searching each item's content for the
+ *      confirmed tokens, producing positioned SpanTag / SpanHashtag objects.
  *
- * Returns a Record<sourceId, ContentSpans>.  If a source has no saved spans
- * the entry will have empty arrays — callers can safely spread into responses.
+ * Returns a `Record<sourceId, ContentSpans>`.  Every input id is guaranteed to
+ * have an entry (empty arrays when no spans exist), so callers can safely spread.
  *
- * @param sc     Service-role Supabase client (bypasses RLS for this internal join)
- * @param sourceType  e.g. 'post' | 'comment' | 'message'
- * @param sourceIds   UUIDs of the content items to enrich
+ * @param sc           Service-role Supabase client (bypasses RLS for internal joins)
+ * @param sourceType   e.g. 'post' | 'comment' | 'message'
+ * @param items        Array of `{ id: string; content: string }` — the items to enrich
+ * @param viewerUserId Optional viewer's user id; when provided blocks are checked
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function enrichSpans(
   sc: any,
   sourceType: string,
-  sourceIds: string[],
+  items: Array<{ id: string; content: string }>,
+  viewerUserId?: string,
 ): Promise<Record<string, ContentSpans>> {
   const result: Record<string, ContentSpans> = {};
-  for (const id of sourceIds) result[id] = { tags: [], hashtagUsages: [] };
+  const contentMap: Record<string, string> = {};
+  for (const item of items) {
+    result[item.id]     = { tags: [], hashtagUsages: [] };
+    contentMap[item.id] = item.content;
+  }
 
+  const sourceIds = items.map((i) => i.id);
   if (sourceIds.length === 0) return result;
 
   // ── User-mention tags ──────────────────────────────────────────────────────
@@ -58,31 +151,54 @@ export async function enrichSpans(
     .eq('source_type', sourceType)
     .in('source_id', sourceIds);
 
-  const taggedUserIds = [
+  const taggedUserIds: string[] = [
     ...new Set(((tagRows ?? []) as any[]).map((r: any) => r.tagged_user_id as string)),
   ];
 
+  const profileMap: Record<string, string> = {};   // userId → handle
   if (taggedUserIds.length > 0) {
     const { data: profiles } = await sc
       .from('profiles')
       .select('id, handle')
       .in('id', taggedUserIds);
-
-    const profileMap: Record<string, string> = {};
     for (const p of (profiles ?? []) as any[]) {
       if (p.handle) profileMap[p.id] = p.handle;
     }
+  }
 
-    for (const row of (tagRows ?? []) as any[]) {
-      const handle = profileMap[row.tagged_user_id];
-      if (handle && result[row.source_id]) {
-        result[row.source_id].tags.push({
-          type: 'user',
-          id: row.tagged_user_id,
-          matchToken: handle,
-        });
-      }
+  // Optional block check
+  const blockedSet = new Set<string>();
+  if (viewerUserId && taggedUserIds.length > 0) {
+    const ids = taggedUserIds.join(',');
+    const { data: blockRows } = await sc
+      .from('blocks')
+      .select('blocker_id, blocked_id')
+      .or(
+        `and(blocker_id.eq.${viewerUserId},blocked_id.in.(${ids})),` +
+        `and(blocked_id.eq.${viewerUserId},blocker_id.in.(${ids}))`,
+      );
+    for (const row of (blockRows ?? []) as any[]) {
+      blockedSet.add(
+        row.blocker_id === viewerUserId ? row.blocked_id : row.blocker_id,
+      );
     }
+  }
+
+  // Build per-source raw tag whitelists
+  const rawTagsMap: Record<string, RawTag[]> = {};
+  for (const id of sourceIds) rawTagsMap[id] = [];
+
+  for (const row of (tagRows ?? []) as any[]) {
+    const uid    = row.tagged_user_id as string;
+    const handle = profileMap[uid];
+    if (!rawTagsMap[row.source_id]) continue;
+    rawTagsMap[row.source_id].push({
+      type: 'user',
+      id: uid,
+      matchToken: handle ?? '',
+      ...(blockedSet.has(uid)  ? { isBlocked:  true } : {}),
+      ...(!handle              ? { isDeleted:  true } : {}),
+    });
   }
 
   // ── Hashtag usages ─────────────────────────────────────────────────────────
@@ -92,30 +208,38 @@ export async function enrichSpans(
     .eq('source_type', sourceType)
     .in('source_id', sourceIds);
 
-  const hashtagIds = [
+  const hashtagIds: string[] = [
     ...new Set(((usageRows ?? []) as any[]).map((r: any) => r.hashtag_id as string)),
   ];
 
+  const hashtagMap: Record<string, string> = {};  // hashtagId → slug
   if (hashtagIds.length > 0) {
     const { data: hashtags } = await sc
       .from('hashtags')
       .select('id, slug')
       .in('id', hashtagIds);
-
-    const hashtagMap: Record<string, string> = {};
     for (const h of (hashtags ?? []) as any[]) {
       if (h.slug) hashtagMap[h.id] = h.slug;
     }
+  }
 
-    for (const row of (usageRows ?? []) as any[]) {
-      const slug = hashtagMap[row.hashtag_id];
-      if (slug && result[row.source_id]) {
-        result[row.source_id].hashtagUsages.push({
-          slug,
-          hashtagId: row.hashtag_id,
-        });
-      }
+  const rawHashtagsMap: Record<string, RawHashtag[]> = {};
+  for (const id of sourceIds) rawHashtagsMap[id] = [];
+
+  for (const row of (usageRows ?? []) as any[]) {
+    const slug = hashtagMap[row.hashtag_id];
+    if (slug && rawHashtagsMap[row.source_id]) {
+      rawHashtagsMap[row.source_id].push({ slug, hashtagId: row.hashtag_id });
     }
+  }
+
+  // ── Compute positions for each item ────────────────────────────────────────
+  for (const id of sourceIds) {
+    result[id] = computePositions(
+      contentMap[id] ?? '',
+      rawTagsMap[id]     ?? [],
+      rawHashtagsMap[id] ?? [],
+    );
   }
 
   return result;

@@ -130,9 +130,12 @@ router.get("/pulse", async (req, res) => {
     });
   }
 
-  // Enrich posts with saved @mention tags and #hashtag annotations
-  const postIds  = rows.map((r: any) => r.id as string);
-  const spansMap = await enrichSpans(sc, 'post', postIds);
+  // Enrich posts with positioned @mention + #hashtag spans
+  const spansMap = await enrichSpans(
+    sc, 'post',
+    rows.map((r: any) => ({ id: r.id as string, content: (r.content ?? '') as string })),
+    user.id,
+  );
 
   // Shape responses — NEVER include exact coords
   const posts = rows.map((row: any) => {

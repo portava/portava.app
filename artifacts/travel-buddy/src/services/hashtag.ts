@@ -89,9 +89,9 @@ export interface FeedPostItem {
   createdAt: string; likeCount: number; commentCount: number;
   author: { id: string; handle: string; name: string; avatarUrl: string | null } | null;
   /** Saved @mention annotations — whitelist for RichText rendering. */
-  tags: Array<{ type: 'user'; id: string; matchToken: string; isBlocked?: boolean }>;
+  tags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText rendering. */
-  hashtagUsages: Array<{ slug: string; isBlocked?: boolean }>;
+  hashtagUsages: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
 }
 export interface FeedUserItem {
   id: string; type: 'user'; handle: string; name: string | null; avatarUrl: string | null;

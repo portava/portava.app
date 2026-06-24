@@ -43,6 +43,7 @@ import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
+import { enrichSpans } from '../lib/enrichSpans';
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 
@@ -1303,10 +1304,19 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     }
   }
 
+  // Enrich non-deleted messages with positioned @mention + #hashtag spans
+  const nonDeletedMsgItems = rows
+    .filter((m) => !m.deleted_at)
+    .map((m) => ({ id: m.id as string, content: (m.body ?? '') as string }));
+  const msgSpansMap = nonDeletedMsgItems.length > 0
+    ? await enrichSpans(sc, 'message', nonDeletedMsgItems, user.id)
+    : {};
+
   const messages = rows.map((m) => {
     const p = m.profile ?? {};
     const isDeleted = Boolean(m.deleted_at);
     const tRow = translationMap[m.id] ?? null;
+    const spans = !isDeleted ? ((msgSpansMap as any)[m.id] ?? { tags: [], hashtagUsages: [] }) : null;
 
     const display = buildDisplayFields(
       {
@@ -1347,6 +1357,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       canShowOriginal: display.canShowOriginal,
       msgType: (m.msg_type as string) ?? 'text',
       subtype: (m.subtype as string | null) ?? null,
+      // Rich-text span metadata (absent for deleted messages)
+      ...(spans ? { tags: spans.tags, hashtagUsages: spans.hashtagUsages } : {}),
     };
   });
 

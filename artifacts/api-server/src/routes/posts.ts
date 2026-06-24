@@ -406,10 +406,16 @@ router.get("/posts", async (req, res) => {
       }
     }
 
-    // Step 5: merge author + engagement into each post.
+    // Step 5: enrich with positioned @mention + #hashtag spans.
+    const followingSpansMap = posts.length > 0
+      ? await enrichSpans(sc, 'post', posts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
+      : {};
+
+    // Step 6: merge author + engagement + spans into each post.
     const merged = posts.map((p) => {
       const pr = profileMap[p.author_id];
       const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+      const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
         ...p,
         author: pr
@@ -421,6 +427,8 @@ router.get("/posts", async (req, res) => {
         canLike: true,
         canComment: true,
         canShare: true,
+        tags: spans.tags,
+        hashtagUsages: spans.hashtagUsages,
       };
     });
 
@@ -479,9 +487,15 @@ router.get("/posts", async (req, res) => {
     }
   }
 
+  // Enrich with positioned @mention + #hashtag spans
+  const globalSpansMap = globalPosts.length > 0
+    ? await enrichSpans(svc, 'post', globalPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
+    : {};
+
   const mergedGlobal = globalPosts.map((p) => {
     const pr = globalProfileMap[p.author_id];
     const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
       ...p,
       author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
@@ -491,6 +505,8 @@ router.get("/posts", async (req, res) => {
       canLike: true,
       canComment: true,
       canShare: true,
+      tags: spans.tags,
+      hashtagUsages: spans.hashtagUsages,
     };
   });
 
@@ -572,9 +588,15 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     }
   }
 
+  // Enrich with positioned @mention + #hashtag spans
+  const tripSpansMap = (tripSvc && tripPosts.length > 0)
+    ? await enrichSpans(tripSvc, 'post', tripPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
+    : {};
+
   const mergedTrip = tripPosts.map((p) => {
     const pr = tripProfileMap[p.author_id];
     const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    const spans = (tripSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
     return {
@@ -586,6 +608,8 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       canLike: canEngage,
       canComment: canEngage,
       canShare: canEngage,
+      tags: spans.tags,
+      hashtagUsages: spans.hashtagUsages,
     };
   });
 
@@ -823,8 +847,11 @@ router.get("/posts/:postId/comments", async (req, res) => {
     for (const p of profiles ?? []) profileMap[p.id] = p;
   }
 
-  const commentIds = commentRows.map((c) => c.id);
-  const commentSpansMap = await enrichSpans(sc, 'comment', commentIds);
+  const commentSpansMap = await enrichSpans(
+    sc, 'comment',
+    commentRows.map((c) => ({ id: c.id as string, content: (c.body ?? '') as string })),
+    user.id,
+  );
 
   const comments = commentRows.map((c) => {
     const pr    = profileMap[c.user_id];

@@ -554,8 +554,11 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
     }
 
-    const visibleIds = visiblePosts.map((p: any) => p.id);
-    const spansMap = await enrichSpans(sc, 'post', visibleIds);
+    const spansMap = await enrichSpans(
+      sc, 'post',
+      visiblePosts.map((p: any) => ({ id: p.id as string, content: (p.content ?? '') as string })),
+      user.id,
+    );
 
     const items = visiblePosts.map((p: any) => {
       const pr    = profileMap[p.author_id];
