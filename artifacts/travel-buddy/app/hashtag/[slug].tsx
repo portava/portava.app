@@ -262,10 +262,10 @@ export default function HashtagFeedScreen() {
           setItems(res.data.items);
         }
         setHasMore(res.data.hasMore);
-        const lastItem = res.data.items[res.data.items.length - 1];
-        const lastCreatedAt =
-          lastItem && 'createdAt' in lastItem ? (lastItem as FeedPostItem).createdAt : null;
-        setCursor(lastCreatedAt);
+        // Use the backend-provided cursor (oldest usage row's created_at).
+        // This works across all tabs — post/people/places/circles/trips/events —
+        // because the cursor comes from hashtag_usage.created_at, not the entity.
+        setCursor(res.data.nextCursor ?? null);
       } else {
         setFeedError(res.error ?? 'Failed to load feed');
       }

@@ -111,6 +111,8 @@ export type FeedItem =
 export interface HashtagFeedResponse {
   items: FeedItem[];
   hasMore: boolean;
+  /** ISO timestamp of the oldest usage row in this page; pass as `before` for the next page. */
+  nextCursor: string | null;
   tab: FeedTab;
   scope: FeedScope;
 }

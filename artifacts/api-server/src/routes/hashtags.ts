@@ -508,9 +508,11 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
   }
 
   const sourceIds = (usageRows ?? []).map((u: any) => u.source_id);
+  // Cursor points to the oldest usage row in this page; callers pass it as `before` for the next page.
+  const nextCursor = (usageRows ?? []).at(-1)?.created_at ?? null;
 
   if (sourceIds.length === 0) {
-    res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope });
+    res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope });
     return;
   }
 
@@ -558,7 +560,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
         author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
       };
     });
-    res.status(200).json({ items, posts: items, hasMore: items.length === limit, tab, scope });
+    res.status(200).json({ items, posts: items, hasMore: items.length === limit, nextCursor, tab, scope });
 
   } else if (tab === 'people') {
     // Exclude blocked/blocking profiles
@@ -569,7 +571,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       .map((p: any) => ({
         id: p.id, type: 'user', handle: p.handle, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
       }));
-    res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
+    res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
 
   } else if (tab === 'places') {
     try {
@@ -582,8 +584,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           id: p.id, type: 'place', name: p.name, city: p.city ?? null,
           placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
         }));
-      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
 
   } else if (tab === 'trips') {
     try {
@@ -602,8 +604,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
         .map((t: any) => ({
           id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
         }));
-      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
 
   } else if (tab === 'circles') {
     try {
@@ -619,8 +621,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           (c.visibility === 'public' || c.owner_id === user.id || viewerCircleIds.has(c.id))
         )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
-      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
 
   } else if (tab === 'events') {
     try {
@@ -633,11 +635,11 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           id: e.id, type: 'event', name: e.name, location: e.location ?? null,
           startAt: e.start_at ?? null, endAt: e.end_at ?? null,
         }));
-      res.status(200).json({ items, posts: [], hasMore: items.length === limit, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope }); }
+      res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
+    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
 
   } else {
-    res.status(200).json({ items: [], posts: [], hasMore: false, tab, scope });
+    res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope });
   }
 });
 
