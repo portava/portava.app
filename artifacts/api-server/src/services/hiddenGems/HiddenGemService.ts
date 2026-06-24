@@ -116,41 +116,92 @@ export async function listGems(db: SupabaseClient, opts: GemListOptions = {}) {
   return data ?? [];
 }
 
-/** Update a gem (owner or guide edit). */
+/** Shared patch builder. */
+function buildPatch(patch: Partial<{
+  name: string;
+  description: string;
+  safetyNotes: string;
+  bestTimeToGo: string;
+  localEtiquette: string;
+  vibeTags: string[];
+  priceRange: string;
+  sensitivityLevel: string;
+  layoverSafe: boolean;
+  minimumLayoverMinutes: number;
+}>): Record<string, unknown> {
+  const dbPatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.name !== undefined)                dbPatch.name = patch.name;
+  if (patch.description !== undefined)         dbPatch.description = patch.description;
+  if (patch.safetyNotes !== undefined)         dbPatch.safety_notes = patch.safetyNotes;
+  if (patch.bestTimeToGo !== undefined)        dbPatch.best_time_to_go = patch.bestTimeToGo;
+  if (patch.localEtiquette !== undefined)      dbPatch.local_etiquette = patch.localEtiquette;
+  if (patch.vibeTags !== undefined)            dbPatch.vibe_tags = patch.vibeTags;
+  if (patch.priceRange !== undefined)          dbPatch.price_range = patch.priceRange;
+  if (patch.sensitivityLevel !== undefined)    dbPatch.sensitivity_level = patch.sensitivityLevel;
+  if (patch.layoverSafe !== undefined)         dbPatch.layover_safe = patch.layoverSafe;
+  if (patch.minimumLayoverMinutes !== undefined) dbPatch.minimum_layover_minutes = patch.minimumLayoverMinutes;
+  return dbPatch;
+}
+
+export type GemPatch = Parameters<typeof buildPatch>[0];
+
+/**
+ * Update a gem as the owner.
+ * All fields may be changed. Restricted to submitted_by = userId.
+ */
 export async function updateGem(
   db: SupabaseClient,
   gemId: string,
   userId: string,
-  patch: Partial<{
-    name: string;
-    description: string;
-    safetyNotes: string;
-    bestTimeToGo: string;
-    localEtiquette: string;
-    vibeTags: string[];
-    priceRange: string;
-    sensitivityLevel: string;
-    layoverSafe: boolean;
-    minimumLayoverMinutes: number;
-  }>,
+  patch: GemPatch,
 ) {
-  const dbPatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (patch.name !== undefined) dbPatch.name = patch.name;
-  if (patch.description !== undefined) dbPatch.description = patch.description;
-  if (patch.safetyNotes !== undefined) dbPatch.safety_notes = patch.safetyNotes;
-  if (patch.bestTimeToGo !== undefined) dbPatch.best_time_to_go = patch.bestTimeToGo;
-  if (patch.localEtiquette !== undefined) dbPatch.local_etiquette = patch.localEtiquette;
-  if (patch.vibeTags !== undefined) dbPatch.vibe_tags = patch.vibeTags;
-  if (patch.priceRange !== undefined) dbPatch.price_range = patch.priceRange;
-  if (patch.sensitivityLevel !== undefined) dbPatch.sensitivity_level = patch.sensitivityLevel;
-  if (patch.layoverSafe !== undefined) dbPatch.layover_safe = patch.layoverSafe;
-  if (patch.minimumLayoverMinutes !== undefined) dbPatch.minimum_layover_minutes = patch.minimumLayoverMinutes;
+  const { data, error } = await db
+    .from("hidden_gems")
+    .update(buildPatch(patch))
+    .eq("id", gemId)
+    .eq("submitted_by", userId)
+    .select(GEM_SELECT_COLS)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Update a gem as an active Local Guide.
+ * Guides may only contribute community-knowledge fields:
+ * safety_notes, best_time_to_go, local_etiquette, vibe_tags.
+ * Guides are NOT allowed to change name, coords, sensitivity, or owner.
+ */
+export async function updateGemAsGuide(
+  db: SupabaseClient,
+  gemId: string,
+  guideId: string,
+  patch: Pick<GemPatch, "safetyNotes" | "bestTimeToGo" | "localEtiquette" | "vibeTags">,
+) {
+  // Verify guide is active
+  const { data: guideRow } = await db
+    .from("local_guide_profiles")
+    .select("status, city_expertise")
+    .eq("user_id", guideId)
+    .maybeSingle();
+
+  if (!guideRow || (guideRow as any).status !== "active") {
+    throw Object.assign(new Error("Not an active local guide"), { code: "not_a_guide" });
+  }
+
+  // Build patch — guide-safe fields only
+  const safePatch: GemPatch = {};
+  if (patch.safetyNotes    !== undefined) safePatch.safetyNotes    = patch.safetyNotes;
+  if (patch.bestTimeToGo   !== undefined) safePatch.bestTimeToGo   = patch.bestTimeToGo;
+  if (patch.localEtiquette !== undefined) safePatch.localEtiquette = patch.localEtiquette;
+  if (patch.vibeTags       !== undefined) safePatch.vibeTags       = patch.vibeTags;
 
   const { data, error } = await db
     .from("hidden_gems")
-    .update(dbPatch)
+    .update(buildPatch(safePatch))
     .eq("id", gemId)
-    .eq("submitted_by", userId)
+    .eq("status", "active")   // guides can only touch active gems
     .select(GEM_SELECT_COLS)
     .single();
 

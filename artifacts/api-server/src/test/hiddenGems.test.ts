@@ -655,7 +655,7 @@ describe("Hidden Gems — Telegraph share privacy", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/telegraph`, {
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/share-telegraph`, {
       threadId: "thread-123",
     });
     assert.equal(r.status, 200);
@@ -678,7 +678,7 @@ describe("Hidden Gems — Telegraph share privacy", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/telegraph`, {
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/share-telegraph`, {
       threadId: "thread-123",
     });
     assert.equal(r.status, 200);

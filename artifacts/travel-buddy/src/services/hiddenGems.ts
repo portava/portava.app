@@ -269,7 +269,7 @@ export async function shareGemToTelegraph(
   gemId: string,
   threadId: string,
 ): Promise<{ ok: boolean; card: any }> {
-  return apiFetch(`/api/hidden-gems/${gemId}/telegraph`, {
+  return apiFetch(`/api/hidden-gems/${gemId}/share-telegraph`, {
     method: 'POST',
     body: JSON.stringify({ threadId }),
   });

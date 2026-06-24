@@ -12,7 +12,8 @@
  * DELETE /api/hidden-gems/:id/save     — unsave a gem
  * POST   /api/hidden-gems/:id/verify-visit  — GPS check-in
  * POST   /api/hidden-gems/:id/report   — report a gem
- * POST   /api/hidden-gems/:id/telegraph — share to Telegraph
+ * GET    /api/hidden-gems/nearby        — proximity-ranked gems
+ * POST   /api/hidden-gems/:id/share-telegraph — share to Telegraph
  * POST   /api/hidden-gems/:id/plan     — add to trip plan
  *
  * Admin (requires is_admin role on profile):
@@ -37,10 +38,12 @@ import {
   getGem,
   listGems,
   updateGem,
+  updateGemAsGuide,
   saveGem,
   unsaveGem,
   listSavedGems,
 } from "../services/hiddenGems/HiddenGemService.js";
+import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import {
   applyGemPrivacy,
   applyGemPrivacyBatch,
@@ -394,16 +397,40 @@ router.patch("/hidden-gems/:id", async (req, res) => {
   }
 
   try {
-    // Strip null values — updateGem accepts undefined but not null
-    const patch = Object.fromEntries(
+    const rawPatch = Object.fromEntries(
       Object.entries(parsed.data).filter(([, v]) => v !== null),
     ) as Parameters<typeof updateGem>[3];
-    const updated = await updateGem(sc, req.params.id, user.id, patch);
+
+    // Determine if caller is an active guide (but not the owner)
+    const guide = await getGuideProfile(sc, user.id);
+    const isActiveGuide = guide && (guide as any).status === "active";
+
+    // Fetch gem to check ownership
+    const existing = await getGem(sc, req.params.id);
+    if (!existing) { sendError(res, "not_found", "Gem not found"); return; }
+    const isOwner = (existing as any).submitted_by === user.id;
+
+    let updated: any;
+    if (isOwner) {
+      // Owners may change all fields
+      updated = await updateGem(sc, req.params.id, user.id, rawPatch);
+    } else if (isActiveGuide) {
+      // Guides may only touch community-knowledge fields
+      const guidePatch: Parameters<typeof updateGemAsGuide>[3] = {};
+      if (rawPatch.safetyNotes    !== undefined) guidePatch.safetyNotes    = rawPatch.safetyNotes;
+      if (rawPatch.bestTimeToGo   !== undefined) guidePatch.bestTimeToGo   = rawPatch.bestTimeToGo;
+      if (rawPatch.localEtiquette !== undefined) guidePatch.localEtiquette = rawPatch.localEtiquette;
+      if (rawPatch.vibeTags       !== undefined) guidePatch.vibeTags       = rawPatch.vibeTags;
+      updated = await updateGemAsGuide(sc, req.params.id, user.id, guidePatch);
+    } else {
+      sendError(res, "forbidden", "Only the gem owner or an active local guide can edit this gem");
+      return;
+    }
+
     const safe = await applyGemPrivacy(updated, sc, user.id);
 
-    // If guide, record contribution
-    const guide = await getGuideProfile(sc, user.id);
-    if (guide && (guide as any).status === "active") {
+    // Record guide contribution for any active guide (including owner-guides)
+    if (isActiveGuide) {
       const ct = parsed.data.safetyNotes ? "safety_notes"
         : parsed.data.bestTimeToGo ? "best_time"
         : parsed.data.localEtiquette ? "etiquette"
@@ -413,6 +440,9 @@ router.patch("/hidden-gems/:id", async (req, res) => {
 
     res.json({ ok: true, gem: safe });
   } catch (err: any) {
+    if ((err as any).code === "not_a_guide") {
+      sendError(res, "forbidden", err.message); return;
+    }
     sendError(res, "db_error", err.message);
   }
 });
@@ -578,9 +608,55 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
   }
 });
 
-// ── POST /api/hidden-gems/:id/telegraph — share to Telegraph ─────────────────
+// ── GET /api/hidden-gems/nearby — proximity-ranked gems ──────────────────────
 
-router.post("/hidden-gems/:id/telegraph", async (req, res) => {
+const nearbySchema = z.object({
+  lat:      z.coerce.number().min(-90).max(90),
+  lng:      z.coerce.number().min(-180).max(180),
+  radiusKm: z.coerce.number().min(0.1).max(100).optional().default(5),
+  category: z.string().optional(),
+  limit:    z.coerce.number().int().min(1).max(50).optional().default(30),
+});
+
+router.get("/hidden-gems/nearby", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = nearbySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+
+  try {
+    const ranked = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {
+      category: parsed.data.category,
+      limit: parsed.data.limit,
+    });
+
+    const gems = await Promise.all(
+      ranked.map(async ({ gem, distanceKm }) => {
+        const safe = await applyGemPrivacy(gem, sc, user.id);
+        return { ...safe, distanceKm };
+      }),
+    );
+
+    res.json({ ok: true, gems });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/share-telegraph — share to Telegraph ────────────
+
+router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;

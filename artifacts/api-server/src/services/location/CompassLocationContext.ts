@@ -88,26 +88,36 @@ export async function buildCompassContext(
       .limit(1)
       .maybeSingle();
 
-    // Hidden gems for Compass — public sensitivity only; no protected gems; city-level only
+    // Hidden gems for Compass — STRICT inclusion:
+    //   • sensitivity_level = 'public' ONLY (never reveal-after-save / protected / etc.)
+    //   • verification_level in community/guide/gps_verified/admin
+    //   • gated by hidden_gems_compass_enabled feature flag
+    //   • neighborhood included only for public gems; never coordinates
     let hiddenGems: CompassSafeContext["hiddenGems"] = [];
     try {
-      if (city) {
+      const { data: compassFlag } = await db
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "hidden_gems_compass_enabled")
+        .maybeSingle();
+
+      if ((compassFlag as any)?.enabled && city) {
         const { data: gemRows } = await db
           .from("hidden_gems")
-          .select("name, category, city, neighborhood, verification_level, price_range, vibe_tags, sensitivity_level")
+          .select("name, category, city, neighborhood, verification_level, price_range, vibe_tags")
           .eq("status", "active")
+          .eq("sensitivity_level", "public")          // strict: public only
           .ilike("city", city)
-          .neq("sensitivity_level", "protected")
           .in("verification_level", ["community", "guide", "gps_verified", "admin"])
           .limit(5);
         hiddenGems = (gemRows ?? []).map((g: any) => ({
-          name: g.name,
-          category: g.category,
-          city: g.city,
-          neighborhood: g.neighborhood ?? null,
+          name:              g.name,
+          category:          g.category,
+          city:              g.city,
+          neighborhood:      g.neighborhood ?? null,  // neighbourhood is safe for public gems
           verificationLevel: g.verification_level,
-          priceRange: g.price_range ?? null,
-          vibeTags: g.vibe_tags ?? [],
+          priceRange:        g.price_range ?? null,
+          vibeTags:          g.vibe_tags ?? [],
         }));
       }
     } catch { /* non-fatal */ }
