@@ -1,0 +1,694 @@
+Build a complete tagging, hyperlink, and hashtag system for Travel Buddy.
+
+Goal:
+Users should be able to tag people, events, circles, trips, and places using @ tags, and organize/discover content using # hashtags. Tags and hashtags should become clickable in-app links across posts, comments, Telegraph messages, event descriptions, circle posts, trip posts, hidden gems, vibe bubbles, and Compass AI recommendations.
+
+Core systems:
+1. @ Tagging system
+2. # Hashtag system
+3. Hyperlink rendering system
+4. Tag/hashtag suggestions
+5. Privacy and permission enforcement
+6. Notifications
+7. Moderation and anti-spam
+8. Search and discovery
+9. Compass AI integration
+
+Part 1: @ Tagging System
+
+Supported @ tag types:
+- User tags
+  - Example: @Andre
+  - Opens the user’s Passport/profile page
+
+- Event tags
+  - Example: @RooftopBarNight or selected event mention
+  - Opens the event detail page
+
+- Circle tags
+  - Example: @TokyoSoloTravelers
+  - Opens the circle page
+
+- Trip tags
+  - Opens the trip detail page
+
+- Place/venue tags
+  - Opens place detail, map card, or venue profile if available
+
+Tagging behavior:
+- When a user types “@”, show tag suggestions.
+- Suggestions should include users, events, circles, trips, and places the current user is allowed to access.
+- Suggestions should show:
+  - Image/profile photo
+  - Display name/title
+  - Username or subtitle
+  - Type label: User, Event, Circle, Trip, Place
+  - Verification badge if available
+  - Trust Score / Passport Rank if already shown elsewhere
+  - Event date or attendee count where useful
+- Selecting a suggestion inserts a structured clickable tag into the composer.
+- Clicking a user tag opens that user’s Passport/profile.
+- Clicking an event tag opens event detail.
+- Clicking a circle tag opens the circle page.
+- Clicking a trip tag opens the trip page.
+- Clicking a place tag opens the map/place detail card.
+
+Supported tag surfaces:
+- City Pulse posts
+- Postcards
+- Comments
+- Telegraph messages
+- Event chat
+- Circle chat
+- Trip chat
+- Event descriptions
+- Circle descriptions
+- Trip descriptions
+- Hidden Gems
+- Vibe Bubbles
+- Compass AI recommendations
+
+Tagged text examples:
+- “Going to @Andre’s beach event tonight.”
+- “Meet us at @Maya’s circle meetup.”
+- “Join @RooftopBarNight tonight.”
+- “Compass AI recommends @TokyoNightWalk because it matches your nightlife preferences.”
+
+Tag storage:
+Store tags as structured metadata, not plain text only.
+
+Create tags table:
+- id
+- source_type: post | comment | message | event | circle | trip | recommendation | hidden_gem | vibe_bubble
+- source_id
+- tagged_type: user | event | circle | trip | place
+- tagged_id
+- display_text
+- start_index
+- end_index
+- created_by_user_id
+- created_at
+- updated_at nullable
+
+Important:
+- Text should remain readable even if the tagged object is deleted.
+- If a user changes their display name, old content should still render safely.
+- Use tagged_id for routing, not display_text.
+- Display text can update if the app chooses, but the link target must rely on stable IDs.
+- If tagged content is deleted or unavailable, leave the text visible but remove or disable the clickable link.
+
+Tag permissions:
+- Users can only tag people, events, circles, trips, and places they are allowed to see or interact with.
+- Private profiles should not appear in tag suggestions unless the viewer has access.
+- Private events should only appear for invited/accepted users or users with permission.
+- Invite-only circles should only appear for members/invited users.
+- Hidden trips should only appear for allowed users.
+- If someone opens a tag they no longer have permission to view, show:
+  “This content is private or no longer available.”
+
+User tag privacy controls:
+Add user settings:
+- Allow anyone to tag me
+- Allow people I’ve interacted with to tag me
+- Allow only friends/circle members to tag me
+- Do not allow tagging
+
+If tagging is blocked:
+- The blocked user should not appear in suggestions.
+- If someone manually types their name, it remains plain text.
+- Do not create tag metadata.
+- Do not send a notification.
+
+Tag notifications:
+Notify users when they are tagged in:
+- City Pulse posts
+- Postcards
+- Comments
+- Telegraph messages, if privacy settings allow
+- Event posts
+- Circle posts
+- Trip posts
+
+Notification types:
+- user_tagged
+- event_tagged
+- circle_tagged
+- trip_tagged
+- place_tagged
+
+Notification copy:
+- “Andre tagged you in a post.”
+- “Maya mentioned your event.”
+- “Chris mentioned your circle.”
+- “Taylor mentioned your trip.”
+
+Rules:
+- Do not notify users for repeated mentions of the same target in the same content item.
+- Do not notify if the tag was blocked by privacy settings.
+- Do not notify if the tagged user cannot access the content.
+
+Part 2: # Hashtag System
+
+Goal:
+Users should be able to add hashtags to content. Hashtags should be clickable and open a dedicated hashtag feed showing related content.
+
+Hashtag examples:
+- #TokyoNightlife
+- #SoloTravel
+- #DaNangFood
+- #BeachDay
+- #HiddenGems
+- #TravelBuddyMeetup
+- #GirlsTrip
+- #DigitalNomads
+- #FirstTimeInJapan
+
+Supported hashtag surfaces:
+- City Pulse posts
+- Postcards
+- Comments
+- Telegraph messages
+- Event descriptions
+- Circle descriptions
+- Trip descriptions
+- Hidden Gems
+- Vibe Bubbles
+- Compass AI recommendations
+
+Frontend hashtag behavior:
+- When a user types “#”, show hashtag suggestions.
+- Suggestions should include:
+  - Trending hashtags
+  - Recently used hashtags
+  - City-based hashtags
+  - Event/category hashtags
+  - User’s followed hashtags
+  - User’s saved/interested hashtags
+- Selecting a hashtag inserts it into the text.
+- Hashtags should appear as clickable highlighted text.
+- Tapping a hashtag opens the hashtag detail/feed screen.
+- Long-pressing a hashtag should show a preview card:
+  - Hashtag name
+  - Number of posts/events using it
+  - Top city if relevant
+  - Follow/unfollow button
+
+Hashtag feed screen:
+Create a dedicated hashtag page.
+
+Example route:
+- /hashtag/:slug
+
+Show content connected to that hashtag:
+- City Pulse posts
+- Postcards
+- Public events
+- Public circles
+- Public trips
+- Hidden Gems
+- Public reviews/vibe bubbles
+- Related places
+- Related people, where privacy allows
+
+Hashtag feed tabs:
+- Top
+- Recent
+- Events
+- People
+- Places
+- Circles
+- Trips
+
+Hashtag feed filters:
+- Current city
+- Nearby
+- Global
+
+Hashtag storage:
+Store hashtags as structured metadata, not plain text only.
+
+Create hashtags table:
+- id
+- name
+- slug
+- normalized_name
+- usage_count
+- city_id nullable
+- created_by_user_id nullable
+- is_blocked boolean default false
+- is_hidden_from_trending boolean default false
+- created_at
+- updated_at
+
+Create hashtag_usage table:
+- id
+- hashtag_id
+- source_type: post | comment | message | event | circle | trip | recommendation | hidden_gem | vibe_bubble
+- source_id
+- display_text
+- start_index
+- end_index
+- created_by_user_id
+- created_at
+
+Create user_hashtag_follows table:
+- id
+- user_id
+- hashtag_id
+- created_at
+
+Hashtag parsing rules:
+- Hashtags begin with #
+- Hashtags can include letters, numbers, and underscores
+- Hashtags cannot include spaces
+- Normalize hashtags for matching
+- #TokyoNightlife, #tokyonightlife, and #TOKYONIGHTLIFE should point to the same hashtag record
+- Preserve display casing inside the text when possible
+- Use slug/normalized_name for lookup
+- Do not create duplicate hashtag records for capitalization differences
+
+Hashtag limits:
+- Posts: max 10 hashtags
+- Comments: max 5 hashtags
+- Telegraph messages: max 5 hashtags
+- Event descriptions: max 15 hashtags
+- Circle descriptions: max 15 hashtags
+- Trip descriptions: max 15 hashtags
+- Hidden Gems: max 10 hashtags
+- Vibe Bubbles: max 10 hashtags
+- AI recommendations: max 5 hashtags
+
+Hashtag privacy:
+- Hashtag feeds must only show content the viewer has permission to see.
+- Private events, private circles, invite-only trips, blocked users, and hidden content should not appear in hashtag results unless the viewer has access.
+- If a hashtag is used inside private content, it can count toward private analytics but must not expose private content publicly.
+- Hashtag suggestions should not reveal private event names, private circle names, or hidden trip details.
+
+Hashtag following:
+- Users can follow/unfollow hashtags.
+- Followed hashtags should influence:
+  - City Pulse feed
+  - Compass AI recommendations
+  - Travel Radar
+  - Hidden Gems suggestions
+  - Event recommendations
+  - Trip recommendations
+- Followed hashtags should appear in user preferences/interests where relevant.
+
+Trending hashtags:
+Add trending hashtag logic.
+
+Trending score formula:
+  trending_score =
+    recent_usage_score * 0.35
+    + engagement_score * 0.25
+    + city_relevance_score * 0.20
+    + event_activity_score * 0.15
+    - spam_penalty * 0.25
+
+Trending factors:
+- Usage count
+- Recent usage
+- Unique users
+- Saves
+- Comments
+- Shares
+- Event joins
+- Circle joins
+- City relevance
+- Spam/report penalty
+
+Trending views:
+- Global trending
+- City trending
+- Nearby trending
+- Category trending
+
+Part 3: Unified Hyperlink Rendering
+
+Create one shared renderer for tags and hashtags.
+
+It should support:
+- @ user tags
+- @ event tags
+- @ circle tags
+- @ trip tags
+- @ place tags
+- # hashtags
+
+Rendering rules:
+- Tags and hashtags should be highlighted consistently across the app.
+- Tapping should navigate inside the app, not to an external browser.
+- Long-press should open a preview card where supported.
+- Deleted, blocked, private, or unavailable targets should render as plain text or disabled links.
+- Plain text must remain readable even if metadata is missing.
+- Renderer must work in:
+  - Feed posts
+  - Comments
+  - Telegraph
+  - Event pages
+  - Circle pages
+  - Trip pages
+  - Hidden Gems
+  - Vibe Bubbles
+  - Compass AI recommendations
+
+Preview cards:
+For user tags, show:
+- Profile photo
+- Display name
+- Passport Rank / Trust Score if allowed
+- Mutual circles/trips if allowed
+- View Passport button
+
+For event tags, show:
+- Event image
+- Event title
+- Date/time
+- City/location
+- Attendee count
+- View Event button
+
+For circle tags, show:
+- Circle image
+- Circle name
+- Member count
+- Privacy label if allowed
+- View Circle button
+
+For trip tags, show:
+- Trip title
+- Destination
+- Dates
+- Crew count
+- View Trip button
+
+For place tags, show:
+- Place image
+- Name
+- Map area/city
+- Rating or vibe count if available
+- View Place button
+
+For hashtags, show:
+- Hashtag name
+- Usage count
+- Top city if relevant
+- Follow/unfollow button
+
+Part 4: Search and Suggestions
+
+Unified suggestion behavior:
+- @ opens entity suggestions
+- # opens hashtag suggestions
+
+@ suggestion priority:
+User suggestions should prioritize:
+- Friends / mutual travelers
+- Same trip crew
+- Same circle
+- Recent Telegraph chats
+- Nearby relevant travelers
+- Verified users
+- Users the current user has permission to tag
+
+Event suggestions should prioritize:
+- Events user is hosting
+- Events user joined
+- Events nearby
+- Trending events
+- Events user has permission to view
+
+Circle suggestions should prioritize:
+- User’s circles
+- Circles they can join
+- Nearby/trending circles
+- Circles user has permission to view
+
+Trip suggestions should prioritize:
+- Trips user created
+- Trips user joined
+- Upcoming trips
+- Trips user has permission to view
+
+Place suggestions should prioritize:
+- Current city
+- Saved places
+- Recent places
+- Popular nearby spots
+
+# suggestion priority:
+Hashtag suggestions should prioritize:
+- Followed hashtags
+- Trending hashtags
+- Current city hashtags
+- Recently used hashtags
+- Activity/category hashtags
+- AI-recommended hashtags
+
+Search:
+Add hashtag and tag-aware search.
+
+Searching “Tokyo nightlife” should return:
+- #TokyoNightlife
+- Public posts using it
+- Related events
+- Related places
+- Related circles
+- Related trips
+
+Typing “#tok” can suggest:
+- #Tokyo
+- #TokyoNightlife
+- #TokyoFood
+- #TokyoSoloTravel
+
+Typing “@tok” can suggest:
+- Tokyo events
+- Tokyo circles
+- Tokyo places
+- Relevant users with Tokyo in name/username/profile if allowed
+
+Part 5: Compass AI Integration
+
+Compass AI should be able to:
+- Recommend relevant tags
+- Recommend relevant hashtags
+- Insert structured tags into AI recommendations
+- Use followed hashtags to improve recommendations
+- Use user interactions with tags/hashtags to improve personalization
+
+Examples:
+- “Because you follow #TokyoNightlife and #SoloTravel, you may like @RooftopBarNight.”
+- “Compass AI recommends @TokyoNightWalk because it matches your party and walking preferences.”
+- “Try adding #DaNangFood and #HiddenGems to help travelers discover this post.”
+
+AI safety:
+- AI-generated tags must pass permission checks before rendering.
+- AI should not recommend or link private content unless the viewer has access.
+- AI should not create blocked hashtags.
+- AI should not overstuff posts with hashtags.
+
+Part 6: Moderation and Anti-Abuse
+
+Tag anti-abuse:
+- Rate limit tagging.
+- Limit number of @ tags per content item.
+- Detect spam tagging.
+- Prevent users from repeatedly tagging someone who removed their tag.
+- Allow users to remove tags of themselves.
+- Add report options:
+  - “Tagged without permission”
+  - “Spam tagging”
+  - “Harassment”
+
+Hashtag anti-abuse:
+- Rate limit repeated hashtag use.
+- Detect hashtag stuffing.
+- Penalize posts using unrelated trending hashtags.
+- Prevent users from creating too many new hashtags too quickly.
+- Add report options:
+  - “Spam hashtag”
+  - “Misleading hashtag”
+  - “Abusive hashtag”
+
+Moderation controls:
+Admins should be able to:
+- View tag metadata on reported content
+- Remove abusive @ tags
+- Merge duplicate hashtags
+- Rename hashtags
+- Block/ban abusive hashtags
+- Hide hashtags from trending
+- Review reported hashtags
+- Remove hashtag links from content while leaving text visible
+
+Blocked hashtags:
+Create blocked hashtag list for:
+- Hate speech
+- Harassment
+- Spam
+- Sexual exploitation
+- Illegal activity
+- Scams
+- Personal information/doxxing
+- Dangerous challenges
+
+Blocked hashtags should not be:
+- Clickable
+- Suggested
+- Searchable
+- Eligible for trending
+
+Part 7: Audit Logs
+
+Create audit entries when:
+- A user is tagged
+- A tag notification is sent
+- A tag is removed by the tagged user
+- A tag is removed by admin
+- A tag triggers spam/rate-limit protection
+- A hashtag is created
+- A hashtag is blocked
+- A hashtag is renamed
+- Hashtags are merged
+- A hashtag is hidden from trending
+- A hashtag triggers spam/rate-limit protection
+
+Audit log fields:
+- id
+- actor_user_id
+- action
+- source_type nullable
+- source_id nullable
+- target_type: user | event | circle | trip | place | hashtag
+- target_id
+- metadata jsonb
+- created_at
+
+Part 8: Analytics
+
+Track hashtag analytics:
+- Total uses
+- Recent uses
+- Unique users
+- Top cities
+- Related hashtags
+- Engagement rate
+- Event joins generated
+- Circle joins generated
+- Trip joins generated
+- Saves generated
+- Shares generated
+- Reports/spam score
+
+Track tag analytics:
+- Tag frequency
+- Most tagged public events
+- Most tagged public circles
+- Most tagged public places
+- Tag-driven profile views
+- Tag-driven event joins
+- Tag-driven circle joins
+- Tag-driven saves
+
+Admin analytics:
+- Trending hashtags by city
+- Trending hashtags globally
+- Abusive/spam hashtag reports
+- Most reported tag behavior
+- Tag and hashtag growth over time
+
+Part 9: Database Indexes
+
+Add indexes:
+- tags.tagged_type + tags.tagged_id
+- tags.source_type + tags.source_id
+- tags.created_by_user_id
+- tags.created_at
+- hashtags.slug
+- hashtags.normalized_name
+- hashtags.city_id
+- hashtags.usage_count
+- hashtag_usage.hashtag_id
+- hashtag_usage.source_type + hashtag_usage.source_id
+- hashtag_usage.created_by_user_id
+- hashtag_usage.created_at
+- user_hashtag_follows.user_id
+- user_hashtag_follows.hashtag_id
+- audit_logs.target_type + audit_logs.target_id
+
+Part 10: Testing
+
+Backend tests:
+- User tag creates structured metadata
+- Event tag links to correct event
+- Circle tag links to correct circle
+- Trip tag links to correct trip
+- Place tag links to correct place
+- Private profile does not appear in tag suggestions
+- Private event does not appear if user lacks access
+- Private circle does not appear if user lacks access
+- Deleted tagged object renders as plain text or unavailable
+- Tag notification sends once per content item
+- Blocked user cannot be tagged
+- User can remove their own tag
+- Rate limit blocks spam tagging
+- Hashtag is parsed from text
+- Hashtag metadata is stored
+- Same hashtag with different casing maps to one record
+- Hashtag opens correct feed
+- Private content does not leak into public hashtag feed
+- Blocked hashtag is not clickable or searchable
+- Trending score updates correctly
+- User can follow/unfollow hashtag
+- Followed hashtags influence recommendations
+- Hashtag stuffing is rate-limited
+- Admin can merge duplicate hashtags
+- Admin can block abusive hashtags
+- Compass AI respects tag and hashtag permission rules
+
+Frontend tests:
+- Typing @ opens tag suggestions
+- Selecting user inserts clickable tag
+- Selecting event inserts clickable tag
+- Selecting circle inserts clickable tag
+- Selecting trip inserts clickable tag
+- Selecting place inserts clickable tag
+- User tag opens Passport/profile
+- Event tag opens event detail
+- Circle tag opens circle page
+- Trip tag opens trip page
+- Place tag opens map/place detail card
+- Typing # opens hashtag suggestions
+- Selecting hashtag inserts it into composer
+- Hashtag renders as clickable text
+- Tapping hashtag opens hashtag feed
+- Hashtag feed tabs work
+- Hashtag city/global filter works
+- Follow/unfollow hashtag button works
+- Private/unavailable tag shows correct fallback
+- Blocked hashtag renders as plain text
+- Long press opens preview card
+- Removed tag becomes plain text
+- Tag and hashtag styling is consistent across posts, comments, Telegraph, events, circles, trips, hidden gems, and AI recommendations
+
+Acceptance criteria:
+- Users can tag people, events, circles, trips, and places.
+- Tagged names become clickable in-app links.
+- User names link to Passport/profile pages.
+- Event names link to event detail pages.
+- Circle names link to circle pages.
+- Trip names link to trip pages.
+- Place names link to map/place detail cards.
+- Users can add hashtags to posts, comments, messages, events, circles, trips, hidden gems, vibe bubbles, and recommendations.
+- Hashtags become clickable in-app links.
+- Clicking a hashtag opens a hashtag feed.
+- Hashtag feeds respect privacy and permissions.
+- Users can follow hashtags.
+- Trending hashtags work by city and globally.
+- Compass AI can use tags and hashtags for better recommendations.
+- Tags and hashtags are stored structurally and safely.
+- Spam and abusive tagging/hashtags are moderated.
+- Deleted/private/blocked content does not break rendering.
+- All tests pass.

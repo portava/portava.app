@@ -1,0 +1,279 @@
+/**
+ * TrustScoreService
+ *
+ * Recalculates all nine category scores plus the weighted overall score.
+ * Applies:
+ *   - Exponential time decay (recent events weighted more)
+ *   - Active cap ceilings from trust_caps
+ * Derives public trust level and persists to trust_profiles.
+ *
+ * Triggered after new events are applied or caps change.
+ */
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TrustCategory } from "./TrustEventService.js";
+
+export type PublicTrustLevel =
+  | "new_traveler"
+  | "building_trust"
+  | "reliable_traveler"
+  | "trusted_traveler"
+  | "highly_trusted"
+  | "city_trusted";
+
+const ALL_CATEGORIES: TrustCategory[] = [
+  "plan_attendance","host_quality","communication","respect_safety",
+  "location_honesty","content_quality","community_value",
+  "guide_accuracy","passport_authenticity",
+];
+
+interface Settings {
+  weight_plan_attendance:  number;
+  weight_host_quality:     number;
+  weight_communication:    number;
+  weight_respect_safety:   number;
+  weight_location_honesty: number;
+  weight_content_quality:  number;
+  weight_community_value:  number;
+  weight_guide_accuracy:   number;
+  weight_passport_auth:    number;
+  decay_half_life_days:    number;
+  level_building_trust:    number;
+  level_reliable:          number;
+  level_trusted:           number;
+  level_highly_trusted:    number;
+  level_city_trusted:      number;
+}
+
+const DEFAULT_SETTINGS: Settings = {
+  weight_plan_attendance:  0.180,
+  weight_host_quality:     0.120,
+  weight_communication:    0.100,
+  weight_respect_safety:   0.150,
+  weight_location_honesty: 0.130,
+  weight_content_quality:  0.080,
+  weight_community_value:  0.080,
+  weight_guide_accuracy:   0.080,
+  weight_passport_auth:    0.080,
+  decay_half_life_days:    90,
+  level_building_trust:    35,
+  level_reliable:          50,
+  level_trusted:           65,
+  level_highly_trusted:    78,
+  level_city_trusted:      90,
+};
+
+async function loadSettings(db: SupabaseClient): Promise<Settings> {
+  try {
+    const { data } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
+    if (!data) return DEFAULT_SETTINGS;
+    return {
+      weight_plan_attendance:  Number((data as any).weight_plan_attendance)  || 0.180,
+      weight_host_quality:     Number((data as any).weight_host_quality)     || 0.120,
+      weight_communication:    Number((data as any).weight_communication)     || 0.100,
+      weight_respect_safety:   Number((data as any).weight_respect_safety)   || 0.150,
+      weight_location_honesty: Number((data as any).weight_location_honesty) || 0.130,
+      weight_content_quality:  Number((data as any).weight_content_quality)  || 0.080,
+      weight_community_value:  Number((data as any).weight_community_value)  || 0.080,
+      weight_guide_accuracy:   Number((data as any).weight_guide_accuracy)   || 0.080,
+      weight_passport_auth:    Number((data as any).weight_passport_auth)    || 0.080,
+      decay_half_life_days:    Number((data as any).decay_half_life_days)    || 90,
+      level_building_trust:    Number((data as any).level_building_trust)    || 35,
+      level_reliable:          Number((data as any).level_reliable)          || 50,
+      level_trusted:           Number((data as any).level_trusted)           || 65,
+      level_highly_trusted:    Number((data as any).level_highly_trusted)    || 78,
+      level_city_trusted:      Number((data as any).level_city_trusted)      || 90,
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+/** Exponential decay weight for an event: w = 2^(-age_days / half_life) */
+function decayWeight(createdAt: string, halfLifeDays: number): number {
+  const ageDays = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24);
+  return Math.pow(2, -ageDays / halfLifeDays);
+}
+
+/** Load applied+confirmed events for a user from the last year */
+async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
+  const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const { data } = await db
+      .from("trust_events")
+      .select("category, delta, severity, status, created_at")
+      .eq("user_id", userId)
+      .in("status", ["applied", "confirmed"])
+      .gt("created_at", since);
+    return (data as any[]) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Load active caps for a user */
+async function loadCaps(
+  db: SupabaseClient,
+  userId: string,
+): Promise<Record<string, number>> {
+  try {
+    const now = new Date().toISOString();
+    const { data } = await db
+      .from("trust_caps")
+      .select("category, ceiling_score")
+      .eq("user_id", userId)
+      .is("lifted_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${now}`);
+    const caps: Record<string, number> = {};
+    for (const row of (data as any[]) ?? []) {
+      const cur = caps[row.category];
+      caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;
+    }
+    return caps;
+  } catch {
+    return {};
+  }
+}
+
+/** Compute score for one category from events, applying decay */
+function computeCategoryScore(
+  events: any[],
+  category: string,
+  halfLifeDays: number,
+): number {
+  const relevant = events.filter((e) => e.category === category);
+  if (relevant.length === 0) return 50; // neutral default
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const e of relevant) {
+    const w = decayWeight(e.created_at, halfLifeDays);
+    weightedSum += e.delta * w;
+    totalWeight += w;
+  }
+  // Centre on 50 then apply weighted change
+  const delta = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  return Math.min(100, Math.max(0, 50 + delta * 5)); // scale: 1 delta point ≈ 5 score points
+}
+
+function scoreToLevel(score: number, s: Settings): PublicTrustLevel {
+  if (score >= s.level_city_trusted)   return "city_trusted";
+  if (score >= s.level_highly_trusted) return "highly_trusted";
+  if (score >= s.level_trusted)        return "trusted_traveler";
+  if (score >= s.level_reliable)       return "reliable_traveler";
+  if (score >= s.level_building_trust) return "building_trust";
+  return "new_traveler";
+}
+
+export interface TrustScoreResult {
+  userId: string;
+  overall_score: number;
+  public_level: PublicTrustLevel;
+  categories: Record<TrustCategory, number>;
+  capsApplied: string[];
+}
+
+/** Recalculate all scores for a user and persist to trust_profiles */
+export async function recalculateTrustScore(
+  db: SupabaseClient,
+  userId: string,
+): Promise<TrustScoreResult> {
+  const [settings, events, caps] = await Promise.all([
+    loadSettings(db),
+    loadEvents(db, userId),
+    loadCaps(db, userId),
+  ]);
+
+  const halfLife = settings.decay_half_life_days;
+  const categories: Record<string, number> = {};
+  const capsApplied: string[] = [];
+
+  for (const cat of ALL_CATEGORIES) {
+    let score = computeCategoryScore(events, cat, halfLife);
+    // Apply cap ceiling
+    if (caps[cat] !== undefined && score > caps[cat]) {
+      score = caps[cat];
+      capsApplied.push(cat);
+    }
+    categories[cat] = Math.round(score * 100) / 100;
+  }
+
+  // Weighted overall score
+  const overall = Math.round(
+    (categories.plan_attendance  * settings.weight_plan_attendance +
+     categories.host_quality     * settings.weight_host_quality +
+     categories.communication    * settings.weight_communication +
+     categories.respect_safety   * settings.weight_respect_safety +
+     categories.location_honesty * settings.weight_location_honesty +
+     categories.content_quality  * settings.weight_content_quality +
+     categories.community_value  * settings.weight_community_value +
+     categories.guide_accuracy   * settings.weight_guide_accuracy +
+     categories.passport_authenticity * settings.weight_passport_auth) * 100
+  ) / 100;
+
+  const public_level = scoreToLevel(overall, settings);
+
+  // Persist
+  try {
+    await db.from("trust_profiles").upsert({
+      user_id:               userId,
+      overall_score:         overall,
+      plan_attendance:       categories.plan_attendance,
+      host_quality:          categories.host_quality,
+      communication:         categories.communication,
+      respect_safety:        categories.respect_safety,
+      location_honesty:      categories.location_honesty,
+      content_quality:       categories.content_quality,
+      community_value:       categories.community_value,
+      guide_accuracy:        categories.guide_accuracy,
+      passport_authenticity: categories.passport_authenticity,
+      public_level,
+      last_recalculated_at:  new Date().toISOString(),
+      updated_at:            new Date().toISOString(),
+    }, { onConflict: "user_id" });
+  } catch {
+    // Non-fatal — return computed result even if persist fails
+  }
+
+  return {
+    userId,
+    overall_score: overall,
+    public_level,
+    categories: categories as Record<TrustCategory, number>,
+    capsApplied,
+  };
+}
+
+/** Load current trust profile without recalculating */
+export async function getTrustProfile(
+  db: SupabaseClient,
+  userId: string,
+): Promise<TrustScoreResult | null> {
+  try {
+    const { data } = await db
+      .from("trust_profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!data) return null;
+    const d = data as any;
+    return {
+      userId,
+      overall_score: d.overall_score,
+      public_level:  d.public_level,
+      capsApplied:   [],
+      categories: {
+        plan_attendance:       d.plan_attendance,
+        host_quality:          d.host_quality,
+        communication:         d.communication,
+        respect_safety:        d.respect_safety,
+        location_honesty:      d.location_honesty,
+        content_quality:       d.content_quality,
+        community_value:       d.community_value,
+        guide_accuracy:        d.guide_accuracy,
+        passport_authenticity: d.passport_authenticity,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
