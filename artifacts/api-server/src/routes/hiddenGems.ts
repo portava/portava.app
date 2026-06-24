@@ -225,8 +225,18 @@ router.get("/hidden-gems", async (req, res) => {
   if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
 
   try {
-    const gems = await listGems(sc, opts);
-    const safe = await applyGemPrivacyBatch(gems, sc, callerId, callerTripId);
+    // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
+    const { discoverGems } = await import("../services/hiddenGems/HiddenGemDiscoveryService.js");
+    const ranked = await discoverGems(sc, {
+      city: opts.city,
+      neighborhood: opts.neighborhood,
+      category: opts.category,
+      layoverSafe: opts.layoverSafe,
+      availableMinutes: opts.minLayoverMinutes,
+      limit: opts.limit,
+    });
+    const rawGems = ranked.map((r) => r.gem);
+    const safe = await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId);
     res.json({ gems: safe, total: safe.length });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -326,6 +336,53 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
     const gems = await listGems(sc, { city, limit: 30 });
     const safe = await applyGemPrivacyBatch(gems, sc, user.id, tripId);
     res.json({ gems: safe, total: safe.length, city });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── GET /api/hidden-gems/nearby — proximity-ranked gems ──────────────────────
+// NOTE: registered here (before /:id) so Express doesn't swallow "nearby" as an id.
+
+const nearbySchema = z.object({
+  lat:      z.coerce.number().min(-90).max(90),
+  lng:      z.coerce.number().min(-180).max(180),
+  radiusKm: z.coerce.number().min(0.1).max(100).optional().default(5),
+  category: z.string().optional(),
+  limit:    z.coerce.number().int().min(1).max(50).optional().default(30),
+});
+
+router.get("/hidden-gems/nearby", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = nearbySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+
+  try {
+    const ranked = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {
+      category: parsed.data.category,
+      limit: parsed.data.limit,
+    });
+
+    const gems = await Promise.all(
+      ranked.map(async ({ gem, distanceKm }) => {
+        const safe = await applyGemPrivacy(gem, sc, user.id);
+        return { ...safe, distanceKm };
+      }),
+    );
+
+    res.json({ ok: true, gems });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -603,52 +660,6 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
   try {
     const result = await reportGem(sc, req.params.id, user.id, parsed.data.reason, parsed.data.notes);
     res.json({ ok: true, alreadyReported: result.alreadyReported });
-  } catch (err: any) {
-    sendError(res, "db_error", err.message);
-  }
-});
-
-// ── GET /api/hidden-gems/nearby — proximity-ranked gems ──────────────────────
-
-const nearbySchema = z.object({
-  lat:      z.coerce.number().min(-90).max(90),
-  lng:      z.coerce.number().min(-180).max(180),
-  radiusKm: z.coerce.number().min(0.1).max(100).optional().default(5),
-  category: z.string().optional(),
-  limit:    z.coerce.number().int().min(1).max(50).optional().default(30),
-});
-
-router.get("/hidden-gems/nearby", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
-    sendError(res, "feature_disabled"); return;
-  }
-
-  const parsed = nearbySchema.safeParse(req.query);
-  if (!parsed.success) {
-    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
-    return;
-  }
-
-  try {
-    const ranked = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {
-      category: parsed.data.category,
-      limit: parsed.data.limit,
-    });
-
-    const gems = await Promise.all(
-      ranked.map(async ({ gem, distanceKm }) => {
-        const safe = await applyGemPrivacy(gem, sc, user.id);
-        return { ...safe, distanceKm };
-      }),
-    );
-
-    res.json({ ok: true, gems });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

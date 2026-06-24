@@ -6,7 +6,7 @@
  * Suspicious check-ins write a review event instead of upgrading the gem.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getUserTrustLevel } from "../location/LocationSafetyService.js";
+import { getUserTrustLevel, checkAndRecordSnapshot } from "../location/LocationSafetyService.js";
 
 const GPS_PROXIMITY_THRESHOLD_M = 200; // within 200 m → valid check-in
 const COMMUNITY_CONFIRMATIONS_NEEDED = 5; // upgrades unverified → community
@@ -69,9 +69,13 @@ export async function recordGpsCheckin(
     withinRange = distanceM <= GPS_PROXIMITY_THRESHOLD_M;
   }
 
-  // Anti-spoofing trust check
-  const userTrust = await getUserTrustLevel(db, userId);
-  const isSuspicious = userTrust !== "trusted";
+  // Anti-spoofing: (1) snapshot-based coordinate-jump / impossible-speed check at check-in time,
+  // (2) historical trust-event review. Either flagging makes the check-in suspicious.
+  const [snapshotCheck, userTrust] = await Promise.all([
+    checkAndRecordSnapshot(db, userId, userLat, userLng).catch(() => ({ trusted: true })),
+    getUserTrustLevel(db, userId),
+  ]);
+  const isSuspicious = !snapshotCheck.trusted || userTrust !== "trusted";
   const trustLevel = isSuspicious ? "pending_review" : "gps_verified";
 
   // Record the visit (always — even suspicious, for audit trail)

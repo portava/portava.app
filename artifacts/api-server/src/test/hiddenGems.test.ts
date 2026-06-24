@@ -580,7 +580,43 @@ describe("Hidden Gems — layover-safe filter", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. Report
+// 8. Nearby — route reachability (regression: must not be shadowed by /:id)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Hidden Gems — nearby endpoint", () => {
+  it("GET /nearby is reachable and returns gems array (not caught by /:id)", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [
+          makeActiveGem({ id: "g1", sensitivity_level: "public", latitude: 35.6762, longitude: 139.6503 }),
+          makeActiveGem({ id: "g2", sensitivity_level: "public", latitude: 35.6800, longitude: 139.6600 }),
+        ],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/nearby?lat=35.68&lng=139.65&radiusKm=5`);
+    // Must return 200 (not 404 from /:id shadow or feature_disabled)
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(Array.isArray(r.body.gems), "should return gems array");
+  });
+
+  it("GET /nearby returns 400 when lat/lng are missing", async () => {
+    const client = makeFakeClient({ featureFlags: { hidden_gems_enabled: true }, gems: [] }, USER_ID);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", "/api/hidden-gems/nearby");
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. Report
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Hidden Gems — report queue entry", () => {
