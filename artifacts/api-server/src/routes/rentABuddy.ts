@@ -860,6 +860,17 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     .update({ status: "confirmed", confirmed_at: now, updated_at: now })
     .eq("id", bookingId);
 
+  // Positive trust event: buddy accepted and committed to the booking
+  void recordTrustEvent(serviceClient, {
+    userId: auth.user.id,
+    eventType: "rent_buddy_booking_accepted",
+    category: "community_value",
+    delta: 3,
+    severity: "minor",
+    sourceType: "booking",
+    sourceId: bookingId,
+  });
+
   return res.json({ ok: true });
 });
 
@@ -1177,7 +1188,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approv
   if (!changeReq) return res.status(404).json({ error: "not_found" });
 
   await serviceClient.from("rent_buddy_route_change_requests")
-    .update({ status: "approved", resolved_at: new Date().toISOString() })
+    .update({ traveler_response: "approved", responded_at: new Date().toISOString() })
     .eq("id", changeId);
 
   // Apply the new route plan to the booking
@@ -1223,7 +1234,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/declin
   if (!changeReq) return res.status(404).json({ error: "not_found" });
 
   await serviceClient.from("rent_buddy_route_change_requests")
-    .update({ status: "declined", resolved_at: new Date().toISOString() })
+    .update({ traveler_response: "declined", responded_at: new Date().toISOString() })
     .eq("id", changeId);
 
   // Trust penalty: buddy proposed an unauthorized route deviation, traveler declined
@@ -2126,6 +2137,17 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
       admin_status: "active",
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
+
+    // Positive trust event for the newly approved buddy
+    void recordTrustEvent(serviceClient, {
+      userId: (app as any).user_id,
+      eventType: "rent_buddy_application_approved",
+      category: "community_value",
+      delta: 10,
+      severity: "minor",
+      sourceType: "admin",
+      sourceId: appId,
+    });
   }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
