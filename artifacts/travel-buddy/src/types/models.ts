@@ -230,6 +230,15 @@ export type TranslationStatus =
 
 export type TelegraphPriceLevel = 'free' | '$' | '$$' | '$$$' | '$$$$';
 
+/** Minimal hashtag span used for RichText rendering (compatible with RichTextHashtag). */
+export interface HashtagSpan {
+  slug: string;
+  hashtagId?: string;
+  startChar: number;
+  endChar: number;
+  isBlocked?: boolean;
+}
+
 /** An AI-generated activity card surfaced inside a Telegraph thread. */
 export interface TelegraphActivityRecommendation {
   id: ID;
@@ -242,6 +251,8 @@ export interface TelegraphActivityRecommendation {
   imageUrl?: string | null;
   tripId?: ID;               // if "Add to Trip" should target a specific trip
   activityId?: ID;           // attached activity entity (future)
+  /** Positioned #hashtag spans in the `reason` text, resolved server-side by Telegraph. */
+  hashtagSpans?: HashtagSpan[];
 }
 
 /**

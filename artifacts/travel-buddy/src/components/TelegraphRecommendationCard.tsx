@@ -10,6 +10,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, Share2, ThumbsDown } from 'lucide-react-native';
 import type { TelegraphActivityRecommendation } from '../types/models';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { RichText } from './RichText';
 
 const CATEGORY_COLOR: Record<string, string> = {
   food:      '#C8851A',
@@ -65,8 +66,12 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
         <Text style={[styles.badgeText, { color: accent }]}>{rec.category.toUpperCase()}</Text>
       </View>
 
-      {/* Reason */}
-      <Text style={styles.reason}>{rec.reason}</Text>
+      {/* Reason — RichText renders tappable #hashtag spans when present */}
+      <RichText
+        content={rec.reason}
+        hashtagUsages={rec.hashtagSpans}
+        style={styles.reason}
+      />
 
       {/* Meta row */}
       <View style={styles.meta}>

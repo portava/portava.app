@@ -12,6 +12,15 @@ async function freshToken(): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
+/** Minimal hashtag span returned by the Telegraph recommend endpoint. */
+export interface TelegraphHashtagSpan {
+  slug: string;
+  hashtagId?: string;
+  startChar: number;
+  endChar: number;
+  isBlocked?: boolean;
+}
+
 export interface TelegraphRecommendation {
   id: string;
   title: string;
@@ -21,6 +30,8 @@ export interface TelegraphRecommendation {
   estimatedTime: string;
   priceLevel: string;
   imageUrl: string | null;
+  /** Server-resolved positioned #hashtag spans for the `reason` field. */
+  hashtagSpans?: TelegraphHashtagSpan[];
 }
 
 export interface ForYouParams {

@@ -209,8 +209,27 @@ router.get('/hashtags/trending', async (req, res) => {
     if (cityId && row.city === cityId) usageByHt[row.hashtag_id].cityCount++;
   }
 
+  // City→global fallback: when city scope yields no trending items, silently
+  // retry with all global usage in the same 48 h window and note the fallback.
+  let effectiveScope: 'global' | 'city' = scope;
+  if (scope === 'city' && Object.keys(usageByHt).length === 0) {
+    effectiveScope = 'global';
+    const { data: fbRows } = await sc
+      .from('hashtag_usage')
+      .select('hashtag_id, author_id, city')
+      .gte('created_at', since);
+    for (const row of (fbRows ?? []) as any[]) {
+      if (!usageByHt[row.hashtag_id]) {
+        usageByHt[row.hashtag_id] = { total: 0, authors: new Set(), cityCount: 0 };
+      }
+      usageByHt[row.hashtag_id].total++;
+      usageByHt[row.hashtag_id].authors.add(row.author_id);
+      if (cityId && row.city === cityId) usageByHt[row.hashtag_id].cityCount++;
+    }
+  }
+
   if (Object.keys(usageByHt).length === 0) {
-    res.status(200).json({ trending: [] });
+    res.status(200).json({ trending: [], scope: effectiveScope, city: cityId ?? null });
     return;
   }
 
@@ -310,7 +329,7 @@ router.get('/hashtags/trending', async (req, res) => {
     }))
     .sort((a: any, b: any) => b.trendingScore - a.trendingScore);
 
-  res.status(200).json({ trending, scope, city: cityId ?? null });
+  res.status(200).json({ trending, scope: effectiveScope, city: cityId ?? null });
 });
 
 // ─── GET /api/hashtags/:slug ──────────────────────────────────────────────────
