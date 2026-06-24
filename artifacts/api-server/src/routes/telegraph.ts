@@ -16,6 +16,7 @@ import { getServiceClient } from "../lib/supabase";
 import { openai } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
+import type { SpanHashtag } from "../lib/enrichSpans";
 
 const router = Router();
 
@@ -184,7 +185,59 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
     const arr = Array.isArray(parsed) ? parsed : [];
     const recommendations = arr.slice(0, count).map(sanitizeRec);
 
-    res.status(200).json({ recommendations });
+    // ── Compass hashtag span enrichment ──────────────────────────────────────
+    // Scan each recommendation's reason/title text for #slug patterns produced
+    // by the AI (e.g. when the user follows #foodie and the AI echoes it back).
+    // Resolve slugs → hashtag IDs and blocked status so the mobile client can
+    // render them as tappable links via RichText.hashtagUsages.
+    let enrichedRecommendations: typeof recommendations = recommendations;
+    try {
+      const sc = getServiceClient();
+      if (sc && recommendations.length > 0) {
+        // Collect all unique slugs across all reason + title fields
+        const allSlugs = new Set<string>();
+        for (const r of recommendations) {
+          const text = `${r.reason ?? ""} ${r.title ?? ""}`;
+          for (const m of text.matchAll(/#([a-z0-9_]+)/gi)) {
+            allSlugs.add(m[1].toLowerCase());
+          }
+        }
+
+        const slugMetaMap: Record<string, { id: string; isBlocked: boolean }> = {};
+        if (allSlugs.size > 0) {
+          const { data: htRows } = await sc
+            .from("hashtags")
+            .select("id, slug, is_blocked")
+            .in("slug", [...allSlugs]);
+          for (const h of (htRows ?? []) as any[]) {
+            if (h.slug) slugMetaMap[h.slug.toLowerCase()] = { id: h.id, isBlocked: !!h.is_blocked };
+          }
+        }
+
+        // Compute positioned spans for each recommendation's reason text,
+        // skipping permission check for AI-generated content (no real tagger).
+        enrichedRecommendations = recommendations.map((r) => {
+          const reasonText = r.reason ?? "";
+          const reasonSpans: SpanHashtag[] = [];
+          for (const m of reasonText.matchAll(/#([a-z0-9_]+)/gi)) {
+            const slug = m[1].toLowerCase();
+            const meta = slugMetaMap[slug];
+            if (meta) {
+              reasonSpans.push({
+                slug,
+                hashtagId: meta.id,
+                startChar: m.index!,
+                endChar: m.index! + m[0].length,
+                ...(meta.isBlocked ? { isBlocked: true as const } : {}),
+              });
+            }
+          }
+          return reasonSpans.length > 0 ? { ...r, hashtagSpans: reasonSpans } : r;
+        });
+      }
+    } catch { /* non-fatal — degrade to undecorated recommendations */ }
+
+    res.status(200).json({ recommendations: enrichedRecommendations });
   } catch (err) {
     req.log.error({ err }, "Telegraph recommend: OpenAI call failed");
     sendError(res, "db_error", "Telegraph recommendation service unavailable");

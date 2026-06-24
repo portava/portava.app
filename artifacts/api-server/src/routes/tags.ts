@@ -343,10 +343,15 @@ router.delete('/tags/:id', async (req, res) => {
     return;
   }
 
-  const { error } = await sc.from('tags').delete().eq('id', tagId);
+  // Soft-delete: preserve the row so the unique constraint (source_type, source_id,
+  // tagged_user_id) prevents a future re-tag from bypassing the suppression signal.
+  const { error } = await sc
+    .from('tags')
+    .update({ suppressed: true, suppressed_at: new Date().toISOString() })
+    .eq('id', tagId);
 
   if (error) {
-    req.log.error({ err: error }, 'tags/:id self-delete failed');
+    req.log.error({ err: error }, 'tags/:id self-suppress failed');
     sendError(res, 'db_error', error.message);
     return;
   }

@@ -9,19 +9,20 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator,
-  Image, ScrollView,
+  Image, ScrollView, Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, Hash, MapPin, Calendar, Users, Map, Plane,
+  ArrowLeft, Hash, MapPin, Calendar, Users, Map, Plane, Flag,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import {
-  getHashtag, getHashtagFeed, followHashtag, unfollowHashtag,
+  getHashtag, getHashtagFeed, followHashtag, unfollowHashtag, reportHashtag,
   type HashtagMeta, type FeedItem, type FeedTab, type FeedScope,
   type FeedPostItem, type FeedUserItem, type FeedEventItem,
   type FeedPlaceItem, type FeedCircleItem, type FeedTripItem,
+  type HashtagReportReason,
 } from '../../src/services/hashtag';
 import { RichText } from '../../src/components/RichText';
 import { useLocationContext } from '../../src/context/LocationContext';
@@ -217,6 +218,7 @@ export default function HashtagFeedScreen() {
   const [unavailable, setUnavailable] = useState(false);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
 
   const [activeTab, setActiveTab] = useState<FeedTab>('recent');
   const [scope, setScope] = useState<FeedScope>('global');
@@ -283,6 +285,32 @@ export default function HashtagFeedScreen() {
     setCursor(null);
     loadFeed(activeTab, scope);
   }, [meta, activeTab, scope, loadFeed]);
+
+  async function handleReport() {
+    if (reportBusy || !slug) return;
+    Alert.alert(
+      `Report #${slug}`,
+      'Why are you reporting this hashtag?',
+      [
+        { text: 'Spam', onPress: () => submitReport('spam') },
+        { text: 'Misleading', onPress: () => submitReport('misleading') },
+        { text: 'Abusive content', onPress: () => submitReport('abusive') },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  }
+
+  async function submitReport(reason: HashtagReportReason) {
+    if (!slug) return;
+    setReportBusy(true);
+    const res = await reportHashtag(slug, reason);
+    setReportBusy(false);
+    if (res.ok) {
+      Alert.alert('Reported', 'Thank you — your report has been submitted.');
+    } else {
+      Alert.alert('Failed', res.error ?? 'Could not submit report. Please try again.');
+    }
+  }
 
   async function handleFollow() {
     if (followBusy || !slug) return;
@@ -359,6 +387,9 @@ export default function HashtagFeedScreen() {
                 {following ? 'Following' : 'Follow'}
               </Text>
           }
+        </Pressable>
+        <Pressable onPress={handleReport} hitSlop={10} disabled={reportBusy} style={s.reportBtn}>
+          <Flag size={18} color={color.haze} />
         </Pressable>
       </View>
 
@@ -504,6 +535,7 @@ const s = StyleSheet.create({
   },
   followBtnText: { ...t.small, color: color.onInk, fontWeight: '700', fontSize: 12 },
   followBtnTextActive: { color: color.deep },
+  reportBtn: { padding: 4 },
 
   scopeScroll: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze },
   scopeRow: { paddingHorizontal: space.lg, paddingVertical: space.sm, gap: space.sm },

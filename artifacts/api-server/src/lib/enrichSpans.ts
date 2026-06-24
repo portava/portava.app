@@ -174,7 +174,8 @@ export async function enrichSpans(
     .from('tags')
     .select('id, source_id, tagged_user_id')
     .eq('source_type', sourceType)
-    .in('source_id', sourceIds);
+    .in('source_id', sourceIds)
+    .eq('suppressed', false);
 
   const taggedUserIds: string[] = [
     ...new Set(((tagRows ?? []) as any[]).map((r: any) => r.tagged_user_id as string)),
