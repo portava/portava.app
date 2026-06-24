@@ -23,6 +23,7 @@ async function adminGet<T>(path: string): Promise<{ ok: boolean; data?: T; error
     const res = await fetch(`${apiBase()}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 403) return { ok: false, error: 'forbidden' };
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
       return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
@@ -45,6 +46,7 @@ async function adminPost<T>(
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 403) return { ok: false, error: 'forbidden' };
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
       return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
@@ -67,6 +69,7 @@ async function adminPatch<T>(
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 403) return { ok: false, error: 'forbidden' };
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
       return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
@@ -106,6 +109,7 @@ export interface AdminBuddy {
   status: string;
   adminStatus: string;
   buddyLevel: string | null;
+  featured: boolean;
   averageRating: number | null;
   reviewCount: number;
   completedBookings: number;
@@ -195,6 +199,7 @@ export async function listAdminBuddies(
   const res = await adminGet<{ buddies: AdminBuddy[]; total: number }>(
     `/api/rent-a-buddy/admin/buddies?${qs}`,
   );
+  if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : { buddies: [], total: 0 };
 }
 
@@ -209,6 +214,7 @@ export async function listAdminBookings(
   const res = await adminGet<{ bookings: AdminBooking[]; total: number }>(
     `/api/rent-a-buddy/admin/bookings?${qs}`,
   );
+  if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : { bookings: [], total: 0 };
 }
 
@@ -221,6 +227,7 @@ export async function listAdminFlags(
   const res = await adminGet<{ flags: AdminPolicyFlag[]; total: number }>(
     `/api/rent-a-buddy/admin/safety/flags?status=${status}&page=${page}`,
   );
+  if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : { flags: [], total: 0 };
 }
 
@@ -246,6 +253,17 @@ export async function dismissFlag(
   return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
 
+export async function escalateFlag(
+  flagId: string,
+  notes?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(
+    `/api/rent-a-buddy/admin/safety/flags/${flagId}/escalate`,
+    { notes: notes ?? null },
+  );
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
 // ── Analytics ──────────────────────────────────────────────────────────────────
 
 export async function fetchAdminAnalytics(
@@ -254,5 +272,6 @@ export async function fetchAdminAnalytics(
   const res = await adminGet<AdminAnalytics>(
     `/api/rent-a-buddy/admin/analytics?days=${days}`,
   );
+  if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : null;
 }

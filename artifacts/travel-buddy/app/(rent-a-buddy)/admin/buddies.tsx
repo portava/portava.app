@@ -116,6 +116,7 @@ export default function AdminBuddiesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<AdminBuddy | null>(null);
   const [acting, setActing] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   const load = useCallback(async (p = 1, append = false) => {
     try {
@@ -127,7 +128,9 @@ export default function AdminBuddiesScreen() {
       setItems(prev => append ? [...prev, ...data.buddies] : data.buddies);
       setTotal(data.total);
       setPage(p);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      if (e?.message === 'forbidden') setForbidden(true);
+    }
   }, [search, statusFilter]);
 
   useEffect(() => {
@@ -155,7 +158,16 @@ export default function AdminBuddiesScreen() {
     load(1);
   }
 
-  if (!flagLoading && !featureEnabled) return <FeatureDisabled />;
+  if (!flagLoading && (forbidden || !featureEnabled)) {
+    const msg = forbidden
+      ? 'Admin access required.\nYour account does not have admin privileges.'
+      : 'Rent a Buddy is not enabled in this environment.';
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>{msg}</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -230,6 +242,10 @@ export default function AdminBuddiesScreen() {
                   <Text style={detail.value}>{selected.completedBookings} completed</Text>
                   <Text style={detail.label}>RISK HOLD</Text>
                   <Text style={detail.value}>{selected.riskHold ? 'YES' : 'No'}</Text>
+                  <Text style={detail.label}>LEVEL</Text>
+                  <Text style={detail.value}>{selected.buddyLevel ?? 'Standard'}</Text>
+                  <Text style={detail.label}>FEATURED</Text>
+                  <Text style={detail.value}>{selected.featured ? '⭐ Yes' : 'No'}</Text>
                   <Text style={detail.label}>JOINED</Text>
                   <Text style={detail.value}>{new Date(selected.createdAt).toLocaleDateString()}</Text>
 
@@ -243,6 +259,16 @@ export default function AdminBuddiesScreen() {
                       onPress={() => handleAction('reactivate')} disabled={acting}>
                       <Shield size={14} color='#10B981' />
                       <Text style={[detail.btnText, { color: '#10B981' }]}>Reactivate</Text>
+                    </Pressable>
+                    <Pressable style={[detail.btn, { backgroundColor: '#F59E0B20' }]}
+                      onPress={() => handleAction('feature')} disabled={acting}>
+                      <Star size={14} color='#F59E0B' />
+                      <Text style={[detail.btnText, { color: '#F59E0B' }]}>Feature</Text>
+                    </Pressable>
+                    <Pressable style={[detail.btn, { backgroundColor: color.haze }]}
+                      onPress={() => handleAction('unfeature')} disabled={acting}>
+                      <Star size={14} color={color.mute} />
+                      <Text style={[detail.btnText, { color: color.mute }]}>Unfeature</Text>
                     </Pressable>
                   </View>
                 </ScrollView>

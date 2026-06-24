@@ -48,12 +48,15 @@ export default function AdminAnalyticsScreen() {
   const [data, setData] = useState<AdminAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const result = await fetchAdminAnalytics(days);
       setData(result);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      if (e?.message === 'forbidden') setForbidden(true);
+    }
   }, [days]);
 
   useEffect(() => {
@@ -70,12 +73,13 @@ export default function AdminAnalyticsScreen() {
   const maxCityCount = data?.bookingsByCity.reduce((m, r) => Math.max(m, r.count), 0) ?? 1;
   const maxCatCount = data?.bookingsByCategory.reduce((m, r) => Math.max(m, r.count), 0) ?? 1;
 
-  if (!flagLoading && !featureEnabled) {
+  if (!flagLoading && (forbidden || !featureEnabled)) {
+    const msg = forbidden
+      ? 'Admin access required.\nYour account does not have admin privileges.'
+      : 'Rent a Buddy is not enabled in this environment.';
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
-          Rent a Buddy is not enabled in this environment.
-        </Text>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>{msg}</Text>
       </View>
     );
   }

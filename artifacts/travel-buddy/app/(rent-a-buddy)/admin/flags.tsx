@@ -15,7 +15,7 @@ import { ArrowLeft, ShieldAlert, ShieldCheck, ShieldOff } from 'lucide-react-nat
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import {
-  listAdminFlags, confirmFlag, dismissFlag,
+  listAdminFlags, confirmFlag, dismissFlag, escalateFlag,
   type AdminPolicyFlag,
 } from '../../../src/services/rentABuddyAdmin';
 
@@ -33,11 +33,13 @@ function FlagRow({
   item,
   onConfirm,
   onDismiss,
+  onEscalate,
   onView,
 }: {
   item: AdminPolicyFlag;
   onConfirm: (id: string) => void;
   onDismiss: (id: string) => void;
+  onEscalate: (id: string) => void;
   onView: (item: AdminPolicyFlag) => void;
 }) {
   const sevColor = SEVERITY_COLORS[item.severity] ?? color.mute;
@@ -67,6 +69,10 @@ function FlagRow({
             <ShieldCheck size={14} color='#10B981' />
             <Text style={[row.btnText, { color: '#10B981' }]}>Dismiss</Text>
           </Pressable>
+          <Pressable style={[row.btn, { backgroundColor: '#7C3AED20' }]} onPress={() => onEscalate(item.id)}>
+            <ShieldOff size={14} color='#7C3AED' />
+            <Text style={[row.btnText, { color: '#7C3AED' }]}>Escalate</Text>
+          </Pressable>
           <Pressable style={[row.btn, { backgroundColor: color.haze }]} onPress={() => onView(item)}>
             <Text style={[row.btnText, { color: color.mute }]}>Detail</Text>
           </Pressable>
@@ -92,7 +98,8 @@ export default function AdminFlagsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<AdminPolicyFlag | null>(null);
-  const [actionTarget, setActionTarget] = useState<{ id: string; type: 'confirm' | 'dismiss' } | null>(null);
+  const [forbidden, setForbidden] = useState(false);
+  const [actionTarget, setActionTarget] = useState<{ id: string; type: 'confirm' | 'dismiss' | 'escalate' } | null>(null);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -102,7 +109,9 @@ export default function AdminFlagsScreen() {
       setItems(prev => append ? [...prev, ...data.flags] : data.flags);
       setTotal(data.total);
       setPage(p);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      if (e?.message === 'forbidden') setForbidden(true);
+    }
   }, [statusFilter]);
 
   useEffect(() => {
@@ -116,7 +125,7 @@ export default function AdminFlagsScreen() {
     setRefreshing(false);
   }, [load]);
 
-  function initAction(id: string, type: 'confirm' | 'dismiss') {
+  function initAction(id: string, type: 'confirm' | 'dismiss' | 'escalate') {
     setNotes('');
     setActionTarget({ id, type });
   }
@@ -126,7 +135,9 @@ export default function AdminFlagsScreen() {
     setSaving(true);
     const res = actionTarget.type === 'confirm'
       ? await confirmFlag(actionTarget.id, notes || undefined)
-      : await dismissFlag(actionTarget.id, notes || undefined);
+      : actionTarget.type === 'escalate'
+        ? await escalateFlag(actionTarget.id, notes || undefined)
+        : await dismissFlag(actionTarget.id, notes || undefined);
     setSaving(false);
     if (!res.ok) {
       Alert.alert('Error', res.error ?? 'Failed');
@@ -136,12 +147,13 @@ export default function AdminFlagsScreen() {
     load(1);
   }
 
-  if (!flagLoading && !featureEnabled) {
+  if (!flagLoading && (forbidden || !featureEnabled)) {
+    const msg = forbidden
+      ? 'Admin access required.\nYour account does not have admin privileges.'
+      : 'Rent a Buddy is not enabled in this environment.';
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
-          Rent a Buddy is not enabled in this environment.
-        </Text>
+        <Text style={{ fontFamily: 'Courier', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>{msg}</Text>
       </View>
     );
   }
@@ -178,6 +190,7 @@ export default function AdminFlagsScreen() {
             <FlagRow item={item}
               onConfirm={(id) => initAction(id, 'confirm')}
               onDismiss={(id) => initAction(id, 'dismiss')}
+              onEscalate={(id) => initAction(id, 'escalate')}
               onView={setSelected}
             />
           )}
@@ -194,11 +207,20 @@ export default function AdminFlagsScreen() {
         <View style={modal.overlay}>
           <View style={modal.sheet}>
             <Text style={modal.title}>
-              {actionTarget?.type === 'confirm' ? 'Confirm Flag (applies restriction)' : 'Dismiss Flag'}
+              {actionTarget?.type === 'confirm'
+                ? 'Confirm Flag (applies restriction)'
+                : actionTarget?.type === 'escalate'
+                  ? 'Escalate to Support'
+                  : 'Dismiss Flag'}
             </Text>
             {actionTarget?.type === 'confirm' && (
               <Text style={modal.warning}>
                 Confirming a flag will apply a Trust Score penalty to the flagged user. Critical severity also sets a risk hold.
+              </Text>
+            )}
+            {actionTarget?.type === 'escalate' && (
+              <Text style={modal.warning}>
+                Escalating forwards this flag to the support team for human review. Add context notes below.
               </Text>
             )}
             <TextInput
@@ -221,7 +243,9 @@ export default function AdminFlagsScreen() {
               >
                 {saving
                   ? <ActivityIndicator color={color.onInk} size="small" />
-                  : <Text style={modal.confirmText}>{actionTarget?.type === 'confirm' ? 'Confirm Flag' : 'Dismiss'}</Text>}
+                  : <Text style={modal.confirmText}>
+                      {actionTarget?.type === 'confirm' ? 'Confirm Flag' : actionTarget?.type === 'escalate' ? 'Escalate' : 'Dismiss'}
+                    </Text>}
               </Pressable>
             </View>
           </View>

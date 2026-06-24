@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { Shield, ExternalLink, Clock, MapPin, Plus } from 'lucide-react-native';
+import { Shield, ExternalLink, Clock, MapPin, Plus, Languages } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { getBooking, type BuddyBooking } from '../../services/rentABuddy';
 
@@ -31,9 +31,13 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface Props {
   bookingId: string;
+  /** Current translation on/off state from the parent thread */
+  autoTranslate?: boolean;
+  /** Callback to flip the translation toggle */
+  onTranslateToggle?: (value: boolean) => void;
 }
 
-export function RentABuddyThreadHeader({ bookingId }: Props) {
+export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTranslateToggle }: Props) {
   const [booking, setBooking] = useState<BuddyBooking | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -56,6 +60,8 @@ export function RentABuddyThreadHeader({ bookingId }: Props) {
   const statusColor = STATUS_COLORS[booking.status] ?? color.mute;
   const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
   const isActive = booking.status === 'in_progress';
+  // Safety is relevant for both confirmed (about to meet) and in-progress (currently active)
+  const showSafety = booking.status === 'confirmed' || isActive;
 
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -85,7 +91,7 @@ export function RentABuddyThreadHeader({ bookingId }: Props) {
       </View>
 
       <View style={styles.actions}>
-        {isActive && (
+        {showSafety && (
           <Pressable
             style={[styles.btn, styles.btnSafety]}
             onPress={() => router.push({ pathname: '/(rent-a-buddy)/active' as any, params: { bookingId } })}
@@ -103,13 +109,26 @@ export function RentABuddyThreadHeader({ bookingId }: Props) {
           <Text style={styles.btnText}>View Booking</Text>
         </Pressable>
 
-        {(booking.status === 'confirmed' || isActive) && (
+        {showSafety && (
           <Pressable
             style={styles.btn}
             onPress={() => router.push({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId, action: 'add-time' } })}
           >
             <Plus size={13} color={color.ink} />
             <Text style={styles.btnText}>Add Time</Text>
+          </Pressable>
+        )}
+
+        {onTranslateToggle && (
+          <Pressable
+            style={[styles.btn, autoTranslate && styles.btnTranslateOn]}
+            onPress={() => onTranslateToggle(!autoTranslate)}
+            accessibilityLabel={autoTranslate ? 'Turn off translation' : 'Turn on translation'}
+          >
+            <Languages size={13} color={autoTranslate ? color.onInk : color.mute} />
+            <Text style={[styles.btnText, autoTranslate && styles.btnTranslateOnText]}>
+              {autoTranslate ? 'Translating' : 'Translate'}
+            </Text>
           </Pressable>
         )}
       </View>
@@ -179,6 +198,9 @@ const styles = StyleSheet.create({
   btnSafety: {
     backgroundColor: color.signal,
   },
+  btnTranslateOn: {
+    backgroundColor: '#3B82F6',
+  },
   btnText: {
     ...t.small,
     fontWeight: '700',
@@ -190,5 +212,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.onInk,
     fontSize: 12,
+  },
+  btnTranslateOnText: {
+    color: '#FFFFFF',
   },
 });

@@ -1058,6 +1058,21 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
+  // Archive the booking thread for both parties unless they opted to stay connected.
+  // stayConnected=true means both users want to keep the conversation open.
+  const { stayConnected = false } = req.body as { stayConnected?: boolean };
+  if (!stayConnected) {
+    const telegraphThreadId: string | null = (booking as any).telegraph_thread_id ?? null;
+    if (telegraphThreadId) {
+      const archiveNow = new Date().toISOString();
+      await serviceClient
+        .from("message_thread_members")
+        .update({ archived_at: archiveNow })
+        .eq("thread_id", telegraphThreadId)
+        .is("archived_at", null);
+    }
+  }
+
   return res.json({ ok: true });
 });
 
@@ -2549,6 +2564,36 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, 
     target_type: "flag",
     target_id: flagId,
     action: "confirmed",
+    notes: req.body?.notes ?? null,
+  });
+
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+
+  const { flagId } = req.params;
+  const { data: flag } = await serviceClient
+    .from("rent_buddy_policy_flags")
+    .select("id")
+    .eq("id", flagId)
+    .maybeSingle();
+  if (!flag) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_policy_flags").update({
+    status: "escalated",
+    admin_notes: req.body?.notes ? `[ESCALATED] ${req.body.notes}` : "[ESCALATED TO SUPPORT]",
+    updated_at: new Date().toISOString(),
+  }).eq("id", flagId);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: userId,
+    target_type: "flag",
+    target_id: flagId,
+    action: "escalated",
     notes: req.body?.notes ?? null,
   });
 

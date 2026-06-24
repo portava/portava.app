@@ -1394,7 +1394,14 @@ export default function TelegraphThread() {
     >
       <ThreadHeader />
       {threadType === 'rent_buddy_booking' && contextId && (
-        <RentABuddyThreadHeader bookingId={contextId} />
+        <RentABuddyThreadHeader
+          bookingId={contextId}
+          autoTranslate={autoTranslate}
+          onTranslateToggle={(v) => {
+            setThreadAutoTranslate(v);
+            saveThreadTranslationPrefs(v, threadShowOriginal ?? langSettings?.show_original_messages ?? false);
+          }}
+        />
       )}
       <QuickActionBar />
 
