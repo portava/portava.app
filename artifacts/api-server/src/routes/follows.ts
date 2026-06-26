@@ -638,13 +638,19 @@ router.get("/users/suggestions", async (req, res) => {
     } catch { /* fail-safe: proceed with zero mutual counts */ }
   }
 
-  // Interaction decay: a mutual connection you've shared a trip with is a much
-  // stronger endorsement than someone you followed long ago and never interacted
-  // with.  Interacted mutuals carry full weight (1.0); others are discounted to
-  // DECAY_BASE (0.5).  This makes the ranking more personally relevant without
-  // completely discarding cold mutual connections.
+  // Interaction decay with recency weighting: a mutual you shared a trip with
+  // recently is a much stronger endorsement than one you crossed paths with
+  // two years ago.  Weight = max(DECAY_BASE, exp(-daysSince / HALF_LIFE_DAYS)).
+  // At day 0 the weight is 1.0; at the half-life (90 days) it is ~0.37, which
+  // rounds to DECAY_BASE; beyond that it stays at DECAY_BASE — same as not
+  // interacted.  Non-interacted mutuals always use DECAY_BASE (0.5).
   const DECAY_BASE = 0.5;
-  const interactedMutuals = new Set<string>();
+  const HALF_LIFE_DAYS = 90;
+  const nowMs = Date.now();
+
+  // Per-mutual best (highest) recency-weighted interaction score.
+  // Absent entry → not interacted → falls back to DECAY_BASE.
+  const mutualInteractionWeights = new Map<string, number>();
   const allMutualIds = Array.from(
     new Set(Array.from(mutualsByCandidate.values()).flat()),
   );
@@ -656,23 +662,52 @@ router.get("/users/suggestions", async (req, res) => {
         .eq("user_id", user.id);
       const callerTripIds = (callerTripRows ?? []).map((r: any) => r.trip_id as string);
       if (callerTripIds.length > 0) {
+        // Fetch shared trip members including trip_id for recency lookup.
         const { data: sharedRows } = await sc
           .from("trip_members")
-          .select("user_id")
+          .select("user_id, trip_id")
           .in("trip_id", callerTripIds)
           .in("user_id", allMutualIds);
+
+        // Fetch trip creation dates so we can compute days since last interaction.
+        const sharedTripIds = [
+          ...new Set((sharedRows ?? []).map((r: any) => r.trip_id as string)),
+        ];
+        const tripCreatedAtMap = new Map<string, number>(); // trip_id → ms
+        if (sharedTripIds.length > 0) {
+          const { data: tripDateRows } = await sc
+            .from("trips")
+            .select("id, created_at")
+            .in("id", sharedTripIds);
+          for (const t of (tripDateRows ?? [])) {
+            const ts = t.created_at ? new Date(t.created_at as string).getTime() : NaN;
+            if (!isNaN(ts)) tripCreatedAtMap.set(t.id as string, ts);
+          }
+        }
+
+        // For each (mutual, shared-trip) pair compute the recency weight and
+        // keep the best score for that mutual across all shared trips.
         for (const r of (sharedRows ?? [])) {
-          interactedMutuals.add((r as any).user_id as string);
+          const mid = (r as any).user_id as string;
+          const tripTs = tripCreatedAtMap.get((r as any).trip_id as string);
+          const daysSince = tripTs !== undefined
+            ? (nowMs - tripTs) / (1000 * 60 * 60 * 24)
+            : null;
+          const weight = daysSince !== null
+            ? Math.max(DECAY_BASE, Math.exp(-daysSince / HALF_LIFE_DAYS))
+            : DECAY_BASE; // no date available → treat same as non-interacted
+          const prev = mutualInteractionWeights.get(mid) ?? 0;
+          if (weight > prev) mutualInteractionWeights.set(mid, weight);
         }
       }
     } catch { /* fail-safe: all mutuals get base decay weight */ }
   }
 
-  // Sum the per-mutual decay weights for each candidate.
+  // Sum the per-mutual recency-weighted scores for each candidate.
   const decayedMutualScores: Record<string, number> = {};
   for (const [cid, mids] of mutualsByCandidate.entries()) {
     decayedMutualScores[cid] = mids.reduce(
-      (sum, mid) => sum + (interactedMutuals.has(mid) ? 1.0 : DECAY_BASE),
+      (sum, mid) => sum + (mutualInteractionWeights.get(mid) ?? DECAY_BASE),
       0,
     );
   }

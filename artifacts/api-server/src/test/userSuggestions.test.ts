@@ -45,7 +45,7 @@ function makeFakeClient(state: {
   follows:       { follower_id: string; following_id: string }[];
   profiles:      ProfileEntry[];
   blocks:        { blocker_id: string; blocked_id: string }[];
-  trips?:        { id: string; owner_id: string; end_date: string; destination_city?: string | null; destination_country?: string | null }[];
+  trips?:        { id: string; owner_id: string; end_date: string; created_at?: string; destination_city?: string | null; destination_country?: string | null }[];
   trip_members?: { trip_id: string; user_id: string; role: string }[];
 }) {
   return {
@@ -427,8 +427,8 @@ describe("GET /api/users/suggestions", () => {
       profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
       blocks:   [],
       trips: [
-        { id: "trip-me", owner_id: ME, end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
-        { id: "trip-b",  owner_id: B,  end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-me", owner_id: ME, end_date: futureDate, created_at: new Date().toISOString(), destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-b",  owner_id: B,  end_date: futureDate, created_at: new Date().toISOString(), destination_city: "Bali", destination_country: "Indonesia" },
       ],
       trip_members: [
         { trip_id: "trip-me", user_id: ME, role: "owner" },
@@ -451,8 +451,8 @@ describe("GET /api/users/suggestions", () => {
       profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
       blocks:   [],
       trips: [
-        { id: "trip-me", owner_id: ME, end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
-        { id: "trip-b",  owner_id: B,  end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-me", owner_id: ME, end_date: futureDate, created_at: new Date().toISOString(), destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-b",  owner_id: B,  end_date: futureDate, created_at: new Date().toISOString(), destination_city: "Bali", destination_country: "Indonesia" },
       ],
       trip_members: [
         { trip_id: "trip-me", user_id: ME, role: "owner" },
@@ -821,7 +821,7 @@ describe("GET /api/users/suggestions", () => {
       ],
       blocks: [],
       trips: [
-        { id: "trip-shared", owner_id: ME, end_date: "2099-12-31" },
+        { id: "trip-shared", owner_id: ME, end_date: "2099-12-31", created_at: new Date().toISOString() },
       ],
       trip_members: [
         { trip_id: "trip-shared", user_id: ME,    role: "owner" },
@@ -902,7 +902,7 @@ describe("GET /api/users/suggestions", () => {
       ],
       blocks: [],
       trips: [
-        { id: "trip-g", owner_id: ME, end_date: "2099-12-31" },
+        { id: "trip-g", owner_id: ME, end_date: "2099-12-31", created_at: new Date().toISOString() },
       ],
       trip_members: [
         { trip_id: "trip-g", user_id: ME,    role: "owner" },
@@ -920,6 +920,114 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(
       posA < posB,
       `A (interacted mutual, combined=3) must rank above B (interest only, combined=2); got ${ids.join(", ")}`,
+    );
+  });
+
+  // ── recency weighting (time-based decay) ──────────────────────────────────
+
+  it("recency: very recent shared trip (7 days) outranks a 2-year-old shared trip", async () => {
+    // H_MUT shared a trip with ME 7 days ago → weight = max(0.5, exp(-7/90)) ≈ 0.926
+    //   → H_MUT follows A → A's score ≈ 0.926×3 ≈ 2.78
+    // K_MUT shared a trip with ME 730 days ago → weight = max(0.5, exp(-730/90)) ≈ max(0.5, 0) = 0.5
+    //   → K_MUT follows B → B's score = 0.5×3 = 1.5
+    // A must rank above B.
+    const H_MUT = "user-h-mut";
+    const K_MUT = "user-k-mut";
+    const recentDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const oldDate    = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: H_MUT },
+        { follower_id: ME,    following_id: K_MUT },
+        { follower_id: H_MUT, following_id: A },
+        { follower_id: K_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false },
+        { id: H_MUT, handle: "hmut", name: "Hana",  avatar_url: null, is_private: false },
+        { id: K_MUT, handle: "kmut", name: "Karl",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-recent", owner_id: ME, end_date: "2099-12-31", created_at: recentDate },
+        { id: "trip-old",    owner_id: ME, end_date: "2024-01-01", created_at: oldDate    },
+      ],
+      trip_members: [
+        { trip_id: "trip-recent", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-recent", user_id: H_MUT, role: "member" }, // H_MUT: recent interaction
+        { trip_id: "trip-old",    user_id: ME,    role: "owner"  },
+        { trip_id: "trip-old",    user_id: K_MUT, role: "member" }, // K_MUT: old interaction → floor
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (recent-interaction mutual) should appear");
+    assert.ok(posB !== -1, "B (old-interaction mutual) should appear");
+    assert.ok(
+      posA < posB,
+      `A (recent mutual H_MUT, weight≈0.926, combined≈2.78) must rank above B (old mutual K_MUT, weight=0.5, combined=1.5); got ${ids.join(", ")}`,
+    );
+  });
+
+  it("recency: best-of-multiple-trips is used when a mutual shares more than one trip", async () => {
+    // L_MUT shares TWO trips with ME: one old (730 days), one recent (3 days).
+    // Best weight = max(0.5, exp(-3/90)) ≈ 0.967, combined ≈ 2.9.
+    // M_MUT shares ONE trip (730 days old) → weight = 0.5, combined = 1.5.
+    // A (via L_MUT) must rank above B (via M_MUT).
+    const L_MUT = "user-l-mut";
+    const M_MUT = "user-m-mut";
+    const recentDate = new Date(Date.now() - 3  * 24 * 60 * 60 * 1000).toISOString();
+    const oldDate    = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: L_MUT },
+        { follower_id: ME,    following_id: M_MUT },
+        { follower_id: L_MUT, following_id: A },
+        { follower_id: M_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false },
+        { id: L_MUT, handle: "lmut", name: "Lena",  avatar_url: null, is_private: false },
+        { id: M_MUT, handle: "mmut", name: "Max",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-l-old",    owner_id: ME, end_date: "2024-01-01", created_at: oldDate    },
+        { id: "trip-l-recent", owner_id: ME, end_date: "2099-12-31", created_at: recentDate },
+        { id: "trip-m-old",    owner_id: ME, end_date: "2024-01-01", created_at: oldDate    },
+      ],
+      trip_members: [
+        { trip_id: "trip-l-old",    user_id: ME,    role: "owner"  },
+        { trip_id: "trip-l-old",    user_id: L_MUT, role: "member" }, // old trip
+        { trip_id: "trip-l-recent", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-l-recent", user_id: L_MUT, role: "member" }, // recent trip — wins
+        { trip_id: "trip-m-old",    user_id: ME,    role: "owner"  },
+        { trip_id: "trip-m-old",    user_id: M_MUT, role: "member" }, // only old trip
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (best-of: recent trip wins) should appear");
+    assert.ok(posB !== -1, "B (only old trip) should appear");
+    assert.ok(
+      posA < posB,
+      `A (L_MUT best-of-two: weight≈0.967, combined≈2.9) must rank above B (M_MUT: weight=0.5, combined=1.5); got ${ids.join(", ")}`,
     );
   });
 
