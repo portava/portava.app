@@ -122,6 +122,9 @@ function makeFakeClient(role: "admin" | "user" = "admin", tables: TableOverrides
       or:          (..._: any[]) => b,
       gte:         (..._: any[]) => b,
       gt:          (..._: any[]) => b,
+      lt:          (..._: any[]) => b,
+      lte:         (..._: any[]) => b,
+      not:         (..._: any[]) => b,
       order:       (..._: any[]) => b,
       limit:       (..._: any[]) => b,
       range:       (..._: any[]) => b,
@@ -307,16 +310,24 @@ describe("admin compass routes", () => {
       compass_active_user_scores:      { data: [] },
       compass_notification_decisions:  { data: [] },
       compass_algorithm_versions:      { data: [VERSION_ROW] },
+      compass_feedback_events:         { data: [] },
+      user_location_state:             { data: [] },
+      posts:                           { data: [], count: 0 },
     });
     const { status, body } = await req("GET", "/admin/compass/dashboard");
     assert.equal(status, 200);
     assert.ok("generatedAt"         in body, "should have generatedAt");
     assert.ok("windowDays"          in body, "should have windowDays");
-    assert.ok("abuseBySeverity"     in body, "should have abuseBySeverity");
+    assert.ok("abuse"               in body, "should have abuse block");
     assert.ok("safetyFilterFires"   in body, "should have safetyFilterFires");
-    assert.ok("cacheEntriesActive"  in body, "should have cacheEntriesActive");
+    assert.ok("cache"               in body, "should have cache block");
     assert.ok("topBoostedUsers"     in body, "should have topBoostedUsers");
-    assert.ok("notificationOutcomes" in body, "should have notificationOutcomes");
+    assert.ok("notifications"       in body, "should have notifications block");
+    assert.ok("feedbackRates"       in body, "should have feedbackRates");
+    assert.ok("citySupplyDemand"    in body, "should have citySupplyDemand");
+    assert.ok("delayedPosts"        in body, "should have delayedPosts");
+    assert.ok("overexposedUsers"    in body, "should have overexposedUsers");
+    assert.ok("newUserExposure"     in body, "should have newUserExposure");
   });
 
   test("11. POST /admin/compass/weights — 201 with weightSet", async () => {

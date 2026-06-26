@@ -138,6 +138,11 @@ CREATE TABLE IF NOT EXISTS compass_testing_scenarios (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Unique per (name, created_by) so each admin can have their own scenario namespace
+-- and upserts on (name, created_by) are unambiguous.
+CREATE UNIQUE INDEX IF NOT EXISTS compass_testing_scenarios_name_creator_idx
+  ON compass_testing_scenarios(name, created_by);
+
 ALTER TABLE compass_testing_scenarios ENABLE ROW LEVEL SECURITY;
 
 -- ── Feature flag seeds ────────────────────────────────────────────────────────

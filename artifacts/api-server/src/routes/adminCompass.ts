@@ -86,6 +86,41 @@ async function logAdminAction(
   } catch { /* non-fatal */ }
 }
 
+// ── Global cache invalidation helper ─────────────────────────────────────────
+
+/**
+ * Invalidate the Compass cache for every user who currently has a cached
+ * entry, with full per-user audit logging via CompassCacheEngine.invalidate().
+ * Also clears the in-process L1 cache.
+ *
+ * Processes users in batches of 50 to avoid overwhelming the DB.
+ * Each invalidate() call writes a compass_cache_invalidations audit row.
+ */
+async function invalidateAllUserCaches(sc: any, reason: string): Promise<number> {
+  let affected = 0;
+  try {
+    const { data: cacheRows } = await sc
+      .from("compass_feed_cache")
+      .select("user_id");
+
+    const uniqueUserIds = [...new Set(
+      ((cacheRows as any[]) ?? []).map((r: any) => r.user_id as string),
+    )];
+
+    affected = uniqueUserIds.length;
+
+    const BATCH = 50;
+    for (let i = 0; i < uniqueUserIds.length; i += BATCH) {
+      await Promise.allSettled(
+        uniqueUserIds.slice(i, i + BATCH).map((uid) => invalidate(sc, uid, reason)),
+      );
+    }
+  } catch { /* non-fatal — L1 clear still happens */ }
+
+  clearL1Cache();
+  return affected;
+}
+
 // ── GET /api/admin/compass/dashboard ─────────────────────────────────────────
 
 router.get("/admin/compass/dashboard", async (req, res) => {
@@ -95,101 +130,283 @@ router.get("/admin/compass/dashboard", async (req, res) => {
 
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+    const now           = new Date().toISOString();
 
     const [
       abuseFlagsRes,
       safetyLogRes,
-      cacheRes,
+      cacheValidRes,
+      cacheExpiredRes,
       rewardRes,
       notifRes,
       versionRes,
+      feedbackRes,
+      locationRes,
+      delayedPostsRes,
+      totalPostsRes,
+      boostOverexposedRes,
+      newUsersRes,
     ] = await Promise.allSettled([
+      // Abuse flags (last 30 days)
       sc.from("compass_abuse_flags")
-        .select("severity, status", { count: "exact" })
+        .select("severity, status")
         .gte("created_at", thirtyDaysAgo),
 
+      // Safety filter fires (last 30 days)
       sc.from("compass_safety_filter_logs")
-        .select("block_reason", { count: "exact" })
+        .select("block_reason")
         .gte("created_at", thirtyDaysAgo),
 
+      // Valid (non-expired) cache entries
       sc.from("compass_feed_cache")
-        .select("entry_type", { count: "exact" }),
+        .select("entry_type, user_id", { count: "exact" })
+        .gt("expires_at", now),
 
+      // Expired cache entries (gives us total - valid = expired)
+      sc.from("compass_feed_cache")
+        .select("user_id", { count: "exact", head: true })
+        .lte("expires_at", now),
+
+      // Top active user scores (top boosted)
       sc.from("compass_active_user_scores")
-        .select("user_id, active_user_score, trust_multiplier, boost_eligible")
+        .select("user_id, active_user_score, trust_multiplier, boost_eligible, boost_visibility_enabled")
         .order("active_user_score", { ascending: false })
         .limit(10),
 
+      // Notification outcome breakdown (last 30 days)
       sc.from("compass_notification_decisions")
-        .select("outcome", { count: "exact" })
+        .select("notification_type, outcome, suppression_reason")
         .gte("created_at", thirtyDaysAgo),
 
+      // Current active algorithm version
       sc.from("compass_algorithm_versions")
         .select("id, version_tag, rollout_status, launched_at")
         .eq("rollout_status", "active")
         .order("launched_at", { ascending: false })
         .limit(1),
+
+      // Feedback events (last 30 days) — source for click/save/join/book/hide/report rates
+      sc.from("compass_feedback_events")
+        .select("action")
+        .gte("created_at", thirtyDaysAgo),
+
+      // User location state — city supply/demand breakdown
+      sc.from("user_location_state")
+        .select("resolved_city, resolved_country")
+        .not("resolved_city", "is", null)
+        .limit(500),
+
+      // Delayed posts not yet published (pending publish)
+      sc.from("posts")
+        .select("id", { count: "exact", head: true })
+        .eq("post_status", "delayed_post")
+        .gt("publish_eligible_at", now),
+
+      // Total posts in window (for delayed publish rate denominator)
+      sc.from("posts")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", thirtyDaysAgo),
+
+      // Overexposed: boost_visibility_enabled but low trust multiplier
+      sc.from("compass_active_user_scores")
+        .select("user_id, active_user_score, trust_multiplier")
+        .eq("boost_visibility_enabled", true)
+        .lt("trust_multiplier", 0.7)
+        .order("active_user_score", { ascending: false })
+        .limit(20),
+
+      // New users (low active_user_score → limited organic reach)
+      sc.from("compass_active_user_scores")
+        .select("user_id, active_user_score")
+        .lte("active_user_score", 5)
+        .order("active_user_score", { ascending: true })
+        .limit(20),
     ]);
 
-    // Summarise abuse flags by severity
+    // ── Abuse flags ──────────────────────────────────────────────────────────
     const abuseRows: any[] = abuseFlagsRes.status === "fulfilled"
-      ? (abuseFlagsRes.value.data as any[] ?? [])
-      : [];
+      ? ((abuseFlagsRes.value as any).data as any[] ?? []) : [];
     const abuseBySeverity: Record<string, number> = {};
+    const abuseByStatus:   Record<string, number> = {};
     for (const r of abuseRows) {
       abuseBySeverity[r.severity] = (abuseBySeverity[r.severity] ?? 0) + 1;
+      abuseByStatus[r.status]     = (abuseByStatus[r.status]     ?? 0) + 1;
     }
 
-    // Summarise safety filter blocks by reason
+    // ── Safety filter ────────────────────────────────────────────────────────
     const safetyRows: any[] = safetyLogRes.status === "fulfilled"
-      ? (safetyLogRes.value.data as any[] ?? [])
-      : [];
+      ? ((safetyLogRes.value as any).data as any[] ?? []) : [];
     const safetyByReason: Record<string, number> = {};
     for (const r of safetyRows) {
       safetyByReason[r.block_reason] = (safetyByReason[r.block_reason] ?? 0) + 1;
     }
 
-    // Cache entry count
-    const cacheCount = cacheRes.status === "fulfilled"
-      ? (cacheRes.value.count ?? 0)
-      : 0;
+    // ── Cache metrics ────────────────────────────────────────────────────────
+    const validCacheRows: any[] = cacheValidRes.status === "fulfilled"
+      ? ((cacheValidRes.value as any).data as any[] ?? []) : [];
+    const validCacheCount   = validCacheRows.length;
+    const expiredCacheCount = cacheExpiredRes.status === "fulfilled"
+      ? ((cacheExpiredRes.value as any).count ?? 0) : 0;
+    const totalCacheCount   = validCacheCount + expiredCacheCount;
+    const cacheHitRate      = totalCacheCount > 0
+      ? Math.round((validCacheCount / totalCacheCount) * 1_000) / 10
+      : 0; // percentage (0–100)
 
-    // Top boosted users
-    const topRewardUsers: any[] = rewardRes.status === "fulfilled"
-      ? (rewardRes.value.data as any[] ?? [])
-      : [];
-
-    // Notification outcome breakdown
-    const notifRows: any[] = notifRes.status === "fulfilled"
-      ? (notifRes.value.data as any[] ?? [])
-      : [];
-    const notifByOutcome: Record<string, number> = {};
-    for (const r of notifRows) {
-      notifByOutcome[r.outcome] = (notifByOutcome[r.outcome] ?? 0) + 1;
+    // Cache entry type breakdown
+    const cacheByType: Record<string, number> = {};
+    for (const r of validCacheRows) {
+      cacheByType[r.entry_type] = (cacheByType[r.entry_type] ?? 0) + 1;
     }
+    const uniqueCachedUsers = new Set(validCacheRows.map((r) => r.user_id)).size;
 
-    // Active algorithm version
+    // ── Top boosted users ────────────────────────────────────────────────────
+    const topRewardUsers: any[] = rewardRes.status === "fulfilled"
+      ? ((rewardRes.value as any).data as any[] ?? []) : [];
+
+    // ── Notification outcomes ────────────────────────────────────────────────
+    const notifRows: any[] = notifRes.status === "fulfilled"
+      ? ((notifRes.value as any).data as any[] ?? []) : [];
+    const notifByOutcome: Record<string, number>          = {};
+    const notifByType:    Record<string, number>          = {};
+    const notifSuppressReason: Record<string, number>     = {};
+    for (const r of notifRows) {
+      notifByOutcome[r.outcome]                           = (notifByOutcome[r.outcome] ?? 0) + 1;
+      notifByType[r.notification_type]                    = (notifByType[r.notification_type] ?? 0) + 1;
+      if (r.suppression_reason) {
+        notifSuppressReason[r.suppression_reason]         = (notifSuppressReason[r.suppression_reason] ?? 0) + 1;
+      }
+    }
+    const notifTotal   = notifRows.length;
+    const notifSent    = notifByOutcome["sent"]       ?? 0;
+    const notifMuted   = notifByOutcome["suppressed"] ?? 0;
+    const openRate     = notifTotal > 0 ? Math.round((notifSent  / notifTotal) * 1_000) / 10 : 0;
+    const muteRate     = notifTotal > 0 ? Math.round((notifMuted / notifTotal) * 1_000) / 10 : 0;
+
+    // ── Active version ───────────────────────────────────────────────────────
     const activeVersion = versionRes.status === "fulfilled"
-      ? ((versionRes.value.data as any[] ?? [])[0] ?? null)
-      : null;
+      ? (((versionRes.value as any).data as any[] ?? [])[0] ?? null) : null;
+
+    // ── Feedback action rates (click / save / join / book / hide / report) ──
+    const feedbackRows: any[] = feedbackRes.status === "fulfilled"
+      ? ((feedbackRes.value as any).data as any[] ?? []) : [];
+    const feedbackByAction: Record<string, number> = {};
+    for (const r of feedbackRows) {
+      feedbackByAction[r.action] = (feedbackByAction[r.action] ?? 0) + 1;
+    }
+    const feedbackTotal       = feedbackRows.length;
+    const rateOf = (action: string) =>
+      feedbackTotal > 0 ? Math.round(((feedbackByAction[action] ?? 0) / feedbackTotal) * 1_000) / 10 : 0;
+
+    // ── City supply / demand ─────────────────────────────────────────────────
+    const locationRows: any[] = locationRes.status === "fulfilled"
+      ? ((locationRes.value as any).data as any[] ?? []) : [];
+    const cityDemand: Record<string, number> = {};
+    for (const r of locationRows) {
+      const key = r.resolved_city as string;
+      cityDemand[key] = (cityDemand[key] ?? 0) + 1;
+    }
+    // Top 10 cities by demand
+    const topCities = Object.entries(cityDemand)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([city, count]) => ({ city, activeUsers: count }));
+
+    // ── Delayed post publish rate ────────────────────────────────────────────
+    const delayedCount = delayedPostsRes.status === "fulfilled"
+      ? ((delayedPostsRes.value as any).count ?? 0) : 0;
+    const totalPosts   = totalPostsRes.status === "fulfilled"
+      ? ((totalPostsRes.value as any).count ?? 0) : 0;
+    const delayedPublishRate = totalPosts > 0
+      ? Math.round((delayedCount / totalPosts) * 1_000) / 10 : 0;
+
+    // ── Overexposed / new user exposure ─────────────────────────────────────
+    const overexposedUsers: any[] = boostOverexposedRes.status === "fulfilled"
+      ? ((boostOverexposedRes.value as any).data as any[] ?? []) : [];
+    const newUserRows: any[] = newUsersRes.status === "fulfilled"
+      ? ((newUsersRes.value as any).data as any[] ?? []) : [];
 
     res.json({
       generatedAt:    new Date().toISOString(),
       windowDays:     30,
+
+      // Algorithm
       activeVersion,
-      abuseBySeverity,
+
+      // Cache health
+      cache: {
+        validEntries:    validCacheCount,
+        expiredEntries:  expiredCacheCount,
+        totalEntries:    totalCacheCount,
+        uniqueUsers:     uniqueCachedUsers,
+        hitRatePct:      cacheHitRate,
+        byEntryType:     cacheByType,
+      },
+
+      // Feedback action rates (as % of total feedback events)
+      feedbackRates: {
+        totalEvents:  feedbackTotal,
+        byAction:     feedbackByAction,
+        saveRatePct:      rateOf("save"),
+        joinRatePct:      rateOf("joined"),
+        bookRatePct:      rateOf("booked"),
+        hideRatePct:      rateOf("hide_category"),
+        notInterestedPct: rateOf("not_interested"),
+        reportRatePct:    rateOf("report"),
+        blockRatePct:     rateOf("block"),
+        hideUserRatePct:  rateOf("hide_user"),
+        showMoreRatePct:  rateOf("show_more"),
+      },
+
+      // Notifications
+      notifications: {
+        total:           notifTotal,
+        byOutcome:       notifByOutcome,
+        byType:          notifByType,
+        suppressReasons: notifSuppressReason,
+        openRatePct:     openRate,
+        muteRatePct:     muteRate,
+      },
+
+      // Safety
       safetyFilterFires: {
         total:    safetyRows.length,
         byReason: safetyByReason,
       },
-      cacheEntriesActive: cacheCount,
-      topBoostedUsers:    topRewardUsers.map((r) => ({
-        userId:         r.user_id,
-        score:          r.active_user_score,
+
+      // Abuse
+      abuse: {
+        total:      abuseRows.length,
+        bySeverity: abuseBySeverity,
+        byStatus:   abuseByStatus,
+      },
+
+      // User exposure metrics
+      topBoostedUsers: topRewardUsers.map((r) => ({
+        userId:          r.user_id,
+        score:           r.active_user_score,
         trustMultiplier: r.trust_multiplier,
-        boostEligible:  r.boost_eligible,
+        boostEligible:   r.boost_eligible,
+        boostVisible:    r.boost_visibility_enabled,
       })),
-      notificationOutcomes: notifByOutcome,
+      overexposedUsers: overexposedUsers.map((r) => ({
+        userId:          r.user_id,
+        score:           r.active_user_score,
+        trustMultiplier: r.trust_multiplier,
+      })),
+      newUserExposure: {
+        count: newUserRows.length,
+        users: newUserRows.map((r) => ({ userId: r.user_id, score: r.active_user_score })),
+      },
+
+      // City supply / demand
+      citySupplyDemand: topCities,
+
+      // Delayed posts
+      delayedPosts: {
+        pendingCount:   delayedCount,
+        totalPostsInWindow: totalPosts,
+        delayedRatePct: delayedPublishRate,
+      },
     });
   } catch (err) {
     req.log.error({ err }, "admin/compass/dashboard: query failed");
@@ -301,16 +518,25 @@ router.post("/admin/compass/version", async (req, res) => {
   const { weightSetId, versionTag, notes } = parsed.data;
 
   try {
-    // Retire any currently active version
+    const now = new Date().toISOString();
+
+    // Retire any currently active algorithm versions
     await sc
       .from("compass_algorithm_versions")
-      .update({ rollout_status: "retired", retired_at: new Date().toISOString() })
+      .update({ rollout_status: "retired", retired_at: now })
       .eq("rollout_status", "active");
 
-    // Activate the weight set
+    // Deactivate ALL previously active weight sets (only one should be active
+    // at a time; this is the authoritative deactivation step)
     await sc
       .from("compass_admin_weight_sets")
-      .update({ is_active: true, updated_at: new Date().toISOString() })
+      .update({ is_active: false, updated_at: now })
+      .eq("is_active", true);
+
+    // Activate the selected weight set
+    await sc
+      .from("compass_admin_weight_sets")
+      .update({ is_active: true, updated_at: now })
       .eq("id", weightSetId);
 
     // Create new algorithm version row
@@ -329,11 +555,15 @@ router.post("/admin/compass/version", async (req, res) => {
 
     if (error) { sendError(res, "db_error", error.message); return; }
 
-    // Clear L1 cache so the new weights take effect on next build
-    clearL1Cache();
+    // Invalidate all user caches so new weights take effect immediately
+    const affected = await invalidateAllUserCaches(sc, "admin_version_activation");
 
-    await logAdminAction(sc, userId, "activate_version", (data as any).id, { weightSetId, versionTag });
-    res.status(201).json({ version: data });
+    await logAdminAction(sc, userId, "activate_version", (data as any).id, {
+      weightSetId,
+      versionTag,
+      cacheUsersInvalidated: affected,
+    });
+    res.status(201).json({ version: data, cacheUsersInvalidated: affected });
   } catch (err) {
     req.log.error({ err }, "admin/compass/version: activate failed");
     sendError(res, "db_error", "Could not activate version");
@@ -358,7 +588,9 @@ router.post("/admin/compass/rollback", async (req, res) => {
   }
 
   try {
-    // Find current active version
+    const now = new Date().toISOString();
+
+    // Find the currently active version
     const { data: activeVersions } = await sc
       .from("compass_algorithm_versions")
       .select("id, version_tag, weight_set_id")
@@ -368,7 +600,7 @@ router.post("/admin/compass/rollback", async (req, res) => {
 
     const currentVersion = ((activeVersions as any[]) ?? [])[0] ?? null;
 
-    // Find previous stable version (most recent non-rolled-back before the current)
+    // Find the most recent retired version with rollback_available = true
     const { data: prevVersions } = await sc
       .from("compass_algorithm_versions")
       .select("id, version_tag, weight_set_id")
@@ -387,21 +619,35 @@ router.post("/admin/compass/rollback", async (req, res) => {
     // Mark current version as rolled_back
     await sc
       .from("compass_algorithm_versions")
-      .update({ rollout_status: "rolled_back", retired_at: new Date().toISOString() })
+      .update({ rollout_status: "rolled_back", retired_at: now })
       .eq("id", currentVersion.id);
 
-    // Reactivate previous version if available
+    // Deactivate the current version's weight set
+    if (currentVersion.weight_set_id) {
+      await sc
+        .from("compass_admin_weight_sets")
+        .update({ is_active: false, updated_at: now })
+        .eq("id", currentVersion.weight_set_id);
+    }
+
+    // Reactivate previous version and its weight set (if available)
     if (prevVersion) {
       await sc
         .from("compass_algorithm_versions")
         .update({ rollout_status: "active", retired_at: null })
         .eq("id", prevVersion.id);
 
-      // Re-activate the corresponding weight set
       if (prevVersion.weight_set_id) {
+        // First deactivate any currently active weight sets
         await sc
           .from("compass_admin_weight_sets")
-          .update({ is_active: true, updated_at: new Date().toISOString() })
+          .update({ is_active: false, updated_at: now })
+          .eq("is_active", true);
+
+        // Then activate the previous version's weight set
+        await sc
+          .from("compass_admin_weight_sets")
+          .update({ is_active: true, updated_at: now })
           .eq("id", prevVersion.weight_set_id);
       }
     }
@@ -418,19 +664,21 @@ router.post("/admin/compass/rollback", async (req, res) => {
       .select("id, from_version_id, to_version_id, created_at")
       .single();
 
-    // Clear in-process cache globally so rolled-back weights don't serve
-    clearL1Cache();
+    // Globally invalidate all user caches so rolled-back weights take effect
+    const affected = await invalidateAllUserCaches(sc, "admin_rollback");
 
     await logAdminAction(sc, userId, "rollback", currentVersion.id, {
-      fromVersion: currentVersion.version_tag,
-      toVersion:   prevVersion?.version_tag ?? null,
-      reason:      parsed.data.reason ?? null,
+      fromVersion:           currentVersion.version_tag,
+      toVersion:             prevVersion?.version_tag ?? null,
+      reason:                parsed.data.reason ?? null,
+      cacheUsersInvalidated: affected,
     });
 
     res.json({
-      rollback:    rollbackRow,
-      fromVersion: currentVersion,
-      toVersion:   prevVersion ?? null,
+      rollback:              rollbackRow,
+      fromVersion:           currentVersion,
+      toVersion:             prevVersion ?? null,
+      cacheUsersInvalidated: affected,
     });
   } catch (err) {
     req.log.error({ err }, "admin/compass/rollback: failed");
@@ -446,22 +694,13 @@ router.post("/admin/compass/rebuild-cache", async (req, res) => {
   const { userId, sc } = admin;
 
   try {
-    // Clear the in-process L1 cache immediately
-    clearL1Cache();
+    // Invalidate all user caches with per-user audit trail
+    const affected = await invalidateAllUserCaches(sc, "admin_global_rebuild");
 
-    // Delete all DB-side cache rows (best-effort)
-    let purgedRows = 0;
-    try {
-      const { count } = await sc
-        .from("compass_feed_cache")
-        .delete()
-        .gte("created_at", "1970-01-01T00:00:00Z") // matches all rows
-        .select("id", { count: "exact", head: true });
-      purgedRows = count ?? 0;
-    } catch { /* non-fatal */ }
-
-    await logAdminAction(sc, userId, "rebuild_cache", null, { purgedRows });
-    res.json({ ok: true, message: "Cache cleared", purgedRows });
+    await logAdminAction(sc, userId, "rebuild_cache", null, {
+      cacheUsersInvalidated: affected,
+    });
+    res.json({ ok: true, message: "Cache cleared", cacheUsersInvalidated: affected });
   } catch (err) {
     req.log.error({ err }, "admin/compass/rebuild-cache: failed");
     sendError(res, "db_error", "Cache rebuild failed");
@@ -621,7 +860,6 @@ router.get("/admin/compass/safety-filters", async (req, res) => {
     const { data, error } = await query;
     if (error) { sendError(res, "db_error", error.message); return; }
 
-    // Summarise by reason
     const rows: any[] = data ?? [];
     const byReason: Record<string, number> = {};
     for (const r of rows) {
@@ -689,7 +927,7 @@ const sandboxPreviewSchema = z.object({
   userType:   z.enum(["traveler", "buddy", "new_user", "creator"]),
   city:       z.string().min(1).max(120),
   intentMode: z.string().min(1).max(80).default("explore_now"),
-  saveName:   z.string().max(200).optional(), // optional: save scenario for re-use
+  saveName:   z.string().max(200).optional(),
 });
 
 router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
@@ -708,7 +946,8 @@ router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
     // Run sandbox — intentionally passes null for db (no production reads/writes)
     const result = await runSandbox(null, { userType, city, intentMode });
 
-    // Optionally save the scenario for future re-use
+    // Optionally save the scenario for future re-use.
+    // Upsert on (name, created_by) — requires the unique index added in migration 0055.
     if (saveName) {
       try {
         const scenario = { userType, city, intentMode };
@@ -722,7 +961,7 @@ router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
               last_result: result,
               updated_at:  new Date().toISOString(),
             },
-            { onConflict: "name" },
+            { onConflict: "name,created_by" },
           )
           .select("id")
           .single();
