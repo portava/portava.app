@@ -302,12 +302,14 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   }
 
   // Proactive fallback-mode check — same gate as the feed endpoint.
-  // Returns section-schema-compatible response so clients don't need
-  // separate handling for section vs full-feed fallback mode.
+  // On flag or error we include safeItems (the safe content set) alongside
+  // the section-schema envelope so clients receive actual safe content.
   const fallbackModeOn = await isFallbackModeEnabled(sc);
   if (fallbackModeOn) {
     req.log.info({ userId: user.id }, "compass/feed/section: COMPASS_FALLBACK_MODE_ENABLED, returning section fallback");
-    res.json({ section: null, nextCursor: null, fallback: true });
+    const profile  = await getCompassProfile(sc, user.id).catch(() => null);
+    const fallback = await buildFallbackFeed(sc, user.id, profile, "section_fallback_mode_enabled");
+    res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
     return;
   }
 
@@ -343,12 +345,14 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     void setCachedFeed(sc, user.id, cacheKey, "section", result);
     res.json(result);
   } catch (err) {
-    // On unhandled error, return a section-schema-compatible fallback
-    // response so the client never receives a mismatched payload shape.
-    // `section: null` is identical to the COMPASS_ENABLED=false path and
-    // the fallback-mode-enabled path above, making handling uniform.
+    // On unhandled error, return section-schema fields + safe fallback content.
+    // `section: null` is the consistent fallback signal; `safeItems` carries
+    // actual safe content so the client degrades gracefully rather than showing
+    // an empty screen.
     req.log.error({ err }, "compass/feed/section: build failed, using fallback");
-    res.json({ section: null, nextCursor: null, fallback: true });
+    const profile  = await getCompassProfile(sc, user.id).catch(() => null);
+    const fallback = await buildFallbackFeed(sc, user.id, profile, "section_build_error").catch(() => ({ safeItems: [] }));
+    res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
   }
 });
 

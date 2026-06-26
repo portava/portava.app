@@ -607,6 +607,19 @@ router.post("/admin/compass/version", async (req, res) => {
   try {
     const now = new Date().toISOString();
 
+    // ── Precondition: verify weight set exists before any mutation ────────
+    // This prevents the "retired current version + insert fails" scenario
+    // that would leave the system with no active version.
+    const { data: wsCheck, error: wsErr } = await sc
+      .from("compass_admin_weight_sets")
+      .select("id")
+      .eq("id", weightSetId)
+      .single();
+    if (wsErr || !wsCheck) {
+      sendError(res, "not_found", `Weight set '${weightSetId}' not found`);
+      return;
+    }
+
     // Retire any currently active algorithm versions
     await sc
       .from("compass_algorithm_versions")
@@ -700,6 +713,14 @@ router.post("/admin/compass/rollback", async (req, res) => {
 
     if (!currentVersion) {
       sendError(res, "not_found", "No active algorithm version to roll back");
+      return;
+    }
+
+    // ── Precondition: require a prior safe version before touching anything ─
+    // Without this guard, rolling back the current version leaves the system
+    // with no active version, which breaks all feed requests.
+    if (!prevVersion) {
+      sendError(res, "not_found", "No prior rollback-available version found; rollback aborted to preserve current active state");
       return;
     }
 

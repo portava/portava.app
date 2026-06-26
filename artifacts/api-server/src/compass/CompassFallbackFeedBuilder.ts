@@ -230,14 +230,41 @@ async function fetchActiveTrips(
   blockedIds: Set<string>,
 ): Promise<FallbackItem[]> {
   try {
-    const { data } = await db
-      .from("trips")
-      .select("id, destination, start_date, end_date, status, created_by")
-      .eq("status", "active")
-      .eq("created_by", userId)
-      .limit(5);
-    return ((data as any[]) ?? [])
+    // Fetch both trips the user owns AND trips where they are a member,
+    // then deduplicate so a user's own trip isn't shown twice.
+    const [ownedRes, memberRes] = await Promise.allSettled([
+      db.from("trips")
+        .select("id, destination, start_date, end_date, status, created_by")
+        .eq("status", "active")
+        .eq("created_by", userId)
+        .limit(5),
+      db.from("trip_members")
+        .select("trip_id, trips(id, destination, start_date, end_date, status, created_by)")
+        .eq("user_id", userId)
+        .limit(5),
+    ]);
+
+    const ownedRows: any[] = ownedRes.status === "fulfilled"
+      ? ((ownedRes.value as any).data as any[] ?? []) : [];
+
+    const memberRows: any[] = memberRes.status === "fulfilled"
+      ? ((memberRes.value as any).data as any[] ?? [])
+          .map((r: any) => r.trips)
+          .filter(Boolean)
+      : [];
+
+    const seen = new Set<string>();
+    const allTrips: any[] = [];
+    for (const r of [...ownedRows, ...memberRows]) {
+      const id = r.id as string;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      allTrips.push(r);
+    }
+
+    return allTrips
       .filter((r: any) => !blockedIds.has(r.created_by as string))
+      .slice(0, 5)
       .map((r: any): FallbackItem => ({
         id:       r.id as string,
         type:     "trip",
@@ -305,23 +332,51 @@ async function fetchTelegraphThreads(
   blockedIds: Set<string>,
 ): Promise<FallbackItem[]> {
   try {
+    // Fetch the user's threads along with all participant user IDs.
+    // We must exclude any thread that contains a blocked participant so
+    // blocked users cannot surface via telegraph even in fallback mode.
     const { data } = await db
       .from("message_thread_members")
-      .select("thread_id")
-      .eq("user_id", userId)
+      .select("thread_id, user_id")
       .order("thread_id", { ascending: false })
-      .limit(5);
-    return ((data as any[]) ?? [])
-      .map((r: any) => r.thread_id as string)
-      .filter((tid: string) => tid && !blockedIds.has(tid))
-      .map((tid: string): FallbackItem => ({
-        id:       tid,
-        type:     "message",
-        category: "telegraph",
-        title:    "Telegraph Thread",
-        authorId: undefined,
-        data:     { threadId: tid },
-      }));
+      .limit(50); // fetch broadly; we'll filter and deduplicate in JS
+
+    const rows: any[] = (data as any[]) ?? [];
+
+    // Group by thread_id to know all participants
+    const threadParticipants = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const tid = r.thread_id as string;
+      const uid = r.user_id   as string;
+      if (!tid || !uid) continue;
+      if (!threadParticipants.has(tid)) threadParticipants.set(tid, new Set());
+      threadParticipants.get(tid)!.add(uid);
+    }
+
+    // Collect threads the current user participates in, excluding any
+    // thread that has a blocked participant.
+    const eligibleThreads: Array<{ tid: string; otherUserId: string | undefined }> = [];
+    for (const [tid, participants] of threadParticipants) {
+      if (!participants.has(userId)) continue;
+      // Exclude thread if ANY participant (other than self) is blocked
+      const hasBlocked = [...participants].some(
+        (uid) => uid !== userId && blockedIds.has(uid),
+      );
+      if (hasBlocked) continue;
+      // Use the other participant's userId as authorId for safety filter
+      const otherUserId = [...participants].find((uid) => uid !== userId);
+      eligibleThreads.push({ tid, otherUserId });
+      if (eligibleThreads.length >= 5) break;
+    }
+
+    return eligibleThreads.map(({ tid, otherUserId }): FallbackItem => ({
+      id:       tid,
+      type:     "message",
+      category: "telegraph",
+      title:    "Telegraph Thread",
+      authorId: otherUserId,
+      data:     { threadId: tid },
+    }));
   } catch { return []; }
 }
 
@@ -333,11 +388,14 @@ async function fetchVerifiedEvents(
   if (!city) return [];
   try {
     const now = new Date().toISOString();
+    // City filter is applied at the DB level so only events in the user's
+    // city are returned. `event_city` is the canonical city column on posts.
     const { data } = await db
       .from("posts")
-      .select("id, user_id, content, created_at")
+      .select("id, user_id, content, created_at, event_city")
       .eq("post_type", "event")
       .eq("is_verified", true)
+      .eq("event_city", city)
       .not("post_status", "eq", "delayed_post")
       .gt("event_starts_at", now)
       .limit(5);
