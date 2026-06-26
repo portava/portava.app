@@ -396,18 +396,20 @@ async function runFeedPipeline(
  * candidate set and apply its own pagination (e.g. the Discovery route).
  */
 export async function rankItemsForDiscovery(
-  items:   CompassItem[],
-  profile: CompassProfile,
-  context: CompassContext,
-  db:      SupabaseClient | null,
+  items:      CompassItem[],
+  profile:    CompassProfile,
+  context:    CompassContext,
+  db:         SupabaseClient | null,
+  _overrides: FeedBuilderTestOverrides = {},
 ): Promise<PipelineResult[]> {
   // Reuse the internal feed pipeline — stops before section assignment
   const { results, inputCount: _i, blockedCount: _b, rejectedCount: _r, passedCount: _p } =
-    await runPipeline(items, profile, context, db, {});
+    await runPipeline(items, profile, context, db, _overrides);
 
   // Active-user reward boosts
-  const authorScores = new Map<string, ActiveUserScoreResult>();
-  if (db) {
+  const authorScores: Map<string, ActiveUserScoreResult> =
+    _overrides.authorScores ?? new Map();
+  if (db && !_overrides.skipActiveRewards) {
     const authorIds = [...new Set(results.map((r) => r.item.authorId).filter(Boolean) as string[])];
     await Promise.allSettled(
       authorIds.map(async (aid) => {
@@ -427,7 +429,7 @@ export async function rankItemsForDiscovery(
 
   // Fair exposure
   let finalPool = boosted;
-  if (boosted.length > 0) {
+  if (!_overrides.skipFairExposure && boosted.length > 0) {
     const preloaded = await preloadFairExposureData(db, boosted);
     const { items: fairInserts } = applyFairExposure([], boosted, profile, db, preloaded.counts, preloaded.cooldowns);
     if (fairInserts.length > 0) {

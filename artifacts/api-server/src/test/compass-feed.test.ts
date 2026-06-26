@@ -25,7 +25,7 @@ import {
   recordActivityEvent,
   type ActiveUserScoreResult,
 } from "../compass/CompassActiveUserRewardEngine.js";
-import { buildFeed, SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, rankItemsForDiscovery, SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
 import type { PipelineResult } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -687,5 +687,42 @@ describe("CompassFeedBuilder", () => {
       skipActiveRewards: true,
     });
     assert.equal(result.sections.length, 0, "no sections emitted for empty input");
+  });
+});
+
+// ── rankItemsForDiscovery — Compass-rejected items excluded ────────────────────
+
+describe("rankItemsForDiscovery — discovery exclusion regression", () => {
+  it("Compass-rejected items are not present in output when COMPASS_V1_RULE_BASED_ENABLED", async () => {
+    // Two items: one passes safety, one is suspended (should be rejected)
+    const passedItem: CompassItem  = { id: "place:allowed",   type: "suggestion", authorId: BOB_ID };
+    const rejectedItem: CompassItem = { id: "place:suspended", type: "suggestion", authorId: CAROL_ID, isSuspended: true };
+
+    const results = await rankItemsForDiscovery(
+      [passedItem, rejectedItem],
+      baseProfile(),
+      baseContext(),
+      null,
+      {
+        // Custom safety filter that blocks suspended items (mirrors pipeline gate)
+        safetyFilter:     (item, _profile, _db, _flags) => item.isSuspended
+          ? { allowed: false, reason: "suspended" }
+          : { allowed: true },
+        eligibilityCheck: () => ({ eligible: true }),
+        scoreItem:        () => ({ finalScore: 50, components: {} as any }),
+        skipFairExposure:  true,
+        skipActiveRewards: true,
+      },
+    );
+
+    const returnedIds = results.map((r) => r.item.id);
+    assert.ok(
+      returnedIds.includes("place:allowed"),
+      "passed item must appear in discovery results",
+    );
+    assert.ok(
+      !returnedIds.includes("place:suspended"),
+      "Compass-rejected (suspended) item must NOT appear in discovery results",
+    );
   });
 });

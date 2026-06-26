@@ -221,6 +221,19 @@ export interface CompassItem {
   /** For 'buddy' items: must be 'active' to accept bookings. */
   buddyStatus?: string;
 
+  // ── Temporal authorship signals ────────────────────────────────────────────
+  /**
+   * ISO timestamp when the author first joined the platform.
+   * Used by fair-exposure eligibility to detect recently-joined users.
+   */
+  authorJoinedAt?: string;
+  /**
+   * ISO timestamp when the author was approved as a Rent-a-Buddy on the
+   * platform. Used in addition to `authorJoinedAt` so that older users
+   * newly approved as Buddies also qualify for fair-exposure slots.
+   */
+  buddyApprovedAt?: string;
+
   // ── Privacy fields (scrubbed by Privacy Guard) ─────────────────────────────
   /** Exact GPS latitude — ALWAYS stripped by Privacy Guard. */
   exactLat?: number;

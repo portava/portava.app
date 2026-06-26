@@ -611,11 +611,9 @@ router.get("/discovery", async (req, res) => {
                 rating: null, isOpenNow: null,
               };
             });
-            // Items blocked/rejected by Compass pipeline fall to the back
-            const passedIds = new Set(compassRanked.map((p) => p.id));
-            const unranked  = places.filter((p) => !passedIds.has(p.id));
-            // Full ranked list — discovery does its own pagination below
-            const merged    = [...compassRanked, ...unranked];
+            // Compass is authoritative: blocked/rejected items are excluded.
+            // Only pipeline-passed items appear when the flag is enabled.
+            const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
             res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta });

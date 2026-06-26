@@ -92,7 +92,7 @@ async function fetchBuddies(db: SupabaseClient): Promise<CompassItem[]> {
   try {
     const { data } = await db
       .from("rent_buddy_profiles")
-      .select("user_id, status, is_verified, profiles!user_id(id, created_at)")
+      .select("user_id, status, is_verified, verified_at, profiles!user_id(id, created_at)")
       .eq("status", "active")
       .limit(MAX_BUDDIES);
 
@@ -101,15 +101,20 @@ async function fetchBuddies(db: SupabaseClient): Promise<CompassItem[]> {
         ? buddy.profiles[0]
         : buddy.profiles;
       return {
-        id:             buddy.user_id,
-        type:           "buddy",
-        authorId:       buddy.user_id,
-        targetUserId:   buddy.user_id,
-        buddyStatus:    buddy.status,
-        isVerified:     Boolean(buddy.is_verified),
-        authorJoinedAt: profile?.created_at ?? undefined,
-        visibilityScope: "public",
-        qualityScore:   buddy.is_verified ? 8 : 6,
+        id:               buddy.user_id,
+        type:             "buddy",
+        authorId:         buddy.user_id,
+        targetUserId:     buddy.user_id,
+        buddyStatus:      buddy.status,
+        isVerified:       Boolean(buddy.is_verified),
+        // authorJoinedAt: the profile creation date (for new-user fair exposure)
+        authorJoinedAt:   profile?.created_at ?? undefined,
+        // buddyApprovedAt: the buddy-platform approval date — used as the
+        // "recently approved" signal in fair-exposure eligibility so that
+        // older users newly approved as Buddies are correctly given fair exposure.
+        buddyApprovedAt:  buddy.verified_at ?? undefined,
+        visibilityScope:  "public",
+        qualityScore:     buddy.is_verified ? 8 : 6,
       };
     });
   } catch {
