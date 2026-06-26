@@ -1,6 +1,9 @@
 import { useEffect } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+// Register the geofence background task at module root — must be imported
+// before any call to Location.startGeofencingAsync.
+import '../src/tasks/geofenceExitTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform } from 'react-native';

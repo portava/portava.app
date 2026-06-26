@@ -20,6 +20,7 @@
     "expo-image-manipulator": "^56.0.19",
     "expo-notifications": "^56.0.18",
     "expo-sharing": "^56.0.18",
+    "expo-task-manager": "^56.0.19",
     "lucide-react-native": "^0.544.0",
     "react-native-maps": "^1.27.2",
     "react-native-share": "^12.3.1",
