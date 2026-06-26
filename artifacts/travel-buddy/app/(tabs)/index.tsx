@@ -25,6 +25,7 @@ import { LocationPermissionPrompt } from '../../src/components/LocationPermissio
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { Plane, Users, MapPin } from 'lucide-react-native';
+import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -246,6 +247,9 @@ export default function Pulse() {
           </View>
         </View>
       )}
+
+      {/* People you may know — shown in For You mode only */}
+      {feedMode === 'forYou' && <PeopleYouMayKnow />}
 
       {/* Pulse Wall — feed mode toggle + quick filters */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
