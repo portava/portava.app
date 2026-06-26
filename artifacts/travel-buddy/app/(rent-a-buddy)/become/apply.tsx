@@ -1,16 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, Pressable, StyleSheet,
   Alert, Switch, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ArrowRight, Check, Camera, Plus, X } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen } from 'lucide-react-native';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
-import type { BuddyCategory } from '../../../src/services/rentABuddy';
+import type { BuddyCategory, TrainingItem } from '../../../src/services/rentABuddy';
 
 const TOTAL_STEPS = 7;
 
@@ -94,6 +94,48 @@ export default function ApplyToBeBuddy() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // Training checklist gate — only shown when user already has an existing application.
+  // New users (no application yet) skip the gate; training is enforced at admin approval.
+  const [trainingLoading, setTrainingLoading] = useState(true);
+  const [trainingComplete, setTrainingComplete] = useState(false);
+  const [trainingItems, setTrainingItems] = useState<TrainingItem[]>([]);
+  const [checkingItem, setCheckingItem] = useState<string | null>(null);
+  const [showTraining, setShowTraining] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const [appRes, trainRes] = await Promise.all([
+        rentABuddy.getMyApplication(),
+        rentABuddy.getTrainingChecklist(),
+      ]);
+      const hasExistingApplication = appRes.ok && !!appRes.data?.application;
+      if (trainRes.ok && trainRes.data) {
+        setTrainingItems(trainRes.data.checklist);
+        setTrainingComplete(trainRes.data.allComplete);
+        // Only block with training gate if user already has a submitted application
+        if (hasExistingApplication && !trainRes.data.allComplete) setShowTraining(true);
+      } else {
+        setTrainingComplete(false);
+        // Do not block new users who haven't applied yet
+        if (hasExistingApplication) setShowTraining(true);
+      }
+      setTrainingLoading(false);
+    })();
+  }, []);
+
+  async function handleCheckItem(key: string) {
+    setCheckingItem(key);
+    const res = await rentABuddy.completeTrainingItem(key);
+    if (res.ok && res.data) {
+      setTrainingItems((prev) => prev.map((i) => i.key === key ? { ...i, completed: true } : i));
+      if (res.data.allComplete) {
+        setTrainingComplete(true);
+        setShowTraining(false);
+      }
+    }
+    setCheckingItem(null);
+  }
+
   // Step 1
   const [displayName, setDisplayName] = useState('');
   const [city, setCity] = useState('');
@@ -160,6 +202,85 @@ export default function ApplyToBeBuddy() {
     } else {
       Alert.alert('Could not submit', result.error ?? 'Please try again.');
     }
+  }
+
+  if (trainingLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: color.paper }}>
+        <ActivityIndicator size="large" color={color.signal} />
+        <Text style={{ marginTop: space.md, color: color.mute, fontSize: 14 }}>Checking your training status…</Text>
+      </View>
+    );
+  }
+
+  if (showTraining) {
+    const completed = trainingItems.filter((i) => i.completed).length;
+    const total = trainingItems.length || 10;
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper }}>
+        <View style={[hdr.wrap, { paddingTop: insets.top + space.sm }]}>
+          <Pressable onPress={() => router.back()} style={hdr.back} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <ArrowLeft size={20} color={color.ink} />
+          </Pressable>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <BookOpen size={20} color={color.signal} />
+          </View>
+          <View style={{ width: 36 }} />
+        </View>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: insets.bottom + 120 }}>
+          <View style={{ marginTop: space.xl, marginBottom: space.lg }}>
+            <Text style={{ fontSize: 22, fontWeight: '700', color: color.ink, marginBottom: space.xs }}>
+              Complete your training first
+            </Text>
+            <Text style={{ fontSize: 14, color: color.mute, lineHeight: 20 }}>
+              Before applying to become a Buddy, you must read and confirm all 10 training items. These ensure every Buddy meets our safety and conduct standards.
+            </Text>
+            <View style={{ marginTop: space.md, height: 6, backgroundColor: color.haze, borderRadius: 3, overflow: 'hidden' }}>
+              <View style={{ width: `${(completed / total) * 100}%`, height: '100%', backgroundColor: color.signal, borderRadius: 3 }} />
+            </View>
+            <Text style={{ marginTop: space.xs, fontSize: 12, color: color.mute }}>{completed} of {total} confirmed</Text>
+          </View>
+
+          {trainingItems.map((item) => (
+            <Pressable
+              key={item.key}
+              onPress={() => !item.completed && handleCheckItem(item.key)}
+              style={[
+                trn.row,
+                item.completed && trn.rowDone,
+              ]}
+              disabled={item.completed || checkingItem === item.key}
+            >
+              <View style={[trn.check, item.completed && trn.checkDone]}>
+                {item.completed ? (
+                  <Check size={14} color={color.onInk} />
+                ) : checkingItem === item.key ? (
+                  <ActivityIndicator size="small" color={color.signal} />
+                ) : null}
+              </View>
+              <Text style={[trn.label, item.completed && trn.labelDone]}>{item.label}</Text>
+            </Pressable>
+          ))}
+
+          {trainingItems.length === 0 && (
+            <Text style={{ color: color.mute, fontSize: 14, textAlign: 'center', marginTop: space.xl }}>
+              No training items found. You may not have submitted an application yet. Complete training after submitting your first draft.
+            </Text>
+          )}
+
+          {completed === total && total > 0 && (
+            <View style={{ marginTop: space.lg }}>
+              <TravelButton
+                label="Start application →"
+                onPress={() => { setShowTraining(false); setTrainingComplete(true); }}
+                variant="primary"
+                full
+              />
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    );
   }
 
   if (submitted) {
@@ -644,4 +765,23 @@ const s = StyleSheet.create({
   infoBody: { ...t.small, color: color.mute, lineHeight: 18 },
   policyTitle: { ...t.bodyStrong, color: color.ink, marginBottom: space.sm },
   policyBody: { ...t.small, color: color.mute, lineHeight: 18 },
+});
+
+const trn = StyleSheet.create({
+  row: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingVertical: space.sm, paddingHorizontal: space.md,
+    marginBottom: space.xs, backgroundColor: color.haze,
+    borderRadius: radius.md, gap: space.sm,
+  },
+  rowDone: { backgroundColor: `${color.signal}15` },
+  check: {
+    width: 24, height: 24, borderRadius: 12,
+    borderWidth: 2, borderColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, marginTop: 1,
+  },
+  checkDone: { backgroundColor: color.signal, borderColor: color.signal },
+  label: { ...t.body, color: color.ink, flex: 1, lineHeight: 20 },
+  labelDone: { color: color.mute, textDecorationLine: 'line-through' },
 });

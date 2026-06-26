@@ -247,6 +247,8 @@ export async function createBooking(payload: {
   durationH: number;
   groupSize: number;
   city: string;
+  countryCode?: string;
+  meetupLocation?: string;
   category: BuddyCategory;
   notes?: string;
   addonIds?: string[];
@@ -1011,4 +1013,178 @@ export async function getEarningsSummary(): Promise<ApiResult<EarningsSummary>> 
 
 export async function getEarningsLedger(limit = 50, offset = 0): Promise<ApiResult<{ ledger: LedgerEntry[]; total: number }>> {
   return apiFetch(`/api/rent-a-buddy/me/earnings/ledger?limit=${limit}&offset=${offset}`);
+}
+
+// ── Compliance & Launch Hardening ─────────────────────────────────────────────
+
+export interface EligibilityResult {
+  eligible: boolean;
+  reasons: string[];
+  age: number | null;
+  ageOk: boolean;
+  phoneVerified: boolean;
+  idVerified: boolean;
+  riskStatus: string;
+  disclaimers: { main: string; adultService: string; emergency: string };
+}
+
+export async function getMyEligibility(category?: string): Promise<ApiResult<EligibilityResult>> {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+  return apiFetch(`/api/rent-a-buddy/me/eligibility${qs}`);
+}
+
+export interface LocationAvailability {
+  available: boolean;
+  waitlistOnly: boolean;
+  reason?: string;
+  minAge?: number;
+  nightlifeMinAge?: number;
+  requireIdVerification?: boolean;
+  requirePhoneVerification?: boolean;
+  fullPaymentRequired?: boolean;
+  disclaimers?: { main: string; emergency: string };
+}
+
+export async function checkLocationAvailability(params: {
+  country?: string; city?: string; category?: string;
+}): Promise<ApiResult<LocationAvailability>> {
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null)) as Record<string, string>,
+  ).toString();
+  return apiFetch(`/api/rent-a-buddy/availability/location${qs ? '?' + qs : ''}`);
+}
+
+export interface LaunchStatus {
+  enabled: boolean;
+  categories: Record<string, { enabled: boolean; waitlistOnly: boolean; minAge: number }>;
+}
+
+export async function getLaunchStatus(): Promise<ApiResult<LaunchStatus>> {
+  return apiFetch('/api/rent-a-buddy/launch-status');
+}
+
+// ── Tag consent ───────────────────────────────────────────────────────────────
+
+export interface TagConsent {
+  id: string;
+  bookingId: string;
+  requesterId: string;
+  targetId: string;
+  postId: string | null;
+  consentStatus: 'pending' | 'approved' | 'declined' | 'removed' | 'auto_removed';
+  declineReason: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+export async function requestTagConsent(
+  bookingId: string,
+  targetUserId: string,
+  postId?: string,
+): Promise<ApiResult<{ consent: TagConsent; ok: boolean; alreadyExists?: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/tag-consent`, {
+    method: 'POST',
+    body: JSON.stringify({ targetUserId, postId }),
+  });
+}
+
+export async function approveTagConsent(consentId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/tag-consents/${consentId}/approve`, { method: 'POST' });
+}
+
+export async function declineTagConsent(consentId: string, reason?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/tag-consents/${consentId}/decline`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function removeTagConsent(consentId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/tag-consents/${consentId}`, { method: 'DELETE' });
+}
+
+// ── Support reports ───────────────────────────────────────────────────────────
+
+export type SupportCategory =
+  | 'buddy_no_show' | 'traveler_no_show' | 'cash_dispute' | 'harassment'
+  | 'adult_service_violation' | 'off_app_payment' | 'route_changed'
+  | 'venue_scam' | 'refund_request' | 'fake_profile' | 'emergency' | 'other';
+
+export interface SupportReport {
+  id: string;
+  bookingId: string;
+  reporterId: string;
+  category: SupportCategory;
+  details: string | null;
+  status: 'open' | 'in_review' | 'resolved' | 'closed';
+  adminNotes: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+export async function fileSupportReport(
+  bookingId: string,
+  category: SupportCategory,
+  details?: string,
+): Promise<ApiResult<{ report: SupportReport; templateResponse: { title: string; body: string } | null; ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/support/report`, {
+    method: 'POST',
+    body: JSON.stringify({ category, details }),
+  });
+}
+
+// ── Training checklist ────────────────────────────────────────────────────────
+
+export interface TrainingItem {
+  key: string;
+  label: string;
+  completed: boolean;
+}
+
+export async function getTrainingChecklist(): Promise<ApiResult<{ checklist: TrainingItem[]; allComplete: boolean }>> {
+  return apiFetch('/api/rent-a-buddy/me/training-checklist');
+}
+
+export async function completeTrainingItem(itemKey: string): Promise<ApiResult<{ ok: boolean; completedCount: number; allComplete: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/me/training-checklist/${itemKey}`, { method: 'POST' });
+}
+
+// ── Posting defaults ──────────────────────────────────────────────────────────
+
+export interface PostingDefaults {
+  hasActiveRentABuddyBooking: boolean;
+  defaultDelayPost: boolean;
+  defaultLocationGranularity: 'exact' | 'neighborhood' | 'city';
+  suppressExactCoordinates: boolean;
+  safetyNote: string | null;
+}
+
+export async function getPostingDefaults(): Promise<ApiResult<PostingDefaults>> {
+  return apiFetch('/api/rent-a-buddy/me/posting-defaults');
+}
+
+// ── Earnings enhanced summary ─────────────────────────────────────────────────
+
+export interface EarningsBreakdownSummary {
+  totalInAppUsd: number;
+  totalCashConfirmedUsd: number;
+  totalPlatformFeesUsd: number;
+  totalDisputedUsd: number;
+  totalPendingUsd: number;
+  totalNetUsd: number;
+  yearlyNetUsd: number;
+  monthlyBreakdown: Array<{
+    month: string;
+    totalUsd: number;
+    bookingCount: number;
+    inApp: number;
+    cash: number;
+    fees: number;
+  }>;
+  taxNote: string;
+  platformFeePct: number;
+}
+
+export async function getEarningsBreakdownSummary(): Promise<ApiResult<EarningsBreakdownSummary>> {
+  return apiFetch('/api/rent-a-buddy/dashboard/earnings/summary');
 }

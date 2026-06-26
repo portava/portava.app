@@ -462,7 +462,12 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
 
-  return res.json({ buddies: (data ?? []).map(mapProfile), total: count ?? 0, page, perPage });
+  return res.json({
+    buddies: (data ?? []).map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    total: count ?? 0,
+    page,
+    perPage,
+  });
 });
 
 // ── Buddy profile ─────────────────────────────────────────────────────────────
@@ -599,7 +604,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 
   const {
     buddyId, packageId, tripId, bookingDate, startTime,
-    durationH, groupSize = 1, city, category, notes,
+    durationH, groupSize = 1, city, countryCode, meetupLocation, category, notes,
     paymentMode = "full_in_app",
   } = req.body ?? {};
 
@@ -619,6 +624,78 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
     return res.status(403).json({ error: "access_limited", message: "Nightlife bookings are not available for your account." });
   }
 
+  // ── Launch control gating ─────────────────────────────────────────────────
+  // countryCode must be provided whenever launch controls are configured —
+  // without it we cannot enforce country-level policy, so fail closed.
+  if (!countryCode) {
+    const { count: ctrlCount } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id", { count: "exact" })
+      .limit(1);
+    if ((ctrlCount ?? 0) > 0) {
+      return res.status(400).json({
+        error: "invalid_payload",
+        message: "countryCode is required when booking in a region with active launch controls.",
+      });
+    }
+  }
+
+  const launchCtrl = await getLaunchControl(serviceClient, {
+    city, countryCode: countryCode ?? undefined, category,
+  });
+  if (launchCtrl) {
+    if (!launchCtrl.enabled) {
+      return launchCtrl.waitlistOnly
+        ? res.status(403).json({ error: "waitlist_only", message: "Rent a Buddy bookings for this location are currently waitlist-only. Join the waitlist to be notified when it opens." })
+        : res.status(403).json({ error: "location_unavailable", message: "Rent a Buddy is not yet available in this location or category." });
+    }
+    // Fetch traveler profile for verification + age checks
+    const { data: travProf } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("id_verified, phone_verified, date_of_birth")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (launchCtrl.requireIdVerification && !travProf?.id_verified) {
+      return res.status(403).json({ error: "verification_required", message: "ID verification is required to book in this location. Please verify your ID to continue." });
+    }
+    if (launchCtrl.requirePhoneVerification && !travProf?.phone_verified) {
+      return res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
+    }
+    // Missing DOB is an explicit block — age cannot be verified without it
+    if (!travProf?.date_of_birth) {
+      return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
+    }
+    const bd = new Date(travProf.date_of_birth);
+    const today = new Date();
+    let calcAge = today.getFullYear() - bd.getFullYear();
+    const m = today.getMonth() - bd.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) calcAge--;
+    const minAge = category === "nightlife" ? launchCtrl.nightlifeMinAge : launchCtrl.minAge;
+    if (calcAge < minAge) {
+      return res.status(403).json({
+        error: "age_requirement",
+        message: category === "nightlife"
+          ? `Nightlife bookings require you to be at least ${minAge} years old.`
+          : `You must be at least ${minAge} years old to book in this location.`,
+      });
+    }
+    if (launchCtrl.fullPaymentRequired && paymentMode !== "full_in_app") {
+      return res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
+    }
+  } else {
+    // Deny-by-default: if launch controls are configured but none match this booking, block it
+    const { count: ctrlCount } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id", { count: "exact" })
+      .limit(1);
+    if ((ctrlCount ?? 0) > 0) {
+      return res.status(403).json({
+        error: "location_unavailable",
+        message: "Rent a Buddy is not yet available in this location or category.",
+      });
+    }
+  }
+
   const maxDurMin = limits?.max_booking_duration_minutes;
   if (maxDurMin && durationH * 60 > maxDurMin) {
     return res.status(403).json({ error: "access_limited", message: `Max booking duration for your account is ${maxDurMin} minutes.` });
@@ -634,6 +711,35 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 
   if (buddyProfile.status !== "active" || buddyProfile.admin_status !== "active") {
     return res.status(400).json({ error: "buddy_unavailable", message: "This Buddy is not accepting bookings." });
+  }
+
+  // Nightlife and group category approvals are required for ALL bookings, not just new buddies
+  if (category === "nightlife" || category === "group") {
+    const approvals: Record<string, boolean> = (buddyProfile as any).category_approvals ?? {};
+    if (!approvals[category]) {
+      return res.status(403).json({
+        error: "category_not_approved",
+        message: `This Buddy is not approved for ${category} bookings yet.`,
+      });
+    }
+  }
+
+  // Nightlife bookings additionally require explicit admin sign-off on the buddy
+  if (category === "nightlife" && !(buddyProfile as any).nightlife_admin_approved) {
+    return res.status(403).json({
+      error: "nightlife_not_approved",
+      message: "This Buddy has not received admin approval for nightlife bookings.",
+    });
+  }
+
+  // Nightlife bookings require a public meetup location — checked against the
+  // explicit meetupLocation when provided; city is the buddy's operating city,
+  // not the meetup spot, so we only enforce if a meetup location was given.
+  if (category === "nightlife" && meetupLocation && isPrivateLocation(meetupLocation)) {
+    return res.status(400).json({
+      error: "invalid_location",
+      message: "Nightlife meetups must start at a public location (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed.",
+    });
   }
 
   // New Buddy restrictions
@@ -739,7 +845,14 @@ router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
   const party = await requireBookingParty(serviceClient, data, auth.user.id, res);
   if (!party) return;
 
-  return res.json({ booking: mapBooking(data), policyText: POLICY_TEXT });
+  // Strip private fields: traveler details hidden from buddy until booking is confirmed;
+  // buddy details stripped if not confirmed (first meetup/pending)
+  const isConfirmed = ["confirmed", "in_progress", "completed"].includes((data as any).status);
+  return res.json({
+    booking: mapBooking(stripTravelerPrivateFields(data)),
+    buddyPrivateVisible: isConfirmed,
+    policyText: POLICY_TEXT,
+  });
 });
 
 // ── Bookings — Payment ────────────────────────────────────────────────────────
@@ -2446,6 +2559,23 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
     .maybeSingle();
   if (!app) return res.status(404).json({ error: "not_found" });
 
+  // Training must be completed before a buddy can be approved.
+  // Source of truth: rent_buddy_training_checklist (where training route writes),
+  // keyed by application_id so no profile needs to exist yet.
+  if (status === "approved") {
+    const { count: trainedCount } = await serviceClient
+      .from("rent_buddy_training_checklist")
+      .select("id", { count: "exact" })
+      .eq("application_id", appId)
+      .eq("completed", true);
+    if ((trainedCount ?? 0) < TRAINING_CHECKLIST_ITEMS.length) {
+      return res.status(400).json({
+        error: "training_incomplete",
+        message: "Applicant must complete all required training before being approved as a Buddy.",
+      });
+    }
+  }
+
   await serviceClient.from("rent_buddy_applications").update({
     status,
     review_notes: reviewNotes ?? null,
@@ -2929,4 +3059,1128 @@ router.patch("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) =>
   return res.json({ ok: true });
 });
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMPLIANCE & LAUNCH HARDENING — added in 0051 migration cycle
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Legal disclaimer constants ─────────────────────────────────────────────────
+
+export const DISCLAIMER_MAIN =
+  "Rent a Buddy is a local guide and travel companionship service. It is not a dating, escort, adult-service, romantic, or sexual-service platform. All meetups start at public locations. Both parties are responsible for their own safety and compliance with local laws.";
+
+export const DISCLAIMER_ADULT_SERVICE =
+  "This platform strictly prohibits adult services, sexual services, escort services, or any romantic or intimate service arrangement. Any request or offer of such services will result in immediate account suspension and may be reported to authorities.";
+
+export const DISCLAIMER_EMERGENCY =
+  "In a genuine emergency, call local emergency services immediately (112 / 911 / 999). This app's safety tools are a supplement, not a replacement, for emergency services. Share your location with a trusted contact before any meetup.";
+
+export const DISCLAIMER_TRANSPORTATION =
+  "Rent a Buddy does not provide licensed transportation, licensed tour guide services, or professional driver services. Buddies who offer travel support do so as fellow community members, not as licensed professionals. Transport features are not currently available.";
+
+// ── Nightlife prohibited-behavior patterns ────────────────────────────────────
+
+const NIGHTLIFE_PROHIBITED_PATTERNS = [
+  /\bunapproved\s+guest/i,
+  /\bbringing\s+extra\s+people\b/i,
+  /\bprivate\s+after\s+party/i,
+  /\bafter\s+hours\s+at\s+my\s+place\b/i,
+  /\bafter\s+hours\s+at\s+hotel\b/i,
+];
+
+function hasNightlifeProhibitedContent(text: string): boolean {
+  return NIGHTLIFE_PROHIBITED_PATTERNS.some((p) => p.test(text));
+}
+
+// ── Privacy-strip helpers ──────────────────────────────────────────────────────
+
+function stripTravelerPrivateFields(travelerRow: any): any {
+  if (!travelerRow) return null;
+  const { legal_name, id_document_ref, hotel_address, exact_location, home_address, ...safe } = travelerRow;
+  return safe;
+}
+
+function stripBuddyPrivateFields(buddyRow: any, confirmed: boolean): any {
+  if (!buddyRow) return null;
+  if (confirmed) return buddyRow;
+  const { id_verification_ref, legal_name, exact_address, home_address, phone_number, ...safe } = buddyRow;
+  return safe;
+}
+
+// ── Launch control helpers ─────────────────────────────────────────────────────
+
+async function getLaunchControl(
+  client: any,
+  { countryCode, city, category }: { countryCode?: string; city?: string; category?: string },
+): Promise<{
+  enabled: boolean;
+  waitlistOnly: boolean;
+  minAge: number;
+  nightlifeMinAge: number;
+  requireIdVerification: boolean;
+  requirePhoneVerification: boolean;
+  fullPaymentRequired: boolean;
+} | null> {
+  const queries: Array<{ country_code: string | null; city: string | null; category: string | null }> = [];
+
+  if (category && city && countryCode) queries.push({ country_code: countryCode, city, category });
+  if (category && countryCode) queries.push({ country_code: countryCode, city: null, category });
+  if (city && countryCode) queries.push({ country_code: countryCode, city, category: null });
+  // Country-wide catch-all (country-level gating without city/category specificity)
+  if (countryCode) queries.push({ country_code: countryCode, city: null, category: null });
+  if (category) queries.push({ country_code: null, city: null, category });
+  queries.push({ country_code: null, city: null, category: null });
+
+  for (const q of queries) {
+    let query = client.from("rent_buddy_launch_controls").select("*");
+    if (q.country_code !== undefined) {
+      query = q.country_code === null ? query.is("country_code", null) : query.eq("country_code", q.country_code);
+    }
+    if (q.city !== undefined) {
+      query = q.city === null ? query.is("city", null) : query.eq("city", q.city);
+    }
+    if (q.category !== undefined) {
+      query = q.category === null ? query.is("category", null) : query.eq("category", q.category);
+    }
+    const { data } = await query.maybeSingle();
+    if (data) {
+      return {
+        enabled: (data as any).enabled,
+        waitlistOnly: (data as any).waitlist_only,
+        minAge: (data as any).min_age ?? 18,
+        nightlifeMinAge: (data as any).nightlife_min_age ?? 21,
+        requireIdVerification: (data as any).require_id_verification ?? true,
+        requirePhoneVerification: (data as any).require_phone_verification ?? true,
+        fullPaymentRequired: (data as any).full_payment_required ?? false,
+      };
+    }
+  }
+  return null;
+}
+
+// ── Eligibility check ──────────────────────────────────────────────────────────
+
+router.get("/api/rent-a-buddy/me/eligibility", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const category = (req.query.category as string) ?? null;
+  const city = (req.query.city as string) ?? undefined;
+  const countryCode = (req.query.country as string) ?? undefined;
+  const isNightlife = category === "nightlife";
+
+  // Load launch-control requirements for this city/country/category so eligibility
+  // reflects the policy-of-record rather than hardcoded constants
+  const [launchCtrl, profileRes, limits] = await Promise.all([
+    getLaunchControl(serviceClient, { city, countryCode, category: category ?? undefined }),
+    serviceClient
+      .from("rent_buddy_profiles")
+      .select("id, age_verified, phone_verified, id_verified, risk_review_status, date_of_birth, training_completed")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    getUserLimits(serviceClient, user.id),
+  ]);
+
+  const profile = profileRes.data;
+  const minAge = launchCtrl?.minAge ?? 18;
+  const nightlifeMinAge = launchCtrl?.nightlifeMinAge ?? 21;
+  const requireId = launchCtrl?.requireIdVerification ?? false;
+  const requirePhone = launchCtrl?.requirePhoneVerification ?? false;
+
+  const reasons: string[] = [];
+
+  if (limits?.rent_buddy_disabled || limits?.traveler_booking_disabled) {
+    reasons.push("account_restricted");
+  }
+
+  const riskStatus = profile ? (profile as any).risk_review_status : "normal";
+  if (riskStatus === "suspended") reasons.push("account_suspended");
+  if (riskStatus === "under_review") reasons.push("account_under_review");
+
+  const phoneVerified = profile ? !!(profile as any).phone_verified : false;
+  if (requirePhone && !phoneVerified) reasons.push("phone_not_verified");
+
+  const idVerified = profile ? !!(profile as any).id_verified : false;
+  if (requireId && !idVerified) reasons.push("id_not_verified");
+
+  const dob: string | null = profile ? (profile as any).date_of_birth : null;
+  let ageOk = true;
+  let age: number | null = null;
+  if (dob) {
+    const bd = new Date(dob);
+    const today = new Date();
+    age = today.getFullYear() - bd.getFullYear();
+    const m = today.getMonth() - bd.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
+    if (age < minAge) { reasons.push(`age_under_${minAge}`); ageOk = false; }
+    if (isNightlife && age < nightlifeMinAge) { reasons.push(`nightlife_requires_${nightlifeMinAge}`); ageOk = false; }
+  } else {
+    reasons.push("age_unverified");
+    ageOk = false;
+  }
+
+  if (isNightlife && limits?.nightlife_disabled) reasons.push("nightlife_access_restricted");
+
+  const eligible = reasons.length === 0;
+
+  return res.json({
+    eligible,
+    reasons,
+    age,
+    ageOk,
+    phoneVerified,
+    idVerified,
+    riskStatus,
+    disclaimers: {
+      main: DISCLAIMER_MAIN,
+      adultService: DISCLAIMER_ADULT_SERVICE,
+      emergency: DISCLAIMER_EMERGENCY,
+    },
+  });
+});
+
+// ── Location availability & launch status ──────────────────────────────────────
+
+router.get("/api/rent-a-buddy/availability/location", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ available: false, waitlistOnly: false, reason: "service_unavailable" });
+
+  const globalEnabled = await checkRentBuddyEnabled(serviceClient);
+  if (!globalEnabled) return res.json({ available: false, waitlistOnly: false, reason: "feature_disabled" });
+
+  const countryCode = (req.query.country as string) ?? undefined;
+  const city = (req.query.city as string) ?? undefined;
+  const category = (req.query.category as string) ?? undefined;
+
+  const control = await getLaunchControl(serviceClient, { countryCode, city, category });
+
+  if (!control) {
+    return res.json({ available: false, waitlistOnly: true, reason: "city_not_launched" });
+  }
+
+  if (!control.enabled && !control.waitlistOnly) {
+    return res.json({ available: false, waitlistOnly: false, reason: "city_disabled" });
+  }
+
+  if (!control.enabled && control.waitlistOnly) {
+    return res.json({ available: false, waitlistOnly: true, reason: "waitlist_only",
+      minAge: control.minAge, nightlifeMinAge: control.nightlifeMinAge });
+  }
+
+  return res.json({
+    available: true,
+    waitlistOnly: false,
+    minAge: control.minAge,
+    nightlifeMinAge: control.nightlifeMinAge,
+    requireIdVerification: control.requireIdVerification,
+    requirePhoneVerification: control.requirePhoneVerification,
+    fullPaymentRequired: control.fullPaymentRequired,
+    disclaimers: {
+      main: DISCLAIMER_MAIN,
+      emergency: DISCLAIMER_EMERGENCY,
+    },
+  });
+});
+
+router.get("/api/rent-a-buddy/launch-status", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ enabled: false, categories: {} });
+
+  const globalEnabled = await checkRentBuddyEnabled(serviceClient);
+  if (!globalEnabled) return res.json({ enabled: false, categories: {} });
+
+  const { data } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .select("category, enabled, waitlist_only, min_age, nightlife_min_age")
+    .is("country_code", null)
+    .is("city", null);
+
+  const categories: Record<string, { enabled: boolean; waitlistOnly: boolean; minAge: number }> = {};
+  for (const row of (data ?? []) as any[]) {
+    if (row.category) {
+      categories[row.category] = {
+        enabled: row.enabled,
+        waitlistOnly: row.waitlist_only,
+        minAge: row.category === "nightlife" ? row.nightlife_min_age : row.min_age,
+      };
+    }
+  }
+
+  return res.json({ enabled: globalEnabled, categories });
+});
+
+// ── Admin — Launch controls CRUD ──────────────────────────────────────────────
+
+router.get("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const { data } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .select("*")
+    .order("category");
+
+  return res.json({ controls: data ?? [] });
+});
+
+router.post("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+
+  const {
+    countryCode = null, city = null, category = null, enabled = false,
+    waitlistOnly = false, minAge = 18, nightlifeMinAge = 21,
+    requireIdVerification = true, requirePhoneVerification = true,
+    fullPaymentRequired = false, minDepositPct = 30, notes,
+  } = req.body ?? {};
+
+  // PostgreSQL NULLs do not satisfy UNIQUE equality, so onConflict with nullable columns
+  // is unreliable. Use an explicit select-then-update/insert pattern instead.
+  let findQuery = serviceClient.from("rent_buddy_launch_controls").select("id");
+  findQuery = countryCode ? findQuery.eq("country_code", countryCode) : findQuery.is("country_code", null);
+  findQuery = city ? findQuery.eq("city", city) : findQuery.is("city", null);
+  findQuery = category ? findQuery.eq("category", category) : findQuery.is("category", null);
+  const { data: existing } = await findQuery.maybeSingle();
+
+  const controlPayload: Record<string, unknown> = {
+    enabled,
+    waitlist_only: waitlistOnly,
+    min_age: minAge,
+    nightlife_min_age: nightlifeMinAge,
+    require_id_verification: requireIdVerification,
+    require_phone_verification: requirePhoneVerification,
+    full_payment_required: fullPaymentRequired,
+    min_deposit_pct: minDepositPct,
+    notes: notes ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  let data: unknown, error: unknown;
+  if (existing) {
+    ({ data, error } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .update(controlPayload)
+      .eq("id", (existing as any).id)
+      .select()
+      .maybeSingle());
+  } else {
+    ({ data, error } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .insert({ ...controlPayload, country_code: countryCode, city, category, created_by: userId })
+      .select()
+      .maybeSingle());
+  }
+
+  if (error) return sendError(res, "db_error", String((error as any).message ?? error));
+
+  await serviceClient.from("rent_buddy_admin_access_logs").insert({
+    admin_id: userId,
+    resource: "launch_control",
+    resource_id: category ?? "global",
+    reason: `Created/updated launch control: enabled=${enabled}`,
+  });
+
+  return res.status(201).json({ control: data, ok: true });
+});
+
+router.patch("/api/rent-a-buddy/admin/launch-controls/:controlId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+
+  const { controlId } = req.params;
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  const b = req.body ?? {};
+
+  if (b.enabled !== undefined)                 patch.enabled                  = b.enabled;
+  if (b.waitlistOnly !== undefined)            patch.waitlist_only            = b.waitlistOnly;
+  if (b.minAge !== undefined)                  patch.min_age                  = b.minAge;
+  if (b.nightlifeMinAge !== undefined)         patch.nightlife_min_age        = b.nightlifeMinAge;
+  if (b.requireIdVerification !== undefined)   patch.require_id_verification  = b.requireIdVerification;
+  if (b.requirePhoneVerification !== undefined)patch.require_phone_verification = b.requirePhoneVerification;
+  if (b.fullPaymentRequired !== undefined)     patch.full_payment_required    = b.fullPaymentRequired;
+  if (b.notes !== undefined)                   patch.notes                    = b.notes;
+
+  await serviceClient.from("rent_buddy_launch_controls").update(patch).eq("id", controlId);
+
+  await serviceClient.from("rent_buddy_admin_access_logs").insert({
+    admin_id: userId, resource: "launch_control", resource_id: controlId,
+    reason: `Patched launch control`,
+  });
+
+  return res.json({ ok: true });
+});
+
+// ── Mutual tagging consent ─────────────────────────────────────────────────────
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { targetUserId, postId } = req.body ?? {};
+
+  if (!targetUserId) return res.status(400).json({ error: "invalid_payload", message: "targetUserId required" });
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings").select("id, traveler_id, buddy_id, status, safety_status")
+    .eq("id", bookingId).maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, user.id, res);
+  if (!party) return;
+
+  // Validate targetUserId is exactly the opposite booking party
+  const validTargets = [party.buddyUserId, (booking as any).traveler_id].filter((id) => id !== user.id);
+  if (!validTargets.includes(targetUserId)) {
+    return res.status(400).json({
+      error: "invalid_target",
+      message: "Tag consent can only be requested between the two booking parties.",
+    });
+  }
+
+  const bStatus = (booking as any).status;
+  if (bStatus === "disputed") {
+    return res.status(403).json({ error: "consent_blocked", message: "Tagging consent is paused while this booking is disputed." });
+  }
+  const safetyStatus = (booking as any).safety_status;
+  if (safetyStatus === "emergency") {
+    return res.status(403).json({ error: "consent_blocked", message: "Tagging consent is paused due to an active safety flag." });
+  }
+
+  const { data: existing } = await serviceClient
+    .from("rent_buddy_tag_consents")
+    .select("id, consent_status")
+    .eq("booking_id", bookingId)
+    .eq("requester_id", user.id)
+    .eq("target_id", targetUserId)
+    .maybeSingle();
+
+  if (existing) {
+    return res.json({ consentId: (existing as any).id, status: (existing as any).consent_status, alreadyExists: true });
+  }
+
+  const { data: consent } = await serviceClient.from("rent_buddy_tag_consents").insert({
+    booking_id: bookingId,
+    requester_id: user.id,
+    target_id: targetUserId,
+    post_id: postId ?? null,
+    consent_status: "pending",
+  }).select().maybeSingle();
+
+  return res.status(201).json({ consent, ok: true });
+});
+
+router.post("/api/rent-a-buddy/tag-consents/:consentId/approve", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { consentId } = req.params;
+  const { data: consent } = await serviceClient
+    .from("rent_buddy_tag_consents").select("*").eq("id", consentId).maybeSingle();
+
+  if (!consent) return res.status(404).json({ error: "not_found" });
+  if ((consent as any).target_id !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  await serviceClient.from("rent_buddy_tag_consents").update({
+    consent_status: "approved", resolved_at: new Date().toISOString(),
+  }).eq("id", consentId);
+
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/tag-consents/:consentId/decline", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { consentId } = req.params;
+  const { data: consent } = await serviceClient
+    .from("rent_buddy_tag_consents").select("*").eq("id", consentId).maybeSingle();
+
+  if (!consent) return res.status(404).json({ error: "not_found" });
+  if ((consent as any).target_id !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  await serviceClient.from("rent_buddy_tag_consents").update({
+    consent_status: "declined",
+    decline_reason: req.body?.reason ?? null,
+    resolved_at: new Date().toISOString(),
+  }).eq("id", consentId);
+
+  return res.json({ ok: true });
+});
+
+router.delete("/api/rent-a-buddy/tag-consents/:consentId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { consentId } = req.params;
+  const { data: consent } = await serviceClient
+    .from("rent_buddy_tag_consents").select("*").eq("id", consentId).maybeSingle();
+
+  if (!consent) return res.status(404).json({ error: "not_found" });
+  const c = consent as any;
+  if (c.requester_id !== user.id && c.target_id !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  await serviceClient.from("rent_buddy_tag_consents").update({
+    consent_status: "removed", resolved_at: new Date().toISOString(),
+  }).eq("id", consentId);
+
+  return res.json({ ok: true });
+});
+
+// ── Support / dispute structured reports ───────────────────────────────────────
+
+const SUPPORT_WINDOWS: Record<string, number | null> = {
+  safety: null,        // safety reports always accepted
+  emergency: null,
+  harassment: null,
+  adult_service_violation: null,
+  cash_dispute: 72,    // hours
+  refund_request: 72,
+  buddy_no_show: 48,
+  traveler_no_show: 48,
+  venue_scam: 168,     // 7 days
+  off_app_payment: 168,
+  route_changed: 168,
+  fake_profile: 168,
+  other: 168,
+};
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/support/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { category, details } = req.body ?? {};
+
+  const VALID_CATEGORIES = [
+    "buddy_no_show","traveler_no_show","cash_dispute","harassment",
+    "adult_service_violation","off_app_payment","route_changed",
+    "venue_scam","refund_request","fake_profile","emergency","other",
+  ];
+
+  if (!category || !VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: "invalid_payload", message: `category must be one of: ${VALID_CATEGORIES.join(", ")}` });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings").select("id, traveler_id, buddy_id, status, completed_at")
+    .eq("id", bookingId).maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, user.id, res);
+  if (!party) return;
+
+  const windowH = SUPPORT_WINDOWS[category] ?? SUPPORT_WINDOWS.other!;
+  const safetyAlwaysAllowed = ["emergency","harassment","adult_service_violation"].includes(category);
+
+  if (!safetyAlwaysAllowed && windowH !== null && (booking as any).completed_at) {
+    const completedAt = new Date((booking as any).completed_at).getTime();
+    const hoursElapsed = (Date.now() - completedAt) / 3_600_000;
+    if (hoursElapsed > windowH) {
+      return res.status(400).json({
+        error: "report_window_expired",
+        message: `${category} reports must be filed within ${windowH} hours of booking completion.`,
+      });
+    }
+  }
+
+  const { data: templateRow } = await serviceClient
+    .from("rent_buddy_admin_response_templates")
+    .select("id, title, body")
+    .eq("category", category)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  const { data: report, error } = await serviceClient.from("rent_buddy_support_reports").insert({
+    booking_id: bookingId,
+    reporter_id: user.id,
+    category,
+    details: details ?? null,
+    status: "open",
+    template_id: templateRow ? (templateRow as any).id : null,
+  }).select().maybeSingle();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  if (category === "venue_scam") {
+    // Aggregate venue_scam complaints per buddy across ALL their bookings
+    // to detect repeat-abuse patterns, not just reports on a single trip
+    const { data: buddyBookings } = await serviceClient
+      .from("rent_buddy_bookings")
+      .select("id")
+      .eq("buddy_id", (booking as any).buddy_id);
+    const buddyBookingIds = (buddyBookings ?? []).map((b: any) => b.id);
+
+    const { count: priorScamCount } = buddyBookingIds.length > 0
+      ? await serviceClient
+          .from("rent_buddy_support_reports")
+          .select("id", { count: "exact" })
+          .eq("category", "venue_scam")
+          .in("booking_id", buddyBookingIds)
+      : { count: 0 };
+
+    const totalScams = (priorScamCount ?? 0);
+    if (totalScams >= 2) {
+      await serviceClient.from("rent_buddy_safety_events").insert({
+        booking_id: bookingId,
+        actor_user_id: user.id,
+        event_type: "venue_scam_complaint",
+        event_status: "open",
+        metadata: { buddyId: (booking as any).buddy_id, reportCount: totalScams + 1 },
+      });
+    }
+  }
+
+  return res.status(201).json({
+    report,
+    templateResponse: templateRow ? { title: (templateRow as any).title, body: (templateRow as any).body } : null,
+    ok: true,
+  });
+});
+
+router.get("/api/rent-a-buddy/admin/support/reports", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = 50;
+  const status = (req.query.status as string) ?? "open";
+
+  let query = serviceClient
+    .from("rent_buddy_support_reports")
+    .select("*", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (status) query = query.eq("status", status);
+
+  const { data, count } = await query;
+  return res.json({ reports: data ?? [], total: count ?? 0 });
+});
+
+router.patch("/api/rent-a-buddy/admin/support/reports/:reportId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const { reportId } = req.params;
+  const { status, adminNotes } = req.body ?? {};
+
+  const VALID_STATUSES = ["open", "in_review", "resolved", "closed"];
+  if (status !== undefined && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      message: `status must be one of: ${VALID_STATUSES.join(", ")}.`,
+    });
+  }
+
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (status) patch.status = status;
+  if (adminNotes !== undefined) patch.admin_notes = adminNotes;
+  if (status === "resolved" || status === "closed") patch.resolved_at = new Date().toISOString();
+
+  const { error: updateErr } = await serviceClient
+    .from("rent_buddy_support_reports")
+    .update(patch)
+    .eq("id", reportId);
+  if (updateErr) return sendError(res, "db_error", updateErr.message);
+  return res.json({ ok: true });
+});
+
+router.get("/api/rent-a-buddy/admin/support/templates", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const { data } = await serviceClient
+    .from("rent_buddy_admin_response_templates")
+    .select("*")
+    .order("category");
+
+  return res.json({ templates: data ?? [] });
+});
+
+// ── Risk review status ─────────────────────────────────────────────────────────
+
+router.get("/api/rent-a-buddy/admin/risk-review", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = 50;
+  const status = (req.query.status as string) ?? "watch";
+
+  const { data, count } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, user_id, display_name, city, risk_review_status, risk_review_note, risk_reviewed_at", { count: "exact" })
+    .eq("risk_review_status", status)
+    .order("risk_reviewed_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  return res.json({ profiles: data ?? [], total: count ?? 0 });
+});
+
+router.post("/api/rent-a-buddy/admin/users/:userId/risk-status", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId: adminId } = admin;
+
+  const { userId } = req.params;
+  const { status, note } = req.body ?? {};
+
+  const VALID_STATUSES = ["normal","watch","limited","under_review","suspended"];
+  if (!status || !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: "invalid_payload", message: `status must be one of: ${VALID_STATUSES.join(", ")}` });
+  }
+
+  await serviceClient.from("rent_buddy_profiles").update({
+    risk_review_status: status,
+    risk_review_note: note ?? null,
+    risk_reviewed_at: new Date().toISOString(),
+  }).eq("user_id", userId);
+
+  if (status === "suspended") {
+    await serviceClient.from("rent_buddy_user_limits").upsert(
+      { user_id: userId, rent_buddy_disabled: true, reason: `Risk status: ${status}`, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+  }
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: adminId,
+    target_type: "user",
+    target_id: userId,
+    action: `risk_status_set_${status}`,
+    notes: note ?? null,
+  });
+
+  await serviceClient.from("rent_buddy_admin_access_logs").insert({
+    admin_id: adminId, resource: "user_risk_status", resource_id: userId,
+    reason: `Risk status updated to ${status}`,
+  });
+
+  return res.status(201).json({ ok: true });
+});
+
+// ── Repeat-abuse pattern detector (run on-demand by admin or triggered job) ────
+
+router.post("/api/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const flagged: Array<{ userId: string; reason: string; elevatedTo: string }> = [];
+  const now = new Date();
+  const windowDays = Number(req.body?.windowDays ?? 30);
+  const since = new Date(now.getTime() - windowDays * 86400000).toISOString();
+
+  const PATTERN_THRESHOLDS: Array<{ eventType: string; threshold: number; riskLevel: string; reason: string }> = [
+    { eventType: "private_meetup_violation",  threshold: 2, riskLevel: "watch",        reason: "repeated_private_meetup_complaints" },
+    { eventType: "emergency_phrase_triggered",threshold: 2, riskLevel: "under_review", reason: "repeated_nightlife_safety_events" },
+    { eventType: "harassment_reported",       threshold: 2, riskLevel: "under_review", reason: "repeated_harassment_reports" },
+    { eventType: "off_app_payment_attempt",   threshold: 2, riskLevel: "limited",      reason: "repeated_off_app_payment_attempts" },
+    { eventType: "no_show",                   threshold: 3, riskLevel: "watch",        reason: "repeated_no_shows" },
+    { eventType: "comfort_check_distress",    threshold: 3, riskLevel: "watch",        reason: "repeated_distress_checkins" },
+  ];
+
+  for (const pt of PATTERN_THRESHOLDS) {
+    const { data: events } = await serviceClient
+      .from("rent_buddy_safety_events")
+      .select("target_user_id")
+      .eq("event_type", pt.eventType)
+      .gte("created_at", since);
+
+    const counts: Record<string, number> = {};
+    for (const ev of (events ?? []) as any[]) {
+      if (ev.target_user_id) counts[ev.target_user_id] = (counts[ev.target_user_id] ?? 0) + 1;
+    }
+
+    for (const [uid, cnt] of Object.entries(counts)) {
+      if (cnt >= pt.threshold) {
+        const { data: profile } = await serviceClient
+          .from("rent_buddy_profiles")
+          .select("risk_review_status")
+          .eq("user_id", uid)
+          .maybeSingle();
+
+        const currentRisk = (profile as any)?.risk_review_status ?? "normal";
+        const riskOrder = ["normal","watch","limited","under_review","suspended"];
+        const currentIdx = riskOrder.indexOf(currentRisk);
+        const newIdx = riskOrder.indexOf(pt.riskLevel);
+
+        if (newIdx > currentIdx) {
+          await serviceClient.from("rent_buddy_profiles").update({
+            risk_review_status: pt.riskLevel,
+            risk_review_note: `Auto-elevated: ${pt.reason} (${cnt} events in ${windowDays}d)`,
+            risk_reviewed_at: new Date().toISOString(),
+          }).eq("user_id", uid);
+
+          flagged.push({ userId: uid, reason: pt.reason, elevatedTo: pt.riskLevel });
+        }
+      }
+    }
+  }
+
+  return res.json({ ok: true, flagged, scannedAt: now.toISOString() });
+});
+
+// ── Training checklist ─────────────────────────────────────────────────────────
+
+export const TRAINING_CHECKLIST_ITEMS = [
+  { key: "safety_policy",           label: "Read and understood the Safety & Conduct Policy" },
+  { key: "no_adult_services",       label: "Confirmed: no adult, escort, or romantic services" },
+  { key: "public_meetup_rule",      label: "Confirmed: all first meetups in public locations" },
+  { key: "emergency_protocol",      label: "Completed emergency protocol training" },
+  { key: "in_app_payment_only",     label: "Confirmed: all payments through the app" },
+  { key: "no_off_app_contact",      label: "Confirmed: no sharing personal contact off-app before confirmation" },
+  { key: "reporting_obligations",   label: "Understood: how to report policy violations" },
+  { key: "trust_score_explained",   label: "Understood: how Trust Score affects your profile" },
+  { key: "cancellation_policy",     label: "Read and understood the Cancellation & No-Show Policy" },
+  { key: "nightlife_rules",         label: "Read the Nightlife Guide rules (public meetup required, no unapproved guests, Safe Return prompt)" },
+];
+
+router.get("/api/rent-a-buddy/me/training-checklist", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { data: app } = await serviceClient
+    .from("rent_buddy_applications")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!app) return res.json({ checklist: TRAINING_CHECKLIST_ITEMS.map(i => ({ ...i, completed: false })), allComplete: false });
+
+  const { data: rows } = await serviceClient
+    .from("rent_buddy_training_checklist")
+    .select("item_key, completed")
+    .eq("application_id", (app as any).id);
+
+  const completedSet = new Set(
+    ((rows ?? []) as any[]).filter((r) => r.completed).map((r) => r.item_key),
+  );
+
+  const checklist = TRAINING_CHECKLIST_ITEMS.map((item) => ({
+    ...item,
+    completed: completedSet.has(item.key),
+  }));
+
+  return res.json({ checklist, allComplete: checklist.every((i) => i.completed) });
+});
+
+router.post("/api/rent-a-buddy/me/training-checklist/:itemKey", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { itemKey } = req.params;
+  const validKeys = TRAINING_CHECKLIST_ITEMS.map((i) => i.key);
+  if (!validKeys.includes(itemKey)) {
+    return res.status(400).json({ error: "invalid_item", message: `Unknown checklist item: ${itemKey}` });
+  }
+
+  const { data: app } = await serviceClient
+    .from("rent_buddy_applications")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!app) return res.status(404).json({ error: "no_application", message: "No application found. Submit an application first." });
+
+  await serviceClient.from("rent_buddy_training_checklist").upsert(
+    {
+      application_id: (app as any).id,
+      user_id: user.id,
+      item_key: itemKey,
+      completed: true,
+      completed_at: new Date().toISOString(),
+    },
+    { onConflict: "application_id,item_key" },
+  );
+
+  const { data: allRows } = await serviceClient
+    .from("rent_buddy_training_checklist")
+    .select("completed")
+    .eq("application_id", (app as any).id)
+    .eq("completed", true);
+
+  const completedCount = (allRows ?? []).length;
+  const allComplete = completedCount >= TRAINING_CHECKLIST_ITEMS.length;
+
+  if (allComplete) {
+    await serviceClient.from("rent_buddy_profiles")
+      .update({ training_completed: true })
+      .eq("user_id", user.id);
+  }
+
+  return res.json({ ok: true, completedCount, allComplete });
+});
+
+// ── Admin — Nightlife buddy sign-off ──────────────────────────────────────────
+
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/nightlife-approve", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId: adminId } = admin;
+
+  const { buddyId } = req.params;
+  const { approved, note } = req.body ?? {};
+
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles").select("user_id").eq("id", buddyId).maybeSingle();
+  if (!bp) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_profiles").update({
+    nightlife_admin_approved: !!approved,
+    ...(approved ? { category_approvals: { nightlife: true } } : {}),
+  }).eq("id", buddyId);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: adminId,
+    target_type: "buddy",
+    target_id: buddyId,
+    action: approved ? "nightlife_approved" : "nightlife_rejected",
+    notes: note ?? null,
+  });
+
+  return res.json({ ok: true, approved: !!approved });
+});
+
+// ── Delayed-posting default note ───────────────────────────────────────────────
+// Returns whether the user has an active Rent a Buddy booking and the default posting rules.
+
+router.get("/api/rent-a-buddy/me/posting-defaults", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+
+  const { data: activeBookings, count } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, city", { count: "exact" })
+    .eq("traveler_id", user.id)
+    .eq("status", "in_progress")
+    .limit(1);
+
+  const hasActiveBooking = (count ?? 0) > 0;
+
+  return res.json({
+    hasActiveRentABuddyBooking: hasActiveBooking,
+    defaultDelayPost: hasActiveBooking,
+    defaultLocationGranularity: hasActiveBooking ? "neighborhood" : "exact",
+    suppressExactCoordinates: hasActiveBooking,
+    safetyNote: hasActiveBooking
+      ? "Posts made during Rent a Buddy bookings are delayed by default to protect everyone's real-time location."
+      : null,
+  });
+});
+
+// ── Admin — access log for sensitive booking context ───────────────────────────
+
+router.get("/api/rent-a-buddy/admin/bookings/:bookingId/sensitive", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+
+  const { bookingId } = req.params;
+  const reason = (req.query.reason as string) ?? null;
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient.from("rent_buddy_admin_access_logs").insert({
+    admin_id: userId,
+    resource: "booking_sensitive_context",
+    resource_id: bookingId,
+    reason: reason ?? "admin_review",
+  });
+
+  const b = booking as any;
+  return res.json({
+    booking: {
+      id: b.id,
+      buddyId: b.buddy_id,
+      travelerId: b.traveler_id,
+      city: b.city,
+      category: b.category,
+      bookingDate: b.booking_date,
+      notes: b.notes,
+      status: b.status,
+      safetyStatus: b.safety_status,
+      paymentMode: b.payment_mode,
+      totalUsd: b.total_usd,
+      cashBalanceUsd: b.cash_balance_usd,
+    },
+  });
+});
+
+// ── Buddy verification override (admin) ────────────────────────────────────────
+
+router.patch("/api/rent-a-buddy/admin/users/:userId/verification", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId: adminId } = admin;
+
+  const { userId } = req.params;
+  const { idVerified, phoneVerified, ageVerified, dateOfBirth, note } = req.body ?? {};
+
+  const patch: Record<string, any> = {};
+  if (idVerified !== undefined) patch.id_verified = idVerified;
+  if (phoneVerified !== undefined) patch.phone_verified = phoneVerified;
+  if (ageVerified !== undefined) patch.age_verified = ageVerified;
+  if (dateOfBirth !== undefined) patch.date_of_birth = dateOfBirth;
+
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: "invalid_payload", message: "No verification fields provided." });
+  }
+
+  await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", userId);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: adminId,
+    target_type: "user",
+    target_id: userId,
+    action: "verification_override",
+    notes: note ?? JSON.stringify(patch),
+  });
+
+  await serviceClient.from("rent_buddy_admin_access_logs").insert({
+    admin_id: adminId, resource: "user_verification", resource_id: userId,
+    reason: note ?? "admin_verification_override",
+  });
+
+  return res.json({ ok: true });
+});
+
+// ── Booking creation: nightlife enforcement ────────────────────────────────────
+// Augment the policy scanner rules with nightlife patterns
+// and enforce 21+ check + public meetup at the booking-create level.
+// This is exposed as a helper called from the booking create route via the
+// POLICY_RULES array and inline checks already in that route.
+// We export the nightlife check function for re-use.
+
+export function isNightlifeRequiresPublicMeetup(category: string): boolean {
+  return category === "nightlife";
+}
+
+export function nightlifePublicMeetupViolation(meetupLocation: string, category: string): boolean {
+  if (category !== "nightlife") return false;
+  return NIGHTLIFE_PROHIBITED_PATTERNS.some((p) => p.test(meetupLocation));
+}
+
+// ── Buddy earnings summary ─────────────────────────────────────────────────────
+// The /api/rent-a-buddy/dashboard/earnings route already exists in the
+// main router section. We add a richer breakdown endpoint here.
+
+router.get("/api/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
+
+  const { data: bookings } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category")
+    .eq("buddy_id", (bp as any).id)
+    .in("status", ["completed", "disputed"]);
+
+  const rows = (bookings ?? []) as any[];
+
+  const platformFeePct = 0.15;
+  let totalInApp = 0;
+  let totalCashConfirmed = 0;
+  let totalFees = 0;
+  let totalDisputed = 0;
+  let totalPending = 0;
+
+  const monthlyMap: Record<string, { totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }> = {};
+
+  for (const b of rows) {
+    const month = (b.completed_at ?? b.booking_date ?? "").slice(0, 7);
+    if (!monthlyMap[month]) monthlyMap[month] = { totalUsd: 0, bookingCount: 0, inApp: 0, cash: 0, fees: 0 };
+
+    const gross = Number(b.total_usd ?? 0);
+    const fee = Math.round(gross * platformFeePct * 100) / 100;
+    const net = gross - fee;
+
+    if (b.status === "disputed") {
+      totalDisputed += gross;
+      monthlyMap[month].totalUsd += 0;
+    } else {
+      const inApp = Number(b.deposit_usd ?? 0);
+      const cash = Number(b.cash_balance_usd ?? 0);
+      totalInApp += inApp;
+      totalCashConfirmed += cash;
+      totalFees += fee;
+      monthlyMap[month].totalUsd += net;
+      monthlyMap[month].inApp += inApp;
+      monthlyMap[month].cash += cash;
+      monthlyMap[month].fees += fee;
+    }
+    monthlyMap[month].bookingCount += 1;
+  }
+
+  const monthlyBreakdown = Object.entries(monthlyMap)
+    .map(([month, v]) => ({ month, ...v }))
+    .sort((a, b) => b.month.localeCompare(a.month));
+
+  const currentYear = new Date().getFullYear().toString();
+  const yearlyTotalUsd = monthlyBreakdown
+    .filter((m) => m.month.startsWith(currentYear))
+    .reduce((sum, m) => sum + m.totalUsd, 0);
+
+  return res.json({
+    totalInAppUsd: totalInApp,
+    totalCashConfirmedUsd: totalCashConfirmed,
+    totalPlatformFeesUsd: totalFees,
+    totalDisputedUsd: totalDisputed,
+    totalPendingUsd: totalPending,
+    totalNetUsd: totalInApp + totalCashConfirmed - totalFees,
+    yearlyNetUsd: yearlyTotalUsd,
+    monthlyBreakdown,
+    taxNote: "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.",
+    platformFeePct: platformFeePct * 100,
+  });
+});
+
 export default router;
+

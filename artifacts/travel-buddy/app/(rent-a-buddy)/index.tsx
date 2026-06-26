@@ -242,8 +242,22 @@ export default function RentABuddyLanding() {
         <SafetyAccordion />
       </View>
 
+      {/* Legal disclaimer */}
+      <View style={styles.disclaimer}>
+        <View style={styles.disclaimerRow}>
+          <Shield size={14} color={color.mute} />
+          <Text style={styles.disclaimerTitle}>Community Companionship Only</Text>
+        </View>
+        <Text style={styles.disclaimerText}>
+          Rent a Buddy is a local guide and travel companionship service. It is <Text style={{ fontWeight: '700' }}>not</Text> a dating,
+          escort, adult-service, romantic, or sexual-service platform. All meetups begin at
+          public locations. Both parties are responsible for their own safety and local law compliance.
+          {'\n\n'}In a genuine emergency, contact local services immediately (112 / 911 / 999).
+        </Text>
+      </View>
+
       {/* Become a Buddy */}
-      <View style={[styles.becomeCTA, { marginHorizontal: space.lg, marginTop: space.xl }]}>
+      <View style={[styles.becomeCTA, { marginHorizontal: space.lg, marginTop: space.md, marginBottom: space.xl }]}>
         <Star size={20} color={color.signal} />
         <View style={{ flex: 1 }}>
           <Text style={styles.becomeTitle}>Share your city</Text>
@@ -261,6 +275,15 @@ export default function RentABuddyLanding() {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: color.paper },
   hero: { paddingHorizontal: space.lg, paddingTop: space.xl, paddingBottom: space.lg },
+  disclaimer: {
+    marginHorizontal: space.lg, marginTop: space.xl,
+    backgroundColor: '#F7F7F7', borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    padding: space.lg,
+  },
+  disclaimerRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.sm },
+  disclaimerTitle: { ...t.small, fontWeight: '700', color: color.ink, letterSpacing: 0.2 },
+  disclaimerText: { ...t.small, color: color.mute, lineHeight: 18 },
   stampRow: { marginBottom: space.md },
   heroTitle: { ...t.hero, color: color.ink, marginBottom: space.sm },
   heroSub: { ...t.body, color: color.mute, marginBottom: space.lg, lineHeight: 22 },

@@ -136,6 +136,8 @@ export default function RentABuddyCheckout() {
       durationH: duration,
       groupSize,
       city: buddy.city,
+      countryCode: (buddy as any).country_code ?? (buddy as any).country ?? undefined,
+      meetupLocation: location || undefined,
       category,
       notes: notes || undefined,
     });
@@ -400,6 +402,20 @@ export default function RentABuddyCheckout() {
           <PolicyAccordion />
         </View>
 
+        {/* Legal disclaimer */}
+        <View style={styles.legalDisclaimer}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs }}>
+            <Shield size={13} color={color.mute} />
+            <Text style={styles.legalTitle}>Community Companionship Only</Text>
+          </View>
+          <Text style={styles.legalBody}>
+            Rent a Buddy is a local guide and travel companionship service only. It is{' '}
+            <Text style={{ fontWeight: '700' }}>not</Text> a dating, escort, adult-service, romantic,
+            or sexual-service platform. All meetups begin at public locations. In an emergency, call
+            local services immediately (112 / 911 / 999).
+          </Text>
+        </View>
+
         {/* Policy checkbox */}
         <Pressable
           style={styles.policyRow}
@@ -545,6 +561,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.warn,
   },
   confirmNoticeText: { ...t.small, color: color.warn, flex: 1, lineHeight: 18 },
+  legalDisclaimer: {
+    marginHorizontal: space.lg, marginTop: space.lg,
+    backgroundColor: '#F7F7F7', borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, padding: space.md,
+  },
+  legalTitle: { ...t.small, fontWeight: '700', color: color.ink, letterSpacing: 0.2 },
+  legalBody: { ...t.small, color: color.mute, lineHeight: 18 },
   policyRow: {
     flexDirection: 'row', alignItems: 'flex-start', gap: space.md,
     marginHorizontal: space.lg, marginTop: space.lg,

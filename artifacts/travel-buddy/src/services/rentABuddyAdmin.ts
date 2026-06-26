@@ -297,6 +297,120 @@ export async function updateBuddyCategories(buddyId: string, categories: string[
   return res.ok ? { ok: true } : { ok: false };
 }
 
+// ── Compliance: support reports ────────────────────────────────────────────────
+
+export interface AdminSupportReport {
+  id: string;
+  booking_id: string;
+  reporter_id: string;
+  category: string;
+  details: string | null;
+  status: 'open' | 'in_review' | 'resolved' | 'closed' | 'escalated';
+  admin_notes: string | null;
+  template_id: string | null;
+  created_at: string;
+}
+
+export async function getAdminSupportReports(
+  status?: string,
+): Promise<AdminSupportReport[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await adminGet<{ reports: AdminSupportReport[] }>(`/api/rent-a-buddy/admin/support/reports${qs}`);
+  return res.ok && res.data ? res.data.reports : [];
+}
+
+export async function updateSupportReport(
+  reportId: string,
+  updates: { status?: string; adminNotes?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/support/reports/${reportId}`, updates as Record<string, unknown>);
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function getAdminResponseTemplates(): Promise<Array<{ id: string; category: string; title: string; body: string }>> {
+  const res = await adminGet<{ templates: Array<{ id: string; category: string; title: string; body: string }> }>('/api/rent-a-buddy/admin/support/templates');
+  return res.ok && res.data ? res.data.templates : [];
+}
+
+// ── Compliance: risk review ────────────────────────────────────────────────────
+
+export interface AdminRiskBuddy {
+  id: string;
+  user_id: string;
+  display_name: string | null;
+  city: string;
+  risk_review_status: 'normal' | 'watch' | 'limited' | 'under_review' | 'suspended';
+  risk_review_note: string | null;
+  nightlife_admin_approved: boolean;
+}
+
+export async function getAdminRiskReview(status?: string): Promise<AdminRiskBuddy[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await adminGet<{ profiles: AdminRiskBuddy[] }>(`/api/rent-a-buddy/admin/risk-review${qs}`);
+  return res.ok && res.data ? res.data.profiles : [];
+}
+
+export async function updateRiskStatus(
+  userId: string,
+  status: 'normal' | 'watch' | 'limited' | 'under_review' | 'suspended',
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/users/${userId}/risk-status`, { status, note: note ?? null });
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function approveNightlife(buddyId: string, approved: boolean, note?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/buddies/${buddyId}/nightlife-approve`, { approved, note: note ?? null });
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function updateUserVerification(
+  userId: string,
+  fields: { phoneVerified?: boolean; idVerified?: boolean; ageVerified?: boolean; dateOfBirth?: string | null; note?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/users/${userId}/verification`, fields as Record<string, unknown>);
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+// ── Compliance: launch controls ────────────────────────────────────────────────
+
+export interface LaunchControl {
+  id: string;
+  country_code: string | null;
+  city: string | null;
+  category: string | null;
+  enabled: boolean;
+  waitlist_only: boolean;
+  min_age: number;
+  nightlife_min_age: number;
+  require_id_verification: boolean;
+  require_phone_verification: boolean;
+  full_payment_required: boolean;
+  min_deposit_pct: number;
+  notes: string | null;
+  updated_at: string;
+}
+
+export async function getLaunchControls(): Promise<LaunchControl[]> {
+  const res = await adminGet<{ controls: LaunchControl[] }>('/api/rent-a-buddy/admin/launch-controls');
+  return res.ok && res.data ? res.data.controls : [];
+}
+
+export async function createLaunchControl(
+  data: Partial<LaunchControl>,
+): Promise<{ ok: boolean; control?: LaunchControl; error?: string }> {
+  const res = await adminPost<{ control: LaunchControl }>('/api/rent-a-buddy/admin/launch-controls', data as Record<string, unknown>);
+  return res.ok ? { ok: true, control: res.data?.control } : { ok: false, error: res.error };
+}
+
+export async function updateLaunchControl(
+  controlId: string,
+  data: Partial<LaunchControl>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPatch(`/api/rent-a-buddy/admin/launch-controls/${controlId}`, data as Record<string, unknown>);
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
 // ── Analytics ──────────────────────────────────────────────────────────────────
 
 export async function fetchAdminAnalytics(

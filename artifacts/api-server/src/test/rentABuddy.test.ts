@@ -87,6 +87,7 @@ interface FakeState {
   packages?:       Record<string, any>[];
   addons?:         Record<string, any>[];
   availability?:   Record<string, any>[];
+  launchControls?: any[];
 }
 
 let state: FakeState = {};
@@ -174,6 +175,18 @@ function makeClient(userId: string, role = "user") {
             if (t === "rent_buddy_route_change_requests") {
               if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
               (state as any).routeChangeRequests.push(r);
+            }
+            if (t === "rent_buddy_tag_consents") {
+              if (!(state as any).tagConsents) (state as any).tagConsents = [];
+              (state as any).tagConsents.push(r);
+            }
+            if (t === "rent_buddy_support_reports") {
+              if (!(state as any).supportReports) (state as any).supportReports = [];
+              (state as any).supportReports.push(r);
+            }
+            if (t === "rent_buddy_training_checklist") {
+              if (!(state as any).trainingChecklist) (state as any).trainingChecklist = [];
+              (state as any).trainingChecklist.push(r);
             }
           }
           if (this._maybeSingle) return { data: generatedRows.length === 1 ? generatedRows[0] : null, error: null };
@@ -350,6 +363,59 @@ function makeClient(userId: string, role = "user") {
           return { data: state.trustEvents ?? [], error: null };
         }
 
+        if (t === "rent_buddy_tag_consents") {
+          const consents = (state as any).tagConsents ?? [];
+          let rows = [...consents];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, error: null };
+        }
+
+        if (t === "rent_buddy_support_reports") {
+          const reports = (state as any).supportReports ?? [];
+          let rows = [...reports];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
+        }
+
+        if (t === "rent_buddy_training_checklist") {
+          const items = (state as any).trainingChecklist ?? [];
+          const eqUser = this._filters.find(([op, col]) => op === "eq" && col === "user_id");
+          let rows = eqUser ? items.filter((r: any) => r.user_id === eqUser[2]) : [...items];
+          const eqItem = this._filters.find(([op, col]) => op === "eq" && col === "item_key");
+          if (eqItem) rows = rows.filter((r: any) => r.item_key === eqItem[2]);
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, error: null };
+        }
+
+        if (t === "rent_buddy_admin_response_templates") {
+          const templates = (state as any).adminResponseTemplates ?? [];
+          let rows = [...templates];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, error: null };
+        }
+
+        if (t === "rent_buddy_launch_controls") {
+          const controls: any[] = state.launchControls ?? [];
+          // Mirror the cascading lookup getLaunchControl uses: match on each filter applied
+          let rows = [...controls];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          // Return count so the deny-by-default check (count > 0) works correctly
+          return { data: rows, count: controls.length, error: null };
+        }
+
+        if (this._maybeSingle) return { data: null, error: null };
         return { data: [], count: 0, error: null };
       },
     };
@@ -574,6 +640,7 @@ describe("new-buddy restrictions", () => {
           admin_status: "active", buddy_level: "new", new_buddy_public_only: true,
           new_buddy_daytime_only: true, new_buddy_max_hours: 6,
           categories: ["city", "nightlife"], category_approvals: { nightlife: true },
+          nightlife_admin_approved: true,
           languages: ["English"], hourly_rate_usd: 25, max_group_size: 4,
           verified: false, review_count: 0, completed_bookings: 0,
           vibe_tags: [], safety_badges: [], gallery_urls: [],
@@ -1064,5 +1131,553 @@ describe("route-change approval workflow", () => {
     // Buddy tries to self-approve — should be 403
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/route-change/${changeId}/approve`, undefined, BUDDY_TOKEN);
     assert.equal(r.status, 403, JSON.stringify(r.body));
+  });
+});
+
+// ── Compliance & launch hardening tests ───────────────────────────────────────
+
+describe("Rent a Buddy — compliance: eligibility & launch controls", () => {
+  function setupCompliance(overrides: Partial<FakeState & { buddyProfiles?: Record<string, any>; launchControls?: any[] }> = {}) {
+    state = {
+      featureFlags: {
+        rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true },
+      },
+      profiles: {
+        [USER_ID]: { id: USER_ID, full_name: "Traveler", trust_score: 80 },
+        [BUDDY_USER]: { id: BUDDY_USER, full_name: "Buddy", trust_score: 80 },
+        [ADMIN_USER]: { id: ADMIN_USER, full_name: "Admin", trust_score: 80, role: "admin" },
+      },
+      buddyProfiles: {
+        "bp-user-1": {
+          id: "bp-user-1", user_id: USER_ID, display_name: "Traveler",
+          phone_verified: true, id_verified: true, age_verified: true,
+          date_of_birth: "1995-01-01",
+          risk_review_status: "normal", training_completed: true,
+        },
+      },
+      ...overrides,
+    } as any;
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("GET /api/rent-a-buddy/me/eligibility — returns eligibility shape", async () => {
+    setupCompliance();
+    const r = await req("GET", "/api/rent-a-buddy/me/eligibility");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(typeof r.body.eligible === "boolean");
+    assert.ok(Array.isArray(r.body.reasons));
+    assert.ok(r.body.disclaimers?.main?.length > 10);
+    assert.ok(r.body.disclaimers?.adultService?.length > 10);
+    assert.ok(r.body.disclaimers?.emergency?.length > 10);
+  });
+
+  it("GET /api/rent-a-buddy/availability/location — returns availability shape", async () => {
+    setupCompliance({
+      launchControls: [
+        { id: "lc-1", country_code: null, city: null, category: "city", enabled: true, waitlist_only: false, min_age: 18, nightlife_min_age: 21 },
+      ] as any,
+    });
+    const r = await req("GET", "/api/rent-a-buddy/availability/location?category=city");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(typeof r.body.available === "boolean");
+    assert.ok(typeof r.body.waitlistOnly === "boolean");
+  });
+
+  it("GET /api/rent-a-buddy/launch-status — returns category map", async () => {
+    setupCompliance({
+      launchControls: [
+        { id: "lc-1", country_code: null, city: null, category: "city", enabled: true, waitlist_only: false, min_age: 18, nightlife_min_age: 21 },
+        { id: "lc-2", country_code: null, city: null, category: "nightlife", enabled: false, waitlist_only: true, min_age: 18, nightlife_min_age: 21 },
+      ] as any,
+    });
+    const r = await req("GET", "/api/rent-a-buddy/launch-status");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(typeof r.body.enabled === "boolean");
+    assert.ok(typeof r.body.categories === "object");
+  });
+
+  it("admin can create a launch control", async () => {
+    setupCompliance();
+    const r = await req("POST", "/api/rent-a-buddy/admin/launch-controls", {
+      countryCode: null, city: null, category: "food",
+      enabled: true, waitlistOnly: false, minAge: 18, nightlifeMinAge: 21,
+    }, ADMIN_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+  });
+});
+
+describe("Rent a Buddy — compliance: tag consent", () => {
+  function setupTagState() {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:   { id: USER_ID,   trust_score: 80 },
+        [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
+        [ADMIN_USER]:{ id: ADMIN_USER, trust_score: 80, role: "admin" },
+      },
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: "completed", safety_status: "normal",
+          payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          booking_date: new Date().toISOString().slice(0, 10),
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER },
+      },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("traveler can request tag consent from buddy", async () => {
+    setupTagState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/tag-consent`, {
+      targetUserId: BUDDY_USER,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok || r.body.alreadyExists);
+  });
+
+  it("tag consent blocked on disputed bookings", async () => {
+    state.bookings = {
+      [BOOKING_ID]: {
+        id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+        status: "disputed", safety_status: "normal",
+        payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+        booking_date: new Date().toISOString().slice(0, 10),
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      },
+    };
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/tag-consent`, {
+      targetUserId: BUDDY_USER,
+    });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "consent_blocked");
+  });
+
+  it("missing targetUserId returns 400", async () => {
+    setupTagState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/tag-consent`, {});
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+  });
+});
+
+describe("Rent a Buddy — compliance: support reports", () => {
+  function setupSupportState(completedAt?: string) {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:   { id: USER_ID,   trust_score: 80 },
+        [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
+        [ADMIN_USER]:{ id: ADMIN_USER, trust_score: 80, role: "admin" },
+      },
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: "completed", safety_status: "normal",
+          payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          booking_date: new Date().toISOString().slice(0, 10),
+          completed_at: completedAt ?? null,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+      buddyProfiles: { [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER } },
+      adminResponseTemplates: [
+        { id: "tpl-1", category: "adult_service_violation", title: "Zero-tolerance policy applied", body: "This is a serious violation.", is_active: true },
+        { id: "tpl-2", category: "harassment",              title: "Harassment report received", body: "We are reviewing your report.", is_active: true },
+      ],
+    } as any;
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("traveler can file a harassment report", async () => {
+    setupSupportState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, {
+      category: "harassment",
+      details: "Buddy made me uncomfortable at the venue.",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.equal(r.body.report.category, "harassment");
+  });
+
+  it("emergency report always accepted regardless of window", async () => {
+    setupSupportState(new Date(Date.now() - 100 * 3_600_000).toISOString());
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, {
+      category: "emergency",
+      details: "I felt unsafe.",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+  });
+
+  it("cash_dispute outside 72h window is rejected", async () => {
+    const oldDate = new Date(Date.now() - 80 * 3_600_000).toISOString();
+    setupSupportState(oldDate);
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, {
+      category: "cash_dispute",
+      details: "Money issue.",
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "report_window_expired");
+  });
+
+  it("invalid category returns 400", async () => {
+    setupSupportState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, {
+      category: "made_up_category",
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("adult_service_violation report always accepted", async () => {
+    setupSupportState(new Date(Date.now() - 200 * 3_600_000).toISOString());
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, {
+      category: "adult_service_violation",
+      details: "Explicit request was made.",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.ok(r.body.templateResponse?.title?.length > 0);
+  });
+
+  it("admin can list open support reports", async () => {
+    setupSupportState();
+    const r = await req("GET", "/api/rent-a-buddy/admin/support/reports?status=open", undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.reports));
+  });
+
+  it("admin can list support templates", async () => {
+    setupSupportState();
+    const r = await req("GET", "/api/rent-a-buddy/admin/support/templates", undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.templates));
+  });
+});
+
+describe("Rent a Buddy — compliance: training checklist", () => {
+  const APP_ID = "app-test-1";
+
+  function setupTrainState() {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:   { id: USER_ID, trust_score: 80 },
+        [ADMIN_USER]:{ id: ADMIN_USER, trust_score: 80, role: "admin" },
+      },
+      applications: { [USER_ID]: { id: APP_ID, user_id: USER_ID, status: "pending" } },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("GET training checklist returns all items with completed=false when no rows exist", async () => {
+    setupTrainState();
+    const r = await req("GET", "/api/rent-a-buddy/me/training-checklist");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.checklist));
+    assert.equal(r.body.checklist.length, 10);
+    assert.equal(r.body.allComplete, false);
+  });
+
+  it("POST training item marks it complete", async () => {
+    setupTrainState();
+    const r = await req("POST", "/api/rent-a-buddy/me/training-checklist/safety_policy");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.ok(typeof r.body.completedCount === "number");
+  });
+
+  it("invalid checklist item key returns 400", async () => {
+    setupTrainState();
+    const r = await req("POST", "/api/rent-a-buddy/me/training-checklist/not_a_real_item");
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_item");
+  });
+
+  it("POST training item with no application returns 404", async () => {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
+      applications: {},
+    };
+    const r = await req("POST", "/api/rent-a-buddy/me/training-checklist/safety_policy");
+    assert.equal(r.status, 404, JSON.stringify(r.body));
+    assert.equal(r.body.error, "no_application");
+  });
+});
+
+describe("Rent a Buddy — compliance: risk review", () => {
+  function setupRiskState() {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:   { id: USER_ID, trust_score: 80 },
+        [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
+        [ADMIN_USER]:{ id: ADMIN_USER, trust_score: 80, role: "admin" },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: {
+          id: BUDDY_PROF, user_id: BUDDY_USER, display_name: "Buddy",
+          risk_review_status: "watch", risk_review_note: "Multiple complaints",
+        },
+      },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("admin can list buddies under risk review", async () => {
+    setupRiskState();
+    const r = await req("GET", "/api/rent-a-buddy/admin/risk-review?status=watch", undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.profiles));
+  });
+
+  it("admin can update a user's risk status", async () => {
+    setupRiskState();
+    const r = await req("POST", `/api/rent-a-buddy/admin/users/${BUDDY_USER}/risk-status`, {
+      status: "limited",
+      note: "Repeated no-show complaints",
+    }, ADMIN_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+  });
+
+  it("invalid risk status returns 400", async () => {
+    setupRiskState();
+    const r = await req("POST", `/api/rent-a-buddy/admin/users/${BUDDY_USER}/risk-status`, {
+      status: "made_up_status",
+    }, ADMIN_TOKEN);
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("admin can approve nightlife for a buddy", async () => {
+    setupRiskState();
+    const r = await req("POST", `/api/rent-a-buddy/admin/buddies/${BUDDY_PROF}/nightlife-approve`, {
+      approved: true, note: "ID verified, 24 years old",
+    }, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.equal(r.body.approved, true);
+  });
+
+  it("admin can update user verification fields", async () => {
+    setupRiskState();
+    const r = await req("PATCH", `/api/rent-a-buddy/admin/users/${BUDDY_USER}/verification`, {
+      idVerified: true, phoneVerified: true, ageVerified: true, dateOfBirth: "1998-05-12",
+    }, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+  });
+
+  it("admin verification PATCH with empty body returns 400", async () => {
+    setupRiskState();
+    const r = await req("PATCH", `/api/rent-a-buddy/admin/users/${BUDDY_USER}/verification`, {}, ADMIN_TOKEN);
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+});
+
+describe("Rent a Buddy — compliance: posting defaults & earnings summary", () => {
+  function setupPostingState(hasActive = false) {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
+      bookings: hasActive
+        ? {
+            [BOOKING_ID]: {
+              id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+              status: "in_progress", city: "Tokyo",
+              payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+              booking_date: new Date().toISOString().slice(0, 10),
+              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            },
+          }
+        : {},
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("posting defaults returns safe granularity when no active booking", async () => {
+    setupPostingState(false);
+    const r = await req("GET", "/api/rent-a-buddy/me/posting-defaults");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.defaultDelayPost, false);
+    assert.equal(r.body.hasActiveRentABuddyBooking, false);
+    assert.equal(r.body.defaultLocationGranularity, "exact");
+  });
+
+  it("posting defaults signals delay when active booking exists", async () => {
+    setupPostingState(true);
+    const r = await req("GET", "/api/rent-a-buddy/me/posting-defaults");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.hasActiveRentABuddyBooking, true);
+    assert.equal(r.body.defaultDelayPost, true);
+    assert.equal(r.body.defaultLocationGranularity, "neighborhood");
+    assert.ok(r.body.safetyNote !== null);
+  });
+
+  it("earnings breakdown summary returns tax note", async () => {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
+      buddyProfiles: {
+        "bp-u1": { id: "bp-u1", user_id: USER_ID },
+      },
+      bookings: {},
+    };
+    const r = await req("GET", "/api/rent-a-buddy/dashboard/earnings/summary");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.taxNote?.length > 10);
+    assert.ok(typeof r.body.totalNetUsd === "number");
+    assert.ok(Array.isArray(r.body.monthlyBreakdown));
+  });
+});
+
+// ── Launch control + age enforcement at booking creation ──────────────────────
+
+describe("Rent a Buddy — booking: launch control and age enforcement", () => {
+  const BASE_BOOKING_BODY = {
+    buddyId: BUDDY_PROF,
+    bookingDate: new Date().toISOString().slice(0, 10),
+    durationH: 1,
+    city: "Tokyo",
+    countryCode: "JP",
+    category: "city",
+  };
+
+  function setupBookingEnforcement(launchControl: any, travelerBuddyProfile?: any) {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:   { id: USER_ID,   trust_score: 80 },
+        [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: {
+          id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          hourly_rate_usd: 25, categories: ["city", "nightlife"], category_approvals: {},
+          new_buddy_public_only: false, new_buddy_max_hours: 8,
+        },
+        ...(travelerBuddyProfile ? { "bp-traveler": travelerBuddyProfile } : {}),
+      },
+      launchControls: [launchControl],
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("booking blocked when global launch control has enabled=false", async () => {
+    setupBookingEnforcement({
+      id: "lc-global", country_code: null, city: null, category: null,
+      enabled: false, waitlist_only: false,
+      min_age: 18, nightlife_min_age: 21,
+      require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+    });
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "location_unavailable");
+  });
+
+  it("booking blocked with waitlist_only error when waitlist_only=true", async () => {
+    setupBookingEnforcement({
+      id: "lc-waitlist", country_code: null, city: null, category: null,
+      enabled: false, waitlist_only: true,
+      min_age: 18, nightlife_min_age: 21,
+      require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+    });
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "waitlist_only");
+  });
+
+  it("booking blocked when ID verification required but traveler not verified", async () => {
+    setupBookingEnforcement(
+      {
+        id: "lc-id", country_code: null, city: null, category: null,
+        enabled: true, waitlist_only: false,
+        min_age: 18, nightlife_min_age: 21,
+        require_id_verification: true, require_phone_verification: false, full_payment_required: false,
+      },
+      { id: "bp-traveler", user_id: USER_ID, date_of_birth: "1995-01-01", id_verified: false, phone_verified: true },
+    );
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "verification_required");
+  });
+
+  it("booking blocked when traveler DOB makes them under 18 (boundary: 1 day short)", async () => {
+    // DOB is tomorrow's date N years ago, so they turn 18 tomorrow — still 17 today
+    const today = new Date();
+    const dob = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate() + 1)
+      .toISOString().slice(0, 10);
+    setupBookingEnforcement(
+      {
+        id: "lc-age", country_code: null, city: null, category: null,
+        enabled: true, waitlist_only: false,
+        min_age: 18, nightlife_min_age: 21,
+        require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+      },
+      { id: "bp-traveler", user_id: USER_ID, date_of_birth: dob, id_verified: true, phone_verified: true },
+    );
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "age_requirement");
+  });
+
+  it("booking blocked for under-21 nightlife booking (boundary: 1 day short of 21)", async () => {
+    // DOB is tomorrow's date N years ago → user turns 21 tomorrow, still 20 today
+    const today = new Date();
+    const dob = new Date(today.getFullYear() - 21, today.getMonth(), today.getDate() + 1)
+      .toISOString().slice(0, 10);
+    setupBookingEnforcement(
+      {
+        id: "lc-nightlife", country_code: null, city: null, category: null,
+        enabled: true, waitlist_only: false,
+        min_age: 18, nightlife_min_age: 21,
+        require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+      },
+      { id: "bp-traveler", user_id: USER_ID, date_of_birth: dob, id_verified: true, phone_verified: true },
+    );
+    const r = await req("POST", "/api/rent-a-buddy/bookings", { ...BASE_BOOKING_BODY, category: "nightlife" });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "age_requirement");
+  });
+
+  it("booking succeeds for 18-year-old traveler when launch control allows", async () => {
+    // DOB is exactly 18 years ago today
+    const today = new Date();
+    const dob = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate())
+      .toISOString().slice(0, 10);
+    setupBookingEnforcement(
+      {
+        id: "lc-ok", country_code: null, city: null, category: null,
+        enabled: true, waitlist_only: false,
+        min_age: 18, nightlife_min_age: 21,
+        require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+      },
+      { id: "bp-traveler", user_id: USER_ID, date_of_birth: dob, id_verified: true, phone_verified: true },
+    );
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    // Should reach booking creation (201) or a different business error — NOT age_requirement
+    assert.notEqual(r.body.error, "age_requirement", JSON.stringify(r.body));
   });
 });
