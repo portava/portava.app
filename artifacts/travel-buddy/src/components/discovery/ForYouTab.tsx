@@ -23,6 +23,9 @@ import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
 import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall';
+import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
+import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
+import { CompassWhySheet } from '../compass/CompassWhySheet';
 
 // ── Convert a Telegraph recommendation to DiscoveryPlace shape ────────────────
 
@@ -57,22 +60,73 @@ interface ForYouTabProps {
 
 type ForYouItem =
   | { kind: 'telegraph'; rec: TelegraphRecommendation; place: DiscoveryPlace }
-  | { kind: 'osm'; place: DiscoveryPlace };
+  | { kind: 'osm'; place: DiscoveryPlace }
+  | { kind: 'compass'; item: import('../../services/compass').CompassFeedItem; place: DiscoveryPlace };
+
+function compassItemToPlace(item: import('../../services/compass').CompassFeedItem): DiscoveryPlace {
+  return {
+    id:           item.id,
+    name:         item.title ?? item.type,
+    category:     'for_you',
+    type:         item.category ?? null,
+    description:  (item.data?.description as string) ?? null,
+    distanceKm:   null,
+    lat:          null,
+    lng:          null,
+    tags:         [],
+    address:      (item.data?.city as string) ?? null,
+    website:      null,
+    phone:        null,
+    openingHours: null,
+    rating:       null,
+    isOpenNow:    null,
+  };
+}
 
 export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [source, setSource]     = useState<'telegraph' | 'osm' | 'none'>('none');
+  const [source, setSource]     = useState<'compass' | 'telegraph' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
+
+  // Why sheet state
+  const [whyId, setWhyId]         = useState<string | null>(null);
+  const [whySheetOpen, setWhySheetOpen] = useState(false);
+  // Dismissed item ids (optimistic hide for "not interested")
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  // "Show more" tagged items
+  const [showMoreIds, setShowMoreIds] = useState<Set<string>>(new Set());
+
+  // Compass feed — runs in background alongside OSM/Telegraph
+  const compass = useCompassFeed({ section: 'for-you', city: destination, enabled: isAuthed });
+
+  const handleWhyPress = (id: string) => {
+    setWhyId(id);
+    setWhySheetOpen(true);
+  };
 
   const community = useCommunityDiscovery(destination ?? null);
 
   // Monotonically-increasing counter so stale async callbacks from an old
   // load() call can detect they've been superseded and bail out safely.
   const loadIdRef = React.useRef(0);
+
+  // When the Compass feed resolves with enabled items, upgrade to Compass source.
+  useEffect(() => {
+    if (!compass.data) return;
+    const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
+    const safeItems = compass.data.safeItems ?? [];
+    const all = compassItems.length > 0 ? compassItems : safeItems;
+    if (all.length > 0 && compass.compassEnabled) {
+      setItems(all.map((ci) => ({ kind: 'compass' as const, item: ci, place: compassItemToPlace(ci) })));
+      setSource('compass');
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [compass.data, compass.compassEnabled]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!destination) return;
@@ -90,17 +144,21 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       : null;
 
     // Show OSM content the instant it resolves — clears the skeleton immediately.
+    // Only set OSM/Telegraph items if Compass hasn't already upgraded the feed.
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
       setRefreshing(false);
-      if (osm.ok && osm.data.places.length > 0) {
-        setItems(osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
-        setSource('osm');
-      } else {
-        setItems([]);
+      setItems((prev) => {
+        // Don't downgrade from Compass picks
+        if (prev.some((i) => i.kind === 'compass')) return prev;
+        if (osm.ok && osm.data.places.length > 0) {
+          setSource('osm');
+          return osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
+        }
         setSource('none');
-      }
+        return [];
+      });
     }).catch(() => {
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
@@ -111,12 +169,16 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       try {
         const tel = await telPromise;
         if (!stale() && tel.ok && tel.recommendations.length > 0) {
-          setItems(tel.recommendations.map((rec) => ({
-            kind: 'telegraph' as const,
-            rec,
-            place: recToPlace(rec),
-          })));
-          setSource('telegraph');
+          setItems((prev) => {
+            // Don't downgrade from Compass picks
+            if (prev.some((i) => i.kind === 'compass')) return prev;
+            setSource('telegraph');
+            return tel.recommendations.map((rec) => ({
+              kind: 'telegraph' as const,
+              rec,
+              place: recToPlace(rec),
+            }));
+          });
         }
       } catch {
         // telegraph failed — OSM is already showing, nothing to do
@@ -156,7 +218,9 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
         <View style={styles.sourceRow}>
           <Sparkles size={13} color={color.signal} />
           <Text style={styles.sourceLabel}>
-            {source === 'telegraph'
+            {source === 'compass'
+              ? 'Compass picks · personalised for you'
+              : source === 'telegraph'
               ? 'Personalised picks · powered by Telegraph AI'
               : source === 'osm'
               ? 'Popular spots from OpenStreetMap · sign in for personalised picks'
@@ -164,39 +228,69 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
           </Text>
         </View>
 
-        {items.map((item) => (
-          <View key={item.place.id}>
-            {/* "Why this?" reason banner — only for Telegraph cards */}
-            {item.kind === 'telegraph' && item.rec.reason ? (
-              <View style={styles.reasonBanner}>
-                <Info size={11} color={color.signal} />
-                <Text style={styles.reasonText} numberOfLines={2}>
-                  {item.rec.reason}
-                </Text>
+        {items.filter((item) => !dismissed.has(item.place.id)).map((item) => {
+          const isShowMore = showMoreIds.has(item.place.id);
+          return (
+            <View key={item.place.id} style={isShowMore ? styles.showMoreHighlight : undefined}>
+              {/* Reason banner — Compass items or Telegraph cards */}
+              {item.kind === 'compass' && item.item.explanationKey ? (
+                <View style={styles.reasonBanner}>
+                  <Info size={11} color={color.signal} />
+                  <Text style={styles.reasonText} numberOfLines={2}>
+                    Recommended based on your preferences
+                  </Text>
+                  <CompassFeedbackMenu
+                    recommendationId={item.item.recommendationToken ?? item.item.id}
+                    itemType={item.item.type}
+                    category={item.item.category}
+                    onWhyPress={() => handleWhyPress(item.item.recommendationToken ?? item.item.id)}
+                    onDismiss={() => setDismissed((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
+                    onTagShowMore={() => setShowMoreIds((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
+                  />
+                </View>
+              ) : item.kind === 'telegraph' && item.rec.reason ? (
+                <View style={styles.reasonBanner}>
+                  <Info size={11} color={color.signal} />
+                  <Text style={styles.reasonText} numberOfLines={2}>
+                    {item.rec.reason}
+                  </Text>
+                </View>
+              ) : null}
+
+              <PlaceCard
+                place={item.place}
+                onPress={() => setDetail(item.place)}
+                onAddToPlan={() => onAddToPlan({
+                  id:       item.place.id,
+                  name:     item.place.name,
+                  category: item.place.category,
+                  address:  item.place.address,
+                })}
+              />
+
+              {/* Bottom row: Send to Telegraph + non-compass feedback menu */}
+              <View style={styles.shareRow}>
+                <Pressable
+                  style={styles.shareBtn}
+                  onPress={() => setShareItem(item)}
+                >
+                  <Share2 size={12} color={color.mute} />
+                  <Text style={styles.shareLabel}>Send to Telegraph</Text>
+                </Pressable>
+                {item.kind !== 'compass' && isAuthed && (
+                  <CompassFeedbackMenu
+                    recommendationId={item.place.id}
+                    itemType="place"
+                    category={item.place.category ?? undefined}
+                    onWhyPress={() => handleWhyPress(item.place.id)}
+                    onDismiss={() => setDismissed((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
+                    onTagShowMore={() => setShowMoreIds((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
+                  />
+                )}
               </View>
-            ) : null}
-
-            <PlaceCard
-              place={item.place}
-              onPress={() => setDetail(item.place)}
-              onAddToPlan={() => onAddToPlan({
-                id:       item.place.id,
-                name:     item.place.name,
-                category: item.place.category,
-                address:  item.place.address,
-              })}
-            />
-
-            {/* Send to Telegraph */}
-            <Pressable
-              style={styles.shareRow}
-              onPress={() => setShareItem(item)}
-            >
-              <Share2 size={12} color={color.mute} />
-              <Text style={styles.shareLabel}>Send to Telegraph</Text>
-            </Pressable>
-          </View>
-        ))}
+            </View>
+          );
+        })}
 
         {source === 'none' && (
           <View style={styles.empty}>
@@ -240,6 +334,13 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
         item={shareItem ? buildSharePayload(shareItem) : null}
         onClose={() => setShareItem(null)}
       />
+
+      {/* "Why am I seeing this?" sheet — Compass explanations */}
+      <CompassWhySheet
+        visible={whySheetOpen}
+        recommendationId={whyId}
+        onClose={() => { setWhySheetOpen(false); setWhyId(null); }}
+      />
     </>
   );
 }
@@ -253,6 +354,16 @@ function buildSharePayload(item: ForYouItem): DiscoverySharePayload {
       category: item.rec.category ?? 'for_you',
       city: item.rec.locationContext ?? '',
       blurb: item.rec.reason,
+    };
+  }
+  if (item.kind === 'compass') {
+    return {
+      sourceId: item.item.id,
+      sourceType: 'for_you',
+      title: item.item.title ?? item.item.type,
+      category: item.item.category ?? 'for_you',
+      city: (item.item.data?.city as string) ?? '',
+      blurb: undefined,
     };
   }
   return {
@@ -313,17 +424,30 @@ const styles = StyleSheet.create({
   shareRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.xs,
+    justifyContent: 'space-between',
     paddingHorizontal: space.lg,
     paddingVertical: 7,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.haze,
     marginTop: -StyleSheet.hairlineWidth,
   },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+  },
   shareLabel: {
     ...t.small,
     color: color.mute,
     fontSize: 11,
+  },
+  showMoreHighlight: {
+    borderWidth: 1,
+    borderColor: color.signal + '30',
+    borderRadius: radius.md,
+    marginHorizontal: space.lg,
+    overflow: 'hidden',
+    marginBottom: space.sm,
   },
   empty: {
     alignItems: 'center',

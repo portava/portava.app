@@ -14,6 +14,7 @@ import { LocationProvider } from '../src/context/LocationContext';
 import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceContext';
 import { usePushToken } from '../src/hooks/usePushToken';
 import { useNotificationStream } from '../src/hooks/useNotifications';
+import { useCompassFrontload } from '../src/hooks/compass/useCompassFrontload';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 
@@ -27,6 +28,11 @@ if (Platform.OS !== 'web') {
       shouldShowList: true,
     }),
   });
+}
+
+function CompassFrontloadSetup() {
+  useCompassFrontload();
+  return null;
 }
 
 function PushSetup() {
@@ -63,6 +69,7 @@ export default function RootLayout() {
                   <PlanPickerControllerProvider>
                     <NotificationToastProvider>
                       <PushSetup />
+                      <CompassFrontloadSetup />
                       <StatusBar style="dark" />
                       <Stack
                         screenOptions={{
@@ -75,6 +82,7 @@ export default function RootLayout() {
                         <Stack.Screen name="(auth)" />
                         <Stack.Screen name="create" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                       </Stack>
                     </NotificationToastProvider>
                   </PlanPickerControllerProvider>

@@ -637,4 +637,137 @@ router.post("/compass/feedback", async (req, res) => {
   }
 });
 
+// ── GET /api/compass/me/preferences ──────────────────────────────────────────
+// Returns the authenticated user's Compass personalisation preferences.
+// Creates a blank row on first access so callers never get null.
+
+router.get("/compass/me/preferences", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data, error } = await sc
+    .from("compass_user_preferences")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/me/preferences: read failed");
+    sendError(res, "db_error", "Could not load preferences");
+    return;
+  }
+
+  res.json({ preferences: data ?? { user_id: user.id } });
+});
+
+// ── PATCH /api/compass/me/preferences ────────────────────────────────────────
+// Partially updates the user's Compass personalisation preferences.
+
+const patchPreferencesSchema = z.object({
+  interests:              z.array(z.string().max(60)).max(30).optional(),
+  hidden_categories:      z.array(z.string().max(80)).max(50).optional(),
+  muted_hashtags:         z.array(z.string().max(120)).max(200).optional(),
+  exclude_budget_styles:  z.array(z.string().max(60)).max(10).optional(),
+  category_weights:       z.record(z.string(), z.number().min(0).max(10)).optional(),
+  notification_preferences: z.record(z.string(), z.boolean()).optional(),
+  boost_visibility_enabled: z.boolean().optional(),
+  location_privacy_mode:  z.string().max(40).optional(),
+  delayed_post_default:   z.boolean().optional(),
+});
+
+router.patch("/compass/me/preferences", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = patchPreferencesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { error } = await sc
+    .from("compass_user_preferences")
+    .upsert({ ...parsed.data, user_id: user.id }, { onConflict: "user_id" });
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/me/preferences: upsert failed");
+    sendError(res, "db_error", "Could not save preferences");
+    return;
+  }
+
+  const { data: updated } = await sc
+    .from("compass_user_preferences")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  res.json({ preferences: updated ?? { user_id: user.id, ...parsed.data } });
+});
+
+// ── GET /api/compass/me/active-reward ─────────────────────────────────────────
+// Returns the authenticated user's active-user tier, earned badges, and a
+// plain-English visibility status message. Raw score is never exposed.
+
+const TIER_LABELS: Record<string, string> = {
+  active_traveler:           "Active Traveler",
+  local_guide:               "Local Guide",
+  city_connector:            "City Connector",
+  city_ambassador_candidate: "City Ambassador Candidate",
+};
+
+function buildVisibilityMessage(tier: string, badges: string[]): string {
+  if (badges.includes("safety_champion"))      return "Your safety-first approach is building trust across the community.";
+  if (badges.includes("trusted_guide"))        return "Your trusted reviews are helping more travelers discover great places.";
+  if (badges.includes("city_ambassador_candidate")) return "You're one of the most active travelers in your city — your posts are reaching a wider audience.";
+  if (badges.includes("social_connector"))     return "Your connections are expanding your reach to travelers in your network.";
+  if (badges.includes("consistent_explorer"))  return "Your consistent activity is keeping your content visible to nearby travelers.";
+  switch (tier) {
+    case "city_ambassador_candidate": return "Your activity is reaching a wide audience across the city.";
+    case "city_connector":            return "Your helpful posts are reaching more travelers around you.";
+    case "local_guide":               return "Keep sharing — your posts are gaining more local visibility.";
+    default:                          return "Start posting and connecting to grow your travel visibility.";
+  }
+}
+
+router.get("/compass/me/active-reward", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data, error } = await sc
+    .from("compass_active_user_scores")
+    .select("tier, badge_eligibility, boost_visibility_enabled")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/me/active-reward: read failed");
+    sendError(res, "db_error", "Could not load active reward");
+    return;
+  }
+
+  const tier   = (data as any)?.tier ?? "active_traveler";
+  const badges = (data as any)?.badge_eligibility ?? [];
+  const boost  = (data as any)?.boost_visibility_enabled !== false;
+
+  res.json({
+    tier,
+    tierLabel:         TIER_LABELS[tier] ?? "Active Traveler",
+    badges,
+    visibilityMessage: buildVisibilityMessage(tier, badges),
+    boostEnabled:      boost,
+  });
+});
+
 export default router;

@@ -32,6 +32,7 @@ import { mockPassport } from '../../src/data/passport';
 import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
 
 type Tab = 'postcards' | 'stamps' | 'memories' | 'trips' | 'map' | 'about';
 const TABS: { key: Tab; label: string }[] = [
@@ -380,6 +381,9 @@ function PassportContent({
           profile={profile}
           onOpenSettings={() => openSettings('profile')}
         />
+
+        {/* Compass active-user status (owner only, hides itself when opted out) */}
+        <CompassStatusCard />
 
         {/* Tab bar */}
         <ScrollView
