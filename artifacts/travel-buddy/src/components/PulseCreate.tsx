@@ -188,6 +188,15 @@ export function UnifiedPostComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.source]);
 
+  // Pre-fill scheduledTime when switching to "At a time" so the submit
+  // always has a value even if the user never touches the spinner.
+  useEffect(() => {
+    if (locationPrivacyMode === 'delayed_until_time' && scheduledTime === null) {
+      setScheduledTime(new Date(Date.now() + 60 * 60 * 1_000));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationPrivacyMode]);
+
   useEffect(() => {
     if (visible) {
       setSelectedType(null);
