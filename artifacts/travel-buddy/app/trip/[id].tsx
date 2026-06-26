@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, MoreHorizontal, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
@@ -128,24 +128,9 @@ export default function TripDetail() {
         >
           <Share2 size={15} color={color.ink} /><Text style={styles.topBtnText}>Share Trip</Text>
         </Pressable>
-        <Pressable
-          style={styles.topBtn}
-          hitSlop={6}
-          onPress={() =>
-            Alert.alert('Edit Trip', 'Trip editing is coming soon. You\'ll be able to update destination, dates, and visibility here.', [{ text: 'OK' }])
-          }
-        >
+        <View style={[styles.topBtn, { opacity: 0.35 }]} accessibilityLabel="Edit trip (coming soon)">
           <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
-        </Pressable>
-        <Pressable
-          style={styles.topIcon}
-          hitSlop={6}
-          onPress={() =>
-            Alert.alert('Trip Options', 'More trip options coming soon.', [{ text: 'OK' }])
-          }
-        >
-          <MoreHorizontal size={18} color={color.ink} />
-        </Pressable>
+        </View>
       </View>
 
       <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>

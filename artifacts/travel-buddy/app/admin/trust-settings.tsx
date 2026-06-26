@@ -11,7 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { router } from 'expo-router';
 import { fetchTrustSettings, updateTrustSetting, type TrustSettingKey } from '../../src/services/trustAdmin';
+import { useSession } from '../../src/context/SessionContext';
 
 interface SettingSection {
   title: string;
@@ -137,18 +139,21 @@ function SettingRow({
 }
 
 export default function TrustSettingsScreen() {
+  const { isAuthed, loading: sessionLoading } = useSession();
   const [settings, setSettings]   = useState<Record<string, number>>({});
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [saving, setSaving]       = useState<TrustSettingKey | null>(null);
 
   useEffect(() => {
+    if (sessionLoading) return;
+    if (!isAuthed) { router.replace('/(auth)/sign-in' as any); return; }
     setLoading(true);
     fetchTrustSettings()
       .then((d) => setSettings(d.settings))
       .catch((e) => setError(e?.message ?? 'Failed to load settings'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [isAuthed, sessionLoading]);
 
   const onSave = async (key: TrustSettingKey, value: number) => {
     setSaving(key);

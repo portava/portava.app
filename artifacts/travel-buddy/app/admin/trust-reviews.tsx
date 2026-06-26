@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { fetchReviews, type TrustReview } from '../../src/services/trustAdmin';
+import { useSession } from '../../src/context/SessionContext';
 
 const STATUS_FILTERS = ['all', 'open', 'in_progress'] as const;
 const TYPE_FILTERS   = ['all', 'gaming_suspected', 'appeal', 'admin_flagged'] as const;
@@ -48,6 +49,7 @@ function ReviewRow({ item, onPress }: { item: TrustReview; onPress: () => void }
 }
 
 export default function TrustReviewsScreen() {
+  const { isAuthed, loading: sessionLoading } = useSession();
   const [reviews, setReviews]       = useState<TrustReview[]>([]);
   const [total, setTotal]           = useState(0);
   const [page, setPage]             = useState(1);
@@ -57,7 +59,13 @@ export default function TrustReviewsScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter]     = useState<TypeFilter>('all');
 
+  useEffect(() => {
+    if (!sessionLoading && !isAuthed) { router.replace('/(auth)/sign-in' as any); }
+  }, [isAuthed, sessionLoading]);
+
   const load = useCallback(async (p = 1, append = false) => {
+    if (!isAuthed) return;
+
     try {
       setError(null);
       const data = await fetchReviews({
@@ -75,9 +83,10 @@ export default function TrustReviewsScreen() {
   }, [statusFilter, typeFilter]);
 
   useEffect(() => {
+    if (sessionLoading || !isAuthed) return;
     setLoading(true);
     load(1).finally(() => setLoading(false));
-  }, [load]);
+  }, [load, isAuthed, sessionLoading]);
 
   const onRefresh = async () => {
     setRefreshing(true);

@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { ArrowLeft, Search, ShieldOff, Shield, TrendingDown, TrendingUp, Edit2, GitMerge } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { supabase } from '../../src/lib/supabase';
+import { useSession } from '../../src/context/SessionContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,11 @@ async function adminPatch<T>(path: string, body: unknown): Promise<{ ok: boolean
 
 export default function AdminHashtagsScreen() {
   const insets = useSafeAreaInsets();
+  const { isAuthed, loading: sessionLoading } = useSession();
+
+  useEffect(() => {
+    if (!sessionLoading && !isAuthed) { router.replace('/(auth)/sign-in' as any); }
+  }, [isAuthed, sessionLoading]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +132,10 @@ export default function AdminHashtagsScreen() {
     })));
   }, []);
 
-  useEffect(() => { fetchHashtags(); }, [fetchHashtags]);
+  useEffect(() => {
+    if (!isAuthed || sessionLoading) return;
+    fetchHashtags();
+  }, [fetchHashtags, isAuthed, sessionLoading]);
 
   function setBusy(id: string, busy: boolean) {
     setBusyIds((prev) => {

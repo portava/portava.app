@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { fetchGamingFlags, markGamingFlagReviewed, type TrustReview } from '../../src/services/trustAdmin';
+import { useSession } from '../../src/context/SessionContext';
 
 const PATTERN_LABELS: Record<string, string> = {
   rapid_jump:      '📈 Rapid Score Jump',
@@ -59,12 +60,17 @@ function FlagRow({
 }
 
 export default function GamingFlagsScreen() {
+  const { isAuthed, loading: sessionLoading } = useSession();
   const [flags, setFlags]           = useState<TrustReview[]>([]);
   const [total, setTotal]           = useState(0);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionLoading && !isAuthed) { router.replace('/(auth)/sign-in' as any); }
+  }, [isAuthed, sessionLoading]);
 
   const load = useCallback(async () => {
     try {
@@ -78,9 +84,10 @@ export default function GamingFlagsScreen() {
   }, []);
 
   useEffect(() => {
+    if (sessionLoading || !isAuthed) return;
     setLoading(true);
     load().finally(() => setLoading(false));
-  }, [load]);
+  }, [load, isAuthed, sessionLoading]);
 
   const onRefresh = async () => {
     setRefreshing(true);

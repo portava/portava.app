@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, TextInput,
-  Alert, Switch,
+  Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Shield, CheckCircle, Info, ChevronDown, ChevronUp,
-  AlertTriangle, CreditCard, Lock, MapPin,
+  AlertTriangle, Lock, MapPin, CalendarCheck,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
@@ -91,7 +91,6 @@ export default function RentABuddyCheckout() {
   const [zoneIndex, setZoneIndex] = useState<number | null>(null);
   const [customZone, setCustomZone] = useState('');
   const [notes, setNotes] = useState('');
-  const [fullPayment, setFullPayment] = useState(false);
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [safetyPrefs, setSafetyPrefs] = useState<Record<string, boolean>>({
     safeReturn: true, shareLocation: false, publicOnly: true,
@@ -118,9 +117,6 @@ export default function RentABuddyCheckout() {
   const hourlyRate = buddy?.hourlyRateUsd ?? 0;
   const baseRate = selectedPackage ? selectedPackage.priceUsd : hourlyRate * duration;
   const serviceFee = Math.round(baseRate * 0.12);
-  const deposit = Math.round(baseRate * 0.30);
-  const cashBalance = fullPayment ? 0 : baseRate - deposit;
-  const totalDueNow = fullPayment ? baseRate + serviceFee : deposit + serviceFee;
 
   const handleBook = async () => {
     if (!buddy || !policyAccepted) return;
@@ -346,7 +342,7 @@ export default function RentABuddyCheckout() {
         </Section>
 
         {/* Price breakdown */}
-        <Section title="Price breakdown">
+        <Section title="Price estimate">
           <View style={styles.priceTable}>
             <View style={styles.priceRow}>
               <Text style={styles.priceKey}>
@@ -355,37 +351,21 @@ export default function RentABuddyCheckout() {
               <Text style={styles.priceVal}>${baseRate}</Text>
             </View>
             <View style={styles.priceRow}>
-              <Text style={styles.priceKey}>App service fee</Text>
+              <Text style={styles.priceKey}>Platform fee (est.)</Text>
               <Text style={styles.priceVal}>${serviceFee}</Text>
             </View>
             <View style={styles.priceDivider} />
             <View style={styles.priceRow}>
-              <Text style={styles.priceTotalKey}>Deposit due today</Text>
-              <Text style={styles.priceTotalVal}>${fullPayment ? baseRate + serviceFee : deposit + serviceFee}</Text>
+              <Text style={styles.priceTotalKey}>Estimated total</Text>
+              <Text style={styles.priceTotalVal}>${baseRate + serviceFee}</Text>
             </View>
-            {!fullPayment && (
-              <View style={styles.priceRow}>
-                <Text style={[styles.priceKey, { color: color.warn }]}>Cash balance (due to Buddy)</Text>
-                <Text style={[styles.priceVal, { color: color.warn }]}>${cashBalance}</Text>
-              </View>
-            )}
           </View>
 
-          <View style={styles.paymentToggle}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
-                <Lock size={13} color={color.success} />
-                <Text style={styles.toggleLabel}>Pay in full in-app</Text>
-                <View style={styles.saferBadge}><Text style={styles.saferText}>SAFER</Text></View>
-              </View>
-              <Text style={styles.toggleSub}>No cash exchange with your Buddy</Text>
-            </View>
-            <Switch
-              value={fullPayment}
-              onValueChange={setFullPayment}
-              trackColor={{ true: color.success, false: color.haze }}
-              thumbColor={color.paperRaised}
-            />
+          <View style={styles.paymentNotice}>
+            <Info size={13} color={color.deep} />
+            <Text style={styles.paymentNoticeText}>
+              Payment is arranged directly with your Buddy after they confirm the booking. In-app payments are coming soon.
+            </Text>
           </View>
         </Section>
 
@@ -393,7 +373,7 @@ export default function RentABuddyCheckout() {
         <View style={styles.confirmNotice}>
           <AlertTriangle size={14} color={color.warn} />
           <Text style={styles.confirmNoticeText}>
-            Booking is not confirmed until deposit or full in-app payment is completed.
+            Your request is sent to the Buddy for review. Booking is confirmed only after they accept.
           </Text>
         </View>
 
@@ -435,8 +415,8 @@ export default function RentABuddyCheckout() {
       {/* Confirm button */}
       <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.dueLabel}>Due today</Text>
-          <Text style={styles.dueAmount}>${totalDueNow}</Text>
+          <Text style={styles.dueLabel}>Estimated total</Text>
+          <Text style={styles.dueAmount}>${baseRate + serviceFee}</Text>
         </View>
         <Pressable
           style={({ pressed }) => [
@@ -447,9 +427,9 @@ export default function RentABuddyCheckout() {
           onPress={handleBook}
           disabled={!policyAccepted || submitting}
         >
-          <CreditCard size={16} color={color.onInk} />
+          <CalendarCheck size={16} color={color.onInk} />
           <Text style={styles.confirmBtnText}>
-            {submitting ? 'Processing…' : 'Confirm & Pay'}
+            {submitting ? 'Sending request…' : 'Request Booking'}
           </Text>
         </Pressable>
       </View>
@@ -554,6 +534,12 @@ const styles = StyleSheet.create({
   toggleSub: { ...t.small, color: color.mute, marginTop: 2 },
   saferBadge: { backgroundColor: color.success, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
   saferText: { fontSize: 9, fontWeight: '800', color: '#fff', fontFamily: 'Courier', letterSpacing: 0.5 },
+  paymentNotice: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
+    marginTop: space.md, backgroundColor: '#EBF0FF', borderRadius: radius.md,
+    padding: space.md, borderWidth: 1, borderColor: color.deep,
+  },
+  paymentNoticeText: { ...t.small, color: color.deep, flex: 1, lineHeight: 18 },
   confirmNotice: {
     flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
     marginHorizontal: space.lg, marginTop: space.md,
