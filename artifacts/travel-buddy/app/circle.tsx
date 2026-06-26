@@ -19,7 +19,7 @@ import { HighlightRing } from '../src/components/HighlightRing';
 import { HighlightViewer } from '../src/components/HighlightViewer';
 import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
 
-function CircleUserRow({ u }: { u: FollowUser }) {
+function CircleUserRow({ u, reason }: { u: FollowUser; reason?: string }) {
   const ringState = useHighlightRingState(u.id);
   const [viewerOpen, setViewerOpen] = useState(false);
   return (
@@ -47,6 +47,7 @@ function CircleUserRow({ u }: { u: FollowUser }) {
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{u.name ?? u.handle ?? 'Traveler'}</Text>
           {u.handle ? <Text style={styles.handle}>@{u.handle}</Text> : null}
+          {reason ? <Text style={styles.reason}>{reason}</Text> : null}
         </View>
       </Pressable>
       <HighlightViewer
@@ -146,6 +147,16 @@ export default function Circle() {
     } else {
       Alert.alert('Error', res.message ?? 'Could not save age settings');
     }
+  }
+
+  const followingSet = useMemo(() => new Set(following.map((u) => u.id)), [following]);
+  const followersSet = useMemo(() => new Set(followers.map((u) => u.id)), [followers]);
+
+  function circleReason(u: FollowUser, activeTab: 'circle' | 'followers'): string | undefined {
+    if (activeTab === 'circle') {
+      return followersSet.has(u.id) ? 'Follows you back' : undefined;
+    }
+    return followingSet.has(u.id) ? 'Mutual' : 'Follows you';
   }
 
   const list = tab === 'circle' ? following : followers;
@@ -381,7 +392,7 @@ export default function Circle() {
 
           {/* ── Following / Followers list ── */}
           {list.map((u) => (
-            <CircleUserRow key={u.id} u={u} />
+            <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} />
           ))}
           {list.length === 0 && (
             <View style={styles.emptyBox}>
@@ -455,6 +466,7 @@ const styles = StyleSheet.create({
   avatarEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute, marginTop: 2, fontFamily: 'Courier' },
+  reason: { fontSize: 11, color: color.signal, marginTop: 2 },
   emptyBox: { alignItems: 'center', gap: space.sm, paddingVertical: space.xxl },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },

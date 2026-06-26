@@ -118,15 +118,20 @@ router.get("/trips/:tripId/members", async (req, res) => {
   const allIds = [...memberIds, ...invitedIds];
   if (allIds.length === 0) { res.status(200).json({ members: [], invited: [] }); return; }
 
-  const { data: profiles, error: profErr } = await sc
-    .from("profiles")
-    .select("id, handle, name, avatar_url")
-    .in("id", allIds);
+  const [{ data: profiles, error: profErr }, { data: theyFollowMe }, { data: iFollowThem }] = await Promise.all([
+    sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds),
+    sc.from("user_follows").select("follower_id").eq("following_id", user.id).in("follower_id", allIds),
+    sc.from("user_follows").select("following_id").eq("follower_id", user.id).in("following_id", allIds),
+  ]);
 
   if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+
+  const followsYouSet = new Set<string>((theyFollowMe ?? []).map((r: any) => r.follower_id as string));
+  const youFollowSet = new Set<string>((iFollowThem ?? []).map((r: any) => r.following_id as string));
+
   const toUser = (id: string) => {
     const p = profileMap[id];
     return {
@@ -134,6 +139,8 @@ router.get("/trips/:tripId/members", async (req, res) => {
       handle: (p?.handle as string) ?? "",
       name: (p?.name as string) ?? "",
       avatarUrl: (p?.avatar_url as string | null) ?? null,
+      followsYou: followsYouSet.has(id),
+      youFollow: youFollowSet.has(id),
     };
   };
 

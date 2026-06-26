@@ -44,15 +44,24 @@ function PersonAvatar({ user, size = 36 }: { user: FriendUser; size?: number }) 
   );
 }
 
+function memberReason(user: FriendUser): string | null {
+  if (user.followsYou && user.youFollow) return 'Mutual';
+  if (user.followsYou) return 'Follows you';
+  if (user.youFollow) return 'You follow';
+  return null;
+}
+
 function MemberRow({
   user, badge, badgeKind,
 }: { user: FriendUser; badge?: string; badgeKind?: 'owner' | 'pending' }) {
+  const reason = memberReason(user);
   return (
     <View style={s.row}>
       <PersonAvatar user={user} />
       <View style={s.rowMeta}>
         <Text style={s.rowName} numberOfLines={1}>{user.name || user.handle}</Text>
         {user.handle ? <Text style={s.rowHandle} numberOfLines={1}>@{user.handle}</Text> : null}
+        {reason ? <Text style={s.rowReason} numberOfLines={1}>{reason}</Text> : null}
       </View>
       {badge ? (
         <View style={[
@@ -302,6 +311,7 @@ const s = StyleSheet.create({
   rowMeta: { flex: 1, minWidth: 0 },
   rowName: { ...t.body, color: color.ink, fontWeight: '600' },
   rowHandle: { ...t.small, color: color.mute, fontSize: 12 },
+  rowReason: { fontSize: 11, color: color.signal, marginTop: 1 },
 
   avatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 14 },

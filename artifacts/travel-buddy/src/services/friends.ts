@@ -14,6 +14,8 @@ export interface FriendUser {
   handle: string;
   name: string;
   avatarUrl: string | null;
+  followsYou?: boolean;
+  youFollow?: boolean;
 }
 
 export interface FriendStatusResult {
