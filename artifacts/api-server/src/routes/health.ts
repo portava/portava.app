@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { HealthCheckResponse, CleanupHealthCheckResponse } from "@workspace/api-zod";
 import { getCleanupStatus, queryCleanupHealth } from "../lib/dailyBriefCleanup.js";
+import { getSuggestionSeenStatus } from "../lib/suggestionSeenCleanup.js";
 import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
 import { purgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
@@ -31,12 +32,15 @@ router.get("/healthz/cleanup", async (_req, res) => {
     );
   }
 
+  const seen = getSuggestionSeenStatus();
+
   const data = CleanupHealthCheckResponse.parse({
     cleanupStatus,
     lastRunAt,
     lastOutcome: inMem.lastOutcome,
     lastDeletedCount: inMem.lastDeletedCount,
     consecutiveFailures: inMem.consecutiveFailures,
+    lastSeenDeletedCount: seen.lastDeletedCount,
   });
   res.json(data);
 });

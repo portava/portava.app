@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
+import { startSuggestionSeenCleanup } from "./lib/suggestionSeenCleanup";
 import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
 import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
@@ -30,6 +31,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startDailyBriefCleanup();
+  startSuggestionSeenCleanup();
   startWeatherCacheCleanup();
   initTelegraphBroadcast();
   startSafeReturnScheduler();

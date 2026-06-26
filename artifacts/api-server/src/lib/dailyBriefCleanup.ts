@@ -224,19 +224,23 @@ export async function purgeOldBriefs(opts?: {
     } else {
       const briefsDeleted = count ?? 0;
 
-      // Secondary: purge expired suggestion-seen rows on the same cadence.
-      // Failures here are non-fatal — logged as warnings, never change purgeResult.
+      // Secondary: purge expired suggestion-seen rows on the same cadence as
+      // a belt-and-suspenders measure. The suggestion-seen module also runs its
+      // own independent scheduler so seen rows are purged even when the brief
+      // job is paused. Failures here are non-fatal — logged as warnings, never
+      // change purgeResult. The seen count is tracked separately by the
+      // suggestionSeenCleanup module and reported independently in the health
+      // endpoint.
       const { deleted: seenDeleted } = await purgeExpiredSuggestionSeen({
         client: opts?.client,
       });
 
-      const totalDeleted = briefsDeleted + (seenDeleted ?? 0);
-      recordSuccess(totalDeleted);
+      recordSuccess(briefsDeleted);
       logger.info(
-        { briefsDeleted, seenDeleted: seenDeleted ?? 0, totalDeleted, cutoffDate },
+        { briefsDeleted, seenDeleted: seenDeleted ?? 0, cutoffDate },
         "dailyBriefCleanup: purge complete",
       );
-      purgeResult = { deleted: totalDeleted, error: null };
+      purgeResult = { deleted: briefsDeleted, error: null };
     }
   } catch (err) {
     recordError(err);

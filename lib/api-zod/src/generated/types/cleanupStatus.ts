@@ -13,8 +13,10 @@ export interface CleanupStatus {
   lastRunAt: string | null;
   /** Outcome of the most recent purge attempt. */
   lastOutcome: "success" | "error" | "skipped" | null;
-  /** Number of rows deleted in the most recent successful purge, or null on error/skip. */
+  /** Number of daily_briefs rows deleted in the most recent successful purge, or null on error/skip. */
   lastDeletedCount: number | null;
   /** Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert. */
   consecutiveFailures: number;
+  /** Number of user_suggestion_seen rows deleted in the most recent seen-cleanup run, or null on error/skip. */
+  lastSeenDeletedCount: number | null;
 }

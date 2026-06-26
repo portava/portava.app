@@ -105,11 +105,12 @@ describe("H — GET /api/healthz/cleanup", () => {
     assert.equal(res.status, 200);
 
     const body = await res.json() as Record<string, unknown>;
-    assert.ok("cleanupStatus" in body,        "missing cleanupStatus");
-    assert.ok("lastRunAt" in body,             "missing lastRunAt");
-    assert.ok("lastOutcome" in body,           "missing lastOutcome");
-    assert.ok("lastDeletedCount" in body,      "missing lastDeletedCount");
-    assert.ok("consecutiveFailures" in body,   "missing consecutiveFailures");
+    assert.ok("cleanupStatus" in body,          "missing cleanupStatus");
+    assert.ok("lastRunAt" in body,               "missing lastRunAt");
+    assert.ok("lastOutcome" in body,             "missing lastOutcome");
+    assert.ok("lastDeletedCount" in body,        "missing lastDeletedCount");
+    assert.ok("consecutiveFailures" in body,     "missing consecutiveFailures");
+    assert.ok("lastSeenDeletedCount" in body,    "missing lastSeenDeletedCount");
   });
 
   it("H2: cleanupStatus = 'ok' when job ran 1 h ago", async () => {
@@ -178,6 +179,7 @@ describe("H — GET /api/healthz/cleanup", () => {
       "lastOutcome",
       "lastDeletedCount",
       "consecutiveFailures",
+      "lastSeenDeletedCount",
     ]);
 
     const actualKeys = new Set(Object.keys(body));

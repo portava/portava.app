@@ -25,4 +25,5 @@ export const CleanupHealthCheckResponse = zod.object({
   lastOutcome: zod.enum(["success", "error", "skipped"]).nullable(),
   lastDeletedCount: zod.number().int().nullable(),
   consecutiveFailures: zod.number().int(),
+  lastSeenDeletedCount: zod.number().int().nullable(),
 });
