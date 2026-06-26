@@ -5,17 +5,15 @@
  * (pending_location_exit, pending_delay, pending_safety_review).
  *
  * For each post the user can:
- *   • Publish without location (strips geotag, publishes immediately)
- *   • Change delay (change to delayed_until_time with a future time)
- *   • Make private (cancel + set visibility=private) — not yet wired
- *   • Cancel (cancels the delayed publish)
+ *   • Release now — strips the geotag and publishes immediately
+ *   • Make private — cancels + sets visibility=private
+ *   • Cancel — cancels the delayed publish, leaving the post as a draft
  *
- * Geofence monitoring: when the device is outside the post's geofence
- * radius and has been for ≥ CONFIRMATION_WINDOW_MS, the screen
- * automatically calls POST /api/location/exit-geofence.
+ * Geofence exit detection is handled by the background task registered in
+ * useGeofenceMonitor (app/(tabs)/_layout.tsx) — no on-screen polling needed.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,35 +25,16 @@ import {
   Text,
   View,
 } from 'react-native';
-import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { ArrowLeft, Clock, MapPin, XCircle, Eye } from 'lucide-react-native';
+import { ArrowLeft, Clock, MapPin, XCircle, Zap } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import {
   getPendingPosts,
   publishWithoutLocation,
   cancelDelayedPublish,
   changeLocationPrivacy,
-  exitGeofence,
   type PendingPostRow,
 } from '../src/services/posts';
-
-const CONFIRMATION_WINDOW_MS = 8 * 60 * 1_000; // 8 minutes
-
-function distanceMeters(
-  lat1: number, lng1: number,
-  lat2: number, lng2: number,
-): number {
-  const R = 6_371_000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 function statusLabel(post: PendingPostRow): string {
   switch (post.postStatus) {
@@ -82,13 +61,12 @@ function statusColor(post: PendingPostRow): string {
 
 interface PostCardProps {
   post: PendingPostRow;
-  onPublishWithoutLocation: () => void;
+  onReleaseNow: () => void;
   onCancel: () => void;
   onMakePrivate: () => void;
-  exited: boolean;
 }
 
-function PendingPostCard({ post, onPublishWithoutLocation, onCancel, onMakePrivate, exited }: PostCardProps) {
+function PendingPostCard({ post, onReleaseNow, onCancel, onMakePrivate }: PostCardProps) {
   const preview = post.content.replace(/^\[[^\]]+\]\s*/, '').slice(0, 120);
   return (
     <View style={s.card}>
@@ -97,11 +75,6 @@ function PendingPostCard({ post, onPublishWithoutLocation, onCancel, onMakePriva
           <Clock size={12} color={statusColor(post)} />
           <Text style={[s.statusText, { color: statusColor(post) }]}>{statusLabel(post)}</Text>
         </View>
-        {exited && post.postStatus === 'pending_location_exit' && (
-          <View style={s.exitedBadge}>
-            <Text style={s.exitedText}>Exited geofence ✓</Text>
-          </View>
-        )}
       </View>
 
       {preview.length > 0 && (
@@ -119,9 +92,9 @@ function PendingPostCard({ post, onPublishWithoutLocation, onCancel, onMakePriva
       )}
 
       <View style={s.actions}>
-        <Pressable style={s.actionBtn} onPress={onPublishWithoutLocation}>
-          <Eye size={14} color={color.deep} />
-          <Text style={s.actionBtnText}>Publish (no location)</Text>
+        <Pressable style={s.actionBtn} onPress={onReleaseNow}>
+          <Zap size={14} color={color.deep} />
+          <Text style={s.actionBtnText}>Release now</Text>
         </Pressable>
         <Pressable style={[s.actionBtn, s.privateBtn]} onPress={onMakePrivate}>
           <XCircle size={14} color={color.mute} />
@@ -141,8 +114,6 @@ export default function PendingPostsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const exitedPostIds = useRef<Set<string>>(new Set());
-  const outsinceTimes = useRef<Map<string, number>>(new Map());
 
   const load = useCallback(async () => {
     const result = await getPendingPosts();
@@ -157,61 +128,6 @@ export default function PendingPostsScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  // ── Geofence monitoring ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const geofencePosts = posts.filter(
-      (p) =>
-        p.postStatus === 'pending_location_exit' &&
-        !exitedPostIds.current.has(p.id),
-    );
-    if (geofencePosts.length === 0) return;
-
-    let sub: Location.LocationSubscription | null = null;
-
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-
-      sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, distanceInterval: 50 },
-        async (loc) => {
-          const now = Date.now();
-          for (const post of geofencePosts) {
-            if (!post.locationLat || !post.locationLng) continue;
-            const dist = distanceMeters(
-              loc.coords.latitude,
-              loc.coords.longitude,
-              post.locationLat,
-              post.locationLng,
-            );
-            const radius = post.geofenceRadiusMeters ?? 400;
-            if (dist > radius) {
-              const firstOutside = outsinceTimes.current.get(post.id);
-              if (!firstOutside) {
-                outsinceTimes.current.set(post.id, now);
-              } else if (now - firstOutside >= CONFIRMATION_WINDOW_MS) {
-                // Confirmed exit — notify server
-                exitedPostIds.current.add(post.id);
-                outsinceTimes.current.delete(post.id);
-                await exitGeofence({
-                  postId: post.id,
-                  lat: loc.coords.latitude,
-                  lng: loc.coords.longitude,
-                });
-                load(); // refresh to get updated publish_eligible_at
-              }
-            } else {
-              // Re-entered — reset the timer
-              outsinceTimes.current.delete(post.id);
-            }
-          }
-        },
-      );
-    })();
-
-    return () => { sub?.remove(); };
-  }, [posts, load]);
 
   async function handleMakePrivate(post: PendingPostRow) {
     Alert.alert(
@@ -235,14 +151,14 @@ export default function PendingPostsScreen() {
     );
   }
 
-  async function handlePublishWithoutLocation(post: PendingPostRow) {
+  async function handleReleaseNow(post: PendingPostRow) {
     Alert.alert(
-      'Publish without location?',
-      "Your post will go public immediately but won't show where you are.",
+      'Release now?',
+      "Your post will go public immediately without showing your location.",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Keep waiting', style: 'cancel' },
         {
-          text: 'Publish',
+          text: 'Release now',
           style: 'default',
           onPress: async () => {
             const result = await publishWithoutLocation(post.id);
@@ -322,8 +238,7 @@ export default function PendingPostsScreen() {
           renderItem={({ item }) => (
             <PendingPostCard
               post={item}
-              exited={exitedPostIds.current.has(item.id)}
-              onPublishWithoutLocation={() => handlePublishWithoutLocation(item)}
+              onReleaseNow={() => handleReleaseNow(item)}
               onMakePrivate={() => handleMakePrivate(item)}
               onCancel={() => handleCancel(item)}
             />
@@ -349,7 +264,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   back: { padding: 4 },
-  title: { ...t.headingMd, color: color.ink },
+  title: { ...t.heading, color: color.ink },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: space.xl },
   errorText: { ...t.body, color: color.signal },
   emptyTitle: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
@@ -369,11 +284,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
   },
   statusText: { ...t.small, fontWeight: '700', fontSize: 11 },
-  exitedBadge: {
-    paddingHorizontal: 8, paddingVertical: 3,
-    backgroundColor: color.success + '18', borderRadius: radius.pill,
-  },
-  exitedText: { ...t.small, color: color.success, fontWeight: '700', fontSize: 11 },
   preview: { ...t.body, color: color.ink, fontSize: 14 },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   locText: { ...t.small, color: color.mute },
