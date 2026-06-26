@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, Modal, ScrollView, Pressable, Switch,
-  TextInput, StyleSheet, ActivityIndicator, Alert,
+  TextInput, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { X, Plane, Clock, MapPin, AlertCircle } from 'lucide-react-native';
 import {
@@ -72,6 +72,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   const [vibeChips, setVibeChips]                     = useState<string[]>([]);
 
   const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
 
   const toggleVibe = (key: string) => {
     setVibeChips((prev) =>
@@ -100,15 +101,16 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   };
 
   const handleCreate = async () => {
+    setError(null);
     const arrival   = buildDatetime(arrivalHour);
     const departure = buildDatetime(departureHour);
 
     if (!arrival || !departure) {
-      Alert.alert('Missing times', 'Please enter valid arrival and departure hours (0–23).');
+      setError('Please enter valid arrival and departure hours (0–23).');
       return;
     }
     if (new Date(departure) <= new Date(arrival)) {
-      Alert.alert('Invalid times', 'Departure must be after arrival.');
+      setError('Departure must be after arrival.');
       return;
     }
 
@@ -138,8 +140,13 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
       const result = await createLayoverSession(payload);
       onSessionCreated?.(result.session.id, result.safeReturnSuggested);
       onClose();
-    } catch {
-      Alert.alert('Error', 'Could not start layover session. Please try again.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('feature_disabled') || msg.includes('not yet enabled')) {
+        setError('Layover Mode is not yet enabled. Check back soon!');
+      } else {
+        setError('Could not start layover session. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -290,6 +297,14 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
             </View>
           )}
 
+          {/* Inline error */}
+          {error ? (
+            <View style={styles.errorBox}>
+              <AlertCircle size={14} color="#C62828" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
           {/* Submit */}
           <Pressable
             style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
@@ -348,6 +363,8 @@ const styles = StyleSheet.create({
   chipTextActive: { color: '#fff' },
   warningBox:   { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FFF3E0', borderRadius: 8, padding: 10, marginTop: 12 },
   warningText:  { fontSize: 12, color: '#E65100', flex: 1 },
+  errorBox:     { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FFEBEE', borderRadius: 8, padding: 12, marginTop: 12 },
+  errorText:    { fontSize: 13, color: '#C62828', flex: 1, fontWeight: '500' },
   submitBtn:    { backgroundColor: '#2196F3', borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 24 },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
