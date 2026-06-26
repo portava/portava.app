@@ -1,0 +1,223 @@
+Continue and finish the Travel Buddy backlog queue using the existing Task #433 check-first backlog sweep process.
+
+Do not restart the backlog sweep and do not rebuild systems already implemented. Continue from the current clean post-rebase state and work through the remaining queue systematically.
+
+Core rule:
+Check first, then build or update accordingly. Reuse existing work, wire partial work, replace mocks with real data where safe, apply/flag migrations when access allows, and only build missing pieces after proving they do not already exist.
+
+Current known completed items:
+- Trips tab pending invite badge
+- Blocked-user profile unavailable placeholder
+- Telegraph inbox blocked-thread filtering
+- Profile home city/country fields
+- Suggested travelers endpoint and Discover idle-state wiring
+- TripPage mockTripDetail.id bug fix
+- Fixture cleanup where safe
+- Targeted tests previously passed 99/99
+- App and API typechecks previously passed
+
+Before starting:
+1. Verify working tree is clean.
+2. Verify the platform is no longer stuck in MERGING.
+3. Run the closest safe checks:
+   - app typecheck
+   - API/server typecheck
+   - targeted tests for the recently changed areas if available
+4. Do not redo completed work unless a fresh regression is found.
+
+Next priority order:
+
+Phase 0 — Foundation blockers first
+
+1. Database migrations
+Tasks:
+- #120, #128, #137, #147, #172, #175, #214, #223, #235, #381, #410, #421
+
+Instructions:
+- Check whether each SQL migration file exists.
+- Check whether code already expects the migration.
+- Check whether Supabase access is available.
+- If Supabase access is not available, do not fake-apply migrations.
+- Report each migration as:
+  - applied
+  - file exists but needs Supabase access
+  - missing
+  - superseded by newer migration
+- Do not create duplicate migrations unless the existing migration is missing or broken.
+- Add clear operator instructions for any migration that must be applied manually.
+
+2. Telegraph/group chat
+Tasks:
+- #430 Fix useGroupChat import crash
+- #429 Reply to and save messages in chat
+- #155 Permanently mute suggestion category
+- #156 Consolidate preference-event writes
+- #157 if present in queue
+- #193 Pre-fill Telegraph command bar from gap-day chip
+- #194 if present in queue
+
+Instructions:
+- Check existing Telegraph hooks, group chat routes, message models, saved message logic, reply UI, and preference-event logging.
+- Fix the crash first.
+- Reuse existing message/thread models.
+- Do not create a second chat system.
+- Add or update tests for the crash and reply/save behavior.
+
+3. Rent a Buddy
+Tasks:
+- #373 Wire API routes so bookings actually save
+- #374 Buddy application flow
+- #375 Real live-availability data
+- #376 In-app messaging between traveler and Buddy
+- #381 Apply Rent a Buddy DB migration
+
+Instructions:
+- Check existing Rent a Buddy tables, migrations, services, routes, components, booking UI, availability UI, and messaging hooks.
+- Classify each task before editing:
+  - complete
+  - partial
+  - mocked
+  - migration-blocked
+  - missing
+- Wire real booking persistence first.
+- Then wire application flow.
+- Then replace mocked availability with real availability data.
+- Then connect traveler/Buddy messaging through existing Telegraph/group chat if possible.
+- Do not create duplicate booking, messaging, or availability systems.
+- Existing failing Rent-a-Buddy tests were previously identified as pre-existing setup/assertion mismatches. Re-check them, separate true regressions from pre-existing failures, and fix only if in scope.
+
+Phase 1 — Feature work
+
+4. Discovery
+Tasks:
+- #121 Save Discovery places to wishlist
+- #122 Map view of discovered places
+- #123 Pre-warm popular destinations
+
+Instructions:
+- Reuse existing Saved/Saved Places systems.
+- Reuse existing map/location/GPS systems.
+- Do not create duplicate wishlist or map services.
+
+5. Trips
+Tasks:
+- #125 Preview a trip before accepting/declining
+- #150 Invited members preview plan before accepting
+- #171 Let owners pick specific plan editors
+- #216 Trip editing screen
+
+Instructions:
+- Reuse existing trip detail, invite, role, and editor-permission models.
+- Keep invite preview read-only until accepted.
+- Do not duplicate trip screens if existing screens can be reused.
+
+6. Search/profile
+Tasks:
+- #127 Text-search index for faster search
+- #130 Update home city/country from Edit Profile if not fully closed
+- translation language on profile if still queued
+
+Instructions:
+- Confirm whether #130 is fully complete from prior changes.
+- Add search index only if needed and migration-supported.
+- Reuse profile settings/language fields if they exist.
+
+7. Push notifications
+Tasks:
+- #129 Notify when trip invite is accepted
+- #176 Notify when a friend marks a trip day free
+- #196 Notify all invitees when meetup time is confirmed
+
+Instructions:
+- Reuse existing notification service.
+- Do not create duplicate push infrastructure.
+- Add tests around notification event creation where possible.
+
+8. Meetups and availability
+Tasks:
+- #160–#165
+- #180–#184
+- #187–#200
+
+Instructions:
+- Batch small UI fixes together.
+- Keep availability logic centralized.
+- Reuse existing meetup/time-poll models.
+- Add targeted tests for backend time-poll and availability changes.
+
+9. Highlights
+Tasks:
+- #235–#242
+- #248–#249
+
+Instructions:
+- Check existing highlight badge, archive/delete, and sync logic first.
+- Reuse existing media/post systems.
+- Avoid duplicate highlight state stores.
+
+10. Weather
+Tasks:
+- #168 Temperature unit preference
+- #169 Background forecast refresh
+- #170 Weather cache health in server status
+
+Instructions:
+- Reuse existing weather cache and settings.
+- Add health/status reporting without duplicating weather fetchers.
+
+11. Delayed posts/location safety
+Tasks:
+- #419 Edit scheduled post time
+- #420 Warn when scheduled time has passed
+- #431 True background geofencing with Expo TaskManager
+- #432 Auto-refresh Pending Posts after geofence exit
+
+Instructions:
+- Reuse existing delayed geotag/geofence work.
+- Preserve privacy rule: posts publish only after user leaves the location/geofence.
+- Do not create a second GPS/geofence system.
+- If Expo TaskManager or OS background permissions limit behavior, report honestly.
+
+12. UI polish and small fixes
+Tasks:
+- Remaining ~30 small UI/polish items
+
+Instructions:
+- Batch related small fixes.
+- Keep changes narrow.
+- Do not redesign screens unless required.
+- Preserve Travel Buddy style.
+
+Per-task workflow:
+For every task or small batch, report before edits:
+- task number(s)
+- what already exists
+- what is missing
+- what will be reused
+- what will be built or updated
+- what will not be rebuilt
+- migration/feature-flag dependency
+- likely files affected
+
+After edits, report:
+- task number(s)
+- status: complete / already implemented / partially fixed / blocked
+- files changed
+- existing systems reused
+- tests run
+- exact pass/fail counts
+- follow-up needed
+
+Verification:
+After each small batch, run the closest safe checks:
+- targeted unit tests
+- route/API tests
+- app typecheck
+- API/server typecheck
+- migration validation if migrations are touched
+- lint/guards if available
+
+If a check cannot run due to environment limits or missing Supabase access, report exactly why and run the nearest safe targeted verification.
+
+Acceptance:
+Finish the remaining Travel Buddy backlog queue through the Task #433 check-first sweep. Existing implementations are reused, partial systems are wired, mocks are replaced with real data where safe, migration blockers are clearly reported, and missing pieces are built narrowly. No duplicate tables, routes, services, screens, hooks, GPS systems, chat systems, booking systems, or notification systems are created.

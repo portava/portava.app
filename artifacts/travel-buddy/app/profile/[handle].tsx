@@ -20,7 +20,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { blockUser } from '../../src/services/blocks';
+import { blockUser, getBlockStatus } from '../../src/services/blocks';
 
 interface PublicProfile {
   id: string;
@@ -269,17 +269,29 @@ export default function Profile() {
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isBlockedRelation, setIsBlockedRelation] = useState(false);
 
   const loadProfile = useCallback(async () => {
     if (!handle) return;
     setLoading(true);
     setLoadError(null);
+    setIsBlockedRelation(false);
     let res = await getProfileByHandle(handle as string);
     if (!res.ok) res = await getProfileById(handle as string);
-    if (res.ok && res.data) setProfile(res.data as PublicProfile);
-    else setLoadError('Could not load this profile.');
+    if (res.ok && res.data) {
+      const p = res.data as PublicProfile;
+      setProfile(p);
+      if (p.id && p.id !== currentUserId) {
+        const blockRes = await getBlockStatus(p.id);
+        if (blockRes.ok && blockRes.data) {
+          setIsBlockedRelation(blockRes.data.iBlocked || blockRes.data.theyBlockedMe);
+        }
+      }
+    } else {
+      setLoadError('Could not load this profile.');
+    }
     setLoading(false);
-  }, [handle]);
+  }, [handle, currentUserId]);
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
   useFocusEffect(useCallback(() => { loadProfile(); }, [loadProfile]));
@@ -302,6 +314,19 @@ export default function Profile() {
       <View style={{ flex: 1, backgroundColor: color.paper }}>
         <ScreenHeader title="Profile" back />
         <View style={s.center}><Text style={s.errText}>{loadError ?? 'Profile not found.'}</Text></View>
+      </View>
+    );
+  }
+
+  if (isBlockedRelation) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper }}>
+        <ScreenHeader title="Profile" back />
+        <View style={s.center}>
+          <ShieldAlert size={40} color={color.haze} />
+          <Text style={s.unavailableTitle}>This user is unavailable</Text>
+          <Text style={s.unavailableSub}>You can't view this profile.</Text>
+        </View>
       </View>
     );
   }
@@ -423,6 +448,8 @@ function InfoChip({ label, accent = false }: { label: string; accent?: boolean }
 const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errText: { ...t.body, color: color.mute },
+  unavailableTitle: { ...t.title, color: color.ink, fontSize: 18, marginTop: space.md, textAlign: 'center' },
+  unavailableSub: { ...t.small, color: color.mute, textAlign: 'center' },
   heroRow: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
   avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: color.haze, flexShrink: 0 },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },

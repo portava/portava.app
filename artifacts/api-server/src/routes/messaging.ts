@@ -1332,6 +1332,35 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     ? await enrichSpans(sc, 'message', nonDeletedMsgItems, user.id)
     : {};
 
+  // Fetch reply_to_id values and quoted context.
+  // Wrapped in try/catch: silently skipped if migration 0057 is not yet applied.
+  let replyToIdMap: Record<string, string | null> = {};
+  let replyContextMap: Record<string, { body: string; senderName: string | null }> = {};
+  try {
+    const allIds = rows.map((m) => m.id as string);
+    if (allIds.length > 0) {
+      const { data: replyIdRows, error: replyIdErr } = await sc
+        .from('messages')
+        .select('id, reply_to_id')
+        .in('id', allIds);
+      if (!replyIdErr && replyIdRows) {
+        for (const r of replyIdRows as any[]) {
+          if (r.reply_to_id) replyToIdMap[r.id] = r.reply_to_id;
+        }
+        const replyIds = Object.values(replyToIdMap).filter(Boolean) as string[];
+        if (replyIds.length > 0) {
+          const { data: quotedRows } = await sc
+            .from('messages')
+            .select(`id, body, profile:profiles!messages_sender_id_fkey(name)`)
+            .in('id', replyIds);
+          for (const qr of quotedRows as any[] ?? []) {
+            replyContextMap[qr.id] = { body: qr.body ?? '', senderName: qr.profile?.name ?? null };
+          }
+        }
+      }
+    }
+  } catch { /* migration 0057 not applied — reply context unavailable */ }
+
   const messages = rows.map((m) => {
     const p = m.profile ?? {};
     const isDeleted = Boolean(m.deleted_at);
@@ -1379,6 +1408,10 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       subtype: (m.subtype as string | null) ?? null,
       // Rich-text span metadata (absent for deleted messages)
       ...(spans ? { tags: spans.tags, hashtagUsages: spans.hashtagUsages } : {}),
+      // Reply threading (populated after migration 0057_reply_to_messages.sql)
+      replyToId: replyToIdMap[m.id] ?? null,
+      replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
+      replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
     };
   });
 
@@ -1432,6 +1465,23 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
 
   const now = new Date().toISOString();
+
+  const replyToIdRaw = typeof req.body?.replyToId === 'string' ? req.body.replyToId.trim() : null;
+  const replyToId = replyToIdRaw && isUuid(replyToIdRaw) ? replyToIdRaw : null;
+
+  // Validate reply reference belongs to the same thread (prevents cross-thread metadata exposure).
+  if (replyToId) {
+    const { data: refMsg } = await sc
+      .from('messages')
+      .select('id')
+      .eq('id', replyToId)
+      .eq('thread_id', threadId)
+      .maybeSingle();
+    if (!refMsg) {
+      sendError(res, 'invalid_payload', 'Referenced message does not belong to this thread');
+      return;
+    }
+  }
 
   const { data: msg, error: msgErr } = await sc
     .from('messages')
@@ -1513,7 +1563,13 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     msgType: m.msg_type ?? 'text',
     subtype: m.subtype ?? null,
     clientId,
+    replyToId: replyToId ?? null,
   });
+
+  // Fire-and-forget: set reply_to_id if provided (requires migration 0057_reply_to_messages.sql).
+  if (replyToId) {
+    void (Promise.resolve(sc.from('messages').update({ reply_to_id: replyToId }).eq('id', m.id)).catch(() => {}));
+  }
 
   // Realtime: notify other active members a new message landed, and bump the
   // thread for inbox ordering. Fire-and-forget — delivery must never affect the
@@ -1941,8 +1997,48 @@ router.post('/threads/:threadId/report', async (req, res) => {
 // ── Report message ────────────────────────────────────────────────────────────
 
 /**
- * POST /api/messages/:messageId/report
- * Body: { reason: string }
+ * POST /api/threads/:threadId/messages/:messageId/save
+ * Saves a message to the caller's personal collection (requires migration 0057).
+ */
+router.post('/threads/:threadId/messages/:messageId/save', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { threadId, messageId } = req.params;
+  if (!isUuid(threadId) || !isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const { data: membership } = await sc
+    .from('message_thread_members').select('user_id')
+    .eq('thread_id', threadId).eq('user_id', user.id).is('left_at', null).maybeSingle();
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+
+  // Verify message belongs to this thread (prevents cross-thread saves).
+  const { data: msgRow } = await sc
+    .from('messages')
+    .select('id')
+    .eq('id', messageId)
+    .eq('thread_id', threadId)
+    .maybeSingle();
+  if (!msgRow) { sendError(res, 'not_found', 'Message not found in this thread'); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc.from('saved_messages').upsert(
+    { user_id: user.id, message_id: messageId, saved_at: now },
+    { onConflict: 'user_id,message_id' },
+  );
+
+  if (error) {
+    req.log.warn({ err: error }, 'saved_messages upsert failed (migration 0057 may not be applied)');
+    res.json({ ok: false, reason: 'unavailable' });
+    return;
+  }
+  res.status(201).json({ ok: true, savedAt: now });
+});
+
+/**
  * Records a user report against a message. Best-effort insert.
  */
 router.post('/messages/:messageId/report', async (req, res) => {

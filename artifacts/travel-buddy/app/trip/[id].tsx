@@ -182,7 +182,7 @@ export default function TripDetail() {
             onPlanMeetup={(date) => setMeetupDate(date)}
           />
         ) : null}
-        <SavedIdeas ideas={trip.savedIdeas} />
+        <SavedIdeas ideas={trip.savedIdeas} tripId={trip.id} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />
 

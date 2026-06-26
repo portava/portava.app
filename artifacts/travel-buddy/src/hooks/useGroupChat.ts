@@ -46,7 +46,7 @@ export interface GroupChatData {
   errorMessage: string | null;
   typingUserIds: string[];
   reload: () => void;
-  send: (body: string) => Promise<{ ok: boolean }>;
+  send: (body: string, replyToId?: string) => Promise<{ ok: boolean }>;
   retrySend: (clientId: string) => Promise<void>;
   notifyTyping: (isTyping: boolean) => void;
   edit: (messageId: string, body: string) => Promise<void>;
@@ -178,7 +178,7 @@ export function useGroupChat(
     };
   }, [silentRefresh, clearTyping]);
 
-  const send = useCallback(async (body: string): Promise<{ ok: boolean }> => {
+  const send = useCallback(async (body: string, replyToId?: string): Promise<{ ok: boolean }> => {
     if (!thread || !body.trim()) return { ok: false };
     const clientId = makeClientId();
     const optimistic: Message = {
@@ -205,7 +205,7 @@ export function useGroupChat(
     } as unknown as Message;
     setSending(true);
     setMessages((prev) => [...prev, optimistic]);
-    const res = await sendMessage(thread.id, body.trim(), { clientId });
+    const res = await sendMessage(thread.id, body.trim(), { clientId, ...(replyToId ? { replyToId } : {}) });
     if (res.ok && res.data) {
       setMessages((prev) => {
         const withoutOptimistic = prev.filter((m) => m.clientId !== clientId);

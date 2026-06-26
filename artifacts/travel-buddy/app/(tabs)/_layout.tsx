@@ -9,6 +9,7 @@ import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
 import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
+import { getPendingTripInvites } from '../../src/services/trips';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -94,6 +95,7 @@ export default function TabLayout() {
   const isDesktop = useIsDesktop();
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
   const [pendingRequests, setPendingRequests] = useState(0);
+  const [pendingTripInvites, setPendingTripInvites] = useState(0);
 
   // Monitor geofence exits for pending_location_exit posts.
   // Lives here so it runs across all tabs, not just passport.
@@ -107,6 +109,14 @@ export default function TabLayout() {
       getIncomingMessageRequests().then((res) => {
         if (res.ok && res.data) setPendingRequests(res.data.requests.length);
       });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    getPendingTripInvites().then((invites) => setPendingTripInvites(invites.length)).catch(() => {});
+    const timer = setInterval(() => {
+      getPendingTripInvites().then((invites) => setPendingTripInvites(invites.length)).catch(() => {});
     }, 60_000);
     return () => clearInterval(timer);
   }, []);
@@ -162,8 +172,20 @@ export default function TabLayout() {
         name="trips"
         options={{
           title: 'Trips',
-          tabBarIcon: ({ color: c }) => <Map size={22} color={c} />,
+          tabBarIcon: ({ color: c }) => (
+            <View>
+              <Map size={22} color={c} />
+              {pendingTripInvites > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {pendingTripInvites > 99 ? '99+' : String(pendingTripInvites)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
+        listeners={{ focus: () => { getPendingTripInvites().then((invites) => setPendingTripInvites(invites.length)).catch(() => {}); } }}
       />
       <Tabs.Screen
         name="messages"

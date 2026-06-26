@@ -140,6 +140,10 @@ export interface Message {
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText rendering. */
   hashtagUsages?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
+  /** Reply threading — populated after migration 0057_reply_to_messages.sql is applied. */
+  replyToId?: string | null;
+  replyToBody?: string | null;
+  replyToSenderName?: string | null;
 }
 
 export type MsgErrorKind =
@@ -385,9 +389,16 @@ export async function getThreadMessages(
 export async function sendMessage(
   threadId: string,
   body: string,
-  opts?: { msgType?: string; subtype?: string; clientId?: string },
+  opts?: { msgType?: string; subtype?: string; clientId?: string; replyToId?: string },
 ): Promise<MsgResult<Message>> {
   return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
+}
+
+export async function saveMessage(
+  threadId: string,
+  messageId: string,
+): Promise<MsgResult<{ ok: boolean; savedAt: string }>> {
+  return apiPost(`/api/threads/${threadId}/messages/${messageId}/save`, {});
 }
 
 /**

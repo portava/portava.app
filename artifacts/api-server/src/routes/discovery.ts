@@ -19,7 +19,7 @@
 
 import { Router } from "express";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
-import { sendError } from "../lib/http";
+import { sendError, requireUser } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
@@ -835,6 +835,39 @@ router.get("/discovery/community", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");
     res.json({ items: [], city, total: 0 });
+  }
+});
+
+/**
+ * POST /api/discovery/community/:placeId/save  — save a community discovery place (#121).
+ * Increments saved_count on discovery_places. Requires migration 0029_discovery_places.sql.
+ * Gracefully returns ok:false if the table does not exist yet.
+ */
+router.post("/discovery/community/:placeId/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { placeId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(placeId)) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) { res.json({ ok: false, reason: "server_not_configured" }); return; }
+  try {
+    const { data: place, error: fetchErr } = await sc
+      .from("discovery_places")
+      .select("id, saved_count")
+      .eq("id", placeId)
+      .maybeSingle();
+    if (fetchErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    if (!place) { sendError(res, "not_found", "Place not found"); return; }
+    await sc
+      .from("discovery_places")
+      .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
+      .eq("id", placeId);
+    res.json({ ok: true, placeId });
+  } catch {
+    res.json({ ok: false, reason: "unavailable" });
   }
 });
 

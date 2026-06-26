@@ -5,6 +5,7 @@ import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEdi
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { sendPushNotification } from "../lib/push.js";
 
 const router = Router();
 
@@ -460,6 +461,26 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
 
   // Fire-and-forget: sync group chat membership for this trip.
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+
+  // Fire-and-forget: notify trip owner their invite was accepted (#129).
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const { data: tripRow } = await sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle();
+      if (!tripRow || (tripRow as any).owner_id === user.id) return; // skip if caller IS owner
+      const [{ data: ownerRow }, { data: acceptorRow }] = await Promise.all([
+        sc2.from("profiles").select("expo_push_token").eq("id", (tripRow as any).owner_id).maybeSingle(),
+        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+      ]);
+      const acceptorName = (acceptorRow as any)?.display_name ?? "Someone";
+      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+        title: (tripRow as any).title ?? "Your trip",
+        body: `${acceptorName} joined your trip!`,
+        data: { type: "trip_invite_accepted", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
 
   res.status(200).json({ status: "accepted", tripId, role: "member" });
 });

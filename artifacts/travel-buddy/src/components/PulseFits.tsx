@@ -3,7 +3,7 @@ import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { router } from 'expo-router';
 import { MapPin, ChevronRight } from 'lucide-react-native';
 import type { CityEvent } from '../types/models';
-import { me, users } from '../data/cebu';
+import { users } from '../data/cebu';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';

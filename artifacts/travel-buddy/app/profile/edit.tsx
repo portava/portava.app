@@ -68,6 +68,8 @@ interface FormState {
   preferredLanguage: string | null;
   dateOfBirth: string | null;
   tagPermission: TagPermission;
+  homeCity: string;
+  homeCountry: string;
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -85,6 +87,8 @@ export default function EditProfileScreen() {
     username: '',
     bio: '',
     visibility: 'public',
+    homeCity: '',
+    homeCountry: '',
     avatarUri: null,
     coverUri: null,
     avatarUrl: null,
@@ -117,7 +121,9 @@ export default function EditProfileScreen() {
     form.coverUri !== originalForm.coverUri ||
     form.preferredLanguage !== originalForm.preferredLanguage ||
     form.dateOfBirth !== originalForm.dateOfBirth ||
-    form.tagPermission !== originalForm.tagPermission
+    form.tagPermission !== originalForm.tagPermission ||
+    form.homeCity !== originalForm.homeCity ||
+    form.homeCountry !== originalForm.homeCountry
   );
 
   useEffect(() => {
@@ -140,6 +146,8 @@ export default function EditProfileScreen() {
           username: p.username ?? '',
           bio: p.bio ?? '',
           visibility: p.passportVisibility ?? 'public',
+          homeCity: p.homeCity ?? '',
+          homeCountry: p.homeCountry ?? '',
           avatarUri: null,
           coverUri: null,
           avatarUrl: p.avatarUrl,
@@ -292,6 +300,12 @@ export default function EditProfileScreen() {
     }
     if (form.bio !== (originalForm?.bio ?? '')) {
       patch.bio = form.bio;
+    }
+    if (form.homeCity !== (originalForm?.homeCity ?? '')) {
+      patch.homeCity = form.homeCity.trim() || undefined;
+    }
+    if (form.homeCountry !== (originalForm?.homeCountry ?? '')) {
+      patch.homeCountry = form.homeCountry.trim() || undefined;
     }
     if (form.visibility !== (originalForm?.visibility ?? 'public')) {
       patch.passportVisibility = form.visibility;
@@ -546,6 +560,36 @@ export default function EditProfileScreen() {
                   textAlignVertical="top"
                   maxLength={BIO_MAX}
                   returnKeyType="default"
+                />
+              </View>
+
+              {/* Home City */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Home City</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={form.homeCity}
+                  onChangeText={(text) => setForm((f) => ({ ...f, homeCity: text }))}
+                  placeholder="e.g. Bangkok"
+                  placeholderTextColor={color.faint}
+                  maxLength={100}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+              </View>
+
+              {/* Home Country */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Home Country</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={form.homeCountry}
+                  onChangeText={(text) => setForm((f) => ({ ...f, homeCountry: text }))}
+                  placeholder="e.g. Thailand"
+                  placeholderTextColor={color.faint}
+                  maxLength={100}
+                  autoCapitalize="words"
+                  returnKeyType="next"
                 />
               </View>
 

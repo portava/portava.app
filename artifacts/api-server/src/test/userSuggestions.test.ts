@@ -1,0 +1,197 @@
+/**
+ * GET /api/users/suggestions — "people you may know" endpoint
+ *
+ * Returns up to 10 followers the caller hasn't followed back yet,
+ * excluding blocked users. Gracefully returns [] on DB errors.
+ *
+ * Run: node --import tsx/esm --test src/test/userSuggestions.test.ts
+ */
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import followsRouter from "../routes/follows.js";
+
+// ── fake state ────────────────────────────────────────────────────────────────
+
+const ME = "user-me";
+const A  = "user-a";
+const B  = "user-b";
+const C  = "user-c";   // blocked by me
+
+const ME_TOK = "tok-me";
+
+function makeFakeClient(state: {
+  follows:  { follower_id: string; following_id: string }[];
+  profiles: { id: string; handle: string; name: string; avatar_url: string | null; is_private: boolean }[];
+  blocks:   { blocker_id: string; blocked_id: string }[];
+}) {
+  return {
+    auth: {
+      getUser: async (tok: string) =>
+        tok === ME_TOK ? { data: { user: { id: ME } }, error: null }
+                       : { data: { user: null }, error: { message: "bad token" } },
+    },
+    from: (table: string) => {
+      const filters: Array<(r: any) => boolean> = [];
+      let eqCol: string | null = null;
+      let eqVal: any = null;
+
+      const builder: any = {
+        select()  { return builder; },
+        eq(col: string, val: any)   { filters.push((r) => r[col] === val); return builder; },
+        in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+        or(expr: string) {
+          // parse "blocker_id.eq.X,blocked_id.eq.X" style
+          const parts = expr.split(",").map((p) => p.trim().split("."));
+          filters.push((r) =>
+            parts.some(([col, , val]) => String(r[col]) === String(val))
+          );
+          return builder;
+        },
+        limit() { return builder; },
+        order() { return builder; },
+        maybeSingle() { return resolveSingle(); },
+        then(onF: any, onR: any) { return resolveList().then(onF, onR); },
+      };
+
+      function source(): any[] {
+        if (table === "user_follows")  return state.follows;
+        if (table === "profiles")      return state.profiles;
+        if (table === "user_blocks")   return state.blocks;
+        return [];
+      }
+
+      function rows() { return source().filter((r) => filters.every((f) => f(r))); }
+
+      async function resolveList() { return { data: rows(), error: null }; }
+      async function resolveSingle() { const r = rows(); return { data: r[0] ?? null, error: null }; }
+
+      return builder;
+    },
+  };
+}
+
+// ── server ────────────────────────────────────────────────────────────────────
+
+let base: string;
+let server: ReturnType<typeof createServer>;
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use("/api", followsRouter);
+  server = createServer(app);
+  await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+  const addr = server.address() as { port: number };
+  base = `http://127.0.0.1:${addr.port}/api`;
+});
+
+after(() => server.close());
+
+function req(path: string, tok = ME_TOK) {
+  return fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${tok}` } });
+}
+
+function setup(state: Parameters<typeof makeFakeClient>[0]) {
+  const client = makeFakeClient(state) as any;
+  _setTestClient(client, true);
+  _setTestServiceClient(client);
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+describe("GET /api/users/suggestions", () => {
+  it("returns 401 when unauthenticated", async () => {
+    setup({ follows: [], profiles: [], blocks: [] });
+    const r = await req("/users/suggestions", "bad-token");
+    assert.equal(r.status, 401);
+  });
+
+  it("returns [] when caller has no followers", async () => {
+    setup({ follows: [], profiles: [], blocks: [] });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.users, []);
+  });
+
+  it("returns [] when all followers are already followed back", async () => {
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },  // A follows me
+        { follower_id: ME, following_id: A },  // I follow A back
+      ],
+      profiles: [{ id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false }],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.users, []);
+  });
+
+  it("returns followers I haven't followed back", async () => {
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+        { follower_id: ME, following_id: A },  // already following A
+      ],
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    // Only B should appear (A is already followed back)
+    assert.equal(body.users.length, 1);
+    assert.equal(body.users[0].id, B);
+    assert.equal(body.users[0].isFollowing, false);
+    assert.equal(body.users[0].username, "bbb");
+  });
+
+  it("excludes blocked users", async () => {
+    setup({
+      follows: [
+        { follower_id: B, following_id: ME },
+        { follower_id: C, following_id: ME },
+      ],
+      profiles: [
+        { id: B, handle: "bbb", name: "Bob",  avatar_url: null, is_private: false },
+        { id: C, handle: "ccc", name: "Carl", avatar_url: null, is_private: false },
+      ],
+      blocks: [{ blocker_id: ME, blocked_id: C }],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids = body.users.map((u: any) => u.id);
+    assert.ok(ids.includes(B), "B (not blocked) should appear");
+    assert.ok(!ids.includes(C), "C (blocked) should not appear");
+  });
+
+  it("returns correct TravelerSearchResult shape", async () => {
+    setup({
+      follows: [{ follower_id: B, following_id: ME }],
+      profiles: [{ id: B, handle: "traveler1", name: "Trav One", avatar_url: "https://cdn/a.jpg", is_private: false }],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const u = body.users[0];
+    assert.equal(u.id, B);
+    assert.equal(u.displayName, "Trav One");
+    assert.equal(u.username, "traveler1");
+    assert.equal(u.avatarUrl, "https://cdn/a.jpg");
+    assert.equal(typeof u.followerCount, "number");
+    assert.equal(u.isFollowing, false);
+    assert.equal(u.isPrivate, false);
+  });
+});

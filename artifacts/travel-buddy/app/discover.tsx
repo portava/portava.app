@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import { Search, X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { TravelerRow } from '../src/components/TravelerRow';
-import { searchUsers, type TravelerSearchResult } from '../src/services/follows';
+import { searchUsers, getSuggestedTravelers, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 export default function DiscoverScreen() {
@@ -15,8 +15,22 @@ export default function DiscoverScreen() {
   const [results, setResults] = useState<TravelerSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
+
+  // Load follow-back suggestions once on mount
+  useEffect(() => {
+    let alive = true;
+    setLoadingSuggestions(true);
+    getSuggestedTravelers(10).then((res) => {
+      if (!alive) return;
+      setSuggestions(res.data ?? []);
+      setLoadingSuggestions(false);
+    });
+    return () => { alive = false; };
+  }, []);
 
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
@@ -95,12 +109,34 @@ export default function DiscoverScreen() {
           </View>
         )}
 
+        {/* Idle state: show suggestions if available, otherwise placeholder */}
         {!loading && showIdle && (
-          <View style={styles.center}>
-            <Text style={styles.idleIcon}>🌍</Text>
-            <Text style={styles.idleTitle}>Find your next travel buddy</Text>
-            <Text style={styles.idleSub}>Search by name or @username to discover travelers</Text>
-          </View>
+          suggestions.length > 0 ? (
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.list}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <Text style={styles.sectionHeader}>People you may know</Text>
+              }
+              ListFooterComponent={
+                loadingSuggestions ? <ActivityIndicator color={color.signal} style={{ marginTop: space.lg }} /> : null
+              }
+              renderItem={({ item }) => <TravelerRow user={item} />}
+            />
+          ) : loadingSuggestions ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={color.signal} />
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.idleIcon}>🌍</Text>
+              <Text style={styles.idleTitle}>Find your next travel buddy</Text>
+              <Text style={styles.idleSub}>Search by name or @username to discover travelers</Text>
+            </View>
+          )
         )}
 
         {!loading && showEmpty && (
@@ -158,6 +194,13 @@ const styles = StyleSheet.create({
   list: {
     padding: space.lg,
     gap: space.sm,
+  },
+  sectionHeader: {
+    ...t.small,
+    color: color.mute,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: space.sm,
   },
   center: {
     flex: 1,

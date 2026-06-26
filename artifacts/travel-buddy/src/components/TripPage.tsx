@@ -12,7 +12,6 @@ import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { useAttach } from './AttachController';
 import { useAttachments } from '../context/AttachmentStore';
-import { mockTripDetail } from '../data/tripDetail';
 import { PassportStampCard } from './PassportStampCard';
 import { TravelSectionHeader, TravelEmptyState } from './primitives';
 import { HighlightRing } from './HighlightRing';
@@ -188,7 +187,7 @@ export function TripTimeline({ days }: { days: TimelineDay[] }) {
 }
 
 /* ── Saved Ideas ── */
-export function SavedIdeas({ ideas }: { ideas: SavedIdea[] }) {
+export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: string }) {
   const attach = useAttach();
   const { listAttachmentsByTarget } = useAttachments();
   const CAT_TONE: Record<string, { bg: string; fg: string }> = {
@@ -197,7 +196,7 @@ export function SavedIdeas({ ideas }: { ideas: SavedIdea[] }) {
     Nature: { bg: '#E3F1EA', fg: color.success },
     Beach: { bg: '#E2EDF0', fg: color.deep },
   };
-  const added = listAttachmentsByTarget(mockTripDetail.id);
+  const added = listAttachmentsByTarget(tripId);
   const hasAny = ideas.length > 0 || added.length > 0;
   return (
     <View style={section.wrap}>

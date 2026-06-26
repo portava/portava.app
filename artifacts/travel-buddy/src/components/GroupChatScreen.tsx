@@ -31,7 +31,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
-  Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus,
+  Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus, X,
   AlertCircle, RefreshCw, CalendarClock, Clock,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,7 +42,7 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet';
 import { TripMembersSheet } from './TripMembersSheet';
 import type { Message } from '../services/messaging';
-import { deleteMessage } from '../services/messaging';
+import { deleteMessage, saveMessage } from '../services/messaging';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -81,11 +81,15 @@ function LongPressActionSheet({
   mine,
   onClose,
   onDeleteForMe,
+  onReply,
+  onSave,
 }: {
   message: Message | null;
   mine: boolean;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
+  onReply: (msg: Message) => void;
+  onSave: (msg: Message) => void;
 }) {
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
@@ -118,6 +122,12 @@ function LongPressActionSheet({
                   { text: 'Cancel', style: 'cancel' },
                   { text: 'Report', style: 'destructive', onPress: () => {} },
                 ]);
+              } else if (key === 'reply') {
+                onReply(message);
+              } else if (key === 'save') {
+                onSave(message);
+              } else if (key === 'translate') {
+                Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
               } else {
                 Alert.alert(label, 'This feature is coming soon.');
               }
@@ -235,6 +245,17 @@ function GroupMessageBubble({
         onLongPress={onLongPress}
         delayLongPress={300}
       >
+        {item.replyToId && item.replyToBody ? (
+          <View style={[styles.replyQuote, mine && styles.replyQuoteMine]}>
+            <View style={styles.replyQuoteAccent} />
+            <View style={{ flex: 1 }}>
+              {item.replyToSenderName ? (
+                <Text style={styles.replyQuoteSender}>{item.replyToSenderName}</Text>
+              ) : null}
+              <Text style={styles.replyQuoteBody} numberOfLines={2}>{item.replyToBody}</Text>
+            </View>
+          </View>
+        ) : null}
         <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text>
         <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
           {formatTime(item.createdAt)}
@@ -329,6 +350,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [mentionVisible, setMentionVisible] = useState(false);
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   // Per-thread translation settings (AsyncStorage-persisted)
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [defaultShowOriginal, setDefaultShowOriginal] = useState(false);
@@ -427,7 +449,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     setInput('');
     setLastSentText(text);
     setSendFailed(false);
-    const res = await send(text);
+    const currentReplyId = replyingTo?.id;
+    setReplyingTo(null);
+    const res = await send(text, currentReplyId);
     if (!res?.ok) setSendFailed(true);
     listRef.current?.scrollToEnd({ animated: true });
   }
@@ -693,6 +717,22 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onSelect={(s) => mentionRef.current?.insertTag(s)}
       />
 
+      {replyingTo && (
+        <View style={styles.replyBar}>
+          <View style={styles.replyBarAccent} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.replyBarSender} numberOfLines={1}>
+              {replyingTo.senderName ?? 'Someone'}
+            </Text>
+            <Text style={styles.replyBarBody} numberOfLines={1}>
+              {replyingTo.body ?? ''}
+            </Text>
+          </View>
+          <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
+            <X size={16} color={color.mute} />
+          </Pressable>
+        </View>
+      )}
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {isNoAccess ? (
           <View style={styles.noAccessBar}>
@@ -763,6 +803,15 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         mine={actionMsgMine}
         onClose={() => setActionMsg(null)}
         onDeleteForMe={handleDeleteForMe}
+        onReply={(msg) => { setReplyingTo(msg); setActionMsg(null); }}
+        onSave={(msg) => {
+          const tid = thread?.id;
+          setActionMsg(null);
+          if (!tid) return;
+          saveMessage(tid, msg.id).then((r) => {
+            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.');
+          });
+        }}
       />
 
       {/* Per-thread translation settings */}
@@ -993,4 +1042,32 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
   },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
+
+  replyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    backgroundColor: color.paper,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
+  replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
+  replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+
+  replyQuote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderRadius: radius.sm,
+    padding: 6,
+    marginBottom: 4,
+  },
+  replyQuoteMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: color.deep },
+  replyQuoteSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
+  replyQuoteBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 16 },
 });

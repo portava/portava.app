@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, Image, Pressable, StyleSheet,
   ScrollView, TextInput, ActivityIndicator, Alert,
@@ -8,7 +8,7 @@ import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, Sh
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging';
 import { useSession } from '../context/SessionContext';
-import { blockUser } from '../services/blocks';
+import { blockUser, getBlockList } from '../services/blocks';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
@@ -253,15 +253,31 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+
+  const loadBlockList = useCallback(async () => {
+    const res = await getBlockList();
+    if (res.ok && res.data) {
+      setBlockedIds(new Set(res.data.map((u) => u.id)));
+    }
+  }, []);
+
+  useEffect(() => { void loadBlockList(); }, [loadBlockList]);
 
   const requestCount = requests.length;
 
   useFocusEffect(useCallback(() => {
     reload();
     reloadRequests();
-  }, [reload, reloadRequests]));
+    void loadBlockList();
+  }, [reload, reloadRequests, loadBlockList]));
 
   const filtered = threads.filter((th) => {
+    // Hide direct threads where the other member is someone I blocked.
+    if (th.threadType === 'direct' || th.threadType === 'rent_buddy_booking') {
+      const otherId = th.otherMembers[0]?.id;
+      if (otherId && blockedIds.has(otherId)) return false;
+    }
     if (filter === 'direct' && th.threadType !== 'direct' && th.threadType !== 'rent_buddy_booking') return false;
     if (filter === 'trips' && th.threadType !== 'trip') return false;
     if (filter === 'circles' && th.threadType !== 'circle') return false;
