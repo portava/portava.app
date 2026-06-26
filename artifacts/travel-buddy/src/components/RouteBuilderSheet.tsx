@@ -75,7 +75,7 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
       setStartPin(null);
       setEndPin(null);
     }
-  }, [visible]);
+  }, [visible, initialStops]);
 
   const removeStop = useCallback((id: string) => {
     setStops((prev) => prev.filter((s) => s.id !== id));

@@ -80,7 +80,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
             style={({ pressed }) => [styles.saveHeaderBtn, saved && styles.saveHeaderBtnActive, pressed && { opacity: 0.7 }]}
             onPress={() => {
               if (!place) return;
-              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, savedAt: Date.now() };
+              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, lat: place.lat ?? null, lng: place.lng ?? null, savedAt: Date.now() };
               toggleSave(bookmark).then(setSaved).catch(() => setSaved((s) => !s));
             }}
             hitSlop={8}

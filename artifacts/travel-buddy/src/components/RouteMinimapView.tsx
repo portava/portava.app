@@ -104,7 +104,7 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
 
         {stops.map((stop, idx) => {
           const loc = stop.structuredLocation;
-          if (!loc?.lat || !loc?.lng) return null;
+          if (loc?.lat == null || loc?.lng == null) return null;
           const isNext = stop.id === nextStopId;
           const isDone = stop.checkpointStatus === 'arrived';
           const isSkipped = stop.checkpointStatus === 'skipped';
