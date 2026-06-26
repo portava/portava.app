@@ -6,9 +6,9 @@
  *
  * Design constraints:
  *   - Single in-process Map; no external dependency (no Redis required).
- *   - Each user entry expires after SEEN_TTL_MS of inactivity (default 24 h).
+ *   - Each user entry expires after SEEN_TTL_MS of inactivity (default 168 h / 7 days).
  *   - Seen-set capped at MAX_SEEN_PER_USER to bound memory.
- *   - When the full fallback pool is smaller than the exclusion list the cache
+ *   - When the full candidate pool is smaller than the exclusion list the cache
  *     is cleared automatically so the user never sees an empty list.
  *
  * Daily-seed helpers:
@@ -21,7 +21,7 @@
  */
 
 const SEEN_TTL_MS =
-  parseInt(process.env.SUGGESTION_SEEN_TTL_HOURS ?? "24", 10) * 60 * 60 * 1000;
+  parseInt(process.env.SUGGESTION_SEEN_TTL_HOURS ?? "168", 10) * 60 * 60 * 1000;
 
 const MAX_SEEN_PER_USER =
   parseInt(process.env.SUGGESTION_SEEN_MAX ?? "200", 10);

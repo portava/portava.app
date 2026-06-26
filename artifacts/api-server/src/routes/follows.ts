@@ -336,7 +336,18 @@ router.get("/users/suggestions", async (req, res) => {
   const unshuffled = followerIds.filter(
     (id) => !alreadyFollowingSet.has(id) && !blockedSet.has(id),
   );
-  const filtered = seededShuffle(unshuffled, dailySeed(user.id));
+
+  // Deprioritise candidates already shown within the seen window (default 7 days).
+  // Fresh candidates come first; if all have been seen, the cache is cleared and
+  // the full set is used so the list never goes empty.
+  const primarySeenIds = getSeenIds(user.id);
+  let freshCandidates = unshuffled.filter((id) => !primarySeenIds.has(id));
+  if (freshCandidates.length === 0 && unshuffled.length > 0) {
+    clearSeen(user.id);
+    freshCandidates = unshuffled;
+  }
+
+  const filtered = seededShuffle(freshCandidates, dailySeed(user.id));
   const candidateIds = filtered.slice(0, 10);
 
   // 5. If no follow-back candidates, fall back to a sample of popular/recent profiles

@@ -401,7 +401,64 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(bUser.reason, null);
   });
 
-  // ── seen-cache exclusion ─────────────────────────────────────────────────────
+  // ── seen-cache exclusion — primary (follow-back) path ────────────────────────
+
+  it("primary follow-back excludes candidates seen in a previous request", async () => {
+    // 20 followers — more than the 10-item per-request slice.
+    // First call returns up to 10; second call must only return IDs not yet seen.
+    const followers = Array.from({ length: 20 }, (_, i) => ({
+      id: `fb-user-${i}`,
+      handle: `fb${i}`,
+      name: `Follower ${i}`,
+      avatar_url: null,
+      is_private: false,
+    }));
+    const follows = followers.map((f) => ({ follower_id: f.id, following_id: ME }));
+    setup({ follows, profiles: followers, blocks: [] });
+
+    const r1 = await req("/users/suggestions");
+    const body1 = await r1.json() as any;
+    const seenAfterFirst = new Set<string>(body1.users.map((u: any) => u.id));
+    assert.ok(seenAfterFirst.size > 0, "first request should return some followers");
+
+    const r2 = await req("/users/suggestions");
+    const body2 = await r2.json() as any;
+    for (const u of body2.users) {
+      assert.ok(
+        !seenAfterFirst.has(u.id),
+        `${u.id} was already seen in the first request and should be excluded from primary follow-back`
+      );
+    }
+  });
+
+  it("primary follow-back resets and returns results when all candidates have been seen", async () => {
+    // Only 2 followers — both are served in the first call.
+    // The second call must reset and still return suggestions (not an empty list).
+    const follows = [
+      { follower_id: A, following_id: ME },
+      { follower_id: B, following_id: ME },
+    ];
+    setup({
+      follows,
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+
+    const r1 = await req("/users/suggestions");
+    assert.equal(r1.status, 200);
+    const body1 = await r1.json() as any;
+    assert.ok(body1.users.length > 0, "first call should have results");
+
+    const r2 = await req("/users/suggestions");
+    assert.equal(r2.status, 200);
+    const body2 = await r2.json() as any;
+    assert.ok(body2.users.length > 0, "second call should reset and return results instead of empty list");
+  });
+
+  // ── seen-cache exclusion — fallback path ──────────────────────────────────────
 
   it("fallback excludes IDs seen in a previous request", async () => {
     // Pool of 20 profiles — larger than the 10-item per-request slice.
