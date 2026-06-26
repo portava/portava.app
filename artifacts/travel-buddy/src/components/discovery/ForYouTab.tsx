@@ -150,6 +150,29 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
 
     if (!isRefresh) setLoading(true);
 
+    // When Compass is enabled and already has data, it is the primary source —
+    // no need to fire OSM/Telegraph at all.  The Compass useEffect will set items
+    // as soon as compass.data resolves (it runs in parallel with load()).
+    // Only fall back to OSM/Telegraph when Compass is explicitly disabled.
+    if (compass.compassEnabled && compass.data) {
+      // Compass data already in state — items will be set by the Compass useEffect.
+      if (!stale()) { setLoading(false); setRefreshing(false); }
+      return;
+    }
+
+    // When compass.compassEnabled is true but data hasn't loaded yet, wait
+    // for Compass to resolve (it fires independently).  Only start OSM/Telegraph
+    // when Compass is disabled (compassEnabled === false).
+    if (compass.compassEnabled) {
+      // Still loading Compass — clear skeleton after a grace period so the user
+      // doesn't stare at an infinite loader if Compass is slow.
+      setTimeout(() => {
+        if (!stale()) { setLoading(false); setRefreshing(false); }
+      }, 8000);
+      return;
+    }
+
+    // ── Compass disabled — fall back to OSM + Telegraph ───────────────────────
     // Fire OSM and Telegraph simultaneously.
     // OSM is a simple geocode + database query (~1–2 s).
     // Telegraph is an AI call — capped at 10 s by AbortController in the service.
@@ -159,13 +182,11 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       : null;
 
     // Show OSM content the instant it resolves — clears the skeleton immediately.
-    // Only set OSM/Telegraph items if Compass hasn't already upgraded the feed.
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
       setRefreshing(false);
       setItems((prev) => {
-        // Don't downgrade from Compass picks
         if (prev.some((i) => i.kind === 'compass')) return prev;
         if (osm.ok && osm.data.places.length > 0) {
           setSource('osm');
@@ -179,13 +200,11 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
     });
 
     // Silently upgrade to Telegraph AI picks when (if) the AI call returns.
-    // If it times out (10 s), OSM results are already visible — no extra wait.
     if (telPromise) {
       try {
         const tel = await telPromise;
         if (!stale() && tel.ok && tel.recommendations.length > 0) {
           setItems((prev) => {
-            // Don't downgrade from Compass picks
             if (prev.some((i) => i.kind === 'compass')) return prev;
             setSource('telegraph');
             return tel.recommendations.map((rec) => ({
@@ -198,10 +217,9 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       } catch {
         // telegraph failed — OSM is already showing, nothing to do
       }
-      // Guarantee loading is cleared even if osmPromise somehow never resolved
       if (!stale()) { setLoading(false); setRefreshing(false); }
     }
-  }, [destination, isAuthed]);
+  }, [destination, isAuthed, compass.compassEnabled, compass.data]);
 
   useEffect(() => {
     setItems([]);

@@ -62,6 +62,13 @@ export function CompassFeedbackMenu({
   const [open, setOpen] = useState(false);
   const { sendFeedback } = useCompassFeedback();
 
+  // Only show "Why am I seeing this?" when a signed recommendation token
+  // is available and a handler is wired. Plain entity IDs (non-Compass surfaces)
+  // would fail the /why endpoint's token validation.
+  const visibleActions = ACTIONS.filter(
+    (a) => a.key !== 'why' || onWhyPress !== undefined,
+  );
+
   const handleAction = async (key: CompassFeedbackAction | 'why') => {
     setOpen(false);
     if (key === 'why') {
@@ -97,10 +104,10 @@ export function CompassFeedbackMenu({
           <View style={styles.sheet}>
             <View style={styles.handle} />
             <Text style={styles.sheetTitle}>Feedback</Text>
-            {ACTIONS.map((a, i) => (
+            {visibleActions.map((a, i) => (
               <Pressable
                 key={a.key}
-                style={[styles.row, i === ACTIONS.length - 1 && styles.rowLast]}
+                style={[styles.row, i === visibleActions.length - 1 && styles.rowLast]}
                 onPress={() => handleAction(a.key)}
               >
                 <a.Icon size={18} color={a.color ?? color.deep} />

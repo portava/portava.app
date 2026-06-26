@@ -15,13 +15,13 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Sparkles, Eye, EyeOff, Bell, Shield, Zap,
-  ChevronDown, ChevronUp, Check,
+  ChevronDown, ChevronUp, Check, Globe, Users,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useCompassPreferences } from '../src/hooks/compass/useCompassPreferences';
 import { putCompassBoostVisibility } from '../src/services/compass';
 
-// ── Interest options ──────────────────────────────────────────────────────────
+// ── Option constants ──────────────────────────────────────────────────────────
 
 const INTEREST_OPTIONS = [
   'nightlife', 'food', 'beach', 'luxury', 'culture', 'adventure',
@@ -35,10 +35,28 @@ const TRAVEL_STYLES = [
   'solo', 'couple', 'group', 'family', 'digital_nomad', 'backpacker',
 ];
 
+const LANGUAGE_OPTIONS = [
+  'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar',
+  'ru', 'hi', 'nl', 'pl', 'tr',
+];
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch',
+  pt: 'Português', it: 'Italiano', ja: '日本語', zh: '中文',
+  ko: '한국어', ar: 'العربية', ru: 'Русский', hi: 'हिन्दी',
+  nl: 'Nederlands', pl: 'Polski', tr: 'Türkçe',
+};
+
+const SAFETY_PREFERENCES = [
+  { key: 'standard',    label: 'Standard'    },
+  { key: 'cautious',    label: 'Cautious'    },
+  { key: 'very_safe',   label: 'Very safe only' },
+];
+
 const LOCATION_MODES = [
-  { key: 'full_sharing',   label: 'Full sharing'   },
-  { key: 'city_only',      label: 'City only'       },
-  { key: 'private',        label: 'Private'         },
+  { key: 'full_sharing', label: 'Full sharing' },
+  { key: 'city_only',    label: 'City only'    },
+  { key: 'private',      label: 'Private'      },
 ];
 
 const NOTIFICATION_KEYS: { key: string; label: string }[] = [
@@ -103,12 +121,12 @@ function ToggleRow({
 // ── Chip selector ─────────────────────────────────────────────────────────────
 
 function ChipSelector({
-  options, selected, onToggle, multi = true,
+  options, selected, onToggle, labelMap,
 }: {
   options: string[];
   selected: string[];
   onToggle: (key: string) => void;
-  multi?: boolean;
+  labelMap?: Record<string, string>;
 }) {
   return (
     <View style={s.chipWrap}>
@@ -122,7 +140,7 @@ function ChipSelector({
           >
             {active && <Check size={10} color={color.signal} />}
             <Text style={[s.chipLabel, active && s.chipLabelActive]}>
-              {opt.replace(/_/g, ' ')}
+              {labelMap?.[opt] ?? opt.replace(/_/g, ' ')}
             </Text>
           </Pressable>
         );
@@ -151,6 +169,22 @@ export default function CompassPreferencesScreen() {
       ? current.filter((i) => i !== interest)
       : [...current, interest];
     await update({ interests: next });
+  }, [prefs, update]);
+
+  const toggleTravelStyle = useCallback(async (style: string) => {
+    const current = prefs?.travel_styles ?? [];
+    const next = current.includes(style)
+      ? current.filter((s) => s !== style)
+      : [...current, style];
+    await update({ travel_styles: next });
+  }, [prefs, update]);
+
+  const toggleLanguage = useCallback(async (lang: string) => {
+    const current = prefs?.preferred_languages ?? [];
+    const next = current.includes(lang)
+      ? current.filter((l) => l !== lang)
+      : [...current, lang];
+    await update({ preferred_languages: next });
   }, [prefs, update]);
 
   const toggleBudgetStyle = useCallback(async (style: string) => {
@@ -193,6 +227,8 @@ export default function CompassPreferencesScreen() {
   }
 
   const interests            = prefs?.interests ?? [];
+  const travelStyles         = prefs?.travel_styles ?? [];
+  const preferredLanguages   = prefs?.preferred_languages ?? [];
   const hiddenCats           = prefs?.hidden_categories ?? [];
   const mutedHashtags        = prefs?.muted_hashtags ?? [];
   const excludeBudgetStyles  = prefs?.exclude_budget_styles ?? [];
@@ -201,6 +237,8 @@ export default function CompassPreferencesScreen() {
   const locationMode         = prefs?.location_privacy_mode ?? 'city_only';
   const delayedDefault       = prefs?.delayed_post_default ?? false;
   const visibilitySubs       = (prefs as any)?.visibility_sub_controls ?? {};
+  const safetyPref           = prefs?.safety_preference ?? 'standard';
+  const buddyDiscoverable    = prefs?.rent_buddy_discoverable ?? true;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -227,7 +265,14 @@ export default function CompassPreferencesScreen() {
             onToggle={toggleInterest}
           />
 
-          <Text style={[s.fieldLabel, { marginTop: space.lg }]}>Travel styles I avoid (exclude from feed)</Text>
+          <Text style={[s.fieldLabel, { marginTop: space.lg }]}>How you travel</Text>
+          <ChipSelector
+            options={TRAVEL_STYLES}
+            selected={travelStyles}
+            onToggle={toggleTravelStyle}
+          />
+
+          <Text style={[s.fieldLabel, { marginTop: space.lg }]}>Budget styles to exclude from feed</Text>
           <ChipSelector
             options={BUDGET_STYLES}
             selected={excludeBudgetStyles}
@@ -242,9 +287,35 @@ export default function CompassPreferencesScreen() {
           />
         </Section>
 
+        {/* ── Language Preferences ── */}
+        <Section title="Language Preferences" Icon={Globe}>
+          <Text style={s.fieldLabel}>Preferred content languages</Text>
+          <Text style={s.fieldSubLabel}>Compass will surface content in these languages first</Text>
+          <ChipSelector
+            options={LANGUAGE_OPTIONS}
+            selected={preferredLanguages}
+            onToggle={toggleLanguage}
+            labelMap={LANGUAGE_LABELS}
+          />
+        </Section>
+
         {/* ── Safety & Visibility ── */}
         <Section title="Safety & Visibility" Icon={Shield}>
-          <Text style={s.fieldLabel}>Location privacy mode</Text>
+          <Text style={s.fieldLabel}>Safety preference</Text>
+          {SAFETY_PREFERENCES.map((sp) => (
+            <Pressable
+              key={sp.key}
+              style={s.radioRow}
+              onPress={() => toggle('safety_preference', sp.key)}
+            >
+              <View style={[s.radio, safetyPref === sp.key && s.radioActive]}>
+                {safetyPref === sp.key && <View style={s.radioDot} />}
+              </View>
+              <Text style={s.radioLabel}>{sp.label}</Text>
+            </Pressable>
+          ))}
+
+          <Text style={[s.fieldLabel, { marginTop: space.md }]}>Location privacy mode</Text>
           {LOCATION_MODES.map((m) => (
             <Pressable
               key={m.key}
@@ -288,7 +359,7 @@ export default function CompassPreferencesScreen() {
                     options={mutedHashtags}
                     selected={[]}
                     onToggle={async (tag) => {
-                      await update({ muted_hashtags: mutedHashtags.filter((t) => t !== tag) });
+                      await update({ muted_hashtags: mutedHashtags.filter((tg) => tg !== tag) });
                     }}
                   />
                   <Text style={s.fieldSubLabel}>Tap a chip to unmute that topic</Text>
@@ -296,6 +367,22 @@ export default function CompassPreferencesScreen() {
               )}
             </>
           )}
+        </Section>
+
+        {/* ── Rent a Buddy ── */}
+        <Section title="Rent a Buddy" Icon={Users}>
+          <ToggleRow
+            label="Show my Buddy profile in recommendations"
+            sub="Compass will suggest you as a Buddy to compatible travelers"
+            value={buddyDiscoverable}
+            onChange={(v) => toggle('rent_buddy_discoverable', v)}
+          />
+          <Pressable
+            style={s.linkRow}
+            onPress={() => Alert.alert('Buddy Profile', 'Edit your Buddy profile from the Rent a Buddy section.')}
+          >
+            <Text style={s.linkLabel}>Edit Buddy profile & pricing →</Text>
+          </Pressable>
         </Section>
 
         {/* ── Notification Preferences ── */}
@@ -506,5 +593,15 @@ const s = StyleSheet.create({
     ...t.bodyStrong,
     color: color.deep,
     fontSize: 13,
+  },
+  linkRow: {
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  linkLabel: {
+    ...t.body,
+    color: color.signal,
+    fontSize: 14,
   },
 });

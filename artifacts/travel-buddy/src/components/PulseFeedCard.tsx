@@ -10,7 +10,6 @@ import { color, space, radius, type as t, shadow, layout } from '../theme/tokens
 import { usePlanPicker } from './PlanPickerController';
 import { RichText } from './RichText';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
-import { CompassWhySheet } from './compass/CompassWhySheet';
 import { PostEngagementBar } from './PostEngagementBar';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
@@ -178,7 +177,6 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
 function PlanCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
-  const [whyId, setWhyId] = useState<string | null>(null);
   if (dismissed) return null;
   return (
     <View style={s.card}>
@@ -203,14 +201,8 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
           itemType={item.type}
           category={item.type}
           onDismiss={() => setDismissed(true)}
-          onWhyPress={() => setWhyId(item.id)}
         />
       </View>
-      <CompassWhySheet
-        visible={whyId !== null}
-        recommendationId={whyId}
-        onClose={() => setWhyId(null)}
-      />
     </View>
   );
 }
@@ -220,7 +212,6 @@ function GemCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
-  const [whyId, setWhyId] = useState<string | null>(null);
   if (dismissed) return null;
   return (
     <View style={s.card}>
@@ -237,14 +228,8 @@ function GemCard({ item }: { item: PulseFeedItem }) {
           itemType={item.type}
           category={item.type}
           onDismiss={() => setDismissed(true)}
-          onWhyPress={() => setWhyId(item.id)}
         />
       </View>
-      <CompassWhySheet
-        visible={whyId !== null}
-        recommendationId={whyId}
-        onClose={() => setWhyId(null)}
-      />
     </View>
   );
 }

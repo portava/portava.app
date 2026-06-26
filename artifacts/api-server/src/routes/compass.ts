@@ -408,6 +408,10 @@ const frontloadQuerySchema = z.object({
 const navigationEventSchema = z.object({
   screen:      z.string().min(1).max(120),
   occurred_at: z.string().datetime().optional(),
+  // Optional context hints — recorded for future analytics; not yet consumed by
+  // recordNavigationEvent but accepted so client payloads are not rejected.
+  event_type:  z.string().max(80).optional(),
+  city:        z.string().max(200).optional(),
 });
 
 // ── GET /api/compass/frontload ─────────────────────────────────────────────────
@@ -707,16 +711,20 @@ router.get("/compass/me/preferences", async (req, res) => {
 // Partially updates the user's Compass personalisation preferences.
 
 const patchPreferencesSchema = z.object({
-  interests:              z.array(z.string().max(60)).max(30).optional(),
-  hidden_categories:      z.array(z.string().max(80)).max(50).optional(),
-  muted_hashtags:         z.array(z.string().max(120)).max(200).optional(),
-  exclude_budget_styles:  z.array(z.string().max(60)).max(10).optional(),
-  category_weights:       z.record(z.string(), z.number().min(0).max(10)).optional(),
+  interests:                z.array(z.string().max(60)).max(30).optional(),
+  travel_styles:            z.array(z.string().max(60)).max(10).optional(),
+  preferred_languages:      z.array(z.string().max(20)).max(10).optional(),
+  hidden_categories:        z.array(z.string().max(80)).max(50).optional(),
+  muted_hashtags:           z.array(z.string().max(120)).max(200).optional(),
+  exclude_budget_styles:    z.array(z.string().max(60)).max(10).optional(),
+  category_weights:         z.record(z.string(), z.number().min(0).max(10)).optional(),
   notification_preferences: z.record(z.string(), z.boolean()).optional(),
-  boost_visibility_enabled:   z.boolean().optional(),
-  location_privacy_mode:     z.string().max(40).optional(),
-  delayed_post_default:      z.boolean().optional(),
-  visibility_sub_controls:   z.record(z.string(), z.boolean()).optional(),
+  boost_visibility_enabled: z.boolean().optional(),
+  location_privacy_mode:    z.string().max(40).optional(),
+  delayed_post_default:     z.boolean().optional(),
+  visibility_sub_controls:  z.record(z.string(), z.boolean()).optional(),
+  safety_preference:        z.string().max(40).optional(),
+  rent_buddy_discoverable:  z.boolean().optional(),
 });
 
 router.patch("/compass/me/preferences", async (req, res) => {

@@ -213,6 +213,8 @@ export async function postCompassFeedback(body: {
 export interface CompassPreferences {
   user_id?: string;
   interests?: string[];
+  travel_styles?: string[];
+  preferred_languages?: string[];
   hidden_categories?: string[];
   muted_hashtags?: string[];
   exclude_budget_styles?: string[];
@@ -222,6 +224,8 @@ export interface CompassPreferences {
   location_privacy_mode?: string;
   delayed_post_default?: boolean;
   visibility_sub_controls?: Record<string, boolean>;
+  safety_preference?: string;
+  rent_buddy_discoverable?: boolean;
 }
 
 export async function fetchCompassPreferences(): Promise<{ ok: boolean; data?: CompassPreferences; error?: string }> {
