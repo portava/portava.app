@@ -328,14 +328,12 @@ router.get("/users/suggestions", async (req, res) => {
   );
 
   // 4. Follow-back candidates: my followers I haven't followed back, not blocked.
-  // Shuffle before slicing so a different mix surfaces on every visit.
-  const filtered = followerIds.filter(
+  // Seeded daily shuffle: same user + same UTC calendar day → same base order,
+  // different ordering the next day so the strip feels fresh without a scheduler.
+  const unshuffled = followerIds.filter(
     (id) => !alreadyFollowingSet.has(id) && !blockedSet.has(id),
   );
-  for (let i = filtered.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
-  }
+  const filtered = seededShuffle(unshuffled, dailySeed(user.id));
   const candidateIds = filtered.slice(0, 10);
 
   // 5. If no follow-back candidates, fall back to a sample of popular/recent profiles

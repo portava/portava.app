@@ -245,7 +245,7 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(!ids.includes(C), "C (blocked) should not appear");
   });
 
-  it("fallback shuffles the pool so different orderings are possible", async () => {
+  it("fallback uses a daily seed — same ordering for all requests within a day", async () => {
     // Build a pool of 10 distinct profiles (no followers, so fallback is used)
     const pool = Array.from({ length: 10 }, (_, i) => ({
       id: `pool-user-${i}`,
@@ -256,7 +256,7 @@ describe("GET /api/users/suggestions", () => {
     }));
     setup({ follows: [], profiles: pool, blocks: [] });
 
-    // Hit the endpoint 20 times and collect the orderings
+    // 20 requests on the same calendar day must all return the same ordering
     const orderings = await Promise.all(
       Array.from({ length: 20 }, () =>
         req("/users/suggestions")
@@ -266,13 +266,14 @@ describe("GET /api/users/suggestions", () => {
     );
 
     const unique = new Set(orderings);
-    assert.ok(
-      unique.size > 1,
-      `Expected multiple distinct orderings across 20 requests, got ${unique.size}`
+    assert.equal(
+      unique.size,
+      1,
+      `Expected a single stable ordering within the same day, got ${unique.size} distinct orderings`
     );
   });
 
-  it("primary follow-back candidates are shuffled so different orderings are possible", async () => {
+  it("primary follow-back candidates use a daily seed — same ordering for all requests within a day", async () => {
     // 10 users all follow ME — these become primary candidates (not fallback)
     const followers = Array.from({ length: 10 }, (_, i) => ({
       id: `follower-${i}`,
@@ -284,7 +285,7 @@ describe("GET /api/users/suggestions", () => {
     const follows = followers.map((f) => ({ follower_id: f.id, following_id: ME }));
     setup({ follows, profiles: followers, blocks: [] });
 
-    // Hit the endpoint 20 times and collect the orderings
+    // 20 requests on the same calendar day must all return the same ordering
     const orderings = await Promise.all(
       Array.from({ length: 20 }, () =>
         req("/users/suggestions")
@@ -294,9 +295,10 @@ describe("GET /api/users/suggestions", () => {
     );
 
     const unique = new Set(orderings);
-    assert.ok(
-      unique.size > 1,
-      `Expected multiple distinct orderings for primary candidates across 20 requests, got ${unique.size}`
+    assert.equal(
+      unique.size,
+      1,
+      `Expected a single stable ordering within the same day, got ${unique.size} distinct orderings`
     );
   });
 
