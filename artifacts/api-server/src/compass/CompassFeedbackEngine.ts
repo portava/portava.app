@@ -63,6 +63,12 @@ export interface FeedbackRequest {
   hashtag?:         string;
   /** Topic slug — required for mute_topic */
   topic?:           string;
+  /**
+   * UUID of the content author or target user.
+   * Required for `report` and `block` actions — the route uses this to trigger
+   * an immediate on-demand abuse scan for the targeted user.
+   */
+  targetUserId?:    string;
 }
 
 export interface FeedbackResult {

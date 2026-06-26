@@ -455,9 +455,35 @@ export async function buildFeed(
   cursor:     string | null = null,
   _overrides: FeedBuilderTestOverrides = {},
 ): Promise<FeedPage> {
+  // ── Feedback-preference pre-filtering ─────────────────────────────────────
+  // Items the user explicitly dismissed are removed before the pipeline runs so
+  // they consume no scoring budget and never appear in any section.
+  const ignoredSet = new Set(profile.ignoredItemIds);
+  const filteredItems = ignoredSet.size > 0
+    ? items.filter((it) => !ignoredSet.has(String(it.id ?? "")))
+    : items;
+
   const { sectionMap, pipelineMeta } = await runFeedPipeline(
-    items, profile, context, db, _overrides,
+    filteredItems, profile, context, db, _overrides,
   );
+
+  // ── Category-weight post-adjustment ───────────────────────────────────────
+  // Apply user's category weight preferences (from hide_category / show_more
+  // feedback) by scaling finalScore after the pipeline. This lets the user's
+  // expressed preferences move items within each section on the VERY NEXT build.
+  if (Object.keys(profile.categoryWeights).length > 0) {
+    for (const [name, sectionItems] of sectionMap) {
+      const adjusted = sectionItems.map((r) => {
+        const delta = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        if (delta === 0) return r;
+        return { ...r, finalScore: Math.max(0, r.finalScore + delta * 10) };
+      });
+      if (adjusted.some((r, i) => r.finalScore !== sectionItems[i]!.finalScore)) {
+        adjusted.sort((a, b) => b.finalScore - a.finalScore);
+        sectionMap.set(name, adjusted);
+      }
+    }
+  }
 
   const parsedCursor = cursor ? decodeCursor(cursor) : null;
   const sections: FeedSection[] = [];
@@ -505,8 +531,12 @@ export async function buildSection(
   cursor:      string | null = null,
   _overrides:  FeedBuilderTestOverrides = {},
 ): Promise<{ section: FeedSection; nextCursor: string | null; fallback: false }> {
+  const ignoredSet = new Set(profile.ignoredItemIds);
+  const filteredItems = ignoredSet.size > 0
+    ? items.filter((it) => !ignoredSet.has(String(it.id ?? "")))
+    : items;
   const { sectionMap } = await runFeedPipeline(
-    items, profile, context, db, _overrides,
+    filteredItems, profile, context, db, _overrides,
   );
 
   const allItems     = sectionMap.get(sectionName) ?? [];

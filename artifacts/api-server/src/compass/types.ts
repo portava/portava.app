@@ -101,6 +101,23 @@ export interface CompassProfile {
   safeReturnActive: boolean;
   /** Resolved age of the viewer (used for age-gate checks in Safety Filter). */
   viewerAge?: number;
+  /**
+   * Category weight adjustments from feedback (itemType → delta, range -10..+10).
+   * Loaded from compass_user_preferences.category_weights.
+   * Applied as a score bonus/penalty post-pipeline so hide_category/show_more
+   * feedback influences the very next feed build.
+   */
+  categoryWeights: Record<string, number>;
+  /**
+   * Item IDs the user has dismissed via "not_interested" feedback.
+   * These items are filtered out before the feed pipeline runs.
+   */
+  ignoredItemIds: string[];
+  /**
+   * Hashtag slugs the user has muted via feedback.
+   * Content strongly associated with these hashtags is downranked.
+   */
+  mutedHashtags: string[];
   computedAt: string;
 }
 

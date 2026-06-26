@@ -349,6 +349,23 @@ export async function evaluateNotification(
     } catch { /* fail-open: a DB error should not block safety checking elsewhere */ }
   }
 
+  // ── Safety filter step 1b: suspended-sender check ────────────────────────────
+  // Mirror CompassSafetyFilter's "author_or_item_suspended" hard-block. If the
+  // sender's trust profile marks them as suspended they must not reach the
+  // recipient via push, regardless of level, quiet hours, or category.
+  if (db && senderId) {
+    try {
+      const { data: senderTrust } = await db
+        .from("trust_profiles")
+        .select("public_level")
+        .eq("user_id", senderId)
+        .maybeSingle();
+      if (senderTrust?.public_level === "suspended") {
+        return decide("suppressed_safety_filter", `sender_suspended:${senderId}`);
+      }
+    } catch { /* fail-open */ }
+  }
+
   // ── Safety filter step 2: category-level feature flag check ──────────────────
   if (payload.category) {
     const blocked = await isCategoryBlocked(db, payload.category);

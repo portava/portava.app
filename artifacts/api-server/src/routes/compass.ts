@@ -47,6 +47,7 @@ import {
   FEEDBACK_ACTIONS,
   type FeedbackAction,
 } from "../compass/CompassFeedbackEngine.js";
+import { triggerOnDemandScan } from "../lib/compassAbuseScanScheduler.js";
 import type {
   CompassContextResponse,
   CompassFallbackResponse,
@@ -554,6 +555,8 @@ const feedbackBodySchema = z.object({
   category:         z.string().max(80).optional(),
   hashtag:          z.string().max(120).optional(),
   topic:            z.string().max(120).optional(),
+  /** ID of the content author / target user — required for `report` and `block` actions so the abuse scanner can be triggered immediately. */
+  targetUserId:     z.string().uuid().optional(),
 });
 
 router.post("/compass/feedback", async (req, res) => {
@@ -576,6 +579,15 @@ router.post("/compass/feedback", async (req, res) => {
   try {
     const result = await processFeedback(sc, user.id, parsed.data);
     res.json({ updated: result.updated });
+
+    // ── On-demand abuse scan ───────────────────────────────────────────────
+    // When a user reports or blocks another user, immediately trigger a
+    // scoped abuse scan for the target so the AbuseDefenseEngine can act
+    // on the signal before the next scheduled batch window.
+    const { action, targetUserId } = parsed.data;
+    if (targetUserId && (action === "report" || action === "block")) {
+      triggerOnDemandScan(targetUserId);
+    }
   } catch (err) {
     req.log.error({ err }, "compass/feedback: processing failed");
     sendError(res, "db_error", "Could not process feedback");

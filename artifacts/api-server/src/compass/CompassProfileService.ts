@@ -114,6 +114,10 @@ async function buildProfile(
       .eq("traveler_id", userId)
       .in("status", ["confirmed", "in_progress"])
       .limit(1),
+    db.from("compass_user_preferences")
+      .select("category_weights, ignored_item_ids, muted_hashtags")
+      .eq("user_id", userId)
+      .maybeSingle(),
   ]);
 
   // Destructure the other results (indices offset by 2 for ownedTrips + memberTrips)
@@ -127,6 +131,7 @@ async function buildProfile(
     blockRecvRes,
     safeReturnRes,
     bookingRes,
+    compassPrefsRes,
   ] = otherResults;
 
   // ── Trips aggregation ──────────────────────────────────────────────────────
@@ -164,8 +169,9 @@ async function buildProfile(
   const locPref    = locPrefRes.status    === "fulfilled" ? (locPrefRes.value.data as any) : null;
   const blocksSent = blockSentRes.status  === "fulfilled" ? ((blockSentRes.value.data as any[]) ?? []) : [];
   const blocksRecv = blockRecvRes.status  === "fulfilled" ? ((blockRecvRes.value.data as any[]) ?? []) : [];
-  const safeReturn = safeReturnRes.status === "fulfilled" ? ((safeReturnRes.value.data as any[]) ?? []) : [];
-  const bookings   = bookingRes.status    === "fulfilled" ? ((bookingRes.value.data as any[]) ?? []) : [];
+  const safeReturn    = safeReturnRes.status    === "fulfilled" ? ((safeReturnRes.value.data as any[]) ?? [])  : [];
+  const bookings      = bookingRes.status       === "fulfilled" ? ((bookingRes.value.data as any[]) ?? [])      : [];
+  const compassPrefs  = compassPrefsRes?.status === "fulfilled" ? (compassPrefsRes.value.data as any)           : null;
 
   // ── Languages ──────────────────────────────────────────────────────────────
   const languages: string[] = [];
@@ -227,6 +233,9 @@ async function buildProfile(
     currentCity: locState?.city ?? null,
     currentCountry: locState?.country ?? null,
     safeReturnActive: safeReturn.length > 0,
+    categoryWeights: (compassPrefs?.category_weights as Record<string, number>) ?? {},
+    ignoredItemIds:  (compassPrefs?.ignored_item_ids as string[]) ?? [],
+    mutedHashtags:   (compassPrefs?.muted_hashtags as string[]) ?? [],
     computedAt: nowIso,
   };
 }
