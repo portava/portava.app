@@ -260,81 +260,81 @@ router.get("/users/search", async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
+    // Fetch caller's upcoming trips with destination details in 2 queries.
+    // The inner join on trip_members filters out past memberships without an
+    // extra round-trip, so callerCityKeys.size === 0 is a reliable short-circuit.
     const [callerMemberRes, callerOwnedRes] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", user.id).gte("end_date", today),
+      sc.from("trip_members")
+        .select("trip_id, trips!inner(destination_city, destination_country)")
+        .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
+        .gte("trips.end_date", today),
+      sc.from("trips")
+        .select("id, destination_city, destination_country")
+        .eq("owner_id", user.id)
+        .gte("end_date", today),
     ]);
 
-    const callerTripIdSet = new Set<string>([
-      ...((callerMemberRes.data ?? []).map((r: any) => r.trip_id as string)),
-      ...((callerOwnedRes.data ?? []).map((r: any) => r.id as string)),
-    ]);
+    const callerCityKeys = new Set<string>();
+    const callerCountryKeys = new Set<string>();
+    const cityDisplayMap = new Map<string, string>();
 
-    if (callerTripIdSet.size > 0) {
-      const { data: callerTrips } = await sc
-        .from("trips")
-        .select("destination_city, destination_country")
-        .in("id", Array.from(callerTripIdSet))
-        .gte("end_date", today);
+    for (const r of (callerMemberRes.data ?? [])) {
+      const t = (r as any).trips as { destination_city: string | null; destination_country: string | null } | null;
+      const city = t?.destination_city?.trim();
+      const country = t?.destination_country?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
+    for (const t of (callerOwnedRes.data ?? [])) {
+      const city = ((t as any).destination_city as string | null)?.trim();
+      const country = ((t as any).destination_country as string | null)?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
 
-      const callerCityKeys = new Set<string>();
-      const callerCountryKeys = new Set<string>();
-      const cityDisplayMap = new Map<string, string>();
+    if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
+      const [candMemberRes, candOwnedRes] = await Promise.all([
+        sc.from("trip_members").select("trip_id, user_id").in("user_id", ids).in("role", ["owner", "member"]),
+        sc.from("trips").select("id, owner_id").in("owner_id", ids).gte("end_date", today),
+      ]);
 
-      for (const t of (callerTrips ?? [])) {
-        const city = ((t as any).destination_city as string | null)?.trim();
-        const country = ((t as any).destination_country as string | null)?.trim();
-        if (city) {
-          const key = city.toLowerCase();
-          callerCityKeys.add(key);
-          cityDisplayMap.set(key, city);
-        }
-        if (country) callerCountryKeys.add(country.toLowerCase());
+      const tripToUsers = new Map<string, string[]>();
+      for (const r of (candMemberRes.data ?? [])) {
+        const tid = (r as any).trip_id as string;
+        const uid = (r as any).user_id as string;
+        if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+        tripToUsers.get(tid)!.push(uid);
+      }
+      for (const r of (candOwnedRes.data ?? [])) {
+        const tid = (r as any).id as string;
+        const uid = (r as any).owner_id as string;
+        if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+        if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
       }
 
-      if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
-        const [candMemberRes, candOwnedRes] = await Promise.all([
-          sc.from("trip_members").select("trip_id, user_id").in("user_id", ids).in("role", ["owner", "member"]),
-          sc.from("trips").select("id, owner_id").in("owner_id", ids).gte("end_date", today),
-        ]);
+      if (tripToUsers.size > 0) {
+        const { data: candTrips } = await sc
+          .from("trips")
+          .select("id, destination_city, destination_country")
+          .in("id", Array.from(tripToUsers.keys()))
+          .gte("end_date", today);
 
-        const tripToUsers = new Map<string, string[]>();
-        for (const r of (candMemberRes.data ?? [])) {
-          const tid = (r as any).trip_id as string;
-          const uid = (r as any).user_id as string;
-          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
-          tripToUsers.get(tid)!.push(uid);
-        }
-        for (const r of (candOwnedRes.data ?? [])) {
-          const tid = (r as any).id as string;
-          const uid = (r as any).owner_id as string;
-          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
-          if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
-        }
+        for (const trip of (candTrips ?? [])) {
+          const city = ((trip as any).destination_city as string | null)?.trim();
+          const country = ((trip as any).destination_country as string | null)?.trim();
+          const tid = (trip as any).id as string;
 
-        if (tripToUsers.size > 0) {
-          const { data: candTrips } = await sc
-            .from("trips")
-            .select("id, destination_city, destination_country")
-            .in("id", Array.from(tripToUsers.keys()))
-            .gte("end_date", today);
+          let label: string | null = null;
+          if (city && callerCityKeys.has(city.toLowerCase())) {
+            label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+          } else if (country && callerCountryKeys.has(country.toLowerCase())) {
+            label = `Both going to ${country}`;
+          }
 
-          for (const trip of (candTrips ?? [])) {
-            const city = ((trip as any).destination_city as string | null)?.trim();
-            const country = ((trip as any).destination_country as string | null)?.trim();
-            const tid = (trip as any).id as string;
-
-            let label: string | null = null;
-            if (city && callerCityKeys.has(city.toLowerCase())) {
-              label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
-            } else if (country && callerCountryKeys.has(country.toLowerCase())) {
-              label = `Both going to ${country}`;
-            }
-
-            if (label) {
-              for (const uid of (tripToUsers.get(tid) ?? [])) {
-                if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
-              }
+          if (label) {
+            for (const uid of (tripToUsers.get(tid) ?? [])) {
+              if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
             }
           }
         }
@@ -601,88 +601,85 @@ router.get("/users/suggestions", async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    // Fetch caller's upcoming trip IDs — both owned and joined as member.
+    // Fetch caller's upcoming trips with destination details in 2 queries.
+    // The inner join on trip_members filters out past memberships without an
+    // extra round-trip, so callerCityKeys.size === 0 is a reliable short-circuit.
     const [callerMemberRes, callerOwnedRes] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", user.id).gte("end_date", today),
+      sc.from("trip_members")
+        .select("trip_id, trips!inner(destination_city, destination_country)")
+        .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
+        .gte("trips.end_date", today),
+      sc.from("trips")
+        .select("id, destination_city, destination_country")
+        .eq("owner_id", user.id)
+        .gte("end_date", today),
     ]);
 
-    const callerTripIdSet = new Set<string>([
-      ...((callerMemberRes.data ?? []).map((r: any) => r.trip_id as string)),
-      ...((callerOwnedRes.data ?? []).map((r: any) => r.id as string)),
-    ]);
+    // Build lookup sets from caller's destinations.
+    const callerCityKeys = new Set<string>();
+    const callerCountryKeys = new Set<string>();
+    const cityDisplayMap = new Map<string, string>(); // lowercase key → display label
 
-    if (callerTripIdSet.size > 0) {
-      const { data: callerTrips } = await sc
-        .from("trips")
-        .select("destination_city, destination_country")
-        .in("id", Array.from(callerTripIdSet))
-        .gte("end_date", today);
+    for (const r of (callerMemberRes.data ?? [])) {
+      const t = (r as any).trips as { destination_city: string | null; destination_country: string | null } | null;
+      const city = t?.destination_city?.trim();
+      const country = t?.destination_country?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
+    for (const t of (callerOwnedRes.data ?? [])) {
+      const city = ((t as any).destination_city as string | null)?.trim();
+      const country = ((t as any).destination_country as string | null)?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
 
-      // Build lookup sets from caller's destinations.
-      const callerCityKeys = new Set<string>();
-      const callerCountryKeys = new Set<string>();
-      const cityDisplayMap = new Map<string, string>(); // lowercase key → display label
+    if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
+      // Fetch candidate trips — both owned and joined as member.
+      const [candMemberRes, candOwnedRes] = await Promise.all([
+        sc.from("trip_members").select("trip_id, user_id").in("user_id", safeIds).in("role", ["owner", "member"]),
+        sc.from("trips").select("id, owner_id").in("owner_id", safeIds).gte("end_date", today),
+      ]);
 
-      for (const t of (callerTrips ?? [])) {
-        const city = ((t as any).destination_city as string | null)?.trim();
-        const country = ((t as any).destination_country as string | null)?.trim();
-        if (city) {
-          const key = city.toLowerCase();
-          callerCityKeys.add(key);
-          cityDisplayMap.set(key, city);
-        }
-        if (country) {
-          callerCountryKeys.add(country.toLowerCase());
-        }
+      // Build tripId → [userId] map so one trip can credit multiple candidates.
+      const tripToUsers = new Map<string, string[]>();
+      for (const r of (candMemberRes.data ?? [])) {
+        const tid = (r as any).trip_id as string;
+        const uid = (r as any).user_id as string;
+        if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+        tripToUsers.get(tid)!.push(uid);
+      }
+      for (const r of (candOwnedRes.data ?? [])) {
+        const tid = (r as any).id as string;
+        const uid = (r as any).owner_id as string;
+        if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+        if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
       }
 
-      if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
-        // Fetch candidate trips — both owned and joined as member.
-        const [candMemberRes, candOwnedRes] = await Promise.all([
-          sc.from("trip_members").select("trip_id, user_id").in("user_id", safeIds).in("role", ["owner", "member"]),
-          sc.from("trips").select("id, owner_id").in("owner_id", safeIds).gte("end_date", today),
-        ]);
+      if (tripToUsers.size > 0) {
+        const { data: candTrips } = await sc
+          .from("trips")
+          .select("id, destination_city, destination_country")
+          .in("id", Array.from(tripToUsers.keys()))
+          .gte("end_date", today);
 
-        // Build tripId → [userId] map so one trip can credit multiple candidates.
-        const tripToUsers = new Map<string, string[]>();
-        for (const r of (candMemberRes.data ?? [])) {
-          const tid = (r as any).trip_id as string;
-          const uid = (r as any).user_id as string;
-          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
-          tripToUsers.get(tid)!.push(uid);
-        }
-        for (const r of (candOwnedRes.data ?? [])) {
-          const tid = (r as any).id as string;
-          const uid = (r as any).owner_id as string;
-          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
-          if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
-        }
+        for (const trip of (candTrips ?? [])) {
+          const city = ((trip as any).destination_city as string | null)?.trim();
+          const country = ((trip as any).destination_country as string | null)?.trim();
+          const tid = (trip as any).id as string;
 
-        if (tripToUsers.size > 0) {
-          const { data: candTrips } = await sc
-            .from("trips")
-            .select("id, destination_city, destination_country")
-            .in("id", Array.from(tripToUsers.keys()))
-            .gte("end_date", today);
+          let label: string | null = null;
+          if (city && callerCityKeys.has(city.toLowerCase())) {
+            label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+          } else if (country && callerCountryKeys.has(country.toLowerCase())) {
+            label = `Both going to ${country}`;
+          }
 
-          for (const trip of (candTrips ?? [])) {
-            const city = ((trip as any).destination_city as string | null)?.trim();
-            const country = ((trip as any).destination_country as string | null)?.trim();
-            const tid = (trip as any).id as string;
-
-            let label: string | null = null;
-            if (city && callerCityKeys.has(city.toLowerCase())) {
-              label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
-            } else if (country && callerCountryKeys.has(country.toLowerCase())) {
-              label = `Both going to ${country}`;
-            }
-
-            if (label) {
-              for (const uid of (tripToUsers.get(tid) ?? [])) {
-                // First match wins — keeps one label per candidate.
-                if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
-              }
+          if (label) {
+            for (const uid of (tripToUsers.get(tid) ?? [])) {
+              // First match wins — keeps one label per candidate.
+              if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
             }
           }
         }
