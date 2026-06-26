@@ -8,7 +8,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Users, UserCheck, UserPlus, Clock,
   MessageCircle, X, MoreVertical, ShieldAlert,
+  Image as ImageIcon, Tag, Map as MapIcon, Info,
 } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState, viewedHighlightIds } from '../../src/hooks/useHighlightRingState';
@@ -27,11 +29,11 @@ import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'postcards', label: 'Postcards' },
-  { key: 'stamps', label: 'Stamps' },
-  { key: 'map', label: 'Map' },
-  { key: 'about', label: 'About' },
+const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
+  { key: 'postcards', label: 'Postcards', Icon: ImageIcon },
+  { key: 'stamps',    label: 'Stamps',    Icon: Tag },
+  { key: 'map',       label: 'Map',       Icon: MapIcon },
+  { key: 'about',     label: 'About',     Icon: Info },
 ];
 
 interface SocialProfile {
@@ -510,25 +512,28 @@ export default function PublicPassportScreen() {
           </View>
         )}
 
-        {/* Tab bar */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabBarWrap}
-          contentContainerStyle={styles.tabBarContent}
-        >
-          {TABS.map((tb) => (
-            <Pressable
-              key={tb.key}
-              style={[styles.tab, tab === tb.key && styles.tabActive]}
-              onPress={() => setTab(tb.key)}
-            >
-              <Text style={[styles.tabText, tab === tb.key && styles.tabTextActive]}>
-                {tb.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+        {/* Tab bar — icon-only pill row */}
+        <View style={styles.tabBarWrap}>
+          {TABS.map((tb) => {
+            const active = tab === tb.key;
+            return (
+              <Pressable
+                key={tb.key}
+                accessibilityLabel={tb.label}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={[styles.tab, active && styles.tabActive]}
+                onPress={() => setTab(tb.key)}
+              >
+                <tb.Icon
+                  size={20}
+                  color={active ? color.onInk : color.mute}
+                  strokeWidth={2}
+                />
+              </Pressable>
+            );
+          })}
+        </View>
 
         <View style={{ marginTop: space.md }}>
           {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} />}
@@ -684,16 +689,20 @@ const styles = StyleSheet.create({
   },
   privateText: { ...t.small, color: color.mute, flex: 1 },
 
-  tabBarWrap: { marginTop: space.md },
-  tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },
+  tabBarWrap: {
+    marginTop: space.md,
+    flexDirection: 'row',
+    paddingHorizontal: space.lg,
+    gap: space.sm,
+  },
   tab: {
-    paddingHorizontal: space.md, paddingVertical: 8,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
+    flex: 1,
+    alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
     backgroundColor: color.paperRaised,
   },
   tabActive: { backgroundColor: color.ink, borderColor: color.ink },
-  tabText: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 13 },
-  tabTextActive: { color: color.onInk },
 
   aboutRow: { gap: 6 },
   aboutLabel: {
