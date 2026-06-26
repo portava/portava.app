@@ -2,9 +2,17 @@
  * AirportProfileService
  *
  * Resolves airport records by IATA code, GPS proximity, or city name.
- * Falls back to hardcoded defaults when the record is missing from the DB.
+ * Tries the DB first; falls back to the static airport dataset when the DB
+ * table is empty or unavailable.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  searchStaticAirports,
+  resolveStaticByIata,
+  resolveStaticByCity,
+  resolveStaticByGps,
+  type StaticAirport,
+} from "./StaticAirportData.js";
 
 export interface AirportProfile {
   id: string | null;
@@ -24,6 +32,29 @@ export interface AirportProfile {
   checkedBagsExtraMin: number;
   trafficExtraMin: number;
   verified: boolean;
+}
+
+/** Convert a static airport record to an AirportProfile with fallback buffer values. */
+function staticToProfile(s: StaticAirport): AirportProfile {
+  return {
+    id: null,
+    iataCode:               s.iataCode,
+    name:                   s.name,
+    city:                   s.city,
+    country:                s.country,
+    countryCode:            s.countryCode,
+    timezone:               s.timezone,
+    lat:                    s.lat,
+    lng:                    s.lng,
+    domesticBufferMin:      60,
+    domesticBufferMax:      90,
+    internationalBufferMin: 120,
+    internationalBufferMax: 180,
+    immigrationExtraMin:    30,
+    checkedBagsExtraMin:    15,
+    trafficExtraMin:        20,
+    verified:               false,
+  };
 }
 
 const FALLBACK_PROFILE: Omit<AirportProfile, "id" | "iataCode" | "name" | "city" | "country" | "countryCode" | "lat" | "lng"> = {
@@ -71,10 +102,11 @@ export async function resolveByIata(
       .select("*")
       .ilike("iata_code", iataCode.trim())
       .maybeSingle();
-    return data ? rowToProfile(data) : null;
-  } catch {
-    return null;
-  }
+    if (data) return rowToProfile(data);
+  } catch { /* fall through */ }
+  // Static fallback
+  const s = resolveStaticByIata(iataCode);
+  return s ? staticToProfile(s) : null;
 }
 
 /** Resolve by nearest GPS coordinate within maxDistanceKm. */
@@ -95,9 +127,13 @@ export async function resolveByGps(
       .lte("lng", lng + delta)
       .limit(20);
 
-    if (!data || data.length === 0) return null;
+    if (!data || data.length === 0) {
+      // Static GPS fallback
+      const s = resolveStaticByGps(lat, lng);
+      return s ? staticToProfile(s) : null;
+    }
 
-    // Find closest
+    // Find closest DB row
     let closest: any = null;
     let closestDist = Infinity;
     for (const row of data) {
@@ -111,7 +147,8 @@ export async function resolveByGps(
     }
     return closest ? rowToProfile(closest) : null;
   } catch {
-    return null;
+    const s = resolveStaticByGps(lat, lng);
+    return s ? staticToProfile(s) : null;
   }
 }
 
@@ -127,10 +164,11 @@ export async function resolveByCity(
       .ilike("city", `%${city.trim()}%`)
       .limit(1)
       .maybeSingle();
-    return data ? rowToProfile(data) : null;
-  } catch {
-    return null;
-  }
+    if (data) return rowToProfile(data);
+  } catch { /* fall through */ }
+  // Static fallback
+  const s = resolveStaticByCity(city);
+  return s ? staticToProfile(s) : null;
 }
 
 /** Search airports by query (IATA, city, name). Returns up to 10 results. */
@@ -147,10 +185,11 @@ export async function searchAirports(
       .or(`iata_code.ilike.${q}%,city.ilike.%${q}%,name.ilike.%${q}%`)
       .order("verified", { ascending: false })
       .limit(10);
-    return (data ?? []).map(rowToProfile);
-  } catch {
-    return [];
-  }
+    // If DB has results, use them
+    if (data && data.length > 0) return data.map(rowToProfile);
+  } catch { /* fall through */ }
+  // Static fallback — always available even with empty DB
+  return searchStaticAirports(q, 10).map(staticToProfile);
 }
 
 /** Build a minimal fallback profile when the airport is not in the DB. */

@@ -124,14 +124,18 @@ async function resolveAirportForSession(sc: any, session: any) {
 async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<boolean> {
   if (!db) return false;
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    return Boolean((data as any)?.enabled);
+    // DB error (table not yet migrated) → fail-open so dev env works.
+    if (error) return true;
+    // No row → flag not seeded yet, treat as enabled.
+    if (data == null) return true;
+    return Boolean((data as any).enabled);
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -288,7 +292,7 @@ router.post("/airport/sessions", async (req, res) => {
   // Passport seam: emit layover stamp
   void (async () => {
     try {
-      const { data: flagRow } = await sc.from("feature_flags").select("enabled").eq("key", "passport_stamps_enabled").maybeSingle();
+      const { data: flagRow } = await sc.from("feature_flags").select("enabled").eq("flag", "passport_stamps_enabled").maybeSingle();
       if ((flagRow as any)?.enabled) {
         const airportCity = session.manualCity ?? null;
         if (airportCity) {

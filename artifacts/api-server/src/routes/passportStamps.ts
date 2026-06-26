@@ -236,7 +236,10 @@ router.post("/me/passport/memories", async (req, res) => {
 
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { client, user } = auth;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const parsed = createMemorySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -244,7 +247,7 @@ router.post("/me/passport/memories", async (req, res) => {
     return;
   }
 
-  const id = await createMemory(client, {
+  const id = await createMemory(sc, {
     userId: user.id,
     ...parsed.data,
     photoUrl: parsed.data.photoUrl ?? undefined,
@@ -256,8 +259,6 @@ router.post("/me/passport/memories", async (req, res) => {
     return;
   }
 
-  // Record contribution event (does not touch Trust Score)
-  const sc = getServiceClient();
   if (sc && await isFlagEnabled("passport_contribution_events_enabled")) {
     await recordContribution(sc, {
       userId: user.id,
