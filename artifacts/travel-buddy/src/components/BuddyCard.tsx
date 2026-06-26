@@ -6,6 +6,7 @@ import { color, space, radius, type as t, shadow, layout } from '../theme/tokens
 import { Stamp } from './ui';
 import type { BuddyProfile } from '../services/rentABuddy';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
+import { CompassWhySheet } from './compass/CompassWhySheet';
 
 function deriveLevel(reviewCount: number, verified: boolean): { label: string; color: string } {
   if (!verified || reviewCount < 5) return { label: 'New Buddy', color: color.mute };
@@ -31,12 +32,16 @@ interface BuddyCardProps {
   onBook?: () => void;
   onPress?: () => void;
   onDismiss?: () => void;
+  /** Signed Compass recommendation token — enables "Why am I seeing this?" when set. */
+  recommendationId?: string;
 }
 
 export function BuddyCard({
   buddy, compatibilityScore, whyMatched, compact, availableNow, onBook, onPress, onDismiss,
+  recommendationId,
 }: BuddyCardProps) {
   const [dismissed, setDismissed] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false);
   if (dismissed) return null;
   const rating = buddy.averageRating ?? 0;
   const stars = rating > 0 ? rating.toFixed(1) : '—';
@@ -154,16 +159,22 @@ export function BuddyCard({
           </Pressable>
         )}
 
-        {/* Compass feedback menu — not-interested / show-more */}
+        {/* Compass feedback menu — not-interested / show-more / why */}
         <View style={styles.feedbackRow}>
           <CompassFeedbackMenu
             recommendationId={buddy.id}
             itemType="buddy"
             category="rent_a_buddy"
+            onWhyPress={recommendationId ? () => setWhyOpen(true) : undefined}
             onDismiss={() => { setDismissed(true); onDismiss?.(); }}
           />
         </View>
       </View>
+      <CompassWhySheet
+        visible={whyOpen}
+        recommendationId={recommendationId ?? null}
+        onClose={() => setWhyOpen(false)}
+      />
     </Pressable>
   );
 }

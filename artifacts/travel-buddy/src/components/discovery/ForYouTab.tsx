@@ -1,9 +1,8 @@
 /**
- * For You tab — AI-backed recommendations from Telegraph.
+ * For You tab — Compass-powered recommendations with OSM fallback.
  *
- * Uses PlaceCard for full interaction parity (Save, Get Directions, Add to Plan,
- * tap to open PlaceDetailSheet). Shows a "Why this?" reason banner above each card.
- * Falls back to OSM attraction mix when Telegraph is unavailable or user is not signed in.
+ * Primary source: Compass feed (when enabled). Falls back to OSM when
+ * compassEnabled is false. Uses PlaceCard for full interaction parity.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -13,8 +12,6 @@ import { useFocusEffect } from 'expo-router';
 import { Sparkles, Info, Share2 } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
-import type { TelegraphRecommendation } from '../../services/telegraphRecommend';
-import { getForYouRecommendations } from '../../services/telegraphRecommend';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { getDiscoveryPlaces } from '../../services/discovery';
 import { PlaceSkeletonList } from './PlaceSkeleton';
@@ -29,29 +26,6 @@ import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
 import { CompassWhySheet } from '../compass/CompassWhySheet';
 import { postCompassFrontloadEvent } from '../../services/compass';
 
-// ── Convert a Telegraph recommendation to DiscoveryPlace shape ────────────────
-
-function recToPlace(rec: TelegraphRecommendation): DiscoveryPlace {
-  const tags: string[] = [rec.estimatedTime, rec.priceLevel].filter((s) => s && s !== 'free') as string[];
-  return {
-    id:           rec.id,
-    name:         rec.title,
-    category:     'for_you',
-    type:         rec.category || null,
-    description:  rec.locationContext || null,
-    distanceKm:   null,
-    lat:          null,
-    lng:          null,
-    tags,
-    address:      rec.locationContext || null,
-    website:      null,
-    phone:        null,
-    openingHours: null,
-    rating:       null,
-    isOpenNow:    null,
-  };
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface ForYouTabProps {
@@ -61,7 +35,6 @@ interface ForYouTabProps {
 }
 
 type ForYouItem =
-  | { kind: 'telegraph'; rec: TelegraphRecommendation; place: DiscoveryPlace }
   | { kind: 'osm'; place: DiscoveryPlace }
   | { kind: 'compass'; item: import('../../services/compass').CompassFeedItem; place: DiscoveryPlace };
 
@@ -90,7 +63,7 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [source, setSource]     = useState<'compass' | 'telegraph' | 'osm' | 'none'>('none');
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
@@ -156,12 +129,8 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
 
     if (!isRefresh) setLoading(true);
 
-    // Fire OSM and Telegraph simultaneously as baseline content.
-    // Compass data (if enabled) will upgrade items via its own useEffect.
+    // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
     const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode);
-    const telPromise = isAuthed
-      ? getForYouRecommendations({ destination, count: 5 })
-      : null;
 
     // Show OSM content the instant it resolves — clears skeleton immediately.
     osmPromise.then((osm) => {
@@ -182,26 +151,6 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
-    // Silently upgrade to Telegraph AI picks when (if) the AI call returns.
-    if (telPromise) {
-      try {
-        const tel = await telPromise;
-        if (!stale() && tel.ok && tel.recommendations.length > 0) {
-          setItems((prev) => {
-            if (prev.some((i) => i.kind === 'compass')) return prev;
-            setSource('telegraph');
-            return tel.recommendations.map((rec) => ({
-              kind: 'telegraph' as const,
-              rec,
-              place: recToPlace(rec),
-            }));
-          });
-        }
-      } catch {
-        // telegraph failed — OSM is already showing, nothing to do
-      }
-      if (!stale()) { setLoading(false); setRefreshing(false); }
-    }
   }, [destination, isAuthed]);
 
   // Reset state and start loading when destination or auth changes.
@@ -239,10 +188,8 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
           <Text style={styles.sourceLabel}>
             {source === 'compass'
               ? 'Compass picks · personalised for you'
-              : source === 'telegraph'
-              ? 'Personalised picks · powered by Telegraph AI'
               : source === 'osm'
-              ? 'Popular spots from OpenStreetMap · sign in for personalised picks'
+              ? 'Popular spots · sign in for personalised picks'
               : 'Curated picks'}
           </Text>
         </View>
@@ -251,7 +198,7 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
           const isShowMore = showMoreIds.has(item.place.id);
           return (
             <View key={item.place.id} style={isShowMore ? styles.showMoreHighlight : undefined}>
-              {/* Reason banner — Compass items or Telegraph cards */}
+              {/* Reason banner — Compass items only */}
               {item.kind === 'compass' ? (
                 <View style={styles.reasonBanner}>
                   <Info size={11} color={color.signal} />
@@ -268,13 +215,6 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
                     onDismiss={() => setDismissed((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
                     onTagShowMore={() => setShowMoreIds((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
                   />
-                </View>
-              ) : item.kind === 'telegraph' && item.rec.reason ? (
-                <View style={styles.reasonBanner}>
-                  <Info size={11} color={color.signal} />
-                  <Text style={styles.reasonText} numberOfLines={2}>
-                    {item.rec.reason}
-                  </Text>
                 </View>
               ) : null}
 
@@ -366,16 +306,6 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
 }
 
 function buildSharePayload(item: ForYouItem): DiscoverySharePayload {
-  if (item.kind === 'telegraph') {
-    return {
-      sourceId: item.rec.id,
-      sourceType: 'for_you',
-      title: item.rec.title,
-      category: item.rec.category ?? 'for_you',
-      city: item.rec.locationContext ?? '',
-      blurb: item.rec.reason,
-    };
-  }
   if (item.kind === 'compass') {
     return {
       sourceId: item.item.id,

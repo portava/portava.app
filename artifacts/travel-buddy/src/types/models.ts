@@ -713,6 +713,8 @@ export interface PulseFeedItem {
 
   availabilityScore?: number | null;
   recommendationReason?: string | null;
+  /** Signed token from Compass that enables "Why am I seeing this?" — only set when served via Compass. */
+  recommendationId?: string | null;
 
   relatedPlanId?: ID | null;
   relatedGemId?: ID | null;

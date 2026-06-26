@@ -10,6 +10,7 @@ import { color, space, radius, type as t, shadow, layout } from '../theme/tokens
 import { usePlanPicker } from './PlanPickerController';
 import { RichText } from './RichText';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
+import { CompassWhySheet } from './compass/CompassWhySheet';
 import { PostEngagementBar } from './PostEngagementBar';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
@@ -106,7 +107,7 @@ function FitBadge() {
 }
 
 /* ── Traveler Post ── */
-function PostCard({ item }: { item: PulseFeedItem }) {
+function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
@@ -151,6 +152,7 @@ function PostCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -159,7 +161,7 @@ function PostCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Question ── */
-function QuestionCard({ item }: { item: PulseFeedItem }) {
+function QuestionCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
   return (
@@ -175,6 +177,7 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -194,7 +197,7 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Open Plan ── */
-function PlanCard({ item }: { item: PulseFeedItem }) {
+function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
@@ -220,6 +223,7 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -228,7 +232,7 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Hidden Gem Share ── */
-function GemCard({ item }: { item: PulseFeedItem }) {
+function GemCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
@@ -247,6 +251,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -255,7 +260,7 @@ function GemCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Itinerary / Plan Idea ── */
-function ItineraryCard({ item }: { item: PulseFeedItem }) {
+function ItineraryCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
@@ -279,6 +284,7 @@ function ItineraryCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -309,7 +315,7 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Compass Suggestion (stub-real: only with explicit reason) ── */
-function CompassCard({ item }: { item: PulseFeedItem }) {
+function CompassCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
@@ -330,6 +336,7 @@ function CompassCard({ item }: { item: PulseFeedItem }) {
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
+          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
           onDismiss={() => setDismissed(true)}
         />
       </View>
@@ -384,19 +391,36 @@ function RentABuddyCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Unified renderer: switch on type ── */
 export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
+  const [whyId, setWhyId] = useState<string | null>(null);
+  const [whyOpen, setWhyOpen] = useState(false);
+
+  const handleWhyPress = (id: string) => { setWhyId(id); setWhyOpen(true); };
+
+  let card: React.ReactNode;
   switch (item.type) {
-    case 'post': return <PostCard item={item} />;
-    case 'question': return <QuestionCard item={item} />;
-    case 'plan': return <PlanCard item={item} />;
-    case 'hidden_gem': return <GemCard item={item} />;
-    case 'itinerary': return <ItineraryCard item={item} />;
-    case 'circle_activity': return <CircleCard item={item} />;
-    case 'compass_suggestion': return item.reason ? <CompassCard item={item} /> : null; // stub: only with real reason
-    case 'city_note': return item.isProvisional ? <CityNoteCard item={item} /> : null;  // stub: only provisional-labeled
-    case 'safety': return item.blurb ? <SafetyCard item={item} /> : null;               // stub: only when condition exists
-    case 'rent_a_buddy': return <RentABuddyCard item={item} />;
-    default: return null;
+    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'circle_activity':    card = <CircleCard item={item} />; break;
+    case 'compass_suggestion': card = item.reason ? <CompassCard item={item} onWhyPress={handleWhyPress} /> : null; break;
+    case 'city_note':          card = item.isProvisional ? <CityNoteCard item={item} /> : null; break;
+    case 'safety':             card = item.blurb ? <SafetyCard item={item} /> : null; break;
+    case 'rent_a_buddy':       card = <RentABuddyCard item={item} />; break;
+    default:                   card = null;
   }
+
+  return (
+    <>
+      {card}
+      <CompassWhySheet
+        visible={whyOpen}
+        recommendationId={whyId}
+        onClose={() => setWhyOpen(false)}
+      />
+    </>
+  );
 }
 
 const s = StyleSheet.create({
