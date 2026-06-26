@@ -208,6 +208,8 @@ interface DiscoveryCategoryTabProps {
   ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
   customMinAge?: number | null;
   customMaxAge?: number | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export function DiscoveryCategoryTab({
@@ -221,6 +223,8 @@ export function DiscoveryCategoryTab({
   ageFilter,
   customMinAge,
   customMaxAge,
+  lat,
+  lng,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -250,7 +254,7 @@ export function DiscoveryCategoryTab({
     if (reset) setLoading(true);
     setError(null);
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge);
+    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng);
 
     setLoading(false);
     setRefreshing(false);

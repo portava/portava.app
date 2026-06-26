@@ -4,12 +4,13 @@ import {
   KeyboardAvoidingView, Platform, Alert, StyleSheet,
 } from 'react-native';
 import {
-  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield,
+  MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield, ChevronRight,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { DatePickerField } from '../DateTimePickerField';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ function EditForm({
     item.startsAt ? new Date(item.startsAt) : null,
   );
   const [locationName, setLocationName] = useState(item.locationName ?? '');
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
   const [notes, setNotes] = useState(item.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
@@ -197,7 +199,24 @@ function EditForm({
       />
 
       <Text style={ef.label}>Location <Text style={ef.opt}>(optional)</Text></Text>
-      <TextInput style={ef.input} value={locationName} onChangeText={setLocationName} placeholder="e.g. Ayala Mall, Cebu" placeholderTextColor={color.faint} />
+      <Pressable style={[ef.input, ef.locationRow]} onPress={() => setLocationPickerOpen(true)}>
+        <Text style={locationName ? ef.locationText : ef.locationPlaceholder} numberOfLines={1}>
+          {locationName || 'e.g. Ayala Mall, Cebu'}
+        </Text>
+        <ChevronRight size={14} color={color.mute} />
+      </Pressable>
+      <GlobalPlacePicker
+        visible={locationPickerOpen}
+        title="Item location"
+        placeholder="Venue, address or city…"
+        allowGPS
+        usedFor="plan_item_location"
+        onSelect={(place) => {
+          setLocationName(place.displayName);
+          setLocationPickerOpen(false);
+        }}
+        onClose={() => setLocationPickerOpen(false)}
+      />
 
       <Text style={ef.label}>Status</Text>
       <View style={ef.statusRow}>
@@ -499,6 +518,9 @@ const ef = StyleSheet.create({
   statusChipText:       { ...t.small, color: color.mute, fontWeight: '600' },
   statusChipTextActive: { color: '#fff' },
   error:                { ...t.small, color: color.signal },
+  locationRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  locationText:         { ...t.body, color: color.ink, flex: 1 },
+  locationPlaceholder:  { ...t.body, color: color.faint, flex: 1 },
   saveBtn:              { backgroundColor: color.deep, borderRadius: radius.md, padding: 13, alignItems: 'center', marginTop: 4 },
   saveBtnDim:           { opacity: 0.55 },
   saveText:             { ...t.body, color: '#fff', fontWeight: '700' },

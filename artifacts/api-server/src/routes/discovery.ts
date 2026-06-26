@@ -405,6 +405,12 @@ function contextModeLabel(mode: string, city: string | null): string {
 
 router.get("/discovery", async (req, res) => {
   const destinationParam = (req.query.destination as string | undefined)?.trim() || undefined;
+  const latParam  = req.query.lat  ? parseFloat(req.query.lat  as string) : null;
+  const lngParam  = req.query.lng  ? parseFloat(req.query.lng  as string) : null;
+  const clientCoords =
+    latParam != null && !isNaN(latParam) && lngParam != null && !isNaN(lngParam)
+      ? { lat: latParam, lng: lngParam }
+      : null;
 
   // Optional auth — enrich with DiscoveryLocationContext when present.
   // When authenticated + no destination param, we use discoveryCtx.targetCity as
@@ -565,7 +571,7 @@ router.get("/discovery", async (req, res) => {
   }
 
   try {
-    const coords = await geocode(destination);
+    const coords = clientCoords ?? await geocode(destination);
     if (!coords) {
       res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta });
       return;

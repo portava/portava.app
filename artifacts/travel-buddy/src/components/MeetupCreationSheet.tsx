@@ -29,8 +29,9 @@ import {
 } from 'react-native';
 import {
   X, MapPin, CalendarClock, Users, Check, ChevronDown, ChevronUp,
-  Plus, Trash2, Search,
+  Plus, Trash2, Search, ChevronRight,
 } from 'lucide-react-native';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
 import { DatePickerField } from './DateTimePickerField';
 import {
   createMeetup, addTimeOption, getFrequentInvitees,
@@ -187,6 +188,7 @@ export function MeetupCreationSheet({
   const [title, setTitle]           = useState(initialTitle ?? '');
   const [description, setDescription] = useState('');
   const [locationName, setLocationName] = useState(initialLocation ?? '');
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState<string | null>(null);
 
@@ -476,13 +478,29 @@ export function MeetupCreationSheet({
               <MapPin size={12} color={color.mute} />
               <Text style={s.label}>Location</Text>
             </View>
-            <TextInput
-              style={s.input}
-              placeholder="e.g. Mango Square, Cebu"
-              placeholderTextColor={color.faint}
-              value={locationName}
-              onChangeText={setLocationName}
-              maxLength={300}
+            <Pressable
+              style={[s.input, s.locationRow]}
+              onPress={() => setLocationPickerVisible(true)}
+            >
+              <Text
+                style={locationName ? s.locationText : s.locationPlaceholder}
+                numberOfLines={1}
+              >
+                {locationName || 'e.g. Mango Square, Cebu'}
+              </Text>
+              <ChevronRight size={14} color={color.mute} />
+            </Pressable>
+            <GlobalPlacePicker
+              visible={locationPickerVisible}
+              title="Meetup location"
+              placeholder="City, venue or address…"
+              allowGPS
+              usedFor="meetup_location"
+              onSelect={(place) => {
+                setLocationName(place.displayName);
+                setLocationPickerVisible(false);
+              }}
+              onClose={() => setLocationPickerVisible(false)}
             />
 
             <Text style={s.label}>Description (optional)</Text>
@@ -871,6 +889,9 @@ const s = StyleSheet.create({
   timeLabelRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
   labelHint:        { ...t.small, color: color.mute, fontSize: 11 },
   input:            { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm + 2, ...t.body, color: color.ink },
+  locationRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  locationText:     { ...t.body, color: color.ink, flex: 1 },
+  locationPlaceholder: { ...t.body, color: color.faint, flex: 1 },
   divider:          { height: 1, backgroundColor: color.haze, marginVertical: space.xs },
   sectionToggle:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   sectionToggleText:{ ...t.bodyStrong, color: color.ink, fontWeight: '700' },

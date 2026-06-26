@@ -10,6 +10,7 @@ import {
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
+import type { Place } from '../../src/lib/location/placeTypes';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
@@ -94,6 +95,12 @@ export default function DiscoveryHub() {
   const [destination, setDestination] = useState(
     () => locationState.place.city ?? 'Paris'
   );
+  const [destinationLat, setDestinationLat] = useState<number | null>(
+    () => locationState.coords?.lat ?? null
+  );
+  const [destinationLng, setDestinationLng] = useState<number | null>(
+    () => locationState.coords?.lng ?? null
+  );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   const [customMinAge, setCustomMinAge] = useState<number | null>(null);
@@ -108,6 +115,8 @@ export default function DiscoveryHub() {
   useEffect(() => {
     if (locationState.place.city) {
       setDestination(locationState.place.city);
+      setDestinationLat(locationState.coords?.lat ?? null);
+      setDestinationLng(locationState.coords?.lng ?? null);
     }
   }, [locationState.place.city]);
 
@@ -162,8 +171,17 @@ export default function DiscoveryHub() {
 
   const handlePickDestination = useCallback((city: string) => {
     setDestination(city);
+    setDestinationLat(null);
+    setDestinationLng(null);
     // Also persist as manual city in the location system
     setManualCity(city).catch(() => {});
+  }, [setManualCity]);
+
+  const handleSelectPlaceFromBar = useCallback((place: Place) => {
+    setDestination(place.city ?? place.name);
+    setDestinationLat(place.lat ?? null);
+    setDestinationLng(place.lng ?? null);
+    setManualCity(place.city ?? place.name).catch(() => {});
   }, [setManualCity]);
 
   // Derive LocationChip props from current location state (no coordinates exposed)
@@ -186,7 +204,7 @@ export default function DiscoveryHub() {
             <LocationChip {...locationChipProps} size="sm" muted />
           )}
         </View>
-        <DestinationBar destination={destination} onChangeDestination={setDestination} />
+        <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
       </View>
 
       {/* ── Context mode selector ── */}
@@ -367,6 +385,8 @@ export default function DiscoveryHub() {
             destination={destination}
             onAddToPlan={handleAddToPlan}
             contextMode={contextMode}
+            lat={destinationLat}
+            lng={destinationLng}
           />
         ) : (
           <DiscoveryCategoryTab
@@ -381,6 +401,8 @@ export default function DiscoveryHub() {
             ageFilter={ageFilter}
             customMinAge={customMinAge}
             customMaxAge={customMaxAge}
+            lat={destinationLat}
+            lng={destinationLng}
           />
         )}
       </View>

@@ -5,7 +5,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen, Search } from 'lucide-react-native';
+import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -140,6 +141,7 @@ export default function ApplyToBeBuddy() {
   const [displayName, setDisplayName] = useState('');
   const [city, setCity] = useState('');
   const [country, setCountry] = useState('');
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [languages, setLanguages] = useState<{ lang: string; fluency: string }[]>([
     { lang: '', fluency: 'Proficient' },
   ]);
@@ -355,6 +357,24 @@ export default function ApplyToBeBuddy() {
             <Field label="Display name" value={displayName} onChangeText={setDisplayName} placeholder="e.g. Marco from Bangkok" />
             <Field label="City you guide in" value={city} onChangeText={setCity} placeholder="e.g. Bangkok" />
             <Field label="Country" value={country} onChangeText={setCountry} placeholder="e.g. Thailand" optional />
+            <Pressable style={ap.searchCityBtn} onPress={() => setCityPickerOpen(true)}>
+              <Search size={13} color={color.signal} />
+              <Text style={ap.searchCityText}>Search city &amp; auto-fill</Text>
+            </Pressable>
+            <GlobalPlacePicker
+              visible={cityPickerOpen}
+              title="City you guide in"
+              placeholder="Search a city…"
+              allowGPS={false}
+              usedFor="buddy_service_city"
+              onSelect={(place) => {
+                if (place.city) setCity(place.city);
+                else setCity(place.name);
+                if (place.country) setCountry(place.country);
+                setCityPickerOpen(false);
+              }}
+              onClose={() => setCityPickerOpen(false)}
+            />
 
             <FieldLabel label="Languages you speak" />
             {languages.map((l, i) => (
@@ -783,6 +803,11 @@ const done = StyleSheet.create({
   },
   title: { ...t.heading, color: color.ink, textAlign: 'center' },
   sub: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 22 },
+});
+
+const ap = StyleSheet.create({
+  searchCityBtn:  { flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingVertical: space.sm, marginTop: -space.sm },
+  searchCityText: { ...t.small, color: color.signal, fontWeight: '600' },
 });
 
 const s = StyleSheet.create({

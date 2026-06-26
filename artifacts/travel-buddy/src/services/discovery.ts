@@ -121,6 +121,8 @@ export async function getDiscoveryPlaces(
   ageFilter?: DiscoveryAgeFilter | null,
   customMinAge?: number | null,
   customMaxAge?: number | null,
+  lat?: number | null,
+  lng?: number | null,
 ): Promise<{ ok: true; data: DiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -136,6 +138,8 @@ export async function getDiscoveryPlaces(
     ...(ageFilter && ageFilter !== 'any' ? { ageFilter } : {}),
     ...(ageFilter === 'custom' && customMinAge != null ? { customMinAge: String(customMinAge) } : {}),
     ...(ageFilter === 'custom' && customMaxAge != null ? { customMaxAge: String(customMaxAge) } : {}),
+    ...(lat != null ? { lat: String(lat) } : {}),
+    ...(lng != null ? { lng: String(lng) } : {}),
   });
 
   try {

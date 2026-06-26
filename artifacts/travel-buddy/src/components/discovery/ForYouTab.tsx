@@ -32,6 +32,8 @@ interface ForYouTabProps {
   destination: string;
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
   contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 type ForYouItem =
@@ -58,7 +60,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, contextMode, lat, lng }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -130,7 +132,7 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
     if (!isRefresh) setLoading(true);
 
     // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
-    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode);
+    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode, null, null, null, lat, lng);
 
     // Show OSM content the instant it resolves — clears skeleton immediately.
     osmPromise.then((osm) => {
