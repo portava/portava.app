@@ -551,9 +551,15 @@ importers:
 
   scripts:
     devDependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.108.2
+        version: 2.108.2
       '@types/node':
         specifier: 'catalog:'
         version: 22.19.21
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.4.7
       tsx:
         specifier: 'catalog:'
         version: 4.22.4

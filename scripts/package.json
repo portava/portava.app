@@ -8,10 +8,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "routes:guard": "tsx ./src/guard-expo-router-duplicates.ts",
     "routes:self-heal": "SELF_HEAL_EXPO_ROUTES=1 tsx ./src/guard-expo-router-duplicates.ts",
-    "test:routes-guard": "node --import tsx/esm --test ./src/guard-expo-router-duplicates.test.ts"
+    "test:routes-guard": "node --import tsx/esm --test ./src/guard-expo-router-duplicates.test.ts",
+    "seed:profiles": "tsx ./src/seed-test-profiles.ts"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "@types/node": "catalog:",
+    "dotenv": "^16.4.7",
     "tsx": "catalog:"
   }
 }
