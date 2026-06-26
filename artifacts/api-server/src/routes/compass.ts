@@ -28,6 +28,13 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName } from "../compass/CompassFeedBuilder.js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
+import {
+  buildFrontLoadPayload,
+  buildPreloadManifest,
+  recordNavigationEvent,
+  type NetworkHint,
+  type BatteryHint,
+} from "../compass/CompassFrontLoadEngine.js";
 import type {
   CompassContextResponse,
   CompassFallbackResponse,
@@ -226,6 +233,111 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     req.log.error({ err }, "compass/feed/section: build failed");
     res.json({ section: null, nextCursor: null, fallback: true });
   }
+});
+
+// ── Front-load query/body schemas ─────────────────────────────────────────────
+
+const networkHintValues = ["wifi", "cellular", "slow", "offline"] as const;
+const batteryHintValues = ["normal", "low"] as const;
+
+const frontloadQuerySchema = z.object({
+  network: z.enum(networkHintValues).optional(),
+  battery: z.enum(batteryHintValues).optional(),
+});
+
+const navigationEventSchema = z.object({
+  screen:      z.string().min(1).max(120),
+  occurred_at: z.string().datetime().optional(),
+});
+
+// ── GET /api/compass/frontload ─────────────────────────────────────────────────
+// Returns the Tier 0 + Tier 1 (and higher, network-permitting) payload in one
+// response so the client can pre-cache the data before the user taps any screen.
+
+router.get("/compass/frontload", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const parsed = frontloadQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+
+  try {
+    const profile = await getCompassProfile(sc, user.id);
+    const payload = await buildFrontLoadPayload(sc, user.id, profile, {
+      networkHint: parsed.data.network as NetworkHint | undefined,
+      batteryHint: parsed.data.battery as BatteryHint | undefined,
+    });
+    res.json(payload);
+  } catch (err) {
+    req.log.error({ err }, "compass/frontload: build failed");
+    sendError(res, "server_not_configured", "Front-load build failed");
+  }
+});
+
+// ── GET /api/compass/preload-manifest ─────────────────────────────────────────
+// Returns the prioritized list of Tier 2 URLs the client should prefetch.
+
+router.get("/compass/preload-manifest", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  try {
+    // Derive base URL from the request
+    const proto   = req.headers["x-forwarded-proto"] ?? "https";
+    const host    = req.headers["x-forwarded-host"] ?? req.headers.host ?? "";
+    const baseUrl = `${proto}://${host}`;
+
+    const manifest = await buildPreloadManifest(sc, user.id, baseUrl);
+    res.json({ manifest });
+  } catch (err) {
+    req.log.error({ err }, "compass/preload-manifest: build failed");
+    res.json({ manifest: [] });
+  }
+});
+
+// ── POST /api/compass/frontload/event ─────────────────────────────────────────
+// Records a client navigation event to improve future preload ranking.
+
+router.post("/compass/frontload/event", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const parsed = navigationEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const occurredAt = parsed.data.occurred_at
+    ? new Date(parsed.data.occurred_at)
+    : new Date();
+
+  await recordNavigationEvent(sc, user.id, parsed.data.screen, occurredAt);
+  res.status(200).json({ ok: true });
 });
 
 /* ─────────────────────────────────────────────────────────────────────────

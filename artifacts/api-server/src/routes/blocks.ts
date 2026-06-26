@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { publishToUsers } from "../lib/telegraphEvents";
+import { getServiceClient } from "../lib/supabase.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
+import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 
 const router = Router();
 
@@ -47,9 +49,12 @@ router.post("/users/:userId/block", async (req, res) => {
 
   res.status(200).json({ blocked: true, userId: target });
 
-  // Evict Compass profile cache for both parties — block changes affect signals immediately.
+  // Evict Compass profile + feed cache for both parties immediately.
   invalidateCompassProfile(user.id);
   invalidateCompassProfile(target);
+  const sc = getServiceClient ? getServiceClient() : null;
+  void invalidateCompassCache(sc, user.id, "block");
+  void invalidateCompassCache(sc, target, "blocked_by");
 
   // Realtime: let the blocker's other sessions refresh (threads/follow state
   // may have changed). Not sent to the blocked user.
