@@ -615,7 +615,9 @@ router.get("/users/suggestions", async (req, res) => {
   // 7. Mutual connections: people the caller follows who also follow each candidate.
   //    Computed over the full pool (before the 10-item slice) so that high-mutual
   //    candidates deeper in the shuffle can still surface in the final list.
+  //    We track the specific mutual IDs per candidate so we can apply interaction decay.
   const mutualCounts: Record<string, number> = {};
+  const mutualsByCandidate = new Map<string, string[]>();
   const myFollowingList = Array.from(alreadyFollowingSet);
   const validSafeIds = safeIds.filter((id) => poolProfileMap.has(id));
   if (myFollowingList.length > 0) {
@@ -627,19 +629,62 @@ router.get("/users/suggestions", async (req, res) => {
         .in("follower_id", myFollowingList);
       for (const r of (mutualRows ?? [])) {
         const cid = (r as any).following_id as string;
+        const mid = (r as any).follower_id as string;
         mutualCounts[cid] = (mutualCounts[cid] ?? 0) + 1;
+        const arr = mutualsByCandidate.get(cid) ?? [];
+        arr.push(mid);
+        mutualsByCandidate.set(cid, arr);
       }
     } catch { /* fail-safe: proceed with zero mutual counts */ }
   }
 
-  // Combined score: mutual connections are a stronger trust signal than style
-  // overlap, so they carry 3× weight.  Equal combined scores preserve the
-  // seeded-shuffle order (Array.prototype.sort is stable in V8).
+  // Interaction decay: a mutual connection you've shared a trip with is a much
+  // stronger endorsement than someone you followed long ago and never interacted
+  // with.  Interacted mutuals carry full weight (1.0); others are discounted to
+  // DECAY_BASE (0.5).  This makes the ranking more personally relevant without
+  // completely discarding cold mutual connections.
+  const DECAY_BASE = 0.5;
+  const interactedMutuals = new Set<string>();
+  const allMutualIds = Array.from(
+    new Set(Array.from(mutualsByCandidate.values()).flat()),
+  );
+  if (allMutualIds.length > 0) {
+    try {
+      const { data: callerTripRows } = await sc
+        .from("trip_members")
+        .select("trip_id")
+        .eq("user_id", user.id);
+      const callerTripIds = (callerTripRows ?? []).map((r: any) => r.trip_id as string);
+      if (callerTripIds.length > 0) {
+        const { data: sharedRows } = await sc
+          .from("trip_members")
+          .select("user_id")
+          .in("trip_id", callerTripIds)
+          .in("user_id", allMutualIds);
+        for (const r of (sharedRows ?? [])) {
+          interactedMutuals.add((r as any).user_id as string);
+        }
+      }
+    } catch { /* fail-safe: all mutuals get base decay weight */ }
+  }
+
+  // Sum the per-mutual decay weights for each candidate.
+  const decayedMutualScores: Record<string, number> = {};
+  for (const [cid, mids] of mutualsByCandidate.entries()) {
+    decayedMutualScores[cid] = mids.reduce(
+      (sum, mid) => sum + (interactedMutuals.has(mid) ? 1.0 : DECAY_BASE),
+      0,
+    );
+  }
+
+  // Combined score: interaction-decayed mutual connections are a stronger trust
+  // signal than style overlap, so they carry 3× weight.  Equal combined scores
+  // preserve the seeded-shuffle order (Array.prototype.sort is stable in V8).
   const MUTUAL_WEIGHT = 3;
   safeIds = validSafeIds
     .sort((a, b) => {
-      const scoreB = (mutualCounts[b] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(b) ?? 0);
-      const scoreA = (mutualCounts[a] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(a) ?? 0);
+      const scoreB = (decayedMutualScores[b] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(b) ?? 0);
+      const scoreA = (decayedMutualScores[a] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(a) ?? 0);
       return scoreB - scoreA;
     })
     .slice(0, 10);

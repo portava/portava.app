@@ -793,6 +793,136 @@ describe("GET /api/users/suggestions", () => {
     );
   });
 
+  // ── interaction decay on mutual connections ────────────────────────────────────
+
+  it("decay: interacted mutual (shared trip) outweighs non-interacted mutual of the same count", async () => {
+    // ME and D_MUT share a trip → D_MUT is an interacted mutual (weight 1.0)
+    // ME follows E_MUT but no shared trip → E_MUT is a non-interacted mutual (weight 0.5)
+    // D_MUT follows A → A's decayed score = 1.0, combined = 1.0×3 = 3
+    // E_MUT follows B → B's decayed score = 0.5, combined = 0.5×3 = 1.5
+    // A must rank above B.
+    const D_MUT = "user-d-mut";
+    const E_MUT = "user-e-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: D_MUT },
+        { follower_id: ME,    following_id: E_MUT },
+        { follower_id: D_MUT, following_id: A },
+        { follower_id: E_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false },
+        { id: D_MUT, handle: "dmut", name: "Dave",  avatar_url: null, is_private: false },
+        { id: E_MUT, handle: "emut", name: "Eve",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-shared", owner_id: ME, end_date: "2099-12-31" },
+      ],
+      trip_members: [
+        { trip_id: "trip-shared", user_id: ME,    role: "owner" },
+        { trip_id: "trip-shared", user_id: D_MUT, role: "member" }, // D_MUT interacted with ME
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (interacted mutual D_MUT) should appear");
+    assert.ok(posB !== -1, "B (non-interacted mutual E_MUT) should appear");
+    assert.ok(
+      posA < posB,
+      `A (interacted mutual, decay=1.0, combined=3) must rank above B (non-interacted, decay=0.5, combined=1.5); got ${ids.join(", ")}`,
+    );
+  });
+
+  it("decay: non-interacted mutual loses to sufficient interest-score when interest beats decayed weight", async () => {
+    // Without decay: A with 1 mutual → 1×3=3 > B with 2 style matches = 2 → A wins.
+    // With decay (non-interacted): A with 1 non-interacted mutual → 0.5×3=1.5 < B = 2 → B now wins.
+    const F_MUT = "user-f-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: F_MUT },
+        { follower_id: F_MUT, following_id: A },   // A has 1 non-interacted mutual
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false,
+          travel_styles: [] },                       // 0 style matches, 1 non-interacted mutual
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] }, // 2 style matches, 0 mutuals
+        { id: F_MUT, handle: "fmut", name: "Faye",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      // No shared trips → F_MUT is non-interacted, decay = 0.5
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (1 non-interacted mutual) should appear");
+    assert.ok(posB !== -1, "B (2 style matches) should appear");
+    assert.ok(
+      posB < posA,
+      `B (interest=2, combined=2) must rank above A (non-interacted mutual, combined=1.5); got ${ids.join(", ")}`,
+    );
+  });
+
+  it("decay: interacted mutual still beats interest-only score (decay preserves mutual advantage when interaction exists)", async () => {
+    // A has 1 interacted mutual (weight 1.0) → combined = 1.0×3 = 3
+    // B has 0 mutuals but 2 style matches → combined = 0 + 2 = 2
+    // A must rank above B (interacted mutual is still a stronger signal than interest alone).
+    const G_MUT = "user-g-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: G_MUT },
+        { follower_id: G_MUT, following_id: A },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false,
+          travel_styles: [] },                       // 0 style matches, 1 interacted mutual
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] }, // 2 style matches, 0 mutuals
+        { id: G_MUT, handle: "gmut", name: "Gus",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-g", owner_id: ME, end_date: "2099-12-31" },
+      ],
+      trip_members: [
+        { trip_id: "trip-g", user_id: ME,    role: "owner" },
+        { trip_id: "trip-g", user_id: G_MUT, role: "member" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (1 interacted mutual) should appear");
+    assert.ok(posB !== -1, "B (2 style matches) should appear");
+    assert.ok(
+      posA < posB,
+      `A (interacted mutual, combined=3) must rank above B (interest only, combined=2); got ${ids.join(", ")}`,
+    );
+  });
+
   // ── new profile fields: travel_group_style / looking_for / comfort_level / planning_style ──
 
   it("ranking: overlapping travel_group_style ranks a candidate above one without", async () => {
