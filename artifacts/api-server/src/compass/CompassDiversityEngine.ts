@@ -164,24 +164,32 @@ function familiarTypes(placed: PipelineResult[]): Set<string> {
 
 /**
  * Insert up to MAX_EXPLORATION_INSERTS "exploration" items — items of a type
- * not heavily represented in the placed items — once per EXPLORATION_WINDOW.
+ * not heavily represented — once per EXPLORATION_WINDOW.
  *
  * Exploration items are pulled from the existing pool (not invented); they are
  * moved up to the insertion position from their natural score-sorted position.
+ *
+ * Guarantee: at least one exploration card per 10 items when the feed contains
+ * two or more distinct content types.
+ *
+ * First-window handling:
+ *   When no items have been placed yet (first window), "familiar" types are
+ *   computed from the items within the window itself (dominant types). A
+ *   candidate is first sought beyond the window; if none exists, one is sought
+ *   within the window (after position 0) of a non-dominant type.
  */
 function insertExplorationCards(
-  items: PipelineResult[],
+  items:   PipelineResult[],
   profile: CompassProfile,
 ): { out: PipelineResult[]; explorationCount: number } {
   if (items.length < EXPLORATION_WINDOW) {
     return { out: items, explorationCount: 0 };
   }
 
-  const out: PipelineResult[]  = [...items];
+  const out: PipelineResult[] = [...items];
   let explorationCount = 0;
   let insertions       = 0;
 
-  // Process in windows of EXPLORATION_WINDOW
   for (
     let windowStart = 0;
     windowStart < out.length && insertions < MAX_EXPLORATION_INSERTS;
@@ -189,18 +197,28 @@ function insertExplorationCards(
   ) {
     const windowEnd = Math.min(windowStart + EXPLORATION_WINDOW, out.length);
     const placed    = out.slice(0, windowStart);
-    const familiar  = familiarTypes(placed);
 
-    // Skip if nothing is placed yet (first window — no pattern to break)
-    if (placed.length === 0) continue;
+    // For the first window, determine "familiar" from items WITHIN the window;
+    // for subsequent windows, use all already-placed items.
+    const familiar =
+      placed.length > 0
+        ? familiarTypes(placed)
+        : familiarTypes(out.slice(windowStart, windowEnd));
 
-    // Find an exploration candidate in items beyond the current window end
-    const candidateIdx = out.findIndex(
+    // Primary: find a candidate beyond the current window
+    let candidateIdx = out.findIndex(
       (r, i) => i >= windowEnd && !familiar.has(r.item.type),
     );
+
+    // First-window fallback: look inside the window (after position 0)
+    if (candidateIdx === -1 && placed.length === 0) {
+      candidateIdx = out.findIndex(
+        (r, i) => i > windowStart && i < windowEnd && !familiar.has(r.item.type),
+      );
+    }
+
     if (candidateIdx === -1) continue;
 
-    // Insert the candidate at windowStart + 1 (second position of next window)
     const insertAt = Math.min(windowStart + 1, windowEnd - 1);
     const [candidate] = out.splice(candidateIdx, 1);
     out.splice(insertAt, 0, candidate!);

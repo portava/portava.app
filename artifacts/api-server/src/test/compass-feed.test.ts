@@ -214,9 +214,8 @@ describe("CompassDiversityEngine", () => {
     ];
     const { items: out, explorationCount } = applyDiversity(items, baseProfile());
     assert.equal(out.length, items.length, "no items dropped");
-    // Exploration may or may not fire depending on familiar-type threshold —
-    // we only assert count ≥ 0 (non-negative) and items preserved
-    assert.ok(explorationCount >= 0);
+    // Spec requires at least one exploration card per 10 items when multiple types present
+    assert.ok(explorationCount >= 1, `expected ≥1 exploration card, got ${explorationCount}`);
   });
 });
 

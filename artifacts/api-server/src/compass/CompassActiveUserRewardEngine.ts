@@ -2,29 +2,18 @@
  * CompassActiveUserRewardEngine — Phase 3 active-user visibility rewards.
  *
  * Computes an ActiveUserScore (separate from Trust Score) using time-windowed
- * sums of positive activity events. Applies a Trust Multiplier so safety flags
- * suppress rewards. Writes results to `compass_active_user_scores`.
+ * sums of positive activity events. Applies a Trust Multiplier derived from the
+ * AUTHOR's own trust/safety data — never the viewer's profile.
+ * Writes results to `compass_active_user_scores`.
  * Also populates `compass_city_reputation` and `compass_category_reputation`
- * from the user's historical activity events.
- * Assigns tier and badge eligibility. Respects the user's
- * "boost_visibility_enabled" preference.
+ * from the author's historical activity events.
  *
- * Time windows:
- *   24h   — very recent activity (highest weight)
- *   7d    — this week
- *   30d   — this month
- *   90d   — this quarter
- *   lifetime — all-time signal
- *
- * ActiveVisibilityBoost formula:
- *   score = (w24 * s24 + w7 * s7 + w30 * s30 + w90 * s90 + wL * sL) * trustMultiplier
- *
- * Trust Multiplier:
+ * Trust Multiplier (based on AUTHOR's own data):
  *   - severe_safety_flag present → 0.0 (zero boost)
- *   - trust_caps active → 0.5
- *   - trust_score < 30    → 0.6
- *   - trust_score < 50    → 0.8
- *   - otherwise           → 1.0
+ *   - trust_caps active          → 0.5
+ *   - trust_score < 30           → 0.6
+ *   - trust_score < 50           → 0.8
+ *   - otherwise                  → 1.0
  *
  * Tiers:
  *   score < 15  → active_traveler
@@ -34,7 +23,6 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { CompassProfile } from "./types.js";
 
 // ── Window weights ────────────────────────────────────────────────────────────
 
@@ -82,18 +70,18 @@ export type ActiveUserTier =
   | "city_ambassador_candidate";
 
 export interface ActiveUserScoreResult {
-  userId:                string;
-  score24h:              number;
-  score7d:               number;
-  score30d:              number;
-  score90d:              number;
-  scoreLifetime:         number;
-  activeUserScore:       number;
-  trustMultiplier:       number;
-  tier:                  ActiveUserTier;
-  boostEligible:         boolean;
-  boostVisibilityEnabled: boolean;
-  badgeEligibility:      string[];
+  userId:                  string;
+  score24h:                number;
+  score7d:                 number;
+  score30d:                number;
+  score90d:                number;
+  scoreLifetime:           number;
+  activeUserScore:         number;
+  trustMultiplier:         number;
+  tier:                    ActiveUserTier;
+  boostEligible:           boolean;
+  boostVisibilityEnabled:  boolean;
+  badgeEligibility:        string[];
 }
 
 function nowMinus(days: number): Date {
@@ -109,13 +97,13 @@ function scoreEvents(events: any[], windowStart: Date): number {
       total += w * (Number(e.weight) || 1);
     }
   }
-  return Math.max(total, 0); // floor at 0 for window scores
+  return Math.max(total, 0);
 }
 
 function computeTrustMultiplier(
-  trustScore: number | null,
+  trustScore:          number | null,
   hasSevereSafetyFlag: boolean,
-  hasTrustCap: boolean,
+  hasTrustCap:         boolean,
 ): number {
   if (hasSevereSafetyFlag) return TRUST_MULTIPLIER_SEVERE;
   if (hasTrustCap)          return TRUST_MULTIPLIER_CAPPED;
@@ -126,16 +114,16 @@ function computeTrustMultiplier(
 }
 
 function computeTier(score: number): ActiveUserTier {
-  if (score >= TIER_AMBASSADOR) return "city_ambassador_candidate";
-  if (score >= TIER_CITY_CONN)  return "city_connector";
+  if (score >= TIER_AMBASSADOR)  return "city_ambassador_candidate";
+  if (score >= TIER_CITY_CONN)   return "city_connector";
   if (score >= TIER_LOCAL_GUIDE) return "local_guide";
   return "active_traveler";
 }
 
 function computeBadgeEligibility(
-  tier: ActiveUserTier,
-  events: any[],
-  score24h: number,
+  tier:            ActiveUserTier,
+  events:          any[],
+  score24h:        number,
   trustMultiplier: number,
 ): string[] {
   const badges: string[] = [];
@@ -155,6 +143,30 @@ function computeBadgeEligibility(
   if (score24h > 5) badges.push("consistent_explorer");
 
   return [...new Set(badges)];
+}
+
+// ── Author data loaders ───────────────────────────────────────────────────────
+
+/** Load the AUTHOR's own trust score and severe safety flag. Never throws. */
+async function loadAuthorTrustData(
+  db:     SupabaseClient,
+  userId: string,
+): Promise<{ trustScore: number | null; hasSevereSafetyFlag: boolean }> {
+  try {
+    const { data } = await db
+      .from("profiles")
+      .select("trust_score, safety_flags")
+      .eq("id", userId)
+      .maybeSingle();
+    const trustScore        = (data as any)?.trust_score ?? null;
+    const safetyFlags       = (data as any)?.safety_flags ?? [];
+    const hasSevereSafetyFlag =
+      Array.isArray(safetyFlags) &&
+      (safetyFlags as string[]).some((f) => f.startsWith("severe_"));
+    return { trustScore, hasSevereSafetyFlag };
+  } catch {
+    return { trustScore: null, hasSevereSafetyFlag: false };
+  }
 }
 
 /** Load active user events from DB. Never throws. */
@@ -205,31 +217,29 @@ async function loadBoostPreference(db: SupabaseClient, userId: string): Promise<
 }
 
 /**
- * Upsert city and category reputation from event history (fire-and-forget).
- * Uses raw counts from events as a proxy for reputation. Never throws.
+ * Upsert city and category reputation from the author's event history.
+ * Fire-and-forget. Never throws.
  */
 function updateReputations(
-  db: SupabaseClient,
+  db:     SupabaseClient,
   userId: string,
   events: any[],
 ): void {
   try {
     const now = new Date().toISOString();
 
-    // City reputation: count positive events per city
     const cityCounts = new Map<string, number>();
     for (const e of events) {
       if (!e.city || (EVENT_WEIGHTS[e.event_type] ?? 0) <= 0) continue;
       cityCounts.set(e.city, (cityCounts.get(e.city) ?? 0) + 1);
     }
     for (const [city, count] of cityCounts) {
-      const reputationScore = Math.min(100, count * 5);
       db.from("compass_city_reputation")
         .upsert(
           {
             user_id:          userId,
             city,
-            reputation_score: reputationScore,
+            reputation_score: Math.min(100, count * 5),
             visit_count:      count,
             last_active_at:   now,
             updated_at:       now,
@@ -239,20 +249,18 @@ function updateReputations(
         .then(() => {}, () => {});
     }
 
-    // Category reputation: count positive events per category
     const catCounts = new Map<string, number>();
     for (const e of events) {
       if (!e.category || (EVENT_WEIGHTS[e.event_type] ?? 0) <= 0) continue;
       catCounts.set(e.category, (catCounts.get(e.category) ?? 0) + 1);
     }
     for (const [category, count] of catCounts) {
-      const reputationScore = Math.min(100, count * 5);
       db.from("compass_category_reputation")
         .upsert(
           {
             user_id:           userId,
             category,
-            reputation_score:  reputationScore,
+            reputation_score:  Math.min(100, count * 5),
             interaction_count: count,
             last_active_at:    now,
             updated_at:        now,
@@ -264,27 +272,30 @@ function updateReputations(
   } catch { /* non-fatal */ }
 }
 
+// ── Public entry points ───────────────────────────────────────────────────────
+
 /**
- * Compute the ActiveUserScore for a single user and write it to the DB.
- * Also populates city/category reputation tables.
- * Never throws. Returns null on unexpected error.
+ * Compute the ActiveUserScore for a single author using their own trust/safety
+ * data from the DB. Never uses the viewer's profile.
+ * Writes results to DB (fire-and-forget). Returns null on unexpected error.
  */
 export async function computeActiveUserScore(
-  db: SupabaseClient,
-  userId: string,
-  profile: CompassProfile,
+  db:      SupabaseClient,
+  userId:  string,
   options: { hasSevereSafetyFlag?: boolean } = {},
 ): Promise<ActiveUserScoreResult | null> {
   try {
-    const [events, trustCapActive, boostPref] = await Promise.all([
+    const [events, trustCapActive, boostPref, authorTrust] = await Promise.all([
       loadEvents(db, userId),
       hasActiveTrustCap(db, userId),
       loadBoostPreference(db, userId),
+      loadAuthorTrustData(db, userId),
     ]);
 
-    const hasSevereSafetyFlag = options.hasSevereSafetyFlag ?? false;
+    const hasSevereSafetyFlag =
+      options.hasSevereSafetyFlag ?? authorTrust.hasSevereSafetyFlag;
     const trustMultiplier = computeTrustMultiplier(
-      profile.trustScore,
+      authorTrust.trustScore,
       hasSevereSafetyFlag,
       trustCapActive,
     );
@@ -297,15 +308,15 @@ export async function computeActiveUserScore(
 
     const { w24, w7, w30, w90, wL } = WINDOW_WEIGHTS;
     const rawScore =
-      w24 * score24h  +
-      w7  * score7d   +
-      w30 * score30d  +
-      w90 * score90d  +
+      w24 * score24h   +
+      w7  * score7d    +
+      w30 * score30d   +
+      w90 * score90d   +
       wL  * scoreLifetime;
 
-    const activeUserScore = Math.round(rawScore * trustMultiplier * 100) / 100;
-    const tier            = computeTier(activeUserScore);
-    const boostEligible   = boostPref && activeUserScore >= TIER_LOCAL_GUIDE && trustMultiplier > 0;
+    const activeUserScore  = Math.round(rawScore * trustMultiplier * 100) / 100;
+    const tier             = computeTier(activeUserScore);
+    const boostEligible    = boostPref && activeUserScore >= TIER_LOCAL_GUIDE && trustMultiplier > 0;
     const badgeEligibility = computeBadgeEligibility(tier, events, score24h, trustMultiplier);
 
     const result: ActiveUserScoreResult = {
@@ -323,28 +334,27 @@ export async function computeActiveUserScore(
       badgeEligibility,
     };
 
-    // Persist active user score (fire-and-forget)
+    // Persist (fire-and-forget)
     db.from("compass_active_user_scores")
       .upsert(
         {
-          user_id:                 userId,
-          score_24h:               score24h,
-          score_7d:                score7d,
-          score_30d:               score30d,
-          score_90d:               score90d,
-          score_lifetime:          scoreLifetime,
-          active_user_score:       activeUserScore,
-          trust_multiplier:        trustMultiplier,
+          user_id:                  userId,
+          score_24h:                score24h,
+          score_7d:                 score7d,
+          score_30d:                score30d,
+          score_90d:                score90d,
+          score_lifetime:           scoreLifetime,
+          active_user_score:        activeUserScore,
+          trust_multiplier:         trustMultiplier,
           tier,
-          boost_eligible:          boostEligible,
+          boost_eligible:           boostEligible,
           boost_visibility_enabled: boostPref,
-          last_computed_at:        new Date().toISOString(),
+          last_computed_at:         new Date().toISOString(),
         },
         { onConflict: "user_id" },
       )
       .then(() => {}, () => {});
 
-    // Badge eligibility upsert (fire-and-forget)
     for (const badge of badgeEligibility) {
       db.from("compass_active_user_badges")
         .upsert(
@@ -354,7 +364,6 @@ export async function computeActiveUserScore(
         .then(() => {}, () => {});
     }
 
-    // Populate city + category reputation (fire-and-forget)
     updateReputations(db, userId, events);
 
     return result;
@@ -365,12 +374,13 @@ export async function computeActiveUserScore(
 
 /**
  * Compute a visibility boost delta for a pipeline item based on its author's
- * ActiveUserScore. Returns a score modifier in [0, MAX_BOOST].
- * Returns 0 if boost is disabled or trust multiplier is zero.
+ * ActiveUserScore. Returns 0 if boost is disabled or trust multiplier is zero.
  */
 const MAX_BOOST = 5.0;
 
-export function computeItemVisibilityBoost(authorScore: ActiveUserScoreResult | null): number {
+export function computeItemVisibilityBoost(
+  authorScore: ActiveUserScoreResult | null,
+): number {
   if (!authorScore)                           return 0;
   if (!authorScore.boostVisibilityEnabled)    return 0;
   if (authorScore.trustMultiplier === 0)      return 0;

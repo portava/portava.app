@@ -1,39 +1,27 @@
 /**
  * CompassFeedBuilder — Phase 3 feed assembly.
  *
- * Calls the Phase 2 pipeline, then applies diversity, fair exposure, and active-
- * user-reward boosts to produce a final paginated feed of named sections.
- *
- * Section catalogue (17 sections, each can be empty):
- *   for_you                    — personalised catch-all
- *   available_now              — buddies available today
- *   during_your_trip           — events/places during active trip dates
- *   tonight                    — events starting in the next 12 h
- *   near_your_area             — items in the viewer's current city
- *   compass_picks              — high-scoring items of mixed types
- *   people_you_may_vibe_with   — user/buddy cards with social compat
- *   rent_a_buddy               — buddy items only
- *   hidden_gems                — suggestion type items
- *   city_pulse                 — post items tagged to current city
- *   passport_stamp_opportunities — stamp type items
- *   safety_recommended         — items with high safety tier
- *   your_circle_may_like       — items from or near trust-circle members
- *   new_in_this_city           — items by recent arrivals
- *   budget_friendly            — items matching budget_mode / budget budgetStyle
- *   creator_spots              — suggestion items in creator_mode context
- *   arrival_help               — arrival_mode targeted items
+ * Section catalogue (17 sections):
+ *   for_you, available_now, during_your_trip, tonight, near_your_area,
+ *   compass_picks, people_you_may_vibe_with, rent_a_buddy, hidden_gems,
+ *   city_pulse, passport_stamp_opportunities, safety_recommended,
+ *   your_circle_may_like, new_in_this_city, budget_friendly,
+ *   creator_spots, arrival_help
  *
  * Fair exposure (global cap):
- *   Up to MAX_FAIR_INSERTS (2) fair-exposure items are inserted per feed build.
- *   This is a GLOBAL limit across the entire feed, not per section.
- *   Appearance counts and cooldowns are preloaded from DB before insertion.
+ *   Up to 2 fair-exposure items are inserted per feed build — GLOBAL, not per section.
+ *   The two candidates are prepended to the diversified pool so they appear in every
+ *   section they naturally qualify for. Appearance counts and cooldowns are preloaded
+ *   from DB before any insertion.
  *
- * Each FeedItem carries an explanationKey string.
+ * Active-user rewards:
+ *   Each author's own trust/safety data is loaded from DB to compute the reward boost,
+ *   never the viewer's profile.
  *
  * Cursor-based pagination:
- *   The cursor is a base64-encoded JSON { section, index } pointer.
- *   First request: no cursor → returns first page of all sections.
- *   Subsequent requests: cursor → returns next page within that section.
+ *   Cursor = base64url-encoded { section: SectionName, index: number }.
+ *   buildFeed returns a global cursor pointing to the first overflowing section.
+ *   buildSection returns a section-specific cursor for the requested section only.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -84,9 +72,9 @@ export interface FeedItem extends PipelineResult {
 }
 
 export interface FeedSection {
-  name:     SectionName;
-  items:    FeedItem[];
-  total:    number;
+  name:  SectionName;
+  items: FeedItem[];
+  total: number;
 }
 
 export interface FeedPage {
@@ -108,29 +96,33 @@ export interface FeedCursor {
 
 /** Injectable overrides for testing (do not use in production). */
 export interface FeedBuilderTestOverrides extends PipelineTestOverrides {
-  skipFairExposure?:    boolean;
-  skipActiveRewards?:   boolean;
-  authorScores?:        Map<string, ActiveUserScoreResult>;
+  skipFairExposure?:  boolean;
+  skipActiveRewards?: boolean;
+  authorScores?:      Map<string, ActiveUserScoreResult>;
   /** Pre-loaded appearance counts (item.id → count) — skip DB load in tests */
-  appearanceCounts?:    Map<string, number>;
+  appearanceCounts?:  Map<string, number>;
   /** Pre-loaded author cooldown set — skip DB load in tests */
-  cooldownSet?:         Set<string>;
+  cooldownSet?:       Set<string>;
 }
 
-// ── Explanation key generation ─────────────────────────────────────────────────
+// ── Explanation key generation ────────────────────────────────────────────────
 
-function buildExplanationKey(item: PipelineResult, section: SectionName, profile: CompassProfile): string {
+function buildExplanationKey(
+  item:    PipelineResult,
+  section: SectionName,
+  profile: CompassProfile,
+): string {
   const base = `${section}:${item.item.type}`;
+  if (item.item.isFairExposureBoosted)       return `${base}:fair_exposure`;
   if (item.item.city && profile.currentCity === item.item.city) return `${base}:local`;
-  if (item.item.fairExposureScore) return `${base}:fair_exposure`;
-  if ((item.item.diversityScore ?? 0) > 0.5)  return `${base}:diversity_pick`;
+  if ((item.item.diversityScore ?? 0) > 0.5) return `${base}:diversity_pick`;
   return base;
 }
 
 // ── Section routing ────────────────────────────────────────────────────────────
 
 function assignSections(
-  items: PipelineResult[],
+  items:   PipelineResult[],
   profile: CompassProfile,
   context: CompassContext,
 ): Map<SectionName, PipelineResult[]> {
@@ -149,18 +141,15 @@ function assignSections(
   for (const r of items) {
     const { item } = r;
 
-    // available_now — buddy items with active status
     if (item.type === "buddy" && item.buddyStatus === "active") {
       push("available_now", r);
       push("rent_a_buddy", r);
     }
 
-    // during_your_trip — trip-scoped items when viewer has active trip
     if (profile.hasActiveTrip && item.visibilityScope === "trip_only") {
       push("during_your_trip", r);
     }
 
-    // tonight — events starting within next 12 hours
     if (item.type === "event" && item.eventStartsAt) {
       const start = new Date(item.eventStartsAt as string);
       if (start >= now && start <= twelveHoursLater) {
@@ -168,76 +157,54 @@ function assignSections(
       }
     }
 
-    // near_your_area — items in viewer's current city
     if (profile.currentCity && item.city === profile.currentCity) {
       push("near_your_area", r);
     }
 
-    // people_you_may_vibe_with — user or buddy types
     if (item.type === "user" || item.type === "buddy") {
       push("people_you_may_vibe_with", r);
       if (item.type === "buddy") push("rent_a_buddy", r);
     }
 
-    // hidden_gems — suggestion type
-    if (item.type === "suggestion") {
-      push("hidden_gems", r);
-    }
+    if (item.type === "suggestion") push("hidden_gems", r);
+    if (item.type === "post")       push("city_pulse", r);
+    if (item.type === "stamp")      push("passport_stamp_opportunities", r);
 
-    // city_pulse — posts
-    if (item.type === "post") {
-      push("city_pulse", r);
-    }
-
-    // passport_stamp_opportunities — stamps
-    if (item.type === "stamp") {
-      push("passport_stamp_opportunities", r);
-    }
-
-    // safety_recommended — high safety tier or cautious viewer preference
-    if (item.safetyTier === "relaxed" ||
-        (item.safetyTier === "standard" && profile.safetyPreference === "cautious")) {
+    if (
+      item.safetyTier === "relaxed" ||
+      (item.safetyTier === "standard" && profile.safetyPreference === "cautious")
+    ) {
       push("safety_recommended", r);
     }
 
-    // new_in_this_city — items by recently joined authors (< 30 days)
     if (item.authorJoinedAt) {
-      const ageDays = (Date.now() - new Date(item.authorJoinedAt as string).getTime())
-        / (1000 * 60 * 60 * 24);
-      if (ageDays < 30) {
-        push("new_in_this_city", r);
-      }
+      const ageDays =
+        (Date.now() - new Date(item.authorJoinedAt as string).getTime()) /
+        (1000 * 60 * 60 * 24);
+      if (ageDays < 30) push("new_in_this_city", r);
     }
 
-    // budget_friendly
-    if (profile.budgetStyle === "budget" ||
-        item.interestTags?.includes("budget") ||
-        item.interestTags?.includes("free")) {
+    if (
+      profile.budgetStyle === "budget" ||
+      item.interestTags?.includes("budget") ||
+      item.interestTags?.includes("free")
+    ) {
       push("budget_friendly", r);
     }
 
-    // creator_spots — suggestions in creator context
     if (context.contextState === "creator_mode" && item.type === "suggestion") {
       push("creator_spots", r);
     }
 
-    // arrival_help — arrival mode context
-    if (context.contextState === "arrival_mode") {
-      push("arrival_help", r);
-    }
+    if (context.contextState === "arrival_mode") push("arrival_help", r);
 
-    // your_circle_may_like — circle_only scope visible to viewer
     if (item.visibilityScope === "circle_only" && item.viewerIsInCircle) {
       push("your_circle_may_like", r);
     }
 
-    // compass_picks — top-scoring items of any type
-    if (r.finalScore >= 70) {
-      push("compass_picks", r);
-    }
+    if (r.finalScore >= 70) push("compass_picks", r);
 
-    // for_you — catch-all (every item)
-    push("for_you", r);
+    push("for_you", r); // catch-all
   }
 
   return sections;
@@ -252,7 +219,11 @@ function encodeCursor(cursor: FeedCursor): string {
 function decodeCursor(raw: string): FeedCursor | null {
   try {
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (parsed && typeof parsed.section === "string" && typeof parsed.index === "number") {
+    if (
+      parsed &&
+      typeof parsed.section === "string" &&
+      typeof parsed.index === "number"
+    ) {
       return parsed as FeedCursor;
     }
     return null;
@@ -264,18 +235,18 @@ function decodeCursor(raw: string): FeedCursor | null {
 // ── Fair exposure data preloader ──────────────────────────────────────────────
 
 async function preloadFairExposureData(
-  db: SupabaseClient | null,
+  db:    SupabaseClient | null,
   items: PipelineResult[],
 ): Promise<{ counts: Map<string, number>; cooldowns: Set<string> }> {
-  const counts   = new Map<string, number>();
+  const counts    = new Map<string, number>();
   const cooldowns = new Set<string>();
   if (!db || items.length === 0) return { counts, cooldowns };
 
   try {
     const itemIds   = items.map((r) => r.item.id).slice(0, 100);
-    const authorIds = [...new Set(
-      items.map((r) => r.item.authorId).filter(Boolean) as string[]
-    )].slice(0, 100);
+    const authorIds = [
+      ...new Set(items.map((r) => r.item.authorId).filter(Boolean) as string[]),
+    ].slice(0, 100);
 
     const [boostsRes, cooldownsRes] = await Promise.allSettled([
       db.from("compass_visibility_boosts")
@@ -291,7 +262,7 @@ async function preloadFairExposureData(
 
     if (boostsRes.status === "fulfilled") {
       for (const row of (boostsRes.value.data as any[]) ?? []) {
-        counts.set(row.item_id, row.appearance_count as number);
+        counts.set(row.item_id as string, row.appearance_count as number);
       }
     }
     if (cooldownsRes.status === "fulfilled") {
@@ -304,47 +275,55 @@ async function preloadFairExposureData(
   return { counts, cooldowns };
 }
 
-// ── Main feed builder ─────────────────────────────────────────────────────────
+// ── Shared pipeline runner ─────────────────────────────────────────────────────
+
+interface FeedPipelineOutput {
+  sectionMap:   Map<SectionName, PipelineResult[]>;
+  pipelineMeta: {
+    inputCount:    number;
+    blockedCount:  number;
+    rejectedCount: number;
+    passedCount:   number;
+  };
+}
 
 /**
- * Build a paginated Compass feed for the calling user.
- *
- * @param items          Raw CompassItems to run through the pipeline
- * @param profile        The viewer's Compass profile
- * @param context        The resolved Compass context
- * @param db             Supabase service client (optional in tests)
- * @param cursor         Pagination cursor from a previous call (null = first page)
- * @param _overrides     Test injection hooks
+ * Run the full pipeline → boost → diversity → fair-exposure → section-assignment
+ * chain. Called by both buildFeed and buildSection to avoid duplicated logic.
  */
-export async function buildFeed(
+async function runFeedPipeline(
   items:      CompassItem[],
   profile:    CompassProfile,
   context:    CompassContext,
-  db:         SupabaseClient | null = null,
-  cursor:     string | null = null,
-  _overrides: FeedBuilderTestOverrides = {},
-): Promise<FeedPage> {
+  db:         SupabaseClient | null,
+  _overrides: FeedBuilderTestOverrides,
+): Promise<FeedPipelineOutput> {
   // ── Phase 2 pipeline ────────────────────────────────────────────────────────
-  const pipelineResult = await runPipeline(items, profile, context, db, _overrides);
-  const { results, inputCount, blockedCount, rejectedCount, passedCount } = pipelineResult;
+  const { results, inputCount, blockedCount, rejectedCount, passedCount } =
+    await runPipeline(items, profile, context, db, _overrides);
 
-  // ── Active user reward scores (batch, best-effort) ─────────────────────────
-  const authorScores: Map<string, ActiveUserScoreResult> = _overrides.authorScores ?? new Map();
+  // ── Active-user reward boosts ──────────────────────────────────────────────
+  // Each author's own trust/safety data is fetched from DB — NEVER the viewer's.
+  const authorScores: Map<string, ActiveUserScoreResult> =
+    _overrides.authorScores ?? new Map();
 
   if (db && !_overrides.skipActiveRewards) {
-    const authorIds = [...new Set(
-      results.map((r) => r.item.authorId).filter(Boolean) as string[]
-    )];
+    const authorIds = [
+      ...new Set(
+        results.map((r) => r.item.authorId).filter(Boolean) as string[],
+      ),
+    ];
     await Promise.allSettled(
       authorIds.map(async (authorId) => {
         if (authorScores.has(authorId)) return;
-        const score = await computeActiveUserScore(db, authorId, profile);
+        // computeActiveUserScore fetches the AUTHOR's own trust data internally
+        const score = await computeActiveUserScore(db, authorId);
         if (score) authorScores.set(authorId, score);
       }),
     );
   }
 
-  // Apply active-user visibility boosts to finalScore
+  // Apply boosts and re-sort
   const boosted: PipelineResult[] = results.map((r) => {
     if (!r.item.authorId) return r;
     const authorScore = authorScores.get(r.item.authorId!);
@@ -356,44 +335,66 @@ export async function buildFeed(
       item: { ...r.item, activeVisibilityBoost: boost },
     };
   });
-
-  // Re-sort after boost
   boosted.sort((a, b) => b.finalScore - a.finalScore);
 
   // ── Diversity pass ─────────────────────────────────────────────────────────
   const { items: diversified } = applyDiversity(boosted, profile);
 
-  // ── Fair exposure — GLOBAL CAP (at most 2 per feed build) ─────────────────
+  // ── Fair exposure — global cap (≤2 per feed build) ────────────────────────
   let finalPool = diversified;
   if (!_overrides.skipFairExposure && diversified.length > 0) {
-    const appearanceCounts = _overrides.appearanceCounts
-      ?? (await preloadFairExposureData(db, diversified)).counts;
-    const cooldownSet = _overrides.cooldownSet
-      ?? (await preloadFairExposureData(db, diversified)).cooldowns;
+    // Preload in a single call (never twice)
+    const preloaded = await preloadFairExposureData(db, diversified);
+    const appearanceCounts = _overrides.appearanceCounts ?? preloaded.counts;
+    const cooldownSet      = _overrides.cooldownSet      ?? preloaded.cooldowns;
 
-    // Apply once with an empty sectionItems: the returned insertions are the
-    // global fair-exposure candidates, capped at MAX_FAIR_INSERTS (2) total.
-    const { items: withFair } = applyFairExposure(
-      [],        // no existing section items — we want the pool itself
+    // Call with empty sectionItems to get only the fair-exposure candidates.
+    // The engine returns [fairInsert1?, fairInsert2?] (up to 2 items total).
+    const { items: fairInserts } = applyFairExposure(
+      [],          // empty → returned array contains ONLY the new inserts
       diversified,
       profile,
       db,
       appearanceCounts,
       cooldownSet,
     );
-    // withFair = [fairItem1?, fairItem2?, ...diversified items NOT already in the insertion]
-    // We merge: fair-exposure inserts appear first, then the rest of diversified
-    const fairIds = new Set(withFair.slice(0, withFair.length - diversified.length).map((r) => r.item.id));
-    const fairInserts = withFair.filter((r) => fairIds.has(r.item.id));
-    finalPool = [...fairInserts, ...diversified];
+
+    if (fairInserts.length > 0) {
+      // Prepend the fair-exposure candidates, removing their natural position
+      const fairIds = new Set(fairInserts.map((r) => r.item.id));
+      const rest = diversified.filter((r) => !fairIds.has(r.item.id));
+      finalPool = [...fairInserts, ...rest];
+    }
   }
 
-  // ── Assign sections ────────────────────────────────────────────────────────
+  // ── Section assignment ─────────────────────────────────────────────────────
   const sectionMap = assignSections(finalPool, profile, context);
 
-  // ── Pagination ─────────────────────────────────────────────────────────────
-  const parsedCursor = cursor ? decodeCursor(cursor) : null;
+  return {
+    sectionMap,
+    pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount },
+  };
+}
 
+// ── buildFeed ─────────────────────────────────────────────────────────────────
+
+/**
+ * Build a paginated Compass feed for the calling user.
+ * Returns all non-empty sections with a GLOBAL pagination cursor.
+ */
+export async function buildFeed(
+  items:      CompassItem[],
+  profile:    CompassProfile,
+  context:    CompassContext,
+  db:         SupabaseClient | null = null,
+  cursor:     string | null = null,
+  _overrides: FeedBuilderTestOverrides = {},
+): Promise<FeedPage> {
+  const { sectionMap, pipelineMeta } = await runFeedPipeline(
+    items, profile, context, db, _overrides,
+  );
+
+  const parsedCursor = cursor ? decodeCursor(cursor) : null;
   const sections: FeedSection[] = [];
   let nextCursor: string | null = null;
 
@@ -413,22 +414,21 @@ export async function buildFeed(
     if (feedItems.length > 0) {
       sections.push({ name, items: feedItems, total: allItems.length });
 
+      // Track first overflowing section for global next cursor
       if (endIdx < allItems.length && !nextCursor) {
         nextCursor = encodeCursor({ section: name, index: endIdx });
       }
     }
   }
 
-  return {
-    sections,
-    nextCursor,
-    fallback: false,
-    pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount },
-  };
+  return { sections, nextCursor, fallback: false, pipelineMeta };
 }
 
+// ── buildSection ──────────────────────────────────────────────────────────────
+
 /**
- * Build a single named section.
+ * Build a single named section with section-specific pagination.
+ * The returned nextCursor always points within this section only.
  * Used by `GET /api/compass/feed/section/:section`.
  */
 export async function buildSection(
@@ -440,12 +440,33 @@ export async function buildSection(
   cursor:      string | null = null,
   _overrides:  FeedBuilderTestOverrides = {},
 ): Promise<{ section: FeedSection; nextCursor: string | null; fallback: false }> {
-  const feed  = await buildFeed(items, profile, context, db, cursor, _overrides);
-  const found = feed.sections.find((s) => s.name === sectionName);
-  const empty: FeedSection = { name: sectionName, items: [], total: 0 };
+  const { sectionMap } = await runFeedPipeline(
+    items, profile, context, db, _overrides,
+  );
+
+  const allItems     = sectionMap.get(sectionName) ?? [];
+  const parsedCursor = cursor ? decodeCursor(cursor) : null;
+
+  // Use section-specific offset — ignore any section field in the cursor
+  const startIdx = parsedCursor?.section === sectionName ? parsedCursor.index : 0;
+  const endIdx   = startIdx + PAGE_SIZE;
+  const pageItems = allItems.slice(startIdx, endIdx);
+
+  const feedItems: FeedItem[] = pageItems.map((r) => ({
+    ...r,
+    section:         sectionName,
+    explanationKey:  buildExplanationKey(r, sectionName, profile),
+    visibilityBoost: r.item.activeVisibilityBoost as number | undefined,
+  }));
+
+  const nextCursor =
+    endIdx < allItems.length
+      ? encodeCursor({ section: sectionName, index: endIdx })
+      : null;
+
   return {
-    section:    found ?? empty,
-    nextCursor: feed.nextCursor,
+    section:    { name: sectionName, items: feedItems, total: allItems.length },
+    nextCursor,
     fallback:   false,
   };
 }
