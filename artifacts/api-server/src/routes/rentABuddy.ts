@@ -770,6 +770,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res
 
   // Record deposit intent — real Stripe integration wires here
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Deposit paid — your booking is secured.");
+
+  // Compass: booking payment state changed — invalidate traveler's cache so
+  // active_booking reflects the new payment status on next frontload.
+  await invalidateCompassCache(serviceClient, auth.user.id, "booking_payment_initiated");
+
   return res.json({
     ok: true,
     depositUsd: Number(b.deposit_usd),
@@ -804,6 +809,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) =
   }
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Payment confirmed — your booking is fully secured.");
+
+  // Compass: booking payment state changed — invalidate traveler's cache so
+  // active_booking reflects the new payment status on next frontload.
+  await invalidateCompassCache(serviceClient, auth.user.id, "booking_payment_initiated");
+
   return res.json({
     ok: true,
     totalUsd: Number(b.total_usd),

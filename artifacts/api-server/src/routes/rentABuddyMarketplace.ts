@@ -2004,6 +2004,16 @@ router.post("/api/rent-a-buddy/admin/packages/:id/disable", async (req, res) => 
     admin_id: admin.userId, target_type: "package", target_id: req.params.id, action: "package_disable", notes: req.body?.reason ?? null,
   });
 
+  // Compass: buddy's package was revoked — their ranking/availability changes
+  const { data: disabledPkg } = await svc
+    .from("rent_buddy_packages")
+    .select("buddy_id")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (disabledPkg?.buddy_id) {
+    await invalidateCompassCache(svc, disabledPkg.buddy_id as string, "package_disabled");
+  }
+
   res.json({ ok: true });
 });
 
@@ -2109,6 +2119,12 @@ router.post("/api/rent-a-buddy/admin/restrictions/city-category", async (req, re
     reason: reason ?? null,
     created_by: admin.userId,
   }, { onConflict: "city,category" });
+
+  // Compass: city/category restriction changes affects all buddies in the city.
+  // Per-user invalidation would require enumerating all affected users — too broad
+  // for a synchronous request. Cache entries will expire naturally within their TTL.
+  // The admin's own cache is invalidated as an immediate acknowledgement.
+  await invalidateCompassCache(svc, admin.userId, "city_category_restriction");
 
   res.json({ ok: true });
 });

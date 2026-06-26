@@ -47,10 +47,12 @@ export type FrontLoadTier = 0 | 1 | 2 | 3;
  * `type` is a stable string key the client uses to decide where to store it.
  */
 export interface FrontLoadItem {
-  type:      string;
-  data:      unknown;
-  tier:      FrontLoadTier;
-  cachedAt?: string;
+  type:          string;
+  data:          unknown;
+  tier:          FrontLoadTier;
+  cachedAt?:     string;
+  /** Computed PreloadScore (0–100). Higher = higher priority for client processing. */
+  preloadScore?: number;
 }
 
 export interface FrontLoadPayload {
@@ -80,18 +82,18 @@ const FORBIDDEN_TYPES = new Set(['emergency_contact', 'id_document']);
  * Used when the DB is unavailable or a rule_name is not present in the live table.
  */
 const DEFAULT_TIER_RULES: ReadonlyMap<string, FrontLoadTier> = new Map<string, FrontLoadTier>([
-  ['safety_state',      0],
-  ['feature_flags',     0],
-  ['active_booking',    0],
-  ['blocked_users',     0],
-  ['privacy_settings',  0],
-  ['first_feed_page',   1],
-  ['city_pulse',        1],
-  ['notifications',     1],
-  ['top_events',        2],
-  ['top_buddies',       2],
-  ['saved_places',      2],
-  ['trip_crew_location', 3],
+  ['safety_state',         0],
+  ['feature_flags',        0],
+  ['active_booking',       0],
+  ['blocked_users',        0],
+  ['privacy_settings',     0],
+  ['first_feed_page',      1],
+  ['city_pulse_preview',   1],   // matches FrontLoadItem type emitted by loadTier1
+  ['notification_preview', 1],   // matches FrontLoadItem type emitted by loadTier1
+  ['top_events',           2],
+  ['top_buddies',          2],
+  ['saved_places',         2],
+  ['trip_crew_location',   3],
 ]);
 
 /**
@@ -164,8 +166,8 @@ export const CONTENT_SCORE_FACTORS: Record<string, PreloadScoreFactors> = {
   blocked_users:      { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 1.0, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.10 },  // →  98
   privacy_settings:   { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 0.8, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.10 },  // →  78
   first_feed_page:    { likelihood: 0.9, safetyPriority: 0.9, timeSensitivity: 0.8, heavyMediaCost: 0.10, stalenessRisk: 0.05, privacyRisk: 0.02 },  // →  58
-  notifications:      { likelihood: 0.9, safetyPriority: 0.9, timeSensitivity: 0.9, heavyMediaCost: 0.00, stalenessRisk: 0.05, privacyRisk: 0.10 },  // →  69
-  city_pulse_preview: { likelihood: 0.7, safetyPriority: 0.8, timeSensitivity: 0.8, heavyMediaCost: 0.05, stalenessRisk: 0.10, privacyRisk: 0.00 },  // →  39
+  notification_preview: { likelihood: 0.9, safetyPriority: 0.9, timeSensitivity: 0.9, heavyMediaCost: 0.00, stalenessRisk: 0.05, privacyRisk: 0.10 },  // →  69
+  city_pulse_preview:   { likelihood: 0.7, safetyPriority: 0.8, timeSensitivity: 0.8, heavyMediaCost: 0.05, stalenessRisk: 0.10, privacyRisk: 0.00 },  // →  39
   top_events:         { likelihood: 0.6, safetyPriority: 0.7, timeSensitivity: 0.8, heavyMediaCost: 0.00, stalenessRisk: 0.05, privacyRisk: 0.00 },  // →  32
   top_buddies:        { likelihood: 0.5, safetyPriority: 0.7, timeSensitivity: 0.5, heavyMediaCost: 0.05, stalenessRisk: 0.05, privacyRisk: 0.15 },  // →  11
   saved_places:       { likelihood: 0.5, safetyPriority: 0.6, timeSensitivity: 0.4, heavyMediaCost: 0.05, stalenessRisk: 0.05, privacyRisk: 0.00 },  // →   8
@@ -346,7 +348,7 @@ async function loadTier1(
       const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
         .from("posts")
-        .select("id, body, created_at, user_id, post_status, status")
+        .select("id, body, created_at, user_id, post_status, status, post_type")
         .eq("city", profile.currentCity)
         .eq("status", "active")
         .order("created_at", { ascending: false })
@@ -555,7 +557,26 @@ export async function buildFrontLoadPayload(
     }
   }
 
-  return { tier0, tier1, tier2, tier3, networkHint, batteryHint, maxTier, builtAt };
+  // Score-driven scheduling: annotate each item with its PreloadScore and sort
+  // within each tier by score descending.  This wires computePreloadScore into the
+  // actual data assembly so the highest-value items are first in every tier.
+  // Items without a known type fall back to a tier-derived score.
+  function applyScores(items: FrontLoadItem[]): FrontLoadItem[] {
+    return items
+      .map(item => ({ ...item, preloadScore: computePreloadScore(item.type, rules) }))
+      .sort((a, b) => (b.preloadScore ?? 0) - (a.preloadScore ?? 0));
+  }
+
+  return {
+    tier0: applyScores(tier0),
+    tier1: applyScores(tier1),
+    tier2: applyScores(tier2),
+    tier3: applyScores(tier3),
+    networkHint,
+    batteryHint,
+    maxTier,
+    builtAt,
+  };
 }
 
 // ── buildPreloadManifest ──────────────────────────────────────────────────────

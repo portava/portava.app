@@ -666,11 +666,22 @@ describe("Cache-backed tier 1–3 assembly", () => {
     const profile = baseProfile({ currentCity: 'Rome' });
     const result = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: 'wifi' });
 
-    // The returned tier1 must be the exact cached payload (L1 hit)
-    assert.deepStrictEqual(result.tier1, cachedPayload,
-      "tier1 must be served from L1 cache when cache hit is present");
+    // The returned tier1 must come from L1 cache (not freshly built from DB).
+    // applyScores() adds preloadScore to each item after cache retrieval, so we
+    // check the core data identity rather than exact struct equality.
+    const tier1Items = result.tier1 as FrontLoadItem[];
+    assert.ok(tier1Items.length >= 1, "tier1 must contain at least the cached item");
+    const cityPulseItem = tier1Items.find(i => i.type === 'city_pulse_preview');
+    assert.ok(cityPulseItem, "cached city_pulse_preview item must be present");
+    assert.deepStrictEqual(
+      cityPulseItem.data,
+      cachedPayload[0].data,
+      "cached data payload must match pre-seeded cache (confirms L1 hit, not DB build)",
+    );
+    // Score is computed from CONTENT_SCORE_FACTORS[city_pulse_preview] = 39
+    assert.strictEqual(cityPulseItem.preloadScore, 39, "preloadScore must be applied to cached items");
     // The fresh-post from DB must not appear (would only appear on cache miss)
-    const allIds = (result.tier1 as FrontLoadItem[])
+    const allIds = tier1Items
       .flatMap(item => Array.isArray(item.data) ? (item.data as any[]).map((d: any) => d.id) : []);
     assert.ok(!allIds.includes('fresh-post'),
       "fresh DB post must not appear when tier1 is served from L1 cache");
