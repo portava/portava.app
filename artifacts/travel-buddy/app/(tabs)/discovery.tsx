@@ -26,6 +26,8 @@ import { LocationChip } from '../../src/components/LocationChip';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
+import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
+import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -110,6 +112,13 @@ export default function DiscoveryHub() {
   const [detailVisible, setDetailVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [layoverOpen, setLayoverOpen] = useState(false);
+  const [routeBuilderDraft, setRouteBuilderDraft] = useState<RouteStopDraft | null>(null);
+  const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
+
+  const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
+    setRouteBuilderDraft(draft);
+    setRouteBuilderOpen(true);
+  }, []);
 
   // Keep destination in sync when location city changes (GPS capture / manual set).
   useEffect(() => {
@@ -384,6 +393,7 @@ export default function DiscoveryHub() {
             key={`${destination}-${contextMode}`}
             destination={destination}
             onAddToPlan={handleAddToPlan}
+            onAddToRoute={handleAddToRoute}
             contextMode={contextMode}
             lat={destinationLat}
             lng={destinationLng}
@@ -432,6 +442,18 @@ export default function DiscoveryHub() {
         visible={layoverOpen}
         onClose={() => setLayoverOpen(false)}
         initialCity={destination}
+      />
+
+      {/* Route builder — opened from any "Add to Route" button in this tab */}
+      <RouteBuilderSheet
+        visible={routeBuilderOpen}
+        initialStops={routeBuilderDraft ? [routeBuilderDraft] : []}
+        onClose={() => { setRouteBuilderOpen(false); setRouteBuilderDraft(null); }}
+        onRouteCreated={(route) => {
+          setRouteBuilderOpen(false);
+          setRouteBuilderDraft(null);
+          router.push(`/route/${route.plan.id}`);
+        }}
       />
     </View>
   );

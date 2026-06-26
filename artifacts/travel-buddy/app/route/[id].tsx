@@ -25,6 +25,8 @@ import {
   MapPin, Shield, Compass, Maximize2, Minimize2, Users, AlertTriangle,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { useSession } from '../../src/context/SessionContext';
+import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { useRouteCheckpointMonitor } from '../../src/hooks/useRouteCheckpointMonitor';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
@@ -234,12 +236,15 @@ export default function ActiveRouteScreen() {
     memberProgress,
   } = useRoutePlan({ planId: id ?? null });
 
+  const { userId: currentUserId } = useSession();
+
   const { locationState, requestLocation } = useActiveLocation();
   const [compassExpanded, setCompassExpanded]   = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
   const [routeStarted, setRouteStarted]         = useState(false);
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
+  const [membershipLoading, setMembershipLoading] = useState(false);
 
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
@@ -283,6 +288,40 @@ export default function ActiveRouteScreen() {
 
   const showFinalStopWarning = lastStopDistanceToHome != null
     && lastStopDistanceToHome > FINAL_STOP_WARN_THRESHOLD;
+
+  // Join/leave for trip members who are not the plan owner
+  const handleJoinRoute = useCallback(async () => {
+    if (!id) return;
+    setMembershipLoading(true);
+    try {
+      await joinRoutePlan(id);
+    } catch (e) {
+      Alert.alert('Could not join route', (e as Error).message ?? 'Please try again.');
+    } finally {
+      setMembershipLoading(false);
+    }
+  }, [id]);
+
+  const handleLeaveRoute = useCallback(async () => {
+    if (!id) return;
+    Alert.alert('Leave Route', 'Remove yourself from this route?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Leave',
+        style: 'destructive',
+        onPress: async () => {
+          setMembershipLoading(true);
+          try {
+            await leaveRoutePlan(id);
+          } catch (e) {
+            Alert.alert('Could not leave route', (e as Error).message ?? 'Please try again.');
+          } finally {
+            setMembershipLoading(false);
+          }
+        },
+      },
+    ]);
+  }, [id]);
 
   const handleStartRoute = useCallback(async () => {
     if (locationState.permissionStatus !== 'denied') {
@@ -382,7 +421,7 @@ export default function ActiveRouteScreen() {
             </View>
           )}
 
-          {/* Compass explanation */}
+          {/* Compass explanation + actionable chips */}
           {plan.compassExplanation ? (
             <View style={styles.compassCard}>
               <Pressable style={styles.compassHeader} onPress={() => setCompassExpanded((v) => !v)}>
@@ -393,39 +432,96 @@ export default function ActiveRouteScreen() {
               {compassExpanded ? (
                 <Text style={styles.compassBody}>{plan.compassExplanation}</Text>
               ) : null}
+              {/* Actionable Compass chips — surface quick route adjustments */}
+              <View style={styles.compassChips}>
+                {nextStop && nextStop.checkpointStatus !== 'arrived' && (
+                  <Pressable
+                    style={styles.compassChip}
+                    onPress={() => {
+                      Alert.alert(
+                        'Skip stop?',
+                        `Skip "${nextStop.title}"?`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Skip', style: 'destructive', onPress: () => { void skipStop(nextStop.id); } },
+                        ],
+                      );
+                    }}
+                  >
+                    <Text style={styles.compassChipText}>⏭ Skip stop</Text>
+                  </Pressable>
+                )}
+                {stops.some((s) => {
+                  const leg = legByFromStop.get(s.id);
+                  return leg && leg.durationSeconds / 60 > 20;
+                }) && (
+                  <Pressable
+                    style={styles.compassChip}
+                    onPress={() => Alert.alert('Rideshare tip', 'One or more legs are over 20 min walk. Consider a rideshare for those segments.')}
+                  >
+                    <Text style={styles.compassChipText}>🚗 Long leg: rideshare?</Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  style={styles.compassChip}
+                  onPress={() => Alert.alert('Route order', 'Stops are ordered to minimise walking distance. Reorder manually by editing the route.')}
+                >
+                  <Text style={styles.compassChipText}>🗺️ About stop order</Text>
+                </Pressable>
+              </View>
             </View>
           ) : null}
 
           {/* Group member progress (trip-linked) */}
-          {plan.tripId && memberProgress && memberProgress.members.length > 0 && (
-            <View style={styles.membersCard}>
-              <Pressable style={styles.membersHeader} onPress={() => setMembersExpanded((v) => !v)}>
-                <Users size={14} color={color.deep} />
-                <Text style={styles.membersTitle}>
-                  {memberProgress.members.length} trip member{memberProgress.members.length !== 1 ? 's' : ''}
-                </Text>
-                {membersExpanded ? <ChevronUp size={13} color={color.mute} /> : <ChevronDown size={13} color={color.mute} />}
-              </Pressable>
-              {membersExpanded && (
-                <View style={styles.membersList}>
-                  {memberProgress.members.map((m) => (
-                    <View key={m.userId} style={styles.memberRow}>
-                      <View style={styles.memberAvatar}>
-                        <Text style={styles.memberAvatarText}>
-                          {(m.displayName ?? 'T')[0]?.toUpperCase()}
-                        </Text>
-                      </View>
-                      <Text style={styles.memberName} numberOfLines={1}>{m.displayName}</Text>
-                      {m.isOwner && <View style={styles.ownerBadge}><Text style={styles.ownerBadgeText}>owner</Text></View>}
-                    </View>
-                  ))}
-                  <Text style={styles.memberProgressNote}>
-                    {memberProgress.arrivedCount}/{memberProgress.totalStops} checkpoints completed
+          {plan.tripId && memberProgress && memberProgress.members.length > 0 && (() => {
+            const selfMember = memberProgress.members.find((m) => m.userId === currentUserId);
+            const isOwner    = selfMember?.isOwner ?? false;
+            const isJoined   = selfMember != null;
+            return (
+              <View style={styles.membersCard}>
+                <Pressable style={styles.membersHeader} onPress={() => setMembersExpanded((v) => !v)}>
+                  <Users size={14} color={color.deep} />
+                  <Text style={styles.membersTitle}>
+                    {memberProgress.members.length} trip member{memberProgress.members.length !== 1 ? 's' : ''}
                   </Text>
-                </View>
-              )}
-            </View>
-          )}
+                  {membersExpanded ? <ChevronUp size={13} color={color.mute} /> : <ChevronDown size={13} color={color.mute} />}
+                </Pressable>
+                {membersExpanded && (
+                  <View style={styles.membersList}>
+                    {memberProgress.members.map((m) => (
+                      <View key={m.userId} style={styles.memberRow}>
+                        <View style={styles.memberAvatar}>
+                          <Text style={styles.memberAvatarText}>
+                            {(m.displayName ?? 'T')[0]?.toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.memberName} numberOfLines={1}>{m.displayName}</Text>
+                        {m.isOwner && <View style={styles.ownerBadge}><Text style={styles.ownerBadgeText}>owner</Text></View>}
+                      </View>
+                    ))}
+                    <Text style={styles.memberProgressNote}>
+                      {memberProgress.arrivedCount}/{memberProgress.totalStops} checkpoints completed
+                    </Text>
+                  </View>
+                )}
+                {/* Join / Leave toggle for non-owner trip members */}
+                {!isOwner && currentUserId && (
+                  <Pressable
+                    style={[styles.memberToggleBtn, isJoined && styles.memberToggleBtnLeave]}
+                    onPress={isJoined ? handleLeaveRoute : handleJoinRoute}
+                    disabled={membershipLoading}
+                  >
+                    {membershipLoading
+                      ? <ActivityIndicator size="small" color={isJoined ? color.signal : color.deep} />
+                      : <Text style={[styles.memberToggleBtnText, isJoined && styles.memberToggleBtnTextLeave]}>
+                          {isJoined ? 'Leave Route' : 'Join Route'}
+                        </Text>
+                    }
+                  </Pressable>
+                )}
+              </View>
+            );
+          })()}
 
           {/* Stop + leg cards */}
           {stops.map((stop: RouteStop, idx: number) => {
@@ -588,6 +684,12 @@ const styles = StyleSheet.create({
   compassHeader: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   compassTitle: { ...t.bodyStrong, color: color.deep, fontSize: 13, flex: 1 },
   compassBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 18, marginTop: space.sm },
+  compassChips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.sm },
+  compassChip: {
+    borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep,
+    paddingHorizontal: space.sm, paddingVertical: 4,
+  },
+  compassChipText: { ...t.small, color: color.deep, fontSize: 11 },
   membersCard: {
     marginHorizontal: space.lg, marginBottom: space.md,
     backgroundColor: color.paperRaised, borderRadius: radius.md,
@@ -606,6 +708,13 @@ const styles = StyleSheet.create({
   ownerBadge: { backgroundColor: '#EAF2F4', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
   ownerBadgeText: { ...t.small, color: color.deep, fontSize: 10, fontWeight: '600' },
   memberProgressNote: { ...t.small, color: color.mute, fontSize: 11, marginTop: 4 },
+  memberToggleBtn: {
+    marginTop: space.md, paddingVertical: space.sm, borderRadius: radius.sm,
+    backgroundColor: '#EAF2F4', alignItems: 'center',
+  },
+  memberToggleBtnLeave: { backgroundColor: '#FEF2F2' },
+  memberToggleBtnText: { ...t.bodyStrong, color: color.deep, fontSize: 13 },
+  memberToggleBtnTextLeave: { color: color.signal },
   stopCard: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
     marginHorizontal: space.lg, marginBottom: 2,

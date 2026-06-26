@@ -1,0 +1,1136 @@
+Create four Travel Buddy loading-animation components. Do not modify any other files. Do not wire these into screens yet — just create the four files exactly as specified.
+
+These are the first Reanimated components in the app. Before finishing, verify react-native-reanimated/plugin is the LAST entry in babel.config.js plugins array; if missing, add it (do not remove or reorder other plugins).
+
+Create the folder if needed: src/components/loading/
+
+Create these four files with EXACTLY the contents below. Do not alter the code, imports, or token references. All four import from '../../theme/tokens' which must resolve to src/theme/tokens.ts.
+
+After creating, run: pnpm --filter travel-buddy run typecheck
+Report any type errors verbatim. Do not "fix" them by changing the animation logic without flagging first — the most likely issue is react-native-svg animated transform typing, which has a known Animated.View fallback.
+
+═══════════════════════════════════════════════════════════════════
+FILE 1: src/components/loading/PassportStampLoader.tsx
+═══════════════════════════════════════════════════════════════════
+/**
+ * PassportStampLoader — Travel Buddy's primary full-screen loading animation
+ * ("Passport Stamp Journey").
+ *
+ * Motion sequence (looping):
+ *   1. A dotted teal travel route draws left-to-right across a passport page.
+ *   2. A vermilion location pin drops onto the route's endpoint with a bounce.
+ *   3. A circular stamp lands with a soft overshoot.
+ *   4. Loading text rotates underneath.
+ *
+ * Use for: app startup, large screen loads, first-time Discovery load,
+ * Trips load, Passport/Profile load, heavy Compass operations.
+ *
+ * Accessibility: respects the OS "Reduce Motion" setting. When enabled, renders
+ * a static passport + stamp with the loading text (no motion), per spec §10.
+ *
+ * Tokens only — no hardcoded brand colors. Pulls from src/theme/tokens.
+ */
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  AccessibilityInfo,
+  type ViewStyle,
+} from 'react-native';
+import Svg, { Rect, Path, Circle, G, Line, Text as SvgText } from 'react-native-svg';
+import Animated, {
+  useSharedValue,
+  useAnimatedProps,
+  useAnimatedStyle,
+  withTiming,
+  withRepeat,
+  withSequence,
+  withDelay,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
+import { color, space, type as t, font } from '../../theme/tokens';
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const AnimatedG = Animated.createAnimatedComponent(G);
+
+const DEFAULT_MESSAGES = [
+  'Finding your next adventure…',
+  'Checking the local vibe…',
+  'Mapping your trip flow…',
+  'Loading nearby plans…',
+  'Syncing your Passport…',
+  'Getting your crew ready…',
+];
+
+// Route arc drawn across the passport page. Length measured for dash math.
+const ROUTE_D = 'M50 118 Q 96 60 150 96 T 196 78';
+const ROUTE_LEN = 260;
+
+// Full loop duration (ms). Each phase is a fraction of this.
+const LOOP_MS = 3400;
+
+export interface PassportStampLoaderProps {
+  /** Stamp label, e.g. a destination ("CEBU '26"). Defaults to a compass mark. */
+  stampLabel?: string;
+  /** Override the rotating loading messages. */
+  messages?: string[];
+  /** Container style override. */
+  style?: ViewStyle;
+  /** Accessibility label for the whole loader. */
+  accessibilityLabel?: string;
+}
+
+export function PassportStampLoader({
+  stampLabel,
+  messages = DEFAULT_MESSAGES,
+  style,
+  accessibilityLabel = 'Loading',
+}: PassportStampLoaderProps) {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  // ── Reduced-motion detection ──────────────────────────────────────────────
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => { if (mounted) setReduceMotion(enabled); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => { if (mounted) setReduceMotion(enabled); },
+    );
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  // ── Rotating loading text (runs in both motion + reduced-motion modes) ─────
+  useEffect(() => {
+    if (messages.length <= 1) return;
+    const id = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, 1700);
+    return () => clearInterval(id);
+  }, [messages.length]);
+
+  // ── Shared animation values ───────────────────────────────────────────────
+  const routeProgress = useSharedValue(ROUTE_LEN); // dashoffset: LEN→0 draws it
+  const pinProgress = useSharedValue(0);           // 0 hidden → 1 landed
+  const stampProgress = useSharedValue(0);         // 0 hidden → 1 landed
+
+  useEffect(() => {
+    if (reduceMotion) {
+      // Park everything in its final, settled state. No looping.
+      routeProgress.value = 0;
+      pinProgress.value = 1;
+      stampProgress.value = 1;
+      return;
+    }
+
+    // Route draws over the first ~45% of the loop, then resets.
+    routeProgress.value = withRepeat(
+      withSequence(
+        withTiming(0, { duration: LOOP_MS * 0.45, easing: Easing.inOut(Easing.cubic) }),
+        withDelay(LOOP_MS * 0.45, withTiming(ROUTE_LEN, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    // Pin drops at ~40% in.
+    pinProgress.value = withRepeat(
+      withSequence(
+        withDelay(LOOP_MS * 0.4, withTiming(1, { duration: LOOP_MS * 0.18, easing: Easing.out(Easing.back(2)) })),
+        withDelay(LOOP_MS * 0.42, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    // Stamp lands at ~62% in.
+    stampProgress.value = withRepeat(
+      withSequence(
+        withDelay(LOOP_MS * 0.62, withTiming(1, { duration: LOOP_MS * 0.16, easing: Easing.out(Easing.back(1.6)) })),
+        withDelay(LOOP_MS * 0.22, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    return () => {
+      cancelAnimation(routeProgress);
+      cancelAnimation(pinProgress);
+      cancelAnimation(stampProgress);
+    };
+  }, [reduceMotion]);
+
+  // ── Animated props ────────────────────────────────────────────────────────
+  const routeAnimatedProps = useAnimatedProps(() => ({
+    strokeDashoffset: routeProgress.value,
+  }));
+
+  const pinAnimatedProps = useAnimatedProps(() => {
+    const p = pinProgress.value;
+    const ty = (1 - p) * -18;            // drop in from above
+    const s = 0.6 + p * 0.4;             // scale up to 1
+    return {
+      opacity: p,
+      transform: [{ translateY: ty }, { scale: s }],
+    };
+  });
+
+  const stampAnimatedProps = useAnimatedProps(() => {
+    const p = stampProgress.value;
+    // overshoot: big → settle. scale eases from 2.2 down to 1.
+    const s = 2.2 - p * 1.2;
+    return {
+      opacity: p,
+      transform: [{ scale: s }],
+    };
+  });
+
+  const label = stampLabel ?? 'VISITED';
+  const subLabel = stampLabel ? '' : 'TRAVEL BUDDY';
+
+  return (
+    <View
+      style={[styles.root, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={styles.page}>
+        <Svg viewBox="0 0 240 168" width={240} height={168}>
+          {/* Passport page */}
+          <Rect x={14} y={14} width={212} height={140} rx={9} fill={color.paperRaised} stroke={color.haze} strokeWidth={1} />
+          <Line x1={14} y1={46} x2={226} y2={46} stroke={color.haze} strokeWidth={1} strokeDasharray="3 4" />
+          <SvgText x={26} y={35} fontFamily={font.stamp} fontSize={9} letterSpacing={1.5} fill={color.faint}>
+            TRAVEL BUDDY · PASSPORT
+          </SvgText>
+
+          {/* Route glow underlay */}
+          <Path d={ROUTE_D} fill="none" stroke={color.deep} strokeWidth={7} strokeLinecap="round" opacity={0.1} />
+
+          {/* Animated dotted route */}
+          <AnimatedPath
+            d={ROUTE_D}
+            fill="none"
+            stroke={color.deep}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeDasharray={ROUTE_LEN}
+            animatedProps={routeAnimatedProps}
+          />
+          {/* Origin dot */}
+          <Circle cx={50} cy={118} r={4} fill={color.deep} />
+
+          {/* Pin (drops onto route endpoint 196,78) */}
+          <AnimatedG originX={196} originY={78} animatedProps={pinAnimatedProps}>
+            <Path
+              d="M196 64 C 188 64 182 70 182 78 C 182 88 196 98 196 98 C 196 98 210 88 210 78 C 210 70 204 64 196 64 Z"
+              fill={color.signal}
+            />
+            <Circle cx={196} cy={78} r={5} fill={color.paper} />
+          </AnimatedG>
+
+          {/* Stamp (lands center) */}
+          <AnimatedG originX={150} originY={122} animatedProps={stampAnimatedProps}>
+            <G rotation={-14} origin="150, 122">
+              <Circle cx={150} cy={122} r={26} fill="none" stroke={color.signal} strokeWidth={2.5} opacity={0.85} />
+              <Circle cx={150} cy={122} r={21} fill="none" stroke={color.signal} strokeWidth={1} strokeDasharray="2 3" opacity={0.7} />
+              <SvgText x={150} y={subLabel ? 119 : 126} textAnchor="middle" fontFamily={font.stamp} fontSize={8} fontWeight="700" letterSpacing={1} fill={color.signalDim}>
+                {label}
+              </SvgText>
+              {subLabel ? (
+                <SvgText x={150} y={130} textAnchor="middle" fontFamily={font.stamp} fontSize={7} letterSpacing={1} fill={color.signalDim}>
+                  {subLabel}
+                </SvgText>
+              ) : null}
+            </G>
+          </AnimatedG>
+        </Svg>
+      </View>
+
+      {/* Loading text */}
+      <View style={styles.textRow}>
+        <View style={styles.dots}>
+          <Dot delay={0} reduceMotion={reduceMotion} />
+          <Dot delay={150} reduceMotion={reduceMotion} />
+          <Dot delay={300} reduceMotion={reduceMotion} />
+        </View>
+        <Text style={styles.loadingText} accessibilityLiveRegion="polite">
+          {messages[msgIndex]}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ── Bouncing dot ─────────────────────────────────────────────────────────────
+function Dot({ delay, reduceMotion }: { delay: number; reduceMotion: boolean }) {
+  const opacity = useSharedValue(0.3);
+  useEffect(() => {
+    if (reduceMotion) { opacity.value = 0.6; return; }
+    opacity.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: 480, easing: Easing.inOut(Easing.quad) }),
+          withTiming(0.3, { duration: 480, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        false,
+      ),
+    );
+    return () => cancelAnimation(opacity);
+  }, [reduceMotion]);
+
+  const dotStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.View style={[styles.dot, dotStyle]} />;
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xl,
+    backgroundColor: color.paper,
+  },
+  page: {
+    width: 240,
+    height: 168,
+    borderRadius: 14,
+    backgroundColor: color.paper,
+    borderWidth: 1,
+    borderColor: color.haze,
+    overflow: 'hidden',
+    // shadow.card equivalent
+    shadowColor: color.ink,
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  textRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: 22,
+  },
+  dots: { flexDirection: 'row', gap: 4 },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: color.signal,
+  },
+  loadingText: {
+    ...t.small,
+    fontFamily: font.stamp,
+    color: color.mute,
+    letterSpacing: 0.3,
+  },
+});
+
+export default PassportStampLoader;
+
+═══════════════════════════════════════════════════════════════════
+FILE 2: src/components/loading/PulsePinLoader.tsx
+═══════════════════════════════════════════════════════════════════
+/**
+ * PulsePinLoader — Travel Buddy's location/GPS loading animation ("Pulse Pin").
+ *
+ * Smaller, inline-friendly loader. A location pin sits center; soft rings pulse
+ * outward like radar; a GPS dot locks on. Text explains the current action.
+ *
+ * Use for: getting current location, GPS permission check, nearby recommendations,
+ * geofence checks, delayed-post location checks, Layover airport lookup, Trip Flow
+ * checkpoint detection, map centering.
+ *
+ * Accessibility: respects OS "Reduce Motion" — renders a static pin + text,
+ * no pulsing, per spec §10.
+ *
+ * Tokens only — no hardcoded brand colors.
+ */
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  AccessibilityInfo,
+  type ViewStyle,
+} from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
+import Animated, {
+  useSharedValue,
+  useAnimatedProps,
+  useAnimatedStyle,
+  withTiming,
+  withRepeat,
+  withDelay,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
+import { color, space, type as t, font } from '../../theme/tokens';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+const DEFAULT_MESSAGES = [
+  'Finding your location…',
+  'Checking nearby plans…',
+  'Looking around this area…',
+];
+
+const RING_MS = 2200;
+const CENTER = 40; // svg is 80x80, pin anchored at center-x
+
+export interface PulsePinLoaderProps {
+  /** Override rotating copy. Pass a single-item array for a fixed message. */
+  messages?: string[];
+  /** Compact mode: hide text, just the animated pin (for inline button/card use). */
+  compact?: boolean;
+  /** Diameter of the pulse graphic in px. Default 80. */
+  size?: number;
+  style?: ViewStyle;
+  accessibilityLabel?: string;
+}
+
+export function PulsePinLoader({
+  messages = DEFAULT_MESSAGES,
+  compact = false,
+  size = 80,
+  style,
+  accessibilityLabel = 'Finding location',
+}: PulsePinLoaderProps) {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => { if (mounted) setReduceMotion(enabled); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => { if (mounted) setReduceMotion(enabled); },
+    );
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (compact || messages.length <= 1) return;
+    const id = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, 1700);
+    return () => clearInterval(id);
+  }, [compact, messages.length]);
+
+  // Two staggered radar rings.
+  const ring1 = useSharedValue(0);
+  const ring2 = useSharedValue(0);
+  // Center GPS dot "lock" pulse.
+  const lock = useSharedValue(0.6);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      ring1.value = 0;
+      ring2.value = 0;
+      lock.value = 1;
+      return;
+    }
+    ring1.value = withRepeat(
+      withTiming(1, { duration: RING_MS, easing: Easing.out(Easing.quad) }),
+      -1,
+      false,
+    );
+    ring2.value = withDelay(
+      RING_MS / 2,
+      withRepeat(
+        withTiming(1, { duration: RING_MS, easing: Easing.out(Easing.quad) }),
+        -1,
+        false,
+      ),
+    );
+    lock.value = withRepeat(
+      withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+      -1,
+      true,
+    );
+    return () => {
+      cancelAnimation(ring1);
+      cancelAnimation(ring2);
+      cancelAnimation(lock);
+    };
+  }, [reduceMotion]);
+
+  // Ring expands from r=6 to r=34 and fades out as it grows.
+  const ring1Props = useAnimatedProps(() => ({
+    r: 6 + ring1.value * 28,
+    opacity: 0.5 * (1 - ring1.value),
+  }));
+  const ring2Props = useAnimatedProps(() => ({
+    r: 6 + ring2.value * 28,
+    opacity: 0.5 * (1 - ring2.value),
+  }));
+  const lockStyle = useAnimatedStyle(() => ({ opacity: lock.value }));
+
+  return (
+    <View
+      style={[compact ? styles.rootCompact : styles.root, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <Svg viewBox="0 0 80 80" width={size} height={size}>
+          {/* Radar rings */}
+          <AnimatedCircle cx={CENTER} cy={CENTER} fill="none" stroke={color.signal} strokeWidth={1.5} animatedProps={ring1Props} />
+          <AnimatedCircle cx={CENTER} cy={CENTER} fill="none" stroke={color.signal} strokeWidth={1.5} animatedProps={ring2Props} />
+
+          {/* Pin sitting at center */}
+          <Path
+            d="M40 26 C 33 26 28 31 28 38 C 28 47 40 56 40 56 C 40 56 52 47 52 38 C 52 31 47 26 40 26 Z"
+            fill={color.signal}
+          />
+          <Circle cx={40} cy={38} r={4.5} fill={color.paper} />
+        </Svg>
+
+        {/* GPS lock dot, overlaid, gently pulsing */}
+        <Animated.View style={[styles.lockDot, lockStyle]} />
+      </View>
+
+      {!compact && (
+        <Text style={styles.loadingText} accessibilityLiveRegion="polite">
+          {messages[msgIndex]}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.md,
+    paddingVertical: space.xl,
+  },
+  rootCompact: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockDot: {
+    position: 'absolute',
+    bottom: 12,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: color.deep,
+  },
+  loadingText: {
+    ...t.small,
+    fontFamily: font.stamp,
+    color: color.mute,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+});
+
+export default PulsePinLoader;
+
+═══════════════════════════════════════════════════════════════════
+FILE 3: src/components/loading/CompassLockLoader.tsx
+═══════════════════════════════════════════════════════════════════
+/**
+ * CompassLockLoader — Travel Buddy's AI / recommendation "thinking" animation
+ * ("Compass Lock").
+ *
+ * The compass needle spins fast, overshoots, and settles locking onto a
+ * direction; a sparkle pops to signal a result was found. Text explains that
+ * Compass is planning or ranking options.
+ *
+ * Use for: Compass AI recommendations, Discovery ranking, Trip Flow optimization,
+ * Layover recommendations, Hidden Gems suggestions, personalized feed refresh.
+ *
+ * Accessibility: respects OS "Reduce Motion" — renders a static locked needle +
+ * sparkle, no spin, per spec §10.
+ *
+ * Tokens only — no hardcoded brand colors.
+ */
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  AccessibilityInfo,
+  type ViewStyle,
+} from 'react-native';
+import Svg, { Circle, Path, Line, G, Text as SvgText } from 'react-native-svg';
+import Animated, {
+  useSharedValue,
+  useAnimatedProps,
+  useAnimatedStyle,
+  withTiming,
+  withRepeat,
+  withSequence,
+  withDelay,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
+import { color, space, type as t, font } from '../../theme/tokens';
+
+const AnimatedG = Animated.createAnimatedComponent(G);
+
+const DEFAULT_MESSAGES = [
+  'Compass is finding the best fit…',
+  'Ranking nearby options…',
+  'Building your route…',
+  'Checking your travel vibe…',
+  'Finding the best flow…',
+];
+
+// One full loop: spin → lock → sparkle → hold → reset.
+const LOOP_MS = 3000;
+// Final resting angle of the needle (degrees). 650 = ~290° after ~1.8 turns.
+const LOCK_ANGLE = 650;
+
+export interface CompassLockLoaderProps {
+  /** Override rotating copy. Single-item array for a fixed message. */
+  messages?: string[];
+  /** Compact mode: hide text, just the spinning compass (inline use). */
+  compact?: boolean;
+  /** Diameter of the compass graphic in px. Default 120. */
+  size?: number;
+  style?: ViewStyle;
+  accessibilityLabel?: string;
+}
+
+export function CompassLockLoader({
+  messages = DEFAULT_MESSAGES,
+  compact = false,
+  size = 120,
+  style,
+  accessibilityLabel = 'Finding recommendations',
+}: CompassLockLoaderProps) {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => { if (mounted) setReduceMotion(enabled); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => { if (mounted) setReduceMotion(enabled); },
+    );
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (compact || messages.length <= 1) return;
+    const id = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, 1700);
+    return () => clearInterval(id);
+  }, [compact, messages.length]);
+
+  const angle = useSharedValue(0);   // needle rotation, degrees
+  const sparkle = useSharedValue(0); // 0 hidden → 1 popped
+
+  useEffect(() => {
+    if (reduceMotion) {
+      angle.value = LOCK_ANGLE;
+      sparkle.value = 1;
+      return;
+    }
+
+    // Spin to overshoot, settle back to LOCK_ANGLE, hold, snap reset.
+    angle.value = withRepeat(
+      withSequence(
+        withTiming(LOCK_ANGLE + 30, { duration: LOOP_MS * 0.55, easing: Easing.out(Easing.cubic) }),
+        withTiming(LOCK_ANGLE - 10, { duration: LOOP_MS * 0.12, easing: Easing.inOut(Easing.quad) }),
+        withTiming(LOCK_ANGLE, { duration: LOOP_MS * 0.1, easing: Easing.out(Easing.quad) }),
+        withDelay(LOOP_MS * 0.23, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    // Sparkle pops once the needle has locked (~78% in).
+    sparkle.value = withRepeat(
+      withSequence(
+        withDelay(LOOP_MS * 0.78, withTiming(1, { duration: LOOP_MS * 0.12, easing: Easing.out(Easing.back(2)) })),
+        withDelay(LOOP_MS * 0.1, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    return () => {
+      cancelAnimation(angle);
+      cancelAnimation(sparkle);
+    };
+  }, [reduceMotion]);
+
+  const needleProps = useAnimatedProps(() => ({
+    transform: [{ rotate: `${angle.value}deg` }],
+  }));
+
+  const sparkleStyle = useAnimatedStyle(() => ({
+    opacity: sparkle.value,
+    transform: [{ scale: 0.4 + sparkle.value * 0.6 }],
+  }));
+
+  return (
+    <View
+      style={[compact ? styles.rootCompact : styles.root, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <Svg viewBox="0 0 100 100" width={size} height={size}>
+          {/* Glow + face */}
+          <Circle cx={50} cy={50} r={46} fill={color.deep} opacity={0.12} />
+          <Circle cx={50} cy={50} r={38} fill={color.paperRaised} stroke={color.haze} strokeWidth={1} />
+          <Circle cx={50} cy={50} r={38} fill="none" stroke={color.deep} strokeWidth={1} opacity={0.25} />
+
+          {/* Cardinal letters */}
+          <G fill={color.faint} fontFamily={font.stamp} fontSize={7} fontWeight="700" textAnchor="middle">
+            <SvgText x={50} y={20}>N</SvgText>
+            <SvgText x={50} y={86}>S</SvgText>
+            <SvgText x={16} y={53}>W</SvgText>
+            <SvgText x={84} y={53}>E</SvgText>
+          </G>
+
+          {/* Cardinal ticks */}
+          <Line x1={50} y1={14} x2={50} y2={20} stroke={color.deep} strokeWidth={1} opacity={0.4} />
+          <Line x1={50} y1={80} x2={50} y2={86} stroke={color.deep} strokeWidth={1} opacity={0.4} />
+          <Line x1={14} y1={50} x2={20} y2={50} stroke={color.deep} strokeWidth={1} opacity={0.4} />
+          <Line x1={80} y1={50} x2={86} y2={50} stroke={color.deep} strokeWidth={1} opacity={0.4} />
+
+          {/* Needle (rotates) */}
+          <AnimatedG originX={50} originY={50} animatedProps={needleProps}>
+            <Path d="M50 22 L 56 50 L 50 46 L 44 50 Z" fill={color.signal} />
+            <Path d="M50 78 L 44 50 L 50 54 L 56 50 Z" fill={color.faint} />
+          </AnimatedG>
+
+          {/* Hub */}
+          <Circle cx={50} cy={50} r={4} fill={color.ink} />
+          <Circle cx={50} cy={50} r={1.6} fill={color.paper} />
+        </Svg>
+
+        {/* Sparkle — pops on lock */}
+        <Animated.View style={[styles.sparkle, { left: size * 0.62, top: size * 0.18 }, sparkleStyle]}>
+          <Svg viewBox="0 0 16 16" width={size * 0.16} height={size * 0.16}>
+            <Path d="M8 0 L 9.5 6.5 L 16 8 L 9.5 9.5 L 8 16 L 6.5 9.5 L 0 8 L 6.5 6.5 Z" fill={color.signal} />
+          </Svg>
+        </Animated.View>
+      </View>
+
+      {!compact && (
+        <View style={styles.textRow}>
+          <View style={styles.dots}>
+            <Dot delay={0} reduceMotion={reduceMotion} />
+            <Dot delay={150} reduceMotion={reduceMotion} />
+            <Dot delay={300} reduceMotion={reduceMotion} />
+          </View>
+          <Text style={styles.loadingText} accessibilityLiveRegion="polite">
+            {messages[msgIndex]}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function Dot({ delay, reduceMotion }: { delay: number; reduceMotion: boolean }) {
+  const opacity = useSharedValue(0.3);
+  useEffect(() => {
+    if (reduceMotion) { opacity.value = 0.6; return; }
+    opacity.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(
+          withTiming(0.5, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+          withTiming(0.3, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        false,
+      ),
+    );
+    return () => cancelAnimation(opacity);
+  }, [reduceMotion]);
+  const dotStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.View style={[styles.dot, dotStyle]} />;
+}
+
+const styles = StyleSheet.create({
+  root: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.lg,
+    paddingVertical: space.xl,
+  },
+  rootCompact: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sparkle: {
+    position: 'absolute',
+  },
+  textRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: 22,
+  },
+  dots: { flexDirection: 'row', gap: 4 },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: color.deep,
+  },
+  loadingText: {
+    ...t.small,
+    fontFamily: font.stamp,
+    color: color.mute,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+});
+
+export default CompassLockLoader;
+
+═══════════════════════════════════════════════════════════════════
+FILE 4: src/components/loading/RoutePathLoader.tsx
+═══════════════════════════════════════════════════════════════════
+/**
+ * RoutePathLoader — Travel Buddy's route-planning / Trip Flow loading animation
+ * ("Route Path"), itinerary-card style.
+ *
+ * A vertical itinerary builds itself: numbered stops appear in sequence, each
+ * with a name + time, connectors drawing between them. Reads like a real trip
+ * plan rather than a generic map spinner.
+ *
+ * Use for: creating a walking path, optimizing activity order, rerouting after a
+ * skipped stop, loading directions, calculating checkpoint progress, Trip Flow.
+ *
+ * Accessibility: respects OS "Reduce Motion" — renders the full itinerary
+ * statically with no staggered reveal, per spec §10.
+ *
+ * Tokens only — no hardcoded brand colors. Stops are configurable via props so
+ * callers can show real itinerary data; defaults are illustrative.
+ */
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  AccessibilityInfo,
+  type ViewStyle,
+} from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withDelay,
+  withRepeat,
+  withSequence,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
+import { color, space, radius, type as t, font, shadow } from '../../theme/tokens';
+
+export interface RouteStop {
+  label: string;
+  detail?: string;
+}
+
+const DEFAULT_STOPS: RouteStop[] = [
+  { label: 'Sunset Café', detail: '6:30 PM · coffee' },
+  { label: 'Mactan Beach', detail: '7:45 PM · walk' },
+  { label: 'Rooftop Bar', detail: '9:00 PM · drinks' },
+];
+
+const DEFAULT_MESSAGES = [
+  'Finding the best walking path…',
+  'Optimizing your night flow…',
+  'Ordering your stops…',
+  'Checking route safety…',
+  'Building your checkpoint map…',
+];
+
+// Per-stop reveal stagger and the full loop length.
+const STOP_STAGGER_MS = 420;
+const HOLD_MS = 1100;
+
+export interface RoutePathLoaderProps {
+  /** Itinerary stops to show. Defaults to an illustrative 3-stop night out. */
+  stops?: RouteStop[];
+  /** Header eyebrow text. */
+  title?: string;
+  /** Override rotating copy. */
+  messages?: string[];
+  style?: ViewStyle;
+  accessibilityLabel?: string;
+}
+
+export function RoutePathLoader({
+  stops = DEFAULT_STOPS,
+  title = 'Day 1 · Tonight',
+  messages = DEFAULT_MESSAGES,
+  style,
+  accessibilityLabel = 'Building your route',
+}: RoutePathLoaderProps) {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => { if (mounted) setReduceMotion(enabled); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => { if (mounted) setReduceMotion(enabled); },
+    );
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (messages.length <= 1) return;
+    const id = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, 1700);
+    return () => clearInterval(id);
+  }, [messages.length]);
+
+  return (
+    <View
+      style={[styles.root, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.eyebrow}>{title.toUpperCase()}</Text>
+          <Text style={styles.stopCount}>{stops.length} stops</Text>
+        </View>
+
+        <View>
+          {stops.map((stop, i) => (
+            <Stop
+              key={`${stop.label}-${i}`}
+              stop={stop}
+              index={i}
+              isLast={i === stops.length - 1}
+              reduceMotion={reduceMotion}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.textRow}>
+        <View style={styles.dots}>
+          <Dot delay={0} reduceMotion={reduceMotion} />
+          <Dot delay={150} reduceMotion={reduceMotion} />
+          <Dot delay={300} reduceMotion={reduceMotion} />
+        </View>
+        <Text style={styles.loadingText} accessibilityLiveRegion="polite">
+          {messages[msgIndex]}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ── One itinerary stop: number badge + connector + name/detail ───────────────
+function Stop({
+  stop,
+  index,
+  isLast,
+  reduceMotion,
+}: {
+  stop: RouteStop;
+  index: number;
+  isLast: boolean;
+  reduceMotion: boolean;
+}) {
+  const progress = useSharedValue(reduceMotion ? 1 : 0);
+
+  useEffect(() => {
+    if (reduceMotion) { progress.value = 1; return; }
+    const totalLoop =
+      STOP_STAGGER_MS * 3 + HOLD_MS + STOP_STAGGER_MS; // staggered reveal + hold + reset gap
+    progress.value = withRepeat(
+      withSequence(
+        withDelay(index * STOP_STAGGER_MS, withTiming(1, { duration: 360, easing: Easing.out(Easing.back(1.5)) })),
+        withDelay(HOLD_MS + (2 - index) * STOP_STAGGER_MS, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+    return () => cancelAnimation(progress);
+  }, [reduceMotion, index]);
+
+  const badgeStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [{ scale: 0.4 + progress.value * 0.6 }],
+  }));
+  const bodyStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [{ translateX: (1 - progress.value) * -6 }],
+  }));
+  const connectorStyle = useAnimatedStyle(() => ({
+    opacity: progress.value * 0.6,
+    transform: [{ scaleY: progress.value }],
+  }));
+
+  // First stop badge is vermilion (origin), the rest teal.
+  const badgeColor = index === 0 ? color.signal : color.deep;
+
+  return (
+    <View style={styles.stopRow}>
+      <View style={styles.stopRail}>
+        <Animated.View style={[styles.badge, { backgroundColor: badgeColor }, badgeStyle]}>
+          <Text style={styles.badgeText}>{index + 1}</Text>
+        </Animated.View>
+        {!isLast && (
+          <Animated.View style={[styles.connector, connectorStyle]} />
+        )}
+      </View>
+
+      <Animated.View style={[styles.stopBody, bodyStyle]}>
+        <Text style={styles.stopLabel}>{stop.label}</Text>
+        {stop.detail ? <Text style={styles.stopDetail}>{stop.detail}</Text> : null}
+      </Animated.View>
+    </View>
+  );
+}
+
+function Dot({ delay, reduceMotion }: { delay: number; reduceMotion: boolean }) {
+  const opacity = useSharedValue(0.3);
+  useEffect(() => {
+    if (reduceMotion) { opacity.value = 0.6; return; }
+    opacity.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: 480, easing: Easing.inOut(Easing.quad) }),
+          withTiming(0.3, { duration: 480, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        false,
+      ),
+    );
+    return () => cancelAnimation(opacity);
+  }, [reduceMotion]);
+  const dotStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.View style={[styles.dot, dotStyle]} />;
+}
+
+const styles = StyleSheet.create({
+  root: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.lg,
+    paddingVertical: space.xl,
+  },
+  card: {
+    width: 280,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.lg,
+    ...shadow.card,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: space.md,
+  },
+  eyebrow: {
+    fontFamily: font.stamp,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: color.faint,
+  },
+  stopCount: {
+    fontFamily: font.stamp,
+    fontSize: 11,
+    color: color.signal,
+  },
+  stopRow: {
+    flexDirection: 'row',
+    gap: space.md,
+  },
+  stopRail: {
+    alignItems: 'center',
+    width: 24,
+  },
+  badge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: {
+    fontFamily: font.stamp,
+    fontSize: 11,
+    fontWeight: '700',
+    color: color.onInk,
+  },
+  connector: {
+    width: 2,
+    height: 22,
+    backgroundColor: color.haze,
+    marginVertical: 1,
+  },
+  stopBody: {
+    flex: 1,
+    paddingBottom: space.md,
+  },
+  stopLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: color.ink,
+  },
+  stopDetail: {
+    fontFamily: font.stamp,
+    fontSize: 10,
+    color: color.faint,
+    marginTop: 1,
+  },
+  textRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: 22,
+  },
+  dots: { flexDirection: 'row', gap: 4 },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: color.signal,
+  },
+  loadingText: {
+    ...t.small,
+    fontFamily: font.stamp,
+    color: color.mute,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+});
+
+export default RoutePathLoader;
+
+=== END — four files total. Create them, typecheck, report results. ===

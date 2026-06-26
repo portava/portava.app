@@ -218,6 +218,23 @@ test("POST /api/route-plans/:id/members — idempotent (upsert, no duplicate)", 
   }
 });
 
+test("POST /api/route-plans/:id/members — 403 when non-owner joins private (non-trip) route", async () => {
+  const otherOwnedPlan = {
+    ...seedPlan,
+    owner_user_id: "other-user-999",
+    trip_id:       null,
+  };
+  const store = makeStore({ route_plans: [otherOwnedPlan] });
+  const srv = await startServer(store);
+  try {
+    const r = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/members`);
+    assert.equal(r.status, 403, `expected 403 for non-owner private route, got ${r.status}`);
+    assert.equal(store.route_plan_members.length, 0, "no member row should be added");
+  } finally {
+    await srv.close();
+  }
+});
+
 test("DELETE /api/route-plans/:id/members — leave removes member", async () => {
   const store = makeStore({
     route_plans:        [seedPlan],

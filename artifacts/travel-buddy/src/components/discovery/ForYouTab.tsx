@@ -21,6 +21,7 @@ import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
 import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall';
+import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
 import { CompassWhySheet } from '../compass/CompassWhySheet';
@@ -31,6 +32,7 @@ import { postCompassFrontloadEvent } from '../../services/compass';
 interface ForYouTabProps {
   destination: string;
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
+  onAddToRoute?: (draft: RouteStopDraft) => void;
   contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
   lat?: number | null;
   lng?: number | null;
@@ -60,7 +62,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, contextMode, lat, lng }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -269,12 +271,12 @@ export function ForYouTab({ destination, onAddToPlan, contextMode, lat, lng }: F
         {/* ── Community sections: traveler-submitted from Supabase ── */}
         {community.gems.length > 0 && (
           <View style={styles.communitySection}>
-            <HiddenGemsSection gems={community.gems} />
+            <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />
           </View>
         )}
         {community.picks.length > 0 && (
           <View style={styles.communitySection}>
-            <TravelerPicksSection picks={community.picks} />
+            <TravelerPicksSection picks={community.picks} onAddToRoute={onAddToRoute} />
           </View>
         )}
       </ScrollView>

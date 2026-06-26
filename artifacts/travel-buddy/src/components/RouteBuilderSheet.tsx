@@ -11,7 +11,7 @@ import {
   View, Text, Modal, ScrollView, Pressable, TextInput,
   StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
-import { X, Route, Trash2, MapPin, ChevronRight } from 'lucide-react-native';
+import { X, Route, Trash2, MapPin, ChevronRight, Plus } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { createRoutePlan, type CandidateStopInput, type RouteStyle, type FullRoutePlan } from '../services/routePlan';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
@@ -65,6 +65,7 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
   const [endPin, setEndPin]             = useState<LocationPin | null>(null);
   const [startPickerOpen, setStartPickerOpen] = useState(false);
   const [endPickerOpen, setEndPickerOpen]     = useState(false);
+  const [addStopPickerOpen, setAddStopPickerOpen] = useState(false);
 
   React.useEffect(() => {
     if (visible) {
@@ -100,6 +101,19 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
     if (place.lat == null || place.lng == null) return;
     setEndPin({ label: place.displayName ?? place.name, lat: place.lat, lng: place.lng });
     setEndPickerOpen(false);
+  }, []);
+
+  const handleAddStop = useCallback((place: Place) => {
+    const draft: RouteStopDraft = {
+      id:         `place-${Date.now()}`,
+      title:      place.displayName ?? place.name,
+      lat:        place.lat ?? null,
+      lng:        place.lng ?? null,
+      sourceType: 'discovery',
+      sourceId:   place.id ?? undefined,
+    };
+    setStops((prev) => [...prev, draft]);
+    setAddStopPickerOpen(false);
   }, []);
 
   const handleGenerate = useCallback(async () => {
@@ -275,6 +289,12 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
               </View>
             ))}
 
+            {/* Add a stop from search */}
+            <Pressable style={styles.addStopBtn} onPress={() => setAddStopPickerOpen(true)}>
+              <Plus size={15} color={color.deep} />
+              <Text style={styles.addStopBtnText}>Add a stop</Text>
+            </Pressable>
+
             <View style={styles.approxNotice}>
               <Text style={styles.approxText}>
                 ℹ️ All walking distances and times are approximate (straight-line). No live routing provider is used.
@@ -313,6 +333,16 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
         allowGPS
         usedFor="route_end"
         placeholder="Search city or landmark…"
+      />
+
+      <GlobalPlacePicker
+        visible={addStopPickerOpen}
+        title="Add a stop"
+        onSelect={handleAddStop}
+        onClose={() => setAddStopPickerOpen(false)}
+        allowGPS={false}
+        usedFor="route_stop"
+        placeholder="Search restaurants, museums, bars…"
       />
     </>
   );
@@ -381,6 +411,13 @@ const styles = StyleSheet.create({
   arrowBtnDisabled: { opacity: 0.3 },
   arrowText: { fontSize: 12, color: color.ink },
   removeBtn: { padding: 4, marginLeft: 4 },
+  addStopBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    borderWidth: 1.5, borderColor: color.deep, borderStyle: 'dashed',
+    borderRadius: radius.md, padding: space.md, marginTop: space.sm,
+    justifyContent: 'center',
+  },
+  addStopBtnText: { ...t.bodyStrong, color: color.deep, fontSize: 13 },
   approxNotice: {
     backgroundColor: '#FFF8E1', borderRadius: radius.md, padding: space.md, marginTop: space.lg,
   },

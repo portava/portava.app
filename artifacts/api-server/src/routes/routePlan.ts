@@ -390,15 +390,23 @@ router.post("/route-plans/:id/members", async (req, res) => {
 
   const { data: plan } = await client
     .from("route_plans")
-    .select("id, trip_id")
+    .select("id, trip_id, owner_user_id")
     .eq("id", id)
     .maybeSingle();
 
   if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
 
-  // For trip-linked plans, only trip members may join
   const tripId = (plan as any).trip_id as string | null;
-  if (tripId) {
+
+  if (!tripId) {
+    // Non-trip (private) route plans: only the owner can join their own plan.
+    // Without this gate any authenticated user who discovers the UUID could
+    // mutate membership on a private route.
+    if ((plan as any).owner_user_id !== user.id) {
+      sendError(res, "forbidden", "Private route plans can only be joined by the owner"); return;
+    }
+  } else {
+    // Trip-linked plans: only accepted trip members may join
     const isMember = await isAcceptedTripMember(client, tripId, user.id);
     if (!isMember) { sendError(res, "forbidden", "Only trip members can join this route"); return; }
   }
