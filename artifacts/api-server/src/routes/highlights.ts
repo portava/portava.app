@@ -799,6 +799,16 @@ router.post("/highlights/:id/report", async (req, res) => {
     .from("highlight_reports")
     .upsert({ highlight_id: id, reporter_id: user.id, reason }, { onConflict: "highlight_id,reporter_id" });
 
+  // Compass: record negative signal + immediately end fair exposure for the reported author.
+  // Import lazily to keep highlights.ts independent of the compass subsystem.
+  const authorId: string = access.h.owner_id;
+  import("../compass/CompassActiveUserRewardEngine.js").then(({ recordActivityEvent }) => {
+    recordActivityEvent(sc, authorId, "report_received");
+  }, () => {});
+  import("../compass/CompassFairExposureEngine.js").then(({ endFairExposure }) => {
+    endFairExposure(sc, authorId, "report");
+  }, () => {});
+
   res.status(204).send();
 });
 

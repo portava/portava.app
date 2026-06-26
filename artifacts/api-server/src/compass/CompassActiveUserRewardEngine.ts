@@ -202,13 +202,19 @@ async function hasActiveTrustCap(db: SupabaseClient, userId: string): Promise<bo
   }
 }
 
-/** Load boost_visibility_enabled preference from profiles. Never throws. */
+/**
+ * Load boost_visibility_enabled preference from `compass_active_user_scores`.
+ * That table is the canonical, persisted source for this preference
+ * (added in migration 0053).  `profiles` never had this column.
+ * Defaults to `true` (opt-in by default) if no row exists yet.
+ * Never throws.
+ */
 async function loadBoostPreference(db: SupabaseClient, userId: string): Promise<boolean> {
   try {
     const { data } = await db
-      .from("profiles")
+      .from("compass_active_user_scores")
       .select("boost_visibility_enabled")
-      .eq("id", userId)
+      .eq("user_id", userId)
       .maybeSingle();
     return (data as any)?.boost_visibility_enabled !== false;
   } catch {
@@ -395,6 +401,12 @@ export function computeItemVisibilityBoost(
 /**
  * Append an activity event for a user to `compass_active_user_events`.
  * Fire-and-forget — never throws.
+ *
+ * The `weight` column is a **scaling multiplier** (default 1), not the raw
+ * event score.  `scoreEvents` applies the final weight by multiplying
+ * `EVENT_WEIGHTS[event_type] * row.weight`.  Callers that want to amplify a
+ * specific event (e.g. a verified booking = 2×) pass `meta.weight = 2`.
+ * Storing the event weight here would cause double-multiplication in scoring.
  */
 export function recordActivityEvent(
   db:        SupabaseClient | null,
@@ -403,13 +415,14 @@ export function recordActivityEvent(
   meta:      { city?: string; category?: string; weight?: number } = {},
 ): void {
   if (!db) return;
-  const weight = meta.weight ?? EVENT_WEIGHTS[eventType] ?? 1;
-  if (Math.abs(weight) < 0.01) return;
+  // Default multiplier is 1; caller may override (e.g. 0.5 to half-weight).
+  const multiplier = meta.weight ?? 1;
+  if (Math.abs(multiplier) < 0.01) return;
   db.from("compass_active_user_events")
     .insert({
       user_id:    userId,
       event_type: eventType,
-      weight:     Math.abs(weight),
+      weight:     Math.abs(multiplier),   // always positive; sign comes from EVENT_WEIGHTS
       city:       meta.city ?? null,
       category:   meta.category ?? null,
     })

@@ -228,4 +228,45 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   }
 });
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * PUT /api/compass/me/boost-visibility
+ * Body: { enabled: boolean }
+ *
+ * Persists the "boost my visibility when active" preference.
+ * Written to compass_active_user_scores.boost_visibility_enabled.
+ * Upserts the row so the preference is honoured even before the first
+ * score-compute run.
+ * ─────────────────────────────────────────────────────────────────────── */
+const boostVisibilitySchema = z.object({ enabled: z.boolean() });
+
+router.put("/compass/me/boost-visibility", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = boostVisibilitySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", "Body must be { enabled: boolean }");
+    return;
+  }
+
+  const { error } = await sc
+    .from("compass_active_user_scores")
+    .upsert(
+      { user_id: user.id, boost_visibility_enabled: parsed.data.enabled },
+      { onConflict: "user_id" },
+    );
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass: boost-visibility upsert failed");
+    sendError(res, "db_error", "Could not save preference");
+    return;
+  }
+
+  res.status(200).json({ ok: true, enabled: parsed.data.enabled });
+});
+
 export default router;

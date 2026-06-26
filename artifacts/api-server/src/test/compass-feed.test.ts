@@ -22,6 +22,7 @@ import { applyDiversity, diversifySection } from "../compass/CompassDiversityEng
 import { applyFairExposure, endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import {
   computeItemVisibilityBoost,
+  recordActivityEvent,
   type ActiveUserScoreResult,
 } from "../compass/CompassActiveUserRewardEngine.js";
 import { buildFeed, SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
@@ -459,6 +460,38 @@ describe("CompassActiveUserRewardEngine", () => {
     }));
     assert.ok(capped < full, "trust-capped boost must be less than full-trust boost");
     assert.ok(capped > 0,   "trust-capped boost must still be positive");
+  });
+
+  it("recordActivityEvent stores multiplier=1 by default (no double-weighting)", () => {
+    // The weight column is a SCALING MULTIPLIER (default 1), not the raw event score.
+    // scoreEvents() computes:  EVENT_WEIGHTS[type] * row.weight
+    // If we stored EVENT_WEIGHTS[type] here, the formula would square the weight.
+    const inserts: { weight: number }[] = [];
+    const fakeDb = {
+      from: () => ({
+        insert: (row: { weight: number }) => {
+          inserts.push(row);
+          return { then: () => {} };
+        },
+      }),
+    } as any;
+
+    recordActivityEvent(fakeDb, ALICE_ID, "booking_completed");
+    assert.equal(inserts.length, 1, "one insert expected");
+    assert.equal(inserts[0]!.weight, 1,
+      "default weight must be 1 (the multiplier); event score is applied by scoreEvents()");
+
+    // Caller-supplied multiplier is stored as-is
+    const fakeDb2 = {
+      from: () => ({
+        insert: (row: { weight: number }) => {
+          inserts.push(row);
+          return { then: () => {} };
+        },
+      }),
+    } as any;
+    recordActivityEvent(fakeDb2, ALICE_ID, "booking_completed", { weight: 2 });
+    assert.equal(inserts[1]!.weight, 2, "explicit multiplier 2 must be stored as 2");
   });
 });
 
