@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { HealthCheckResponse, CleanupHealthCheckResponse } from "@workspace/api-zod";
 import { getCleanupStatus, queryCleanupHealth } from "../lib/dailyBriefCleanup.js";
+import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
 import { purgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
 
@@ -38,6 +39,24 @@ router.get("/healthz/cleanup", async (_req, res) => {
     consecutiveFailures: inMem.consecutiveFailures,
   });
   res.json(data);
+});
+
+router.get("/healthz/delayed-publish", async (_req, res) => {
+  const { publisherStatus, lastRunAt } = await queryPublisherHealth();
+
+  if (publisherStatus === "critical") {
+    logger.error(
+      { lastRunAt },
+      "delayedPublishHealthCheck: publisher job is critically overdue",
+    );
+  } else if (publisherStatus === "overdue") {
+    logger.warn(
+      { lastRunAt },
+      "delayedPublishHealthCheck: publisher job has not run within the expected window",
+    );
+  }
+
+  res.json({ publisherStatus, lastRunAt });
 });
 
 /**

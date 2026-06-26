@@ -246,6 +246,59 @@ async function persistJobHealth(db: any, runAt: string): Promise<void> {
   }
 }
 
+// ── Health query (for /api/healthz/delayed-publish) ───────────────────────────
+
+type PublisherStatusLevel = "ok" | "overdue" | "critical";
+
+/**
+ * Classify the publisher job's staleness.
+ *
+ * | Elapsed since last run       | Status   |
+ * |------------------------------|----------|
+ * | < interval + 5 min grace     | ok       |
+ * | interval + 5 min to 4×       | overdue  |
+ * | ≥ 4 × interval, or null      | critical |
+ *
+ * For a default 5-min job: ok < 10 min, overdue 10–20 min, critical ≥ 20 min.
+ */
+export function computePublisherStatus(lastRunAt: string | null): PublisherStatusLevel {
+  if (!lastRunAt) return "critical";
+  const elapsed = Date.now() - new Date(lastRunAt).getTime();
+  const overdueMs  = PUBLISH_INTERVAL_MS + 5 * 60 * 1_000;
+  const criticalMs = 4 * PUBLISH_INTERVAL_MS;
+  if (elapsed < overdueMs)  return "ok";
+  if (elapsed < criticalMs) return "overdue";
+  return "critical";
+}
+
+/**
+ * Query the persistent `job_health` table for the delayed post publisher's last
+ * run time. Falls back to critical/null when the client is unavailable or the
+ * table row doesn't exist yet (first boot before the first tick).
+ */
+export async function queryPublisherHealth(): Promise<{
+  publisherStatus: PublisherStatusLevel;
+  lastRunAt: string | null;
+}> {
+  const db = resolveClient();
+  if (!db) return { publisherStatus: "critical", lastRunAt: null };
+
+  try {
+    const { data, error } = await db
+      .from("job_health")
+      .select("last_run_at")
+      .eq("job", "delayed_post_publisher")
+      .maybeSingle();
+
+    if (error || !data) return { publisherStatus: "critical", lastRunAt: null };
+
+    const lastRunAt = (data as any).last_run_at as string;
+    return { publisherStatus: computePublisherStatus(lastRunAt), lastRunAt };
+  } catch {
+    return { publisherStatus: "critical", lastRunAt: null };
+  }
+}
+
 // ── Scheduler ────────────────────────────────────────────────────────────────
 
 export function startDelayedPostPublisher(): ReturnType<typeof setInterval> {
