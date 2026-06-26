@@ -82,6 +82,7 @@ export type NotificationOutcome =
   | "suppressed_quiet_hours"
   | "suppressed_category_muted"
   | "suppressed_safety_filter"
+  | "suppressed_blocked_sender"
   | "suppressed_private_location"
   | "suppressed_ignored_category";
 
@@ -317,7 +318,38 @@ export async function evaluateNotification(
     return decide("sent");
   }
 
-  // ── Safety filter: category-level feature flag check ─────────────────────────
+  // ── Safety filter step 1: sender–recipient block relationship ─────────────────
+  // Mirror CompassSafetyFilter's "author_blocked_by_viewer" and
+  // "viewer_blocked_by_author" hard-block checks. A blocked sender must never
+  // reach the recipient via push — regardless of level, quiet hours, or category.
+  const senderId =
+    payload.data?.senderId != null ? String(payload.data.senderId) : null;
+
+  if (db && senderId) {
+    try {
+      // Two separate queries so eq()-only fake DB in tests can exercise both paths.
+      const [{ data: senderBlockedRecipient }, { data: recipientBlockedSender }] =
+        await Promise.all([
+          db
+            .from("blocks")
+            .select("id")
+            .eq("blocker_id", senderId)
+            .eq("blocked_id", userId)
+            .maybeSingle(),
+          db
+            .from("blocks")
+            .select("id")
+            .eq("blocker_id", userId)
+            .eq("blocked_id", senderId)
+            .maybeSingle(),
+        ]);
+      if (senderBlockedRecipient || recipientBlockedSender) {
+        return decide("suppressed_blocked_sender", `blocked:${senderId}`);
+      }
+    } catch { /* fail-open: a DB error should not block safety checking elsewhere */ }
+  }
+
+  // ── Safety filter step 2: category-level feature flag check ──────────────────
   if (payload.category) {
     const blocked = await isCategoryBlocked(db, payload.category);
     if (blocked) {

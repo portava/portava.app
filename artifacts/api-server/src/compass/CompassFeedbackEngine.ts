@@ -284,6 +284,11 @@ export async function processFeedback(
     }
   }
 
+  // Ordered per spec: event write → prefs update → cache invalidation.
+  // compass_feedback_events is the authoritative append-only audit log; it is
+  // written first so the record exists even if the subsequent prefs update fails.
+  await logFeedbackEvent(db, userId, req, update);
+
   try {
     // applyPrefsUpdate throws on DB error — we must treat this as a hard failure.
     // Feedback returning { updated: true } when the write silently failed would
@@ -293,12 +298,9 @@ export async function processFeedback(
     return { updated: false };
   }
 
-  // Log the event and invalidate cache concurrently (non-critical — failures here
-  // don't affect the correctness of the preference write).
-  await Promise.allSettled([
-    logFeedbackEvent(db, userId, req, update),
-    invalidate(db, userId, `feedback:${req.action}`),
-  ]);
+  // Cache invalidation — await so the stale feed is purged before we return.
+  // Non-fatal: allSettled so a cache-layer error doesn't fail the feedback response.
+  await Promise.allSettled([invalidate(db, userId, `feedback:${req.action}`)]);
 
   return { updated: true, prefsChanged: update };
 }

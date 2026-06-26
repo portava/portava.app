@@ -691,6 +691,66 @@ describe("CompassNotificationEngine", () => {
 
   // ── Safety filter integration ─────────────────────────────────────────────────
 
+  it("evaluateNotification: sender blocked by recipient → suppressed_blocked_sender", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [],
+      compass_notification_decisions: [],
+      feature_flags: [],
+      // Recipient "u-recip" has blocked sender "u-sender"
+      blocks: [
+        { blocker_id: "u-recip", blocked_id: "u-sender" },
+      ],
+    };
+    const { db } = makeFakeDb(tableData);
+    const p: NotificationPayload = {
+      type: "message_normal",
+      title: "New message",
+      body:  "Hey!",
+      data:  { senderId: "u-sender" },
+    };
+    const decision = await evaluateNotification(db, "u-recip", p, { nowMinutes: 12 * 60 });
+    assert.equal(decision.outcome, "suppressed_blocked_sender");
+  });
+
+  it("evaluateNotification: sender has blocked recipient → suppressed_blocked_sender", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [],
+      compass_notification_decisions: [],
+      feature_flags: [],
+      // Sender "u-sender2" has blocked recipient "u-recip2"
+      blocks: [
+        { blocker_id: "u-sender2", blocked_id: "u-recip2" },
+      ],
+    };
+    const { db } = makeFakeDb(tableData);
+    const p: NotificationPayload = {
+      type: "message_normal",
+      title: "New message",
+      body:  "Hey!",
+      data:  { senderId: "u-sender2" },
+    };
+    const decision = await evaluateNotification(db, "u-recip2", p, { nowMinutes: 12 * 60 });
+    assert.equal(decision.outcome, "suppressed_blocked_sender");
+  });
+
+  it("evaluateNotification: no block relationship → notification sent", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [],
+      compass_notification_decisions: [],
+      feature_flags: [],
+      blocks: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const p: NotificationPayload = {
+      type: "message_normal",
+      title: "New message",
+      body:  "Hey!",
+      data:  { senderId: "u-stranger" },
+    };
+    const decision = await evaluateNotification(db, "u-recip3", p, { nowMinutes: 12 * 60 });
+    assert.equal(decision.outcome, "sent");
+  });
+
   it("evaluateNotification: category blocked by feature flag → suppressed_safety_filter", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [],

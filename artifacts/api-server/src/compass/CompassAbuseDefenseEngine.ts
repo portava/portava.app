@@ -426,14 +426,20 @@ async function detectHashtagSpam(
       }
     }
 
-    // Count (user_id, hashtag_id) pairs
-    const userHashtagCount = new Map<string, number>(); // `${userId}:${hashtagId}` → count
+    // Count (user_id, hashtag_id) pairs.
+    // Always resolve the actual post author from postAuthorMap — never assume
+    // that all rows belong to the scoped userId.  For scoped on-demand scans
+    // we filter to rows whose resolved author matches userId; unattributable
+    // rows are skipped in both modes.
+    const userHashtagCount = new Map<string, number>(); // `${uid}:${hashtagId}` → count
     const userHashtagId    = new Map<string, string>();  // key → hashtagId
 
     for (const r of rows) {
-      const uid = userId ?? postAuthorMap.get(r.source_id);
-      if (!uid) continue; // skip rows we can't attribute to a user
-      const key = `${uid}:${r.hashtag_id}`;
+      const resolvedUid = postAuthorMap.get(r.source_id as string) ?? null;
+      // Scoped scan: skip rows that don't belong to the target user
+      if (userId !== null && resolvedUid !== userId) continue;
+      if (!resolvedUid) continue; // can't attribute — skip in global scan too
+      const key = `${resolvedUid}:${r.hashtag_id}`;
       userHashtagCount.set(key, (userHashtagCount.get(key) ?? 0) + 1);
       userHashtagId.set(key, r.hashtag_id as string);
     }
