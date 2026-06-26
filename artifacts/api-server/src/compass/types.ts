@@ -1,8 +1,7 @@
 /**
- * Compass Phase 1 — shared TypeScript types.
+ * Compass shared TypeScript types — Phase 1 (profile/context/intent) + Phase 2 (items/pipeline).
  *
- * These types are the single source of truth used by CompassProfileService,
- * CompassContextEngine, CompassIntentModeEngine, and the /api/compass route.
+ * Single source of truth for all Compass engines.
  */
 
 // ── Intent modes ──────────────────────────────────────────────────────────────
@@ -104,6 +103,8 @@ export interface CompassProfile {
   currentCity: string | null;
   currentCountry: string | null;
   safeReturnActive: boolean;
+  /** Resolved age of the viewer (used for age-gate checks in Safety Filter). */
+  viewerAge?: number;
   computedAt: string;
 }
 
@@ -133,3 +134,185 @@ export interface CompassFallbackResponse {
   contextState: 'normal';
   intentMode: { primary: 'explore_now'; secondary: [] };
 }
+
+// ── Phase 2: Content item interfaces ─────────────────────────────────────────
+
+/**
+ * Content type discriminator. All Compass pipeline stages use this union.
+ * Add new types here as new content surfaces are added.
+ */
+export type CompassItemType =
+  | 'event'
+  | 'post'
+  | 'user'
+  | 'buddy'
+  | 'trip'
+  | 'stamp'
+  | 'notification'
+  | 'suggestion';
+
+/**
+ * Universal content item interface for the Compass pipeline.
+ *
+ * All four pipeline gates (Safety → Eligibility → Privacy → Scoring) operate
+ * on this interface. Each gate checks only the fields it cares about; unused
+ * fields are ignored. Concrete content adapters map domain objects to this shape
+ * before calling `runPipeline()`.
+ *
+ * Index signature `[key: string]: any` allows extra domain-specific data to be
+ * carried through the pipeline without type errors.
+ */
+export interface CompassItem {
+  /** Stable unique identifier for the item (DB UUID or composite key). */
+  id: string;
+  /** Content type — drives type-specific checks in all four gates. */
+  type: CompassItemType;
+
+  // ── Authorship ─────────────────────────────────────────────────────────────
+  /** User ID of the content creator (used for block checks). */
+  authorId?: string;
+  /** For 'user' items: the user being shown (same as authorId for profiles). */
+  targetUserId?: string;
+  /** Cached trust score of the author (0–100). */
+  authorTrustScore?: number | null;
+
+  // ── Safety signals ─────────────────────────────────────────────────────────
+  /** True if the item or its author has been suspended by an admin. */
+  isSuspended?: boolean;
+  /** True if the item has been reported above the hard-block threshold. */
+  isReported?: boolean;
+  /** How many times this item has been reported. */
+  reportCount?: number;
+  /** True if the item has an adult-service flag (rent-a-buddy safety). */
+  hasAdultServiceFlag?: boolean;
+  /** True if the item contains off-app payment signals. */
+  hasOffAppPaymentSignal?: boolean;
+  /** True if the item contains an unsafe-intent signal. */
+  hasUnsafeIntentSignal?: boolean;
+  /** True if the item is hidden (user set to hidden or admin hidden). */
+  isHidden?: boolean;
+  /** True if the event/trip/stamp has expired. */
+  isExpired?: boolean;
+  /** True if the event/booking has been cancelled. */
+  isCancelled?: boolean;
+  /** Minimum viewer age required to see this item (0 = no restriction). */
+  minAgeRequired?: number;
+  /** True if this is a delayed post awaiting location-exit before publication. */
+  isDelayedPost?: boolean;
+  /** ISO timestamp when the delayed post becomes eligible for publication. */
+  publishEligibleAt?: string;
+
+  // ── Eligibility signals ────────────────────────────────────────────────────
+  /** True if this content type requires the author to be verified. */
+  requiresVerification?: boolean;
+  /** True if the author has passed verification for this content type. */
+  isVerified?: boolean;
+  /** For 'event' items: maximum number of attendees. */
+  capacity?: number;
+  /** For 'event' items: current attendee count. */
+  currentAttendees?: number;
+  /**
+   * Visibility scope:
+   *   'public'       — visible to everyone
+   *   'circle_only'  — visible only to trust-circle members
+   *   'trip_only'    — visible only to trip members
+   *   'private'      — visible only to the author
+   */
+  visibilityScope?: 'public' | 'circle_only' | 'trip_only' | 'private';
+  /** True if the viewing user is in the item's trust circle. */
+  viewerIsInCircle?: boolean;
+  /** True if the viewing user is a member of the item's trip. */
+  viewerIsInTrip?: boolean;
+  /** For 'buddy' items: must be 'active' to accept bookings. */
+  buddyStatus?: string;
+
+  // ── Privacy fields (scrubbed by Privacy Guard) ─────────────────────────────
+  /** Exact GPS latitude — ALWAYS stripped by Privacy Guard. */
+  exactLat?: number;
+  /** Exact GPS longitude — ALWAYS stripped by Privacy Guard. */
+  exactLng?: number;
+  /** Exact street address — ALWAYS stripped by Privacy Guard. */
+  exactAddress?: string;
+  /** Hotel/accommodation address — ALWAYS stripped by Privacy Guard. */
+  hotelAddress?: string;
+  /** Safe-return session route data — ALWAYS stripped by Privacy Guard. */
+  safeReturnRoute?: unknown;
+  /** Emergency contact details — ALWAYS stripped by Privacy Guard. */
+  emergencyContacts?: unknown;
+  /** Internal admin notes — ALWAYS stripped by Privacy Guard. */
+  adminNotes?: string;
+  /** Identity document data — ALWAYS stripped by Privacy Guard. */
+  idDocument?: unknown;
+  /** Private booking notes — ALWAYS stripped by Privacy Guard. */
+  privateBookingNotes?: string;
+  /** True if the item is unpublished (draft/scheduled). */
+  isUnpublished?: boolean;
+  /** Sanitized public post latitude (for delayed posts, stripped until eligible). */
+  publicLat?: number;
+  /** Sanitized public post longitude. */
+  publicLng?: number;
+  /** Public location label text. */
+  publicLocationLabel?: string;
+  /** Human-readable location text (rewritten by Privacy Guard when GPS was stripped). */
+  locationText?: string;
+
+  // ── Location (for scoring + privacy text) ─────────────────────────────────
+  /** City name where the item is located (used for city-match scoring). */
+  city?: string;
+  /** Neighbourhood within the city (used for privacy text). */
+  neighbourhood?: string;
+  /** Country code or name. */
+  country?: string;
+
+  // ── Scoring signals ────────────────────────────────────────────────────────
+  /** Interest/activity tags on this item (matched against viewer's travel styles). */
+  interestTags?: string[];
+  /** BCP-47 language code of the item's content. */
+  languageCode?: string;
+  /** ISO timestamp when the item was created (for freshness decay). */
+  createdAt?: string;
+  /** Base quality score 0–10 assigned by the content layer. */
+  qualityScore?: number;
+  /** True if the item has been flagged as spam. */
+  isSpam?: boolean;
+  /** How many times this item has already been shown to this viewer. */
+  repeatCount?: number;
+
+  // ── Content body (may be stripped for unpublished items) ──────────────────
+  contentBody?: string;
+  contentUrl?: string;
+
+  // ── Catch-all for domain-specific fields carried through the pipeline ──────
+  [key: string]: unknown;
+}
+
+/** A CompassItem annotated with its pipeline result (after all four gates). */
+export interface ScoredCompassItem extends CompassItem {
+  finalScore: number;
+}
+
+// ── Convenience type aliases for each content subtype ────────────────────────
+
+/** An event item passed through the Compass pipeline. */
+export type CompassEvent = CompassItem & { type: 'event' };
+
+/** A post item passed through the Compass pipeline. */
+export type CompassPost = CompassItem & { type: 'post' };
+
+/** A user/traveler profile item passed through the Compass pipeline. */
+export type CompassUser = CompassItem & { type: 'user' };
+
+/** A rent-a-buddy profile item passed through the Compass pipeline. */
+export type CompassBuddy = CompassItem & { type: 'buddy' };
+
+/** A trip item passed through the Compass pipeline. */
+export type CompassTrip = CompassItem & { type: 'trip' };
+
+/** A passport stamp opportunity item. */
+export type CompassStamp = CompassItem & { type: 'stamp' };
+
+/** An in-app notification item. */
+export type CompassNotification = CompassItem & { type: 'notification' };
+
+/** A Telegraph/content suggestion item. */
+export type CompassSuggestion = CompassItem & { type: 'suggestion' };
