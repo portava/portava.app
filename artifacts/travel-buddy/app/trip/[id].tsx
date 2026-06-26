@@ -115,6 +115,19 @@ export default function TripDetail() {
             <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
           </Pressable>
         )}
+        {rentBuddyEnabled && (
+          <Pressable
+            style={styles.topBtn}
+            hitSlop={6}
+            onPress={() => {
+              const params = new URLSearchParams({ tripId: trip.id });
+              if (trip.destinationCity) params.set('city', trip.destinationCity);
+              router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+            }}
+          >
+            <Users size={15} color={color.ink} /><Text style={styles.topBtnText}>Rent a Buddy</Text>
+          </Pressable>
+        )}
         <Pressable
           style={styles.topBtn}
           hitSlop={6}

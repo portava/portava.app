@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane, MessageCircle } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
@@ -48,17 +48,6 @@ function DesktopSidebar({ unreadNotifications, unreadMessages, pendingRequests }
       </View>
 
       <View style={{ flex: 1 }} />
-
-      {/* Telegraph (Messages) link */}
-      <Pressable style={styles.notifBtn} onPress={() => router.push('/(tabs)/messages' as any)}>
-        <MessageCircle size={18} color={color.mute} />
-        <Text style={styles.navLabel}>Telegraph</Text>
-        {(unreadMessages + pendingRequests) > 0 && (
-          <View style={styles.sidebarBadge}>
-            <Text style={styles.sidebarBadgeText}>{(unreadMessages + pendingRequests) > 99 ? '99+' : String(unreadMessages + pendingRequests)}</Text>
-          </View>
-        )}
-      </Pressable>
 
       {/* Notifications — bell with popover preview */}
       <View style={styles.notifBtn}>
@@ -189,22 +178,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="messages"
-        options={{
-          title: 'Telegraph',
-          tabBarIcon: ({ color: c }) => (
-            <View>
-              <MessageCircle size={22} color={c} />
-              {(unreadMessages + pendingRequests) > 0 && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>
-                    {(unreadMessages + pendingRequests) > 99 ? '99+' : String(unreadMessages + pendingRequests)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
-        }}
-        listeners={{ focus: refreshUnread }}
+        options={{ href: null, title: 'Telegraph' }}
       />
       <Tabs.Screen
         name="passport"
