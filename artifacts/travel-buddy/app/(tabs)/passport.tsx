@@ -2,13 +2,12 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, MessageCircle, Users, Clock } from 'lucide-react-native';
+import { Share2, Users, Clock } from 'lucide-react-native';
 import { getPendingPosts } from '../../src/services/posts';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { NotificationBell } from '../../src/components/NotificationBell';
-import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { useHighlightRingState, invalidateHighlightCache } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
@@ -315,7 +314,6 @@ function PassportContent({
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
-  const { messages: unreadMessages } = useUnreadCounts();
   const [pendingCount, setPendingCount] = useState(0);
 
   useFocusEffect(useCallback(() => {
@@ -349,23 +347,13 @@ function PassportContent({
           postcards={postcards}
           stamps={verifiedStamps}
           trips={trips}
+          onCellPress={(label) => {
+            if (label === 'Postcards') setTab('postcards');
+            else if (label === 'Stamps') setTab('stamps');
+            else if (label === 'Trips') setTab('trips');
+            else if (label === 'Countries' || label === 'Cities') setTab('map');
+          }}
         />
-
-        {/* Telegraph quick action */}
-        <Pressable style={styles.telegraphRow} onPress={() => router.push('/(tabs)/messages' as any)}>
-          <View style={styles.telegraphIcon}>
-            <MessageCircle size={18} color={color.signal} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.telegraphTitle}>Telegraph</Text>
-            <Text style={styles.telegraphSub}>Messages, trip chats & travel conversations</Text>
-          </View>
-          {unreadMessages > 0 && (
-            <View style={styles.telegraphBadge}>
-              <Text style={styles.telegraphBadgeText}>{unreadMessages > 99 ? '99+' : String(unreadMessages)}</Text>
-            </View>
-          )}
-        </Pressable>
 
         {/* Rent a Buddy entry point — flag-gated */}
         {rentBuddyEnabled && (
@@ -544,20 +532,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  telegraphRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    marginHorizontal: space.lg,
-    marginTop: space.sm,
-    marginBottom: space.xs,
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: color.haze,
-    borderRadius: 14,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-  },
   telegraphIcon: {
     width: 36,
     height: 36,
@@ -578,16 +552,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 1,
   },
-  telegraphBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 5,
-  },
-  telegraphBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   buddyRow: {
     flexDirection: 'row',
