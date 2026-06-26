@@ -17,10 +17,10 @@
  *   - Levels 1–2 always pass through (safety is non-negotiable).
  *   - Levels 3–10 are blocked during the user's configured quiet hours.
  *   - Levels 8–10 are suppressed if the category is muted by the user.
- *   - Any level is suppressed if the content fails the Safety Filter category
- *     check (nightlife to no-nightlife users, etc.).
+ *   - Category is checked against COMPASS_<CATEGORY>_SAFETY_BLOCK feature flags.
+ *   - Any level is suppressed for nightlife content if user has nightlife muted.
  *   - Private location data (lat/lng, exact address) is stripped from all
- *     notification bodies before send.
+ *     notification data fields AND redacted from body text (coordinate patterns).
  *
  * All decisions are logged to compass_notification_decisions (fire-and-forget).
  */
@@ -65,9 +65,9 @@ export interface NotificationPayload {
   type:      NotificationType;
   title:     string;
   body:      string;
-  /** Category tag (e.g. "nightlife", "buddy") — used for mute checks. */
+  /** Category tag (e.g. "nightlife", "buddy") — used for mute/safety checks. */
   category?: string;
-  /** Any extra data to send with the push. Private location keys will be stripped. */
+  /** Extra data to send with the push. Private location keys will be stripped. */
   data?:     Record<string, unknown>;
 }
 
@@ -96,17 +96,41 @@ const PRIVATE_LOCATION_KEYS = [
 ];
 
 /**
- * Remove any private location fields from the notification payload.
+ * Regex patterns for location data that should be redacted from body text.
+ * - Decimal coordinates: e.g. 13.7563 or -100.5018
+ * - Street addresses: e.g. "123 Main Street"
+ */
+const COORDINATE_REGEX  = /\b-?\d{1,3}\.\d{4,}\b/g;
+const ADDRESS_REGEX     =
+  /\b\d+\s+[\w\s]{2,30}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Way|Place|Pl|Court|Ct)\b/gi;
+
+/**
+ * Redact GPS coordinates and street addresses from a text string.
+ */
+export function redactLocationText(text: string): string {
+  return text
+    .replace(COORDINATE_REGEX, "[location removed]")
+    .replace(ADDRESS_REGEX,    "[address removed]");
+}
+
+/**
+ * Remove any private location fields from the notification payload data
+ * AND redact coordinate/address patterns from the body text.
  * Returns a new payload — never mutates the input.
  */
 export function stripPrivateLocation(payload: NotificationPayload): NotificationPayload {
+  // Strip private keys from data
   const strippedData: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload.data ?? {})) {
     if (!PRIVATE_LOCATION_KEYS.includes(key.toLowerCase())) {
       strippedData[key] = value;
     }
   }
-  return { ...payload, data: strippedData };
+
+  // Redact location patterns from body text
+  const strippedBody = redactLocationText(payload.body);
+
+  return { ...payload, body: strippedBody, data: strippedData };
 }
 
 // ── Quiet hours helpers ───────────────────────────────────────────────────────
@@ -173,10 +197,11 @@ async function loadUserNotifPrefs(
       .eq("user_id", userId)
       .maybeSingle();
 
-    // Quiet hours stored as muted_topics entries with "quiet_start:HH:MM" /
-    // "quiet_end:HH:MM" convention, or a dedicated column if available.
     const row = (data as any) ?? {};
     const topics: string[] = (row.muted_topics as string[]) ?? [];
+
+    // Quiet hours are stored as special muted_topics entries:
+    //   "quiet_start:HH:MM" and "quiet_end:HH:MM"
     const quietStartEntry = topics.find((t: string) => t.startsWith("quiet_start:"));
     const quietEndEntry   = topics.find((t: string) => t.startsWith("quiet_end:"));
     const quietStart = quietStartEntry?.replace("quiet_start:", "") ?? null;
@@ -197,6 +222,32 @@ async function loadUserNotifPrefs(
   }
 }
 
+// ── Safety filter — category-level feature flag check ────────────────────────
+
+/**
+ * Check whether the notification category is blocked by a feature flag
+ * (e.g. COMPASS_BUDDY_SAFETY_BLOCK or COMPASS_NIGHTLIFE_SAFETY_BLOCK).
+ * This mirrors the CompassSafetyFilter type-level block check.
+ * Never throws.
+ */
+async function isCategoryBlocked(
+  db:       SupabaseClient | null,
+  category: string,
+): Promise<boolean> {
+  if (!db || !category) return false;
+  try {
+    const flagKey = `COMPASS_${category.toUpperCase().replace(/[\s-]/g, "_")}_SAFETY_BLOCK`;
+    const { data } = await db
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", flagKey)
+      .maybeSingle();
+    return Boolean((data as any)?.enabled);
+  } catch {
+    return false;
+  }
+}
+
 // ── Audit logger ──────────────────────────────────────────────────────────────
 
 function logDecision(
@@ -206,13 +257,12 @@ function logDecision(
   decision: NotificationDecision,
 ): void {
   if (!db) return;
-  const level = PRIORITY_LEVELS[payload.type];
   db.from("compass_notification_decisions")
     .insert({
-      user_id:           userId,
-      notification_type: payload.type,
-      priority_level:    level,
-      outcome:           decision.outcome,
+      user_id:            userId,
+      notification_type:  payload.type,
+      priority_level:     decision.priorityLevel,
+      outcome:            decision.outcome,
       suppression_reason: decision.suppressionReason,
     })
     .then(() => {}, () => {});
@@ -229,7 +279,7 @@ function logDecision(
  * @param db       Supabase service-role client (null in tests).
  * @param userId   The recipient's user ID.
  * @param payload  The notification to evaluate.
- * @param opts     Optional test overrides (e.g. inject now-minutes for quiet-hours tests).
+ * @param opts     Optional overrides (nowMinutes for quiet-hours tests).
  */
 export async function evaluateNotification(
   db:      SupabaseClient | null,
@@ -256,24 +306,35 @@ export async function evaluateNotification(
     return d;
   };
 
-  // Levels 1–2: always send (safety override)
+  // ── Levels 1–2: always send (safety override) ────────────────────────────────
   if (level <= SAFETY_OVERRIDE_THRESHOLD) {
     return decide("sent");
   }
 
-  // Load user preferences (best-effort; if unavailable, fail-open for levels 3–6)
+  // ── Safety filter: category-level feature flag check ─────────────────────────
+  if (payload.category) {
+    const blocked = await isCategoryBlocked(db, payload.category);
+    if (blocked) {
+      return decide(
+        "suppressed_safety_filter",
+        `safety_block:${payload.category}`,
+      );
+    }
+  }
+
+  // ── User preferences (best-effort; fail-open for higher-priority levels) ─────
   const prefs = db
     ? await loadUserNotifPrefs(db, userId)
     : { quietStart: null, quietEnd: null, mutedCategories: [], compassEnabled: true };
 
-  // Quiet hours check (levels 3–10)
+  // ── Quiet hours check (levels 3–10) ──────────────────────────────────────────
   if (prefs.quietStart && prefs.quietEnd) {
     if (isQuietHours(prefs.quietStart, prefs.quietEnd, opts.nowMinutes)) {
       return decide("suppressed_quiet_hours", "quiet_hours_active");
     }
   }
 
-  // Category mute check (levels 8–10)
+  // ── Category mute check (levels 8–10) ────────────────────────────────────────
   if (level >= CATEGORY_MUTE_THRESHOLD && payload.category) {
     const catLower = payload.category.toLowerCase();
     const muted = prefs.mutedCategories.some(
@@ -284,7 +345,7 @@ export async function evaluateNotification(
     }
   }
 
-  // Nightlife suppression for users with "no_clubs" / "no_alcohol" preference
+  // ── Nightlife suppression for users with no_clubs / no_alcohol preference ────
   if (
     payload.category &&
     ["nightlife", "clubs", "alcohol"].includes(payload.category.toLowerCase()) &&
@@ -292,7 +353,7 @@ export async function evaluateNotification(
       ["clubs", "no_clubs", "alcohol", "no_alcohol"].includes(m.toLowerCase()),
     )
   ) {
-    return decide("suppressed_ignored_category", `nightlife_preference`);
+    return decide("suppressed_ignored_category", "nightlife_preference");
   }
 
   return decide("sent");

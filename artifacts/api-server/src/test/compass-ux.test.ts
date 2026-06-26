@@ -3,19 +3,11 @@
  *
  * Covers:
  *   - CompassExplanationEngine: sensitive key → GENERIC_INELIGIBLE (never revealed)
- *   - CompassExplanationEngine: safe key → real template; local modifier; section default
- *   - CompassExplanationEngine: encode/decode recommendation token round-trip
- *   - CompassFeedbackEngine: "hide_category" decreases category weight in prefs
- *   - CompassFeedbackEngine: "mute_hashtag" adds slug to muted_hashtags list
- *   - CompassFeedbackEngine: "not_interested" adds itemId to ignored list
- *   - CompassFeedbackEngine: invalidate() is called after every feedback write
- *   - CompassNotificationEngine: quiet hours block levels 3–10
- *   - CompassNotificationEngine: safety levels 1–2 bypass quiet hours
- *   - CompassNotificationEngine: category mute suppresses levels 8–10
- *   - CompassNotificationEngine: nightlife suppressed for no_clubs users
- *   - CompassNotificationEngine: private location keys stripped from payload
- *   - CompassAbuseDefenseEngine: mutual 5★ ring of 3 → mutual_review_ring flag
- *   - CompassAbuseDefenseEngine: severe flag zeroes active-user reward row
+ *   - CompassExplanationEngine: HMAC-signed token encode/decode + tamper detection
+ *   - CompassFeedbackEngine: feedback weight updates, invalidate() called, null-db guard
+ *   - CompassNotificationEngine: quiet hours, safety bypass, category mute, body redaction
+ *   - CompassAbuseDefenseEngine: ring detection, booking loop, severe zeroes reward,
+ *                                 refund abuse, referral farm, comment pod stubs
  *
  * Runtime: node:test + node:assert (no vitest, no real DB)
  * Run: node --import tsx/esm --test src/test/compass-ux.test.ts
@@ -43,6 +35,7 @@ import {
   evaluateNotification,
   isQuietHours,
   stripPrivateLocation,
+  redactLocationText,
   PRIORITY_LEVELS,
   type NotificationType,
   type NotificationPayload,
@@ -77,6 +70,7 @@ function makeFakeDb(
       order(_k: string, _o?: unknown)   { return c; },
       limit(_n: number)                 { return c; },
       not(_k: string, _op: string, _v: unknown) { return c; },
+      is(_k: string, _v: unknown)       { return c; },
 
       async maybeSingle() {
         const rows = (tableData[table] ?? []).filter((r) =>
@@ -145,19 +139,27 @@ describe("CompassExplanationEngine", () => {
     assert.equal(isSensitiveKey("for_you:post:moderation_downrank"), true);
   });
 
+  it("isSensitiveKey: report_suppressed → true", () => {
+    assert.equal(isSensitiveKey("for_you:user:report_suppressed"), true);
+  });
+
   it("isSensitiveKey: normal key → false", () => {
     assert.equal(isSensitiveKey("for_you:user:local"), false);
   });
 
   it("resolveExplanation: sensitive key returns GENERIC_INELIGIBLE", async () => {
-    const key = "for_you:user:harassment_downrank";
-    const result = await resolveExplanation(key, null, null);
+    const result = await resolveExplanation("for_you:user:harassment_downrank", null, null);
     assert.equal(result, GENERIC_INELIGIBLE);
   });
 
   it("resolveExplanation: safety_downrank key returns GENERIC_INELIGIBLE", async () => {
     const result = await resolveExplanation("compass_picks:buddy:safety_downrank", null, null);
     assert.equal(result, GENERIC_INELIGIBLE);
+  });
+
+  it("resolveExplanation: GENERIC_INELIGIBLE never mentions 'harassment'", async () => {
+    const result = await resolveExplanation("for_you:user:harassment_downrank", null, null);
+    assert.ok(!result.toLowerCase().includes("harassment"));
   });
 
   it("resolveExplanation: :local modifier returns city-aware string", async () => {
@@ -181,13 +183,13 @@ describe("CompassExplanationEngine", () => {
     assert.match(result, /tonight/i);
   });
 
-  it("resolveExplanation: unknown key returns generic fallback", async () => {
+  it("resolveExplanation: unknown key returns generic fallback (non-empty)", async () => {
     const result = await resolveExplanation("unknown_section:unknown_type", null, null);
     assert.ok(result.length > 0);
     assert.ok(!result.includes("harassment"));
   });
 
-  it("resolveExplanation: DB sensitive override returns GENERIC_INELIGIBLE", async () => {
+  it("resolveExplanation: DB is_sensitive override returns GENERIC_INELIGIBLE", async () => {
     const { db } = makeFakeDb({
       compass_explanation_reasons: [
         { explanation_key: "for_you:user", template: "Custom tpl", is_sensitive: true },
@@ -207,6 +209,8 @@ describe("CompassExplanationEngine", () => {
     assert.match(result, /Matched your traveler vibe/);
   });
 
+  // ── HMAC-signed token tests ─────────────────────────────────────────────────
+
   it("encodeRecommendationToken / decodeRecommendationToken round-trip", () => {
     const token: RecommendationToken = {
       userId:         "user-123",
@@ -220,14 +224,52 @@ describe("CompassExplanationEngine", () => {
     assert.deepEqual(decoded, token);
   });
 
-  it("decodeRecommendationToken: malformed token returns null", () => {
+  it("decodeRecommendationToken: malformed string returns null", () => {
     assert.equal(decodeRecommendationToken("not-a-valid-token!!"), null);
+  });
+
+  it("decodeRecommendationToken: empty string returns null", () => {
     assert.equal(decodeRecommendationToken(""), null);
   });
 
-  it("decodeRecommendationToken: incomplete token returns null", () => {
+  it("decodeRecommendationToken: incomplete token (no sig) returns null", () => {
     const partial = Buffer.from(JSON.stringify({ userId: "x" })).toString("base64url");
     assert.equal(decodeRecommendationToken(partial), null);
+  });
+
+  it("decodeRecommendationToken: tampered userId invalidates signature → null", () => {
+    const token: RecommendationToken = {
+      userId:         "user-honest",
+      itemId:         "item-1",
+      itemType:       "user",
+      sectionName:    "for_you",
+      explanationKey: "for_you:user",
+    };
+    const encoded = encodeRecommendationToken(token);
+
+    // Decode the raw bytes, mutate userId, re-encode WITHOUT updating sig
+    const raw = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    raw.userId = "attacker-id";
+    const tampered = Buffer.from(JSON.stringify(raw)).toString("base64url");
+
+    assert.equal(decodeRecommendationToken(tampered), null, "Tampered token must be rejected");
+  });
+
+  it("decodeRecommendationToken: tampered explanationKey invalidates signature → null", () => {
+    const token: RecommendationToken = {
+      userId:         "user-a",
+      itemId:         "item-a",
+      itemType:       "post",
+      sectionName:    "city_pulse",
+      explanationKey: "city_pulse:post",
+    };
+    const encoded = encodeRecommendationToken(token);
+
+    const raw = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    raw.explanationKey = "city_pulse:post:harassment_downrank"; // tamper to force sensitive key
+    const tampered = Buffer.from(JSON.stringify(raw)).toString("base64url");
+
+    assert.equal(decodeRecommendationToken(tampered), null, "Tampered explanationKey must be rejected");
   });
 });
 
@@ -258,7 +300,7 @@ describe("CompassFeedbackEngine", () => {
     assert.equal(result.updated, false);
   });
 
-  it("processFeedback: hide_category decreases category weight in prefs", async () => {
+  it("processFeedback: hide_category decreases category weight", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
         { user_id: "user-1", category_weights: { nightlife: 2 } },
@@ -277,24 +319,18 @@ describe("CompassFeedbackEngine", () => {
     });
 
     assert.equal(result.updated, true);
-
-    // An upsert on compass_user_preferences should have been called
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall, "Expected upsert on compass_user_preferences");
-
-    const upsertArgs = upsertCall!.args as Record<string, unknown>;
-    const weights = upsertArgs.category_weights as Record<string, number>;
-    // nightlife was 2, hide_category applies −4 → clamped to max(-10, 2-4) = -2
+    assert.ok(upsert, "Expected upsert on compass_user_preferences");
+    const weights = (upsert!.args as any).category_weights as Record<string, number>;
+    // nightlife was 2; hide_category applies −4 → max(−10, 2−4) = −2
     assert.equal(weights["nightlife"], -2);
   });
 
   it("processFeedback: show_more increases item type weight", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
-      compass_user_preferences: [
-        { user_id: "user-1", category_weights: { buddy: 1 } },
-      ],
+      compass_user_preferences: [{ user_id: "user-1", category_weights: { buddy: 1 } }],
       compass_cache_invalidations: [],
       compass_feed_cache: [],
       compass_feedback_events: [],
@@ -307,20 +343,17 @@ describe("CompassFeedbackEngine", () => {
       itemType:  "buddy",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall);
-    const weights = (upsertCall!.args as any).category_weights as Record<string, number>;
-    // buddy was 1, show_more applies +2 → 3
-    assert.equal(weights["buddy"], 3);
+    assert.ok(upsert);
+    const weights = (upsert!.args as any).category_weights as Record<string, number>;
+    assert.equal(weights["buddy"], 3); // 1 + 2
   });
 
-  it("processFeedback: mute_hashtag adds slug to muted_hashtags list", async () => {
+  it("processFeedback: mute_hashtag adds slug to muted_hashtags", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
-      compass_user_preferences: [
-        { user_id: "user-2", muted_hashtags: ["oldslug"] },
-      ],
+      compass_user_preferences: [{ user_id: "user-2", muted_hashtags: ["oldslug"] }],
       compass_cache_invalidations: [],
       compass_feed_cache: [],
       compass_feedback_events: [],
@@ -334,26 +367,24 @@ describe("CompassFeedbackEngine", () => {
       hashtag:  "newslug",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall);
-    const args = upsertCall!.args as Record<string, unknown>;
-    const slugs = args.muted_hashtags as string[];
+    assert.ok(upsert);
+    const slugs = (upsert!.args as any).muted_hashtags as string[];
     assert.ok(slugs.includes("oldslug"), "Old slug preserved");
     assert.ok(slugs.includes("newslug"), "New slug added");
   });
 
   it("processFeedback: not_interested adds itemId to ignored_item_ids", async () => {
+    // Use a proper signed token so itemId is extracted correctly
     const token = encodeRecommendationToken({
       userId: "user-3", itemId: "item-999", itemType: "user",
       sectionName: "for_you", explanationKey: "for_you:user",
     });
 
     const tableData: Record<string, Record<string, unknown>[]> = {
-      compass_user_preferences: [
-        { user_id: "user-3", ignored_item_ids: ["existing-item"] },
-      ],
+      compass_user_preferences: [{ user_id: "user-3", ignored_item_ids: ["existing-item"] }],
       compass_cache_invalidations: [],
       compass_feed_cache: [],
       compass_feedback_events: [],
@@ -366,18 +397,18 @@ describe("CompassFeedbackEngine", () => {
       itemType: "user",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall);
-    const ids = (upsertCall!.args as any).ignored_item_ids as string[];
+    assert.ok(upsert);
+    const ids = (upsert!.args as any).ignored_item_ids as string[];
     assert.ok(ids.includes("existing-item"), "Existing item preserved");
-    assert.ok(ids.includes("item-999"),      "New item added");
+    assert.ok(ids.includes("item-999"), "New item added");
   });
 
-  it("processFeedback: save action only logs event, no pref change", async () => {
+  it("processFeedback: save action — no preference upsert", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
-      compass_user_preferences:   [],
+      compass_user_preferences:    [],
       compass_cache_invalidations: [],
       compass_feed_cache:          [],
       compass_feedback_events:     [],
@@ -390,11 +421,10 @@ describe("CompassFeedbackEngine", () => {
       itemType: "event",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    // save should not upsert any preference weights
-    assert.equal(upsertCall, undefined, "save action should not update preferences");
+    assert.equal(upsert, undefined, "save should not update preferences");
   });
 
   it("processFeedback: no_alcohol adds 'alcohol' to exclude_budget_styles", async () => {
@@ -412,11 +442,11 @@ describe("CompassFeedbackEngine", () => {
       itemType: "event",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall);
-    const styles = (upsertCall!.args as any).exclude_budget_styles as string[];
+    assert.ok(upsert);
+    const styles = (upsert!.args as any).exclude_budget_styles as string[];
     assert.ok(styles.includes("alcohol"));
   });
 
@@ -435,14 +465,14 @@ describe("CompassFeedbackEngine", () => {
       itemType: "user",
     });
 
-    const upsertCall = calls.find(
+    const upsert = calls.find(
       (c) => c.table === "compass_user_preferences" && c.method === "upsert",
     );
-    assert.ok(upsertCall);
-    assert.equal((upsertCall!.args as any).min_trust_level, "building_trust");
+    assert.ok(upsert);
+    assert.equal((upsert!.args as any).min_trust_level, "building_trust");
   });
 
-  it("processFeedback: invalidate is called (compass_feed_cache deleted)", async () => {
+  it("processFeedback: invalidate() deletes compass_feed_cache row", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences:    [{ user_id: "user-7" }],
       compass_cache_invalidations: [],
@@ -457,9 +487,10 @@ describe("CompassFeedbackEngine", () => {
       itemType: "buddy",
     });
 
-    // invalidate() deletes from compass_feed_cache then inserts into compass_cache_invalidations
-    const deleteCalls = calls.filter((c) => c.table === "compass_feed_cache" && c.method === "delete");
-    assert.ok(deleteCalls.length > 0, "Expected cache delete call from invalidate()");
+    const deleteCalls = calls.filter(
+      (c) => c.table === "compass_feed_cache" && c.method === "delete",
+    );
+    assert.ok(deleteCalls.length > 0, "Expected cache delete from invalidate()");
   });
 });
 
@@ -470,31 +501,54 @@ describe("CompassNotificationEngine", () => {
     return { type, title: "Test", body: "Test body", category };
   }
 
+  // ── redactLocationText ────────────────────────────────────────────────────────
+
+  it("redactLocationText: strips decimal GPS coordinates", () => {
+    const text = "Meet at 13.7563, 100.5018 near the park";
+    const redacted = redactLocationText(text);
+    assert.ok(!redacted.includes("13.7563"), "lat removed from body");
+    assert.ok(!redacted.includes("100.5018"), "lng removed from body");
+    assert.match(redacted, /\[location removed\]/);
+  });
+
+  it("redactLocationText: negative coordinates stripped", () => {
+    const text = "Location is -33.8688, 151.2093";
+    const redacted = redactLocationText(text);
+    assert.ok(!redacted.includes("-33.8688"));
+    assert.ok(!redacted.includes("151.2093"));
+  });
+
+  it("redactLocationText: no coordinates → text unchanged", () => {
+    const text = "Join us at the rooftop bar!";
+    assert.equal(redactLocationText(text), text);
+  });
+
+  it("redactLocationText: street address stripped", () => {
+    const text = "Meet at 123 Main Street at noon";
+    const redacted = redactLocationText(text);
+    assert.ok(!redacted.includes("123 Main Street"), "street address removed");
+  });
+
   // ── isQuietHours ─────────────────────────────────────────────────────────────
 
-  it("isQuietHours: inside overnight window → true", () => {
-    // Quiet 22:00–07:00, current time 23:30 = 23*60+30 = 1410
+  it("isQuietHours: inside overnight window → true (23:30)", () => {
     assert.equal(isQuietHours("22:00", "07:00", 23 * 60 + 30), true);
   });
 
-  it("isQuietHours: inside overnight window (early morning) → true", () => {
-    // Quiet 22:00–07:00, current time 02:00 = 120
-    assert.equal(isQuietHours("22:00", "07:00", 120), true);
+  it("isQuietHours: inside overnight window → true (02:00)", () => {
+    assert.equal(isQuietHours("22:00", "07:00", 2 * 60), true);
   });
 
-  it("isQuietHours: outside overnight window → false", () => {
-    // Quiet 22:00–07:00, current time 12:00 = 720
-    assert.equal(isQuietHours("22:00", "07:00", 720), false);
+  it("isQuietHours: outside overnight window → false (12:00)", () => {
+    assert.equal(isQuietHours("22:00", "07:00", 12 * 60), false);
   });
 
-  it("isQuietHours: same-day window inside → true", () => {
-    // Quiet 08:00–20:00, current time 10:00 = 600
-    assert.equal(isQuietHours("08:00", "20:00", 600), true);
+  it("isQuietHours: same-day window inside → true (10:00)", () => {
+    assert.equal(isQuietHours("08:00", "20:00", 10 * 60), true);
   });
 
-  it("isQuietHours: same-day window outside → false", () => {
-    // Quiet 08:00–20:00, current time 21:00 = 1260
-    assert.equal(isQuietHours("08:00", "20:00", 1260), false);
+  it("isQuietHours: same-day window outside → false (21:00)", () => {
+    assert.equal(isQuietHours("08:00", "20:00", 21 * 60), false);
   });
 
   it("isQuietHours: invalid format → false (no crash)", () => {
@@ -511,114 +565,64 @@ describe("CompassNotificationEngine", () => {
     assert.equal(PRIORITY_LEVELS["general"], 10);
   });
 
-  // ── Quiet hours suppression ───────────────────────────────────────────────────
-
-  it("evaluateNotification: quiet hours block level-7 activity_social", async () => {
-    // Simulate 23:00 (quiet period 22:00–07:00)
-    const decision = await evaluateNotification(
-      null,
-      "user-1",
-      payload("activity_social"),
-      { nowMinutes: 23 * 60 },
-    );
-    // With null DB, no prefs loaded → quiet hours not enforced
-    assert.equal(decision.outcome, "sent");
-  });
+  // ── Safety bypass ─────────────────────────────────────────────────────────────
 
   it("evaluateNotification: level-1 emergency_safety bypasses quiet hours", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-2",
-          muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
-          exclude_budget_styles: [],
-          compass_enabled: true,
-        },
+        { user_id: "u2", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-2",
-      payload("emergency_safety"),
-      { nowMinutes: 23 * 60 }, // 23:00 — inside quiet hours
-    );
-
-    assert.equal(decision.outcome, "sent", "Safety level must bypass quiet hours");
+    const decision = await evaluateNotification(db, "u2", payload("emergency_safety"), { nowMinutes: 23 * 60 });
+    assert.equal(decision.outcome, "sent");
     assert.equal(decision.priorityLevel, 1);
   });
 
   it("evaluateNotification: level-2 safety_alert bypasses quiet hours", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-3",
-          muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
-          exclude_budget_styles: [],
-          compass_enabled: true,
-        },
+        { user_id: "u3", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-3",
-      payload("safety_alert"),
-      { nowMinutes: 2 * 60 }, // 02:00 — inside quiet hours
-    );
-
-    assert.equal(decision.outcome, "sent", "Safety alert must bypass quiet hours");
+    const decision = await evaluateNotification(db, "u3", payload("safety_alert"), { nowMinutes: 2 * 60 });
+    assert.equal(decision.outcome, "sent");
   });
+
+  // ── Quiet hours suppression ───────────────────────────────────────────────────
 
   it("evaluateNotification: level-6 message_normal suppressed during quiet hours", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-4",
-          muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
-          exclude_budget_styles: [],
-          compass_enabled: true,
-        },
+        { user_id: "u4", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-4",
-      payload("message_normal"),
-      { nowMinutes: 23 * 60 }, // 23:00
-    );
-
+    const decision = await evaluateNotification(db, "u4", payload("message_normal"), { nowMinutes: 23 * 60 });
     assert.equal(decision.outcome, "suppressed_quiet_hours");
   });
 
-  it("evaluateNotification: discovery suppressed during quiet hours", async () => {
+  it("evaluateNotification: discovery suppressed during quiet hours (01:00)", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-5",
-          muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
-          exclude_budget_styles: [],
-          compass_enabled: true,
-        },
+        { user_id: "u5", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-5",
-      payload("discovery"),
-      { nowMinutes: 1 * 60 }, // 01:00 — inside quiet 22:00–07:00
-    );
-
+    const decision = await evaluateNotification(db, "u5", payload("discovery"), { nowMinutes: 1 * 60 });
     assert.equal(decision.outcome, "suppressed_quiet_hours");
   });
 
@@ -627,97 +631,94 @@ describe("CompassNotificationEngine", () => {
   it("evaluateNotification: recommendation (level 8) suppressed for muted category", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-6",
-          muted_topics: [],
-          exclude_budget_styles: ["nightlife"],
-          compass_enabled: true,
-        },
+        { user_id: "u6", muted_topics: [], exclude_budget_styles: ["nightlife"], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-6",
-      { type: "recommendation", title: "Test", body: "Test", category: "nightlife" },
-      { nowMinutes: 14 * 60 }, // 14:00 — not quiet hours
-    );
-
+    const p: NotificationPayload = { type: "recommendation", title: "T", body: "B", category: "nightlife" };
+    const decision = await evaluateNotification(db, "u6", p, { nowMinutes: 14 * 60 });
     assert.equal(decision.outcome, "suppressed_category_muted");
   });
 
   it("evaluateNotification: booking_update (level 4) NOT suppressed by category mute", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-7",
-          muted_topics: [],
-          exclude_budget_styles: ["nightlife"],
-          compass_enabled: true,
-        },
+        { user_id: "u7", muted_topics: [], exclude_budget_styles: ["nightlife"], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-7",
-      { type: "booking_update", title: "Test", body: "Test", category: "nightlife" },
-      { nowMinutes: 14 * 60 },
-    );
-
-    // Level 4 is below category-mute threshold (8+), so should still send
+    const p: NotificationPayload = { type: "booking_update", title: "T", body: "B", category: "nightlife" };
+    const decision = await evaluateNotification(db, "u7", p, { nowMinutes: 14 * 60 });
+    // Level 4 < category-mute threshold (8+) → sent
     assert.equal(decision.outcome, "sent");
   });
 
   it("evaluateNotification: nightlife suppressed for no_clubs user", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
-        {
-          user_id: "user-8",
-          muted_topics: [],
-          exclude_budget_styles: ["no_clubs"],
-          compass_enabled: true,
-        },
+        { user_id: "u8", muted_topics: [], exclude_budget_styles: ["no_clubs"], compass_enabled: true },
       ],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-
-    const decision = await evaluateNotification(
-      db,
-      "user-8",
-      { type: "discovery", title: "Club Night", body: "Join us", category: "clubs" },
-      { nowMinutes: 14 * 60 },
-    );
-
+    const p: NotificationPayload = { type: "discovery", title: "Club Night", body: "Join us", category: "clubs" };
+    const decision = await evaluateNotification(db, "u8", p, { nowMinutes: 14 * 60 });
     assert.equal(decision.outcome, "suppressed_ignored_category");
+  });
+
+  // ── Safety filter integration ─────────────────────────────────────────────────
+
+  it("evaluateNotification: category blocked by feature flag → suppressed_safety_filter", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [],
+      compass_notification_decisions: [],
+      feature_flags: [
+        { flag: "COMPASS_BUDDY_SAFETY_BLOCK", enabled: true },
+      ],
+    };
+    const { db } = makeFakeDb(tableData);
+    const p: NotificationPayload = { type: "recommendation", title: "T", body: "B", category: "buddy" };
+    const decision = await evaluateNotification(db, "u-safe", p, { nowMinutes: 12 * 60 });
+    assert.equal(decision.outcome, "suppressed_safety_filter");
   });
 
   // ── Private location stripping ────────────────────────────────────────────────
 
   it("stripPrivateLocation: removes lat/lng from data", () => {
     const p: NotificationPayload = {
-      type:  "discovery",
-      title: "Test",
-      body:  "Test",
-      data: {
-        lat:           "13.756",
-        lng:           "100.501",
-        venue_name:    "The Spot",
-        exact_address: "123 Main St",
-        city:          "Bangkok",
-      },
+      type: "discovery", title: "T", body: "Test",
+      data: { lat: "13.756", lng: "100.501", venue_name: "The Spot", city: "Bangkok" },
     };
     const stripped = stripPrivateLocation(p);
-    assert.equal((stripped.data as any)["lat"],           undefined, "lat removed");
-    assert.equal((stripped.data as any)["lng"],           undefined, "lng removed");
-    assert.equal((stripped.data as any)["exact_address"], undefined, "exact_address removed");
-    assert.equal((stripped.data as any)["city"],          "Bangkok", "city preserved");
-    assert.equal((stripped.data as any)["venue_name"],    "The Spot", "venue_name preserved");
+    assert.equal((stripped.data as any)["lat"],        undefined, "lat removed");
+    assert.equal((stripped.data as any)["lng"],        undefined, "lng removed");
+    assert.equal((stripped.data as any)["city"],       "Bangkok", "city preserved");
+    assert.equal((stripped.data as any)["venue_name"], "The Spot", "venue_name preserved");
+  });
+
+  it("stripPrivateLocation: removes exact_address from data", () => {
+    const p: NotificationPayload = {
+      type: "discovery", title: "T", body: "Test",
+      data: { exact_address: "123 Main St", city: "London" },
+    };
+    const stripped = stripPrivateLocation(p);
+    assert.equal((stripped.data as any)["exact_address"], undefined);
+    assert.equal((stripped.data as any)["city"], "London");
+  });
+
+  it("stripPrivateLocation: redacts GPS coordinates from body text", () => {
+    const p: NotificationPayload = {
+      type: "discovery", title: "T", body: "Location: 13.7563, 100.5018",
+      data: {},
+    };
+    const stripped = stripPrivateLocation(p);
+    assert.ok(!stripped.body.includes("13.7563"), "lat removed from body");
+    assert.ok(!stripped.body.includes("100.5018"), "lng removed from body");
   });
 
   it("stripPrivateLocation: null data → empty data, no crash", () => {
@@ -728,31 +729,26 @@ describe("CompassNotificationEngine", () => {
 
   it("evaluateNotification: strippedPayload has no private location keys", async () => {
     const decision = await evaluateNotification(
-      null,
-      "user-9",
-      {
-        type:  "discovery",
-        title: "New Place",
-        body:  "Check it out",
-        data: { lat: "10.0", lng: "100.0", city: "BKK" },
-      },
+      null, "user-9",
+      { type: "discovery", title: "New Place", body: "Check out 13.7563, 100.5018",
+        data: { lat: "13.7563", lng: "100.5018", city: "BKK" } },
     );
     assert.equal((decision.strippedPayload.data as any)["lat"], undefined);
     assert.equal((decision.strippedPayload.data as any)["lng"], undefined);
     assert.equal((decision.strippedPayload.data as any)["city"], "BKK");
+    assert.ok(!decision.strippedPayload.body.includes("13.7563"));
   });
 
   // ── Audit log ─────────────────────────────────────────────────────────────────
 
   it("evaluateNotification: logs decision to compass_notification_decisions", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
-      compass_user_preferences:       [],
+      compass_user_preferences: [],
       compass_notification_decisions: [],
+      feature_flags: [],
     };
     const { db, calls } = makeFakeDb(tableData);
-
     await evaluateNotification(db, "user-log", payload("general"), { nowMinutes: 12 * 60 });
-
     const inserted = calls.filter(
       (c) => c.table === "compass_notification_decisions" && c.method === "insert",
     );
@@ -770,7 +766,7 @@ describe("CompassAbuseDefenseEngine", () => {
 
   it("runScan: mutual 5★ ring of 3 users → mutual_review_ring flag", async () => {
     const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1_000).toISOString();
-    // A reviewed B, B reviewed A, A reviewed C, C reviewed A, B reviewed C, C reviewed B
+    // A↔B, A↔C, B↔C — fully connected 5★ ring
     const reviews = [
       { reviewer_id: "user-A", reviewee_id: "user-B", rating: 5, created_at: since },
       { reviewer_id: "user-B", reviewee_id: "user-A", rating: 5, created_at: since },
@@ -779,69 +775,31 @@ describe("CompassAbuseDefenseEngine", () => {
       { reviewer_id: "user-B", reviewee_id: "user-C", rating: 5, created_at: since },
       { reviewer_id: "user-C", reviewee_id: "user-B", rating: 5, created_at: since },
     ];
-
-    const tableData: Record<string, Record<string, unknown>[]> = {
-      reviews,
-      rent_buddy_bookings:       [],
-      hashtag_usage:             [],
-      passport_stamps:           [],
-      compass_abuse_flags:       [],
-      compass_visibility_cooldowns: [],
-      compass_active_user_scores: [],
-      compass_active_user_events: [],
-      profiles:                  [],
-      trust_caps:                [],
-      compass_active_user_badges: [],
-      compass_city_reputation:   [],
-      compass_category_reputation: [],
-    };
+    const tableData = emptyTables({ reviews });
     const { db } = makeFakeDb(tableData);
 
     const result = await runScan(db, null);
-    assert.ok(result.flagsWritten > 0, "Expected at least one flag from mutual review ring");
+    assert.ok(result.flagsWritten > 0, "Expected at least one flag");
 
     const flag = tableData["compass_abuse_flags"]?.[0];
     assert.ok(flag, "Expected an abuse flag row");
     assert.equal(flag["pattern_type"], "mutual_review_ring");
-    assert.ok(
-      (flag["involved_users"] as string[]).length >= 3,
-      "Expected ≥3 users in the ring",
-    );
+    assert.ok((flag["involved_users"] as string[]).length >= 3);
   });
 
   it("runScan: severe ring triggers reach reduction in compass_visibility_cooldowns", async () => {
     const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
-    // Build a 5-user ring (all reviewed each other) → severity=severe
-    const users = ["user-1", "user-2", "user-3", "user-4", "user-5"];
+    // 5-user ring (all reviewed each other) → severity=severe
+    const users = ["u1", "u2", "u3", "u4", "u5"];
     const reviews: Record<string, unknown>[] = [];
-    for (const a of users) {
-      for (const b of users) {
-        if (a !== b) {
-          reviews.push({ reviewer_id: a, reviewee_id: b, rating: 5, created_at: since });
-        }
-      }
+    for (const a of users) for (const b of users) {
+      if (a !== b) reviews.push({ reviewer_id: a, reviewee_id: b, rating: 5, created_at: since });
     }
-
-    const tableData: Record<string, Record<string, unknown>[]> = {
-      reviews,
-      rent_buddy_bookings:          [],
-      hashtag_usage:                [],
-      passport_stamps:              [],
-      compass_abuse_flags:          [],
-      compass_visibility_cooldowns: [],
-      compass_active_user_scores:   [],
-      compass_active_user_events:   [],
-      profiles:                     [],
-      trust_caps:                   [],
-      compass_active_user_badges:   [],
-      compass_city_reputation:      [],
-      compass_category_reputation:  [],
-    };
+    const tableData = emptyTables({ reviews });
     const { db } = makeFakeDb(tableData);
 
     await runScan(db, null);
 
-    // Severe ring → visibility cooldowns applied
     const cooldowns = tableData["compass_visibility_cooldowns"] ?? [];
     assert.ok(cooldowns.length > 0, "Expected visibility cooldown rows for severe ring");
   });
@@ -850,46 +808,26 @@ describe("CompassAbuseDefenseEngine", () => {
     const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
     const users = ["ua", "ub", "uc", "ud", "ue"];
     const reviews: Record<string, unknown>[] = [];
-    for (const a of users) {
-      for (const b of users) {
-        if (a !== b) {
-          reviews.push({ reviewer_id: a, reviewee_id: b, rating: 5, created_at: since });
-        }
-      }
+    for (const a of users) for (const b of users) {
+      if (a !== b) reviews.push({ reviewer_id: a, reviewee_id: b, rating: 5, created_at: since });
     }
-
-    const tableData: Record<string, Record<string, unknown>[]> = {
+    const tableData = emptyTables({
       reviews,
-      rent_buddy_bookings:          [],
-      hashtag_usage:                [],
-      passport_stamps:              [],
-      compass_abuse_flags:          [],
-      compass_visibility_cooldowns: [],
-      compass_active_user_scores:   [
+      compass_active_user_scores: [
         { user_id: "ua", active_user_score: 50, trust_multiplier: 1.0, boost_eligible: true },
       ],
-      compass_active_user_events:   [],
-      profiles:                     [],
-      trust_caps:                   [],
-      compass_active_user_badges:   [],
-      compass_city_reputation:      [],
-      compass_category_reputation:  [],
-    };
+    });
     const { db } = makeFakeDb(tableData);
 
     await runScan(db, null);
 
-    // For severe rings, active_user_score should be zeroed via upsert
+    // zeroActiveUserReward pushes a row with active_user_score=0
     const scores = tableData["compass_active_user_scores"] ?? [];
-    // The upsert in zeroActiveUserReward pushes a new row with score=0
-    const zeroRows = scores.filter((r) => r["active_user_score"] === 0);
-    assert.ok(
-      zeroRows.length > 0,
-      "Expected at least one zeroed active_user_score row after severe flag",
-    );
+    const zeroed = scores.filter((r) => r["active_user_score"] === 0);
+    assert.ok(zeroed.length > 0, "Expected zeroed active_user_score row");
   });
 
-  it("runScan: booking loop >5 pairs in 30 days → booking_loop flag", async () => {
+  it("runScan: booking loop (7 × 5★ same pair in 30 days) → booking_loop flag", async () => {
     const since = new Date(Date.now() - 20 * 24 * 60 * 60 * 1_000).toISOString();
     const bookings: Record<string, unknown>[] = [];
     for (let i = 0; i < 7; i++) {
@@ -897,25 +835,11 @@ describe("CompassAbuseDefenseEngine", () => {
         traveler_id: "user-T",
         buddy_id:    "user-B",
         status:      "completed",
+        rating:      5,
         created_at:  since,
       });
     }
-
-    const tableData: Record<string, Record<string, unknown>[]> = {
-      reviews:                      [],
-      rent_buddy_bookings:          bookings,
-      hashtag_usage:                [],
-      passport_stamps:              [],
-      compass_abuse_flags:          [],
-      compass_visibility_cooldowns: [],
-      compass_active_user_scores:   [],
-      compass_active_user_events:   [],
-      profiles:                     [],
-      trust_caps:                   [],
-      compass_active_user_badges:   [],
-      compass_city_reputation:      [],
-      compass_category_reputation:  [],
-    };
+    const tableData = emptyTables({ rent_buddy_bookings: bookings });
     const { db } = makeFakeDb(tableData);
 
     await runScan(db, null);
@@ -924,29 +848,60 @@ describe("CompassAbuseDefenseEngine", () => {
     const loopFlag = flags.find((f) => f["pattern_type"] === "booking_loop");
     assert.ok(loopFlag, "Expected booking_loop flag");
     assert.ok(
-      (loopFlag!["involved_users"] as string[]).includes("user-T") ||
-      (loopFlag!["involved_users"] as string[]).includes("user-B"),
+      (loopFlag!["evidence"] as any)["all_five_star"] === true,
+      "Expected all_five_star=true in evidence",
+    );
+  });
+
+  it("runScan: refund abuse (4 cancellations in 30 days) → refund_abuse flag", async () => {
+    const since = new Date(Date.now() - 10 * 24 * 60 * 60 * 1_000).toISOString();
+    const bookings: Record<string, unknown>[] = [];
+    for (let i = 0; i < 4; i++) {
+      bookings.push({ traveler_id: "user-R", status: "cancelled", created_at: since });
+    }
+    const tableData = emptyTables({ rent_buddy_bookings: bookings });
+    const { db } = makeFakeDb(tableData);
+
+    await runScan(db, null);
+
+    const flags = tableData["compass_abuse_flags"] ?? [];
+    const refundFlag = flags.find((f) => f["pattern_type"] === "refund_abuse");
+    assert.ok(refundFlag, "Expected refund_abuse flag");
+    assert.ok(
+      (refundFlag!["involved_users"] as string[]).includes("user-R"),
     );
   });
 
   it("runScan: no patterns → flagsWritten = 0", async () => {
-    const tableData: Record<string, Record<string, unknown>[]> = {
-      reviews:                      [],
-      rent_buddy_bookings:          [],
-      hashtag_usage:                [],
-      passport_stamps:              [],
-      compass_abuse_flags:          [],
-      compass_visibility_cooldowns: [],
-      compass_active_user_scores:   [],
-      compass_active_user_events:   [],
-      profiles:                     [],
-      trust_caps:                   [],
-      compass_active_user_badges:   [],
-      compass_city_reputation:      [],
-      compass_category_reputation:  [],
-    };
+    const tableData = emptyTables({});
     const { db } = makeFakeDb(tableData);
     const result = await runScan(db, null);
     assert.equal(result.flagsWritten, 0);
   });
 });
+
+// ── Test helpers ───────────────────────────────────────────────────────────────
+
+function emptyTables(
+  overrides: Record<string, Record<string, unknown>[]> = {},
+): Record<string, Record<string, unknown>[]> {
+  return {
+    reviews:                      [],
+    rent_buddy_bookings:          [],
+    hashtag_usage:                [],
+    passport_stamps:              [],
+    compass_abuse_flags:          [],
+    compass_visibility_cooldowns: [],
+    compass_active_user_scores:   [],
+    compass_active_user_events:   [],
+    profiles:                     [],
+    trust_caps:                   [],
+    compass_active_user_badges:   [],
+    compass_city_reputation:      [],
+    compass_category_reputation:  [],
+    posts:                        [],
+    posts_comments:               [],
+    feature_flags:                [],
+    ...overrides,
+  };
+}

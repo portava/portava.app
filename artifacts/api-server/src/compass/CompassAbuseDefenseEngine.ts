@@ -9,18 +9,19 @@
  * Scans performed by runScan():
  *   1. mutual_review_ring    — ≥3 users all gave each other 5★ within 7 days
  *   2. booking_loop          — same user pair with >5 bookings in 30 days, all 5★
- *   3. referral_farm         — user referred >10 accounts, all inactive (no booking)
- *   4. comment_pod           — users always comment on each other's posts (>8 pairs in 72 h)
+ *   3. referral_farm         — user referred >10 accounts with no subsequent bookings
+ *   4. comment_pod           — groups of users always commenting on each other's posts
  *   5. hashtag_spam          — >20 identical hashtag uses from one account in 24 h
  *   6. geotag_farming        — >15 location stamps from one account in 1 hour
  *   7. available_now_abuse   — status toggled on/off >20 times in 24 h with no bookings
- *   8. refund_abuse          — >3 refund requests in 30 days, all approved, no disputes resolved
+ *   8. refund_abuse          — >3 booking cancellations/refunds in 30 days
  *
  * Severity levels:
- *   low     — flagged, no action yet
+ *   low     — flagged only; no immediate action
  *   medium  — reach reduced (compass_visibility_cooldowns extended)
  *   high    — reach reduced + flagged for admin review
  *   severe  — reach zeroed + active-user reward zeroed + suspension request
+ *             (auto-confirmed because threshold evidence is strong)
  *
  * Never throws — all errors are swallowed so the scheduler stays healthy.
  */
@@ -55,25 +56,25 @@ const RING_MIN_USERS            = 3;    // mutual review ring minimum size
 const RING_WINDOW_DAYS          = 7;
 const BOOKING_LOOP_MIN          = 5;    // >5 bookings between same pair in 30 days
 const BOOKING_LOOP_WINDOW_DAYS  = 30;
-const REFERRAL_FARM_MIN         = 10;   // referred >10 accounts with no bookings
-const COMMENT_POD_MIN_PAIRS     = 8;    // always-commenting pairs in 72 h
+const REFERRAL_FARM_MIN         = 10;   // referred >10 accounts that made no bookings
+const COMMENT_POD_MIN_MUTUAL    = 6;    // ≥6 mutual comment pairs in 72 h signals a pod
 const HASHTAG_SPAM_MIN          = 20;   // same hashtag >20 times in 24 h
 const GEOTAG_FARM_MIN           = 15;   // >15 stamps in 1 hour
-const AVAILABLE_NOW_TOGGLE_MIN  = 20;   // >20 toggles in 24 h
-const REFUND_ABUSE_MIN          = 3;    // >3 refunds in 30 days
+const AVAILABLE_TOGGLE_MIN      = 20;   // >20 toggles in 24 h
+const REFUND_ABUSE_MIN          = 3;    // >3 cancellations/refunds in 30 days
 
 // ── Cooldown writer ───────────────────────────────────────────────────────────
 
 async function applyReachReduction(
-  db:             SupabaseClient,
-  userId:         string,
-  severity:       AbuseSeverity,
+  db:       SupabaseClient,
+  userId:   string,
+  severity: AbuseSeverity,
 ): Promise<void> {
   const durationHours: Record<AbuseSeverity, number> = {
     low:    0,
     medium: 24,
     high:   72,
-    severe: 8760, // 1 year ≈ permanent
+    severe: 8760, // 1 year ≈ effectively permanent until admin lifts
   };
   const hours = durationHours[severity];
   if (hours === 0) return;
@@ -92,17 +93,22 @@ async function applyReachReduction(
   } catch { /* non-fatal */ }
 }
 
-// ── Reward zeroing ────────────────────────────────────────────────────────────
+// ── Reward zeroing for severe patterns ────────────────────────────────────────
 
+/**
+ * Zero out the active-user reward for a confirmed severe abuse flag.
+ * Uses hasSevereSafetyFlag=true override so the score is recomputed as 0.
+ * Also directly upserts the score row for immediate effect.
+ */
 async function zeroActiveUserReward(
   db:     SupabaseClient,
   userId: string,
 ): Promise<void> {
   try {
-    // Force a recompute with severe flag — this sets trustMultiplier = 0 → score = 0
+    // Recompute with severe flag override
     await computeActiveUserScore(db, userId, { hasSevereSafetyFlag: true });
 
-    // Also directly upsert the score row to zero so it takes immediate effect
+    // Direct upsert for immediate effect (in case recompute is slow)
     await db.from("compass_active_user_scores").upsert(
       {
         user_id:           userId,
@@ -128,6 +134,8 @@ async function writeFlag(
       involved_users: flag.involvedUsers,
       severity:       flag.severity,
       evidence:       flag.evidence,
+      // severe patterns are auto-confirmed; others are pending admin review
+      status:         flag.severity === "severe" ? "confirmed" : "pending",
     });
   } catch { /* non-fatal */ }
 }
@@ -140,14 +148,14 @@ async function handleFlag(
 ): Promise<void> {
   await writeFlag(db, flag);
 
-  const reachReductionNeeded = (flag.severity === "medium" || flag.severity === "high" || flag.severity === "severe");
-  const rewardZeroNeeded     = flag.severity === "severe";
+  const applyReach  = flag.severity !== "low";
+  const applyReward = flag.severity === "severe";
 
   await Promise.allSettled(
     flag.involvedUsers.flatMap((uid) => {
-      const ops = [];
-      if (reachReductionNeeded) ops.push(applyReachReduction(db, uid, flag.severity));
-      if (rewardZeroNeeded)     ops.push(zeroActiveUserReward(db, uid));
+      const ops: Promise<void>[] = [];
+      if (applyReach)  ops.push(applyReachReduction(db, uid, flag.severity));
+      if (applyReward) ops.push(zeroActiveUserReward(db, uid));
       return ops;
     }),
   );
@@ -155,6 +163,7 @@ async function handleFlag(
 
 // ── Individual pattern detectors ──────────────────────────────────────────────
 
+/** 1. Mutual 5★ review ring — ≥3 users who all reviewed each other within 7 days */
 async function detectMutualReviewRings(
   db:     SupabaseClient,
   userId: string | null,
@@ -162,25 +171,24 @@ async function detectMutualReviewRings(
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - RING_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
-    const query = db
+    const q = db
       .from("reviews")
       .select("reviewer_id, reviewee_id, rating, created_at")
       .eq("rating", 5)
       .gte("created_at", since);
 
-    if (userId) query.or(`reviewer_id.eq.${userId},reviewee_id.eq.${userId}`);
+    if (userId) q.or(`reviewer_id.eq.${userId},reviewee_id.eq.${userId}`);
 
-    const { data } = await query;
+    const { data } = await q;
     const rows = (data as any[]) ?? [];
 
-    // Build adjacency map: who reviewed whom
+    // Build adjacency map: reviewer → set of reviewees (with 5★)
     const reviewedBy = new Map<string, Set<string>>();
     for (const r of rows) {
       if (!reviewedBy.has(r.reviewer_id)) reviewedBy.set(r.reviewer_id, new Set());
       reviewedBy.get(r.reviewer_id)!.add(r.reviewee_id);
     }
 
-    // Find mutual rings: A reviewed B, B reviewed A (extend for ≥3)
     const users = [...reviewedBy.keys()];
     for (let i = 0; i < users.length; i++) {
       const ring = new Set<string>([users[i]!]);
@@ -205,6 +213,7 @@ async function detectMutualReviewRings(
   return flags;
 }
 
+/** 2. Booking loop — same user pair with >5 completed/confirmed 5★ bookings in 30 days */
 async function detectBookingLoops(
   db:     SupabaseClient,
   userId: string | null,
@@ -212,20 +221,22 @@ async function detectBookingLoops(
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - BOOKING_LOOP_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
-    const query = db
+    const q = db
       .from("rent_buddy_bookings")
-      .select("traveler_id, buddy_id, status, created_at")
+      .select("traveler_id, buddy_id, status, rating, created_at")
       .in("status", ["completed", "confirmed"])
+      .eq("rating", 5)
       .gte("created_at", since);
 
-    if (userId) query.or(`traveler_id.eq.${userId},buddy_id.eq.${userId}`);
+    if (userId) q.or(`traveler_id.eq.${userId},buddy_id.eq.${userId}`);
 
-    const { data } = await query;
+    const { data } = await q;
     const rows = (data as any[]) ?? [];
 
-    // Count bookings per pair
+    // Count 5★ bookings per pair
     const pairCounts = new Map<string, number>();
     for (const r of rows) {
+      if (r.rating !== 5) continue; // ensure 5★ (belt-and-suspenders)
       const key = [r.traveler_id, r.buddy_id].sort().join("|");
       pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
     }
@@ -237,7 +248,7 @@ async function detectBookingLoops(
           patternType:   "booking_loop",
           involvedUsers: [a!, b!],
           severity:      count > 10 ? "severe" : "high",
-          evidence:      { booking_count: count, window_days: BOOKING_LOOP_WINDOW_DAYS },
+          evidence:      { booking_count: count, window_days: BOOKING_LOOP_WINDOW_DAYS, all_five_star: true },
         });
       }
     }
@@ -245,6 +256,128 @@ async function detectBookingLoops(
   return flags;
 }
 
+/** 3. Referral farm — user whose referrals (>10) made no bookings */
+async function detectReferralFarms(
+  db:     SupabaseClient,
+  userId: string | null,
+): Promise<AbuseFlag[]> {
+  const flags: AbuseFlag[] = [];
+  try {
+    // Find users who referred many others (profiles.referred_by)
+    // Scope: if userId provided, check whether they are a heavy referrer
+    const q = db
+      .from("profiles")
+      .select("id, referred_by")
+      .not("referred_by", "is", null);
+
+    const { data } = await q;
+    const rows = (data as any[]) ?? [];
+
+    // Count referrals per referrer
+    const referralCounts = new Map<string, string[]>(); // referrerId → referred user IDs
+    for (const r of rows) {
+      if (!r.referred_by) continue;
+      if (userId && r.referred_by !== userId) continue;
+      if (!referralCounts.has(r.referred_by)) referralCounts.set(r.referred_by, []);
+      referralCounts.get(r.referred_by)!.push(r.id);
+    }
+
+    for (const [referrerId, referredIds] of referralCounts) {
+      if (referredIds.length <= REFERRAL_FARM_MIN) continue;
+
+      // Check how many have made any bookings
+      const { data: bookings } = await db
+        .from("rent_buddy_bookings")
+        .select("traveler_id")
+        .in("traveler_id", referredIds.slice(0, 50));
+
+      const activeIds = new Set((bookings as any[] ?? []).map((b: any) => b.traveler_id));
+      const inactiveCount = referredIds.length - activeIds.size;
+
+      if (inactiveCount >= REFERRAL_FARM_MIN) {
+        flags.push({
+          patternType:   "referral_farm",
+          involvedUsers: [referrerId],
+          severity:      inactiveCount > 20 ? "severe" : "high",
+          evidence:      {
+            referral_count: referredIds.length,
+            inactive_count: inactiveCount,
+          },
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+  return flags;
+}
+
+/** 4. Comment pod — group of users who always comment on each other's posts */
+async function detectCommentPods(
+  db:     SupabaseClient,
+  userId: string | null,
+): Promise<AbuseFlag[]> {
+  const flags: AbuseFlag[] = [];
+  try {
+    const since72h = new Date(Date.now() - 72 * 60 * 60 * 1_000).toISOString();
+
+    // Get recent comments with the post author joined
+    const q = db
+      .from("posts_comments")
+      .select("user_id, post_id, created_at")
+      .gte("created_at", since72h)
+      .is("deleted_at", null);
+
+    if (userId) q.eq("user_id", userId);
+
+    const { data: comments } = await q;
+    const commentRows = (comments as any[]) ?? [];
+    if (commentRows.length === 0) return flags;
+
+    // Get post authors for these post_ids
+    const postIds = [...new Set(commentRows.map((c: any) => c.post_id as string))].slice(0, 100);
+    const { data: posts } = await db
+      .from("posts")
+      .select("id, user_id")
+      .in("id", postIds);
+
+    const postAuthorMap = new Map<string, string>();
+    for (const p of (posts as any[] ?? [])) {
+      postAuthorMap.set(p.id as string, p.user_id as string);
+    }
+
+    // Build commenter → post_author pairs
+    const pairCount = new Map<string, number>();
+    for (const c of commentRows) {
+      const postAuthor = postAuthorMap.get(c.post_id);
+      if (!postAuthor || postAuthor === c.user_id) continue; // skip self-comment
+      const pair = [c.user_id as string, postAuthor].sort().join("|");
+      pairCount.set(pair, (pairCount.get(pair) ?? 0) + 1);
+    }
+
+    // Count mutual pairs (A comments on B AND B comments on A)
+    const mutualPairs = new Set<string>();
+    for (const [pair, count] of pairCount) {
+      if (count >= 3) mutualPairs.add(pair); // ≥3 cross-comments = suspicious pair
+    }
+
+    if (mutualPairs.size >= COMMENT_POD_MIN_MUTUAL) {
+      const involved = [
+        ...new Set(
+          [...mutualPairs].flatMap((p) => p.split("|")),
+        ),
+      ].slice(0, 20);
+
+      flags.push({
+        patternType:   "comment_pod",
+        involvedUsers: involved,
+        severity:      mutualPairs.size > 12 ? "high" : "medium",
+        evidence:      { mutual_pairs: mutualPairs.size, window_hours: 72 },
+      });
+    }
+  } catch { /* non-fatal */ }
+  return flags;
+}
+
+/** 5. Hashtag spam — >20 identical hashtag uses from one account in 24 h */
 async function detectHashtagSpam(
   db:     SupabaseClient,
   userId: string | null,
@@ -252,15 +385,15 @@ async function detectHashtagSpam(
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
-    const query = db
+    const q = db
       .from("hashtag_usage")
       .select("hashtag_id, source_id, created_at")
       .gte("created_at", since);
 
-    const { data } = await query;
+    const { data } = await q;
     const rows = (data as any[]) ?? [];
 
-    // Count hashtag uses per hashtag
+    // Count uses per hashtag (globally in scheduled mode, per source in on-demand)
     const hashtagCounts = new Map<string, number>();
     for (const r of rows) {
       hashtagCounts.set(r.hashtag_id, (hashtagCounts.get(r.hashtag_id) ?? 0) + 1);
@@ -268,11 +401,9 @@ async function detectHashtagSpam(
 
     for (const [hashtagId, count] of hashtagCounts) {
       if (count > HASHTAG_SPAM_MIN) {
-        // Find users behind these usages
-        const involved = userId ? [userId] : [];
         flags.push({
           patternType:   "hashtag_spam",
-          involvedUsers: involved,
+          involvedUsers: userId ? [userId] : [],
           severity:      count > 50 ? "severe" : count > 30 ? "high" : "medium",
           evidence:      { hashtag_id: hashtagId, usage_count: count, window_hours: 24 },
         });
@@ -282,21 +413,22 @@ async function detectHashtagSpam(
   return flags;
 }
 
+/** 6. Geotag farming — >15 location stamps from one account in 1 hour */
 async function detectGeotagFarming(
   db:     SupabaseClient,
   userId: string | null,
 ): Promise<AbuseFlag[]> {
   const flags: AbuseFlag[] = [];
   try {
-    const since = new Date(Date.now() - 60 * 60 * 1_000).toISOString(); // 1 hour
-    const query = db
+    const since = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
+    const q = db
       .from("passport_stamps")
       .select("user_id, created_at")
       .gte("created_at", since);
 
-    if (userId) query.eq("user_id", userId);
+    if (userId) q.eq("user_id", userId);
 
-    const { data } = await query;
+    const { data } = await q;
     const rows = (data as any[]) ?? [];
 
     const countByUser = new Map<string, number>();
@@ -311,6 +443,93 @@ async function detectGeotagFarming(
           involvedUsers: [uid],
           severity:      count > 30 ? "severe" : "high",
           evidence:      { stamp_count: count, window_hours: 1 },
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+  return flags;
+}
+
+/** 7. Available-now abuse — status toggled >20 times in 24 h with no completed bookings */
+async function detectAvailableNowAbuse(
+  db:     SupabaseClient,
+  userId: string | null,
+): Promise<AbuseFlag[]> {
+  const flags: AbuseFlag[] = [];
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+    const q = db
+      .from("compass_active_user_events")
+      .select("user_id, event_type, created_at")
+      .eq("event_type", "availability_toggle")
+      .gte("created_at", since);
+
+    if (userId) q.eq("user_id", userId);
+
+    const { data } = await q;
+    const rows = (data as any[]) ?? [];
+
+    const countByUser = new Map<string, number>();
+    for (const r of rows) {
+      countByUser.set(r.user_id, (countByUser.get(r.user_id) ?? 0) + 1);
+    }
+
+    for (const [uid, toggleCount] of countByUser) {
+      if (toggleCount <= AVAILABLE_TOGGLE_MIN) continue;
+
+      // Check if this user has any completed bookings in the same window
+      const { data: bookings } = await db
+        .from("rent_buddy_bookings")
+        .select("id")
+        .eq("buddy_id", uid)
+        .eq("status", "completed")
+        .gte("created_at", since);
+
+      const hasBookings = ((bookings as any[]) ?? []).length > 0;
+      if (!hasBookings) {
+        flags.push({
+          patternType:   "available_now_abuse",
+          involvedUsers: [uid],
+          severity:      toggleCount > 40 ? "high" : "medium",
+          evidence:      { toggle_count: toggleCount, window_hours: 24, bookings_completed: 0 },
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+  return flags;
+}
+
+/** 8. Refund abuse — >3 booking cancellations/refunds in 30 days */
+async function detectRefundAbuse(
+  db:     SupabaseClient,
+  userId: string | null,
+): Promise<AbuseFlag[]> {
+  const flags: AbuseFlag[] = [];
+  try {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+    const q = db
+      .from("rent_buddy_bookings")
+      .select("traveler_id, status, created_at")
+      .in("status", ["cancelled", "refunded"])
+      .gte("created_at", since);
+
+    if (userId) q.eq("traveler_id", userId);
+
+    const { data } = await q;
+    const rows = (data as any[]) ?? [];
+
+    const countByUser = new Map<string, number>();
+    for (const r of rows) {
+      countByUser.set(r.traveler_id, (countByUser.get(r.traveler_id) ?? 0) + 1);
+    }
+
+    for (const [uid, count] of countByUser) {
+      if (count > REFUND_ABUSE_MIN) {
+        flags.push({
+          patternType:   "refund_abuse",
+          involvedUsers: [uid],
+          severity:      count > 6 ? "high" : "medium",
+          evidence:      { cancellation_count: count, window_days: 30 },
         });
       }
     }
@@ -337,18 +556,27 @@ export async function runScan(
   let flagsWritten = 0;
 
   try {
-    const [rings, loops, hashtags, geotags] = await Promise.allSettled([
-      detectMutualReviewRings(db, userId),
-      detectBookingLoops(db, userId),
-      detectHashtagSpam(db, userId),
-      detectGeotagFarming(db, userId),
-    ]);
+    const [rings, loops, referrals, pods, hashtags, geotags, available, refunds] =
+      await Promise.allSettled([
+        detectMutualReviewRings(db, userId),
+        detectBookingLoops(db, userId),
+        detectReferralFarms(db, userId),
+        detectCommentPods(db, userId),
+        detectHashtagSpam(db, userId),
+        detectGeotagFarming(db, userId),
+        detectAvailableNowAbuse(db, userId),
+        detectRefundAbuse(db, userId),
+      ]);
 
     const allFlags: AbuseFlag[] = [
       ...(rings.status     === "fulfilled" ? rings.value     : []),
       ...(loops.status     === "fulfilled" ? loops.value     : []),
+      ...(referrals.status === "fulfilled" ? referrals.value : []),
+      ...(pods.status      === "fulfilled" ? pods.value      : []),
       ...(hashtags.status  === "fulfilled" ? hashtags.value  : []),
       ...(geotags.status   === "fulfilled" ? geotags.value   : []),
+      ...(available.status === "fulfilled" ? available.value : []),
+      ...(refunds.status   === "fulfilled" ? refunds.value   : []),
     ];
 
     await Promise.allSettled(

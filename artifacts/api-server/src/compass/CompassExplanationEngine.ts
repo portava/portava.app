@@ -17,14 +17,22 @@
  *   - *:report_suppressed
  *   - *:adult_service_flag
  *   - *:unsafe_intent
+ *   - *:safety_block
+ *   - *:suspended
  *
  * Key format from FeedBuilder:
  *   "<section>:<itemType>"                 — base key
  *   "<section>:<itemType>:local"           — same city as viewer
  *   "<section>:<itemType>:fair_exposure"   — fair-exposure boosted
  *   "<section>:<itemType>:diversity_pick"  — diversity injection
+ *
+ * Recommendation tokens:
+ *   Tokens are HMAC-signed with the server secret so the client cannot forge
+ *   or tamper with the userId or explanationKey fields.
+ *   The /why endpoint verifies the signature before trusting any token field.
  */
 
+import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -80,7 +88,6 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 // ── Built-in explanation templates ────────────────────────────────────────────
-// Keyed by the full explanationKey or by partial patterns (suffix match).
 
 type TemplateKey = string;
 const TEMPLATES: Record<TemplateKey, string> = {
@@ -206,33 +213,86 @@ export interface RecommendationToken {
   explanationKey: string;
 }
 
-/**
- * Encode a recommendation token as a base64url opaque ID.
- * The mobile client receives this in the feed response and sends it back to
- * GET /api/compass/why/:recommendationId and POST /api/compass/feedback.
- */
-export function encodeRecommendationToken(t: RecommendationToken): string {
-  return Buffer.from(JSON.stringify(t)).toString("base64url");
+/** @internal Token fields that are signed (all except sig itself). */
+type SignableFields = RecommendationToken;
+
+/** @internal Signed wire format stored in the opaque ID. */
+interface SignedToken extends RecommendationToken {
+  sig: string;
 }
 
 /**
- * Decode a recommendation token.  Returns null if the token is malformed.
+ * Derive the HMAC signing secret.
+ * Falls back to a fixed default so tests don't need env vars.
+ */
+function getSigningSecret(): string {
+  return (
+    process.env.SESSION_SECRET ??
+    process.env.COMPASS_TOKEN_SECRET ??
+    "compass-recommendation-token-fallback-v1"
+  );
+}
+
+/**
+ * Compute a short HMAC signature over the signable fields.
+ * Keys are sorted before stringification so order doesn't matter.
+ */
+function computeSig(fields: SignableFields): string {
+  const sorted: Record<string, string> = {};
+  for (const key of (Object.keys(fields) as (keyof SignableFields)[]).sort()) {
+    sorted[key] = fields[key];
+  }
+  return createHmac("sha256", getSigningSecret())
+    .update(JSON.stringify(sorted))
+    .digest("hex")
+    .slice(0, 32); // 32 hex chars = 128 bits, ample for HMAC
+}
+
+/**
+ * Encode a recommendation token as a base64url opaque ID.
+ *
+ * The token is HMAC-signed so it cannot be forged or tampered with by the
+ * client.  The server can verify it without a DB lookup.
+ */
+export function encodeRecommendationToken(t: RecommendationToken): string {
+  const signed: SignedToken = { ...t, sig: computeSig(t) };
+  return Buffer.from(JSON.stringify(signed)).toString("base64url");
+}
+
+/**
+ * Decode and cryptographically verify a recommendation token.
+ *
+ * Returns null if the token is malformed, has an invalid signature, or is
+ * missing required fields.  The caller MUST NOT trust any token that returns
+ * null.
  */
 export function decodeRecommendationToken(
   raw: string,
 ): RecommendationToken | null {
+  if (!raw) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    const parsed: SignedToken = JSON.parse(
+      Buffer.from(raw, "base64url").toString("utf8"),
+    );
+
+    // Validate required fields are present
     if (
-      typeof parsed.userId         === "string" &&
-      typeof parsed.itemId         === "string" &&
-      typeof parsed.itemType       === "string" &&
-      typeof parsed.sectionName    === "string" &&
-      typeof parsed.explanationKey === "string"
+      typeof parsed.userId         !== "string" ||
+      typeof parsed.itemId         !== "string" ||
+      typeof parsed.itemType       !== "string" ||
+      typeof parsed.sectionName    !== "string" ||
+      typeof parsed.explanationKey !== "string" ||
+      typeof parsed.sig            !== "string"
     ) {
-      return parsed as RecommendationToken;
+      return null;
     }
-    return null;
+
+    // Cryptographically verify the signature
+    const { sig, ...fields } = parsed;
+    const expectedSig = computeSig(fields as SignableFields);
+    if (sig !== expectedSig) return null;
+
+    return fields as RecommendationToken;
   } catch {
     return null;
   }
