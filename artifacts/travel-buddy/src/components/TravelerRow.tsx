@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { UserCheck, UserPlus, Lock, User, PlaneTakeoff } from 'lucide-react-native';
+import { UserCheck, UserPlus, Lock, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
 import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
@@ -11,14 +11,13 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState';
 function rowSignalIcon(signal: string) {
   const lower = signal.toLowerCase();
   if (lower.includes('follow')) return <User size={10} color={color.signal} />;
+  if (lower.includes('mutual')) return <Users size={10} color={color.signal} />;
+  if (lower.includes('style') || lower.includes('interest')) return <Sparkles size={10} color={color.signal} />;
   return <PlaneTakeoff size={10} color={color.signal} />;
 }
 
 function RowReasonLines({ reason }: { reason: string }) {
   const parts = reason.split(' · ');
-  if (parts.length < 2) {
-    return <Text style={styles.reason} numberOfLines={2}>{reason}</Text>;
-  }
   return (
     <View style={styles.reasonMulti}>
       {parts.map((part, i) => (
