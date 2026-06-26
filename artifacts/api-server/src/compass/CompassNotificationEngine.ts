@@ -200,7 +200,7 @@ async function loadUserNotifPrefs(
   try {
     const { data } = await db
       .from("compass_user_preferences")
-      .select("compass_enabled, exclude_budget_styles, muted_topics")
+      .select("compass_enabled, exclude_budget_styles, muted_topics, category_weights")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -214,8 +214,20 @@ async function loadUserNotifPrefs(
     const quietStart = quietStartEntry?.replace("quiet_start:", "") ?? null;
     const quietEnd   = quietEndEntry?.replace("quiet_end:", "") ?? null;
 
+    // Build muted-category set from three sources:
+    //   1. exclude_budget_styles — explicit lifestyle preferences (no_clubs, no_alcohol, …)
+    //   2. category_weights with negative values — every category a user has hidden via
+    //      hide_category / show_less feedback. Any weight < 0 means the user actively
+    //      deprioritised that category, so we suppress push notifications for it too.
+    const categoryWeights: Record<string, number> =
+      (row.category_weights as Record<string, number>) ?? {};
+    const weightMutedCats = Object.entries(categoryWeights)
+      .filter(([, w]) => w < 0)
+      .map(([cat]) => cat);
+
     const mutedCats: string[] = [
       ...((row.exclude_budget_styles as string[]) ?? []),
+      ...weightMutedCats,
     ];
 
     return {
@@ -364,6 +376,37 @@ export async function evaluateNotification(
         return decide("suppressed_safety_filter", `sender_suspended:${senderId}`);
       }
     } catch { /* fail-open */ }
+  }
+
+  // ── Safety filter step 1c: item-level content risk signals ───────────────────
+  // Mirror the hard-block conditions in CompassSafetyFilter that apply to the
+  // content itself, not the author relationship. When the push payload carries
+  // these signals in `data`, suppress the notification so an unsafe/flagged item
+  // never reaches the recipient via push — regardless of level or category.
+  // Signals are optional: absence means "safe" (fail-open for missing fields).
+  {
+    const d = payload.data ?? {};
+    const contentSuspended      = d["isSuspended"]          === true;
+    const adultService          = d["hasAdultServiceFlag"]   === true;
+    const unsafeIntent          = d["hasUnsafeIntentSignal"] === true;
+    const offAppPayment         = d["hasOffAppPaymentSignal"] === true;
+    const reportCount           = typeof d["reportCount"] === "number" ? d["reportCount"] : 0;
+    const HIGH_REPORT_THRESHOLD = 5;
+
+    if (contentSuspended) {
+      return decide("suppressed_safety_filter", "content_suspended");
+    }
+    if (adultService || unsafeIntent || offAppPayment) {
+      return decide(
+        "suppressed_safety_filter",
+        adultService   ? "adult_service_flag"
+        : unsafeIntent ? "unsafe_intent_signal"
+        :                "off_app_payment_signal",
+      );
+    }
+    if (reportCount >= HIGH_REPORT_THRESHOLD) {
+      return decide("suppressed_safety_filter", `high_report_count:${reportCount}`);
+    }
   }
 
   // ── Safety filter step 2: category-level feature flag check ──────────────────

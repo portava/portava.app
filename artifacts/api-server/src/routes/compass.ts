@@ -480,6 +480,15 @@ router.put("/compass/me/boost-visibility", async (req, res) => {
 // Returns a human-readable "Why am I seeing this?" string for a recommendation.
 // The recommendationId is the opaque base64url token produced by
 // CompassExplanationEngine.encodeRecommendationToken (attached to each FeedItem).
+//
+// Data-source note: This endpoint uses `compass_served_recommendations` (migration
+// 0055) as the authoritative Phase 5 registry of served items and their explanation
+// keys. `compass_served_recommendations` is distinct from `compass_recommendation_scores`
+// (migration 0052), which is a Phase 2 debug log of per-viewer scoring components.
+// Using the served-recommendations table ensures the /why lookup is tied to an actual
+// delivery event and carries the correct explanation_key for the rendered feed position,
+// rather than a raw score snapshot that may have been computed without final section
+// assignment or category-weight adjustments.
 
 router.get("/compass/why/:recommendationId", async (req, res) => {
   const auth = await requireUser(req, res);
