@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { UserPlus, UserCheck, X } from 'lucide-react-native';
+import { UserPlus, UserCheck, X, User, PlaneTakeoff } from 'lucide-react-native';
 import {
   getSuggestedTravelers,
   getFollowStatus,
@@ -89,6 +89,29 @@ async function saveDismissed(map: Map<string, number>): Promise<void> {
   }
 }
 
+function signalIcon(signal: string) {
+  const lower = signal.toLowerCase();
+  if (lower.includes('follow')) return <User size={9} color={color.signal} />;
+  return <PlaneTakeoff size={9} color={color.signal} />;
+}
+
+function CardReasonLines({ reason }: { reason: string }) {
+  const parts = reason.split(' · ');
+  if (parts.length < 2) {
+    return <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text>;
+  }
+  return (
+    <View style={styles.cardReasonMulti}>
+      {parts.map((part, i) => (
+        <View key={i} style={styles.cardReasonRow}>
+          {signalIcon(part)}
+          <Text style={styles.cardReasonText} numberOfLines={1}>{part}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 interface CardProps {
   user: TravelerSearchResult;
   onFollowed: (userId: string) => void;
@@ -159,7 +182,7 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
         )}
         <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
         {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
-        {reason ? <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text> : null}
+        {reason ? <CardReasonLines reason={reason} /> : null}
         <Pressable
           style={[styles.followBtn, following && styles.followingBtn]}
           onPress={handleFollow}
@@ -450,6 +473,22 @@ const styles = StyleSheet.create({
     color: color.signal,
     textAlign: 'center',
     width: '100%',
+  },
+  cardReasonMulti: {
+    width: '100%',
+    gap: 3,
+  },
+  cardReasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  cardReasonText: {
+    ...t.small,
+    fontSize: 10,
+    color: color.signal,
+    flexShrink: 1,
   },
   followBtn: {
     flexDirection: 'row',

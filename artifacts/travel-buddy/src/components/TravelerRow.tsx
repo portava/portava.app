@@ -1,12 +1,35 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { UserCheck, UserPlus, Lock } from 'lucide-react-native';
+import { UserCheck, UserPlus, Lock, User, PlaneTakeoff } from 'lucide-react-native';
 import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
+
+function rowSignalIcon(signal: string) {
+  const lower = signal.toLowerCase();
+  if (lower.includes('follow')) return <User size={10} color={color.signal} />;
+  return <PlaneTakeoff size={10} color={color.signal} />;
+}
+
+function RowReasonLines({ reason }: { reason: string }) {
+  const parts = reason.split(' · ');
+  if (parts.length < 2) {
+    return <Text style={styles.reason} numberOfLines={2}>{reason}</Text>;
+  }
+  return (
+    <View style={styles.reasonMulti}>
+      {parts.map((part, i) => (
+        <View key={i} style={styles.reasonRow}>
+          {rowSignalIcon(part)}
+          <Text style={styles.reasonText} numberOfLines={1}>{part}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 interface Props {
   user: TravelerSearchResult;
@@ -83,9 +106,7 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
             {followerCount === 1 ? '1 follower' : `${followerCount} followers`}
           </Text>
         )}
-        {user.reason ? (
-          <Text style={styles.reason} numberOfLines={2}>{user.reason}</Text>
-        ) : null}
+        {user.reason ? <RowReasonLines reason={user.reason} /> : null}
       </View>
 
       {!isOwnProfile && !user.isPrivate && (
@@ -164,6 +185,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: color.signal,
     marginTop: 2,
+  },
+  reasonMulti: {
+    marginTop: 2,
+    gap: 2,
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reasonText: {
+    fontSize: 11,
+    color: color.signal,
+    flexShrink: 1,
   },
   privateBadge: {
     flexDirection: 'row',
