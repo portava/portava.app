@@ -854,8 +854,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
 
-  // Invalidate compass cache: active_booking state changed for traveler
-  void invalidateCompassCache(getServiceClient(), auth.user.id, "booking_cancel");
+  // Invalidate compass cache before response so caller sees fresh active_booking state
+  await invalidateCompassCache(getServiceClient(), auth.user.id, "booking_cancel");
 
   return res.json({ ok: true });
 });
@@ -933,10 +933,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_accepted", "Buddy accepted — your booking is confirmed!");
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
 
-  // Invalidate compass cache: active_booking state changed for both buddy and traveler
+  // Await invalidation for both parties before response — same-request guarantee
   const sc_ = getServiceClient();
-  void invalidateCompassCache(sc_, auth.user.id, "booking_accept");
-  void invalidateCompassCache(sc_, (booking as any).traveler_id as string, "booking_accept");
+  await Promise.allSettled([
+    invalidateCompassCache(sc_, auth.user.id, "booking_accept"),
+    invalidateCompassCache(sc_, (booking as any).traveler_id as string, "booking_accept"),
+  ]);
 
   return res.json({ ok: true });
 });
@@ -1071,10 +1073,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
-  // Invalidate compass cache: active_booking state changed for both traveler and buddy
+  // Await invalidation before response — active_booking state changed for both parties
   const scComplete = getServiceClient();
-  void invalidateCompassCache(scComplete, auth.user.id, "booking_complete");
-  if (buddyUserId) void invalidateCompassCache(scComplete, buddyUserId, "booking_complete");
+  await Promise.allSettled([
+    invalidateCompassCache(scComplete, auth.user.id, "booking_complete"),
+    buddyUserId ? invalidateCompassCache(scComplete, buddyUserId, "booking_complete") : Promise.resolve(),
+  ]);
 
   // Compass activity ingestion — both traveler and buddy get credit
   recordActivityEvent(serviceClient, auth.user.id, "booking_completed", { category: "buddy_session" });
@@ -1671,6 +1675,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
 
   // Trust Score penalty deferred until admin confirms the report —
   // do NOT emit here to avoid false penalties.
+
+  // Invalidate compass cache for the reporter: dispute state changed
+  await invalidateCompassCache(getServiceClient(), auth.user.id, "booking_report");
 
   return res.status(201).json({ ok: true });
 });
@@ -2513,8 +2520,8 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res)
   if (!buddy) return res.status(404).json({ error: "not_found" });
   await serviceClient.from("rent_buddy_profiles").update({ admin_status: "disabled", status: "suspended", updated_at: new Date().toISOString() }).eq("id", buddyId);
   await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "suspended", notes: reason ?? null });
-  // Invalidate compass cache for the suspended buddy
-  if ((buddy as any).user_id) void invalidateCompassCache(serviceClient, (buddy as any).user_id as string, "buddy_suspend");
+  // Await before response so suspended buddy's cache is evicted before 200
+  if ((buddy as any).user_id) await invalidateCompassCache(serviceClient, (buddy as any).user_id as string, "buddy_suspend");
   return res.json({ ok: true });
 });
 

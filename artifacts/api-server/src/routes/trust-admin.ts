@@ -219,8 +219,8 @@ router.post("/admin/trust/users/:userId/restrict", async (req, res) => {
       parsed.data.reason,
       parsed.data.expiresAt ?? null,
     );
-    // Invalidate compass cache so the restricted user sees updated state immediately
-    void invalidateCompassCache(sc, userId, "admin_restrict");
+    // Await so the restricted user's cache is stale before we respond
+    await invalidateCompassCache(sc, userId, "admin_restrict");
     res.status(201).json(result);
   } catch (err: any) {
     sendError(res, "db_error", err?.message ?? "Could not apply restriction");

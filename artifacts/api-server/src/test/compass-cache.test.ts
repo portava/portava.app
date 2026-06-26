@@ -26,8 +26,10 @@ import {
   buildPreloadManifest,
   recordNavigationEvent,
   resolveMaxTier,
+  computePreloadScore,
   type NetworkHint,
   type BatteryHint,
+  type FrontLoadTier,
 } from "../compass/CompassFrontLoadEngine.js";
 import type { CompassProfile } from "../compass/types.js";
 
@@ -423,5 +425,147 @@ describe("buildPreloadManifest", () => {
       assert.ok(!item.url.includes("emergency"), "manifest must not include emergency contact URLs");
       assert.ok(!item.url.includes("id_document"), "manifest must not include ID document URLs");
     }
+  });
+});
+
+// ── computePreloadScore — rule-driven tier scoring ────────────────────────────
+
+describe("computePreloadScore — rule-driven tier scoring", () => {
+  it("Tier 0 types score 100, Tier 1 score 75, Tier 2 score 50, Tier 3 score 25", () => {
+    const rules = new Map<string, FrontLoadTier>([
+      ['safety_state',    0],
+      ['first_feed_page', 1],
+      ['top_events',      2],
+      ['trip_crew_location', 3],
+    ]);
+    assert.strictEqual(computePreloadScore('safety_state',    rules), 100, "Tier 0 must score 100");
+    assert.strictEqual(computePreloadScore('first_feed_page', rules), 75,  "Tier 1 must score 75");
+    assert.strictEqual(computePreloadScore('top_events',      rules), 50,  "Tier 2 must score 50");
+    assert.strictEqual(computePreloadScore('trip_crew_location', rules), 25, "Tier 3 must score 25");
+  });
+
+  it("unknown type defaults to Tier 3 score (25)", () => {
+    const rules = new Map<string, FrontLoadTier>();
+    assert.strictEqual(computePreloadScore('totally_unknown_type', rules), 25,
+      "unknown types must default to tier 3 score");
+  });
+
+  it("operator DB override changes tier assignment", () => {
+    // Simulate operator promoting top_events from Tier 2 → Tier 1 via DB rules
+    const rules = new Map<string, FrontLoadTier>([
+      ['top_events', 1],
+    ]);
+    assert.strictEqual(computePreloadScore('top_events', rules), 75,
+      "DB override should change top_events from tier 2 (50) to tier 1 (75)");
+  });
+});
+
+// ── Per-item authz — blocked users excluded from city_pulse_preview ───────────
+
+describe("Per-item authz — blocked users excluded from city_pulse_preview", () => {
+  it("posts from blocked users do not appear in city_pulse_preview", async () => {
+    const BLOCKED_USER = "00000000-0000-0000-9999-000000000099";
+    const SAFE_USER    = "00000000-0000-0000-8888-000000000088";
+
+    const fakePost_fromBlocked = {
+      id: "post-blocked", body: "blocked post", created_at: new Date().toISOString(),
+      user_id: BLOCKED_USER, post_status: null, status: "active",
+    };
+    const fakePost_fromSafe = {
+      id: "post-safe", body: "safe post", created_at: new Date().toISOString(),
+      user_id: SAFE_USER, post_status: null, status: "active",
+    };
+
+    const { db } = makeFakeDb({
+      posts: [fakePost_fromBlocked, fakePost_fromSafe],
+    });
+
+    const profile = baseProfile({
+      currentCity:    "Bangkok",
+      blockedUserIds: [BLOCKED_USER],
+    });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
+    assert.ok(pulseItem, "city_pulse_preview must be present in tier1");
+    const pulseData = pulseItem!.data as Array<{ id: string }>;
+
+    const blockedIds = pulseData.filter((p) => p.id === "post-blocked");
+    assert.strictEqual(blockedIds.length, 0,
+      "posts from blocked users must not appear in city_pulse_preview");
+
+    const safePost = pulseData.find((p) => p.id === "post-safe");
+    assert.ok(safePost, "posts from non-blocked users must be included");
+  });
+
+  it("delayed/unpublished posts never appear in city_pulse_preview", async () => {
+    const fakeDelayedPost = {
+      id: "post-delayed", body: "not yet!", created_at: new Date().toISOString(),
+      user_id: USER_B, post_status: "delayed", status: "active",
+    };
+    const fakePublishedPost = {
+      id: "post-published", body: "live", created_at: new Date().toISOString(),
+      user_id: USER_B, post_status: null, status: "active",
+    };
+
+    const { db } = makeFakeDb({
+      posts: [fakeDelayedPost, fakePublishedPost],
+    });
+
+    const profile = baseProfile({ currentCity: "Tokyo" });
+    const payload  = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
+    const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
+
+    assert.ok(
+      !pulseData.find((p) => p.id === "post-delayed"),
+      "delayed/unpublished posts must never appear in city_pulse_preview",
+    );
+    assert.ok(
+      pulseData.find((p) => p.id === "post-published"),
+      "fully published posts must appear in city_pulse_preview",
+    );
+  });
+});
+
+// ── Invalidation timing — await semantics ─────────────────────────────────────
+
+describe("Invalidation timing — await semantics", () => {
+  it("invalidate() resolves before caller continues (no unresolved promises)", async () => {
+    const auditRows: unknown[] = [];
+    const { db } = makeFakeDb({
+      compass_feed_cache:         [],
+      compass_cache_invalidations: [],
+    });
+
+    // Track that the promise returned by invalidate resolves synchronously-ish
+    let resolved = false;
+    const p = invalidate(db, USER_A, "test_timing").then(() => { resolved = true; });
+    await p;
+    assert.ok(resolved, "invalidate() promise must resolve when awaited — same-request guarantee");
+  });
+
+  it("invalidate() evicts L1 before promise resolves", async () => {
+    clearL1Cache();
+    const tableData: Record<string, FakeDbRow[]> = {
+      compass_feed_cache:          [],
+      compass_cache_invalidations: [],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    // Prime L1 cache
+    const payload = { items: [{ id: "test-item" }] };
+    await setCachedFeed(db, USER_A, "feed:evict_test", "feed", payload);
+
+    // Confirm L1 has the item before invalidation
+    const before = await getCachedFeed(db, USER_A, "feed:evict_test", "feed");
+    assert.ok(before !== null, "L1 must have the item before invalidation");
+
+    // Await invalidation — L1 must be cleared when promise resolves
+    await invalidate(db, USER_A, "test_eviction");
+    const after = await getCachedFeed(db, USER_A, "feed:evict_test", "feed");
+    assert.strictEqual(after, null, "L1 must be evicted when invalidate() resolves");
   });
 });

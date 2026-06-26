@@ -47,14 +47,17 @@ router.post("/users/:userId/block", async (req, res) => {
       .or(`and(user_a.eq.${user.id},user_b.eq.${target}),and(user_a.eq.${target},user_b.eq.${user.id})`),
   ]).catch((e) => req.log.warn({ err: e }, "cleanup after block partially failed"));
 
-  res.status(200).json({ blocked: true, userId: target });
-
-  // Evict Compass profile + feed cache for both parties immediately.
+  // Evict Compass profile + feed cache for both parties — must complete before response
+  // so clients immediately see consistent state on next request.
   invalidateCompassProfile(user.id);
   invalidateCompassProfile(target);
   const sc = getServiceClient ? getServiceClient() : null;
-  void invalidateCompassCache(sc, user.id, "block");
-  void invalidateCompassCache(sc, target, "blocked_by");
+  await Promise.allSettled([
+    invalidateCompassCache(sc, user.id, "block"),
+    invalidateCompassCache(sc, target, "blocked_by"),
+  ]);
+
+  res.status(200).json({ blocked: true, userId: target });
 
   // Realtime: let the blocker's other sessions refresh (threads/follow state
   // may have changed). Not sent to the blocked user.

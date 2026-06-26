@@ -74,6 +74,59 @@ export interface PreloadManifestItem {
 /** Types that must NEVER appear in any tier output. */
 const FORBIDDEN_TYPES = new Set(['emergency_contact', 'id_document']);
 
+/**
+ * Default tier assignments — mirrors the seed rows in compass_frontload_rules.
+ * Used when the DB is unavailable or a rule_name is not present in the live table.
+ */
+const DEFAULT_TIER_RULES: ReadonlyMap<string, FrontLoadTier> = new Map<string, FrontLoadTier>([
+  ['safety_state',      0],
+  ['feature_flags',     0],
+  ['active_booking',    0],
+  ['blocked_users',     0],
+  ['privacy_settings',  0],
+  ['first_feed_page',   1],
+  ['city_pulse',        1],
+  ['notifications',     1],
+  ['top_events',        2],
+  ['top_buddies',       2],
+  ['saved_places',      2],
+  ['trip_crew_location', 3],
+]);
+
+/**
+ * Load tier-assignment rules from the compass_frontload_rules table,
+ * falling back to DEFAULT_TIER_RULES for any missing rule.
+ * This makes tier assignment operator-configurable without a code deploy.
+ */
+async function loadTierRules(db: SupabaseClient | null): Promise<Map<string, FrontLoadTier>> {
+  const rules = new Map<string, FrontLoadTier>(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>);
+  if (!db) return rules;
+  try {
+    const { data } = await db
+      .from('compass_frontload_rules')
+      .select('rule_name, tier')
+      .eq('enabled', true);
+    for (const row of (data as any[]) ?? []) {
+      if (typeof row.tier === 'number' && row.tier >= 0 && row.tier <= 3) {
+        rules.set(row.rule_name as string, row.tier as FrontLoadTier);
+      }
+    }
+  } catch { /* non-fatal: use defaults */ }
+  return rules;
+}
+
+/**
+ * Compute a PreloadScore for an item type given the current rule map.
+ * Score is determined by the tier (lower tier = higher urgency).
+ * Items in Tier 0 score 100, Tier 1 score 75, Tier 2 score 50, Tier 3 score 25.
+ * Unknown types default to Tier 3 score.
+ */
+export function computePreloadScore(type: string, rules: Map<string, FrontLoadTier>): number {
+  const TIER_SCORES: Record<FrontLoadTier, number> = { 0: 100, 1: 75, 2: 50, 3: 25 };
+  const tier = rules.get(type) ?? 3;
+  return TIER_SCORES[tier as FrontLoadTier] ?? 25;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Determine the maximum allowed tier given network and battery hints. */
@@ -115,6 +168,7 @@ async function loadTier0(
   db: SupabaseClient | null,
   userId: string,
   profile: CompassProfile,
+  rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
 ): Promise<FrontLoadItem[]> {
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
@@ -182,6 +236,7 @@ async function loadTier1(
   db: SupabaseClient | null,
   userId: string,
   profile: CompassProfile,
+  rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
 ): Promise<FrontLoadItem[]> {
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
@@ -254,6 +309,7 @@ async function loadTier2(
   db: SupabaseClient | null,
   userId: string,
   profile: CompassProfile,
+  rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
 ): Promise<FrontLoadItem[]> {
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
@@ -326,6 +382,7 @@ async function loadTier3(
   _db: SupabaseClient | null,
   _userId: string,
   _profile: CompassProfile,
+  _rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
 ): Promise<FrontLoadItem[]> {
   // Tier 3 items (extra pages, map hints) are hint-only.
   // The client uses the preload manifest URLs to fetch these on its own.
@@ -358,12 +415,16 @@ export async function buildFrontLoadPayload(
 
   const builtAt = new Date().toISOString();
 
-  // Tier 0 is always live
-  const tier0 = await loadTier0(db, userId, profile);
+  // Load tier-assignment rules from DB (operator-configurable).
+  // Falls back to DEFAULT_TIER_RULES when DB is unavailable.
+  const rules = await loadTierRules(db);
 
-  const tier1: FrontLoadItem[] = maxTier >= 1 ? await loadTier1(db, userId, profile) : [];
-  const tier2: FrontLoadItem[] = maxTier >= 2 ? await loadTier2(db, userId, profile) : [];
-  const tier3: FrontLoadItem[] = maxTier >= 3 ? await loadTier3(db, userId, profile) : [];
+  // Tier 0 is always live — safety/auth/booking state never cached
+  const tier0 = await loadTier0(db, userId, profile, rules);
+
+  const tier1: FrontLoadItem[] = maxTier >= 1 ? await loadTier1(db, userId, profile, rules) : [];
+  const tier2: FrontLoadItem[] = maxTier >= 2 ? await loadTier2(db, userId, profile, rules) : [];
+  const tier3: FrontLoadItem[] = maxTier >= 3 ? await loadTier3(db, userId, profile, rules) : [];
 
   return { tier0, tier1, tier2, tier3, networkHint, batteryHint, maxTier, builtAt };
 }

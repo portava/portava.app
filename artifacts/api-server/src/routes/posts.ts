@@ -947,7 +947,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     await logDelayedEvent(sc, postId, user.id, "privacy_changed", {
       metadata: { new_mode: newMode, new_status: patch.post_status },
     });
-    void invalidateCompassCache(sc, user.id, "post_privacy_change");
+    await invalidateCompassCache(sc, user.id, "post_privacy_change");
   }
 
   res.status(200).json(updated);
@@ -1042,7 +1042,7 @@ router.post("/posts/:postId/cancel-delayed-publish", async (req, res) => {
   const sc = getServiceClient();
   if (sc) {
     await logDelayedEvent(sc, postId, user.id, "canceled");
-    void invalidateCompassCache(sc, user.id, "delayed_post_cancel");
+    await invalidateCompassCache(sc, user.id, "delayed_post_cancel");
   }
 
   res.status(200).json(updated);
@@ -1199,8 +1199,8 @@ router.delete("/posts/:postId", async (req, res) => {
     return;
   }
 
-  // Invalidate compass feed cache so the deleted post is not served to the author
-  void invalidateCompassCache(getServiceClient(), user.id, "post_delete");
+  // Invalidate compass feed cache — await so stale content is never served after 204
+  await invalidateCompassCache(getServiceClient(), user.id, "post_delete");
 
   res.status(204).send();
 });
