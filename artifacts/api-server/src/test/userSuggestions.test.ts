@@ -1,8 +1,10 @@
 /**
  * GET /api/users/suggestions — "people you may know" endpoint
  *
- * Returns up to 10 followers the caller hasn't followed back yet,
- * excluding blocked users. Gracefully returns [] on DB errors.
+ * Primary: followers the caller hasn't followed back, excluding blocked.
+ * Fallback: when no follow-back candidates exist, returns a sample of
+ * recently-joined profiles so new users always see suggestions.
+ * Gracefully returns [] on DB errors.
  *
  * Run: node --import tsx/esm --test src/test/userSuggestions.test.ts
  */
@@ -42,7 +44,15 @@ function makeFakeClient(state: {
       const builder: any = {
         select()  { return builder; },
         eq(col: string, val: any)   { filters.push((r) => r[col] === val); return builder; },
+        neq(col: string, val: any)  { filters.push((r) => r[col] !== val); return builder; },
         in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+        not(col: string, op: string, val: any) {
+          if (op === "in") {
+            const vals: any[] = Array.isArray(val) ? val : [];
+            filters.push((r) => !vals.includes(r[col]));
+          }
+          return builder;
+        },
         or(expr: string) {
           // parse "blocker_id.eq.X,blocked_id.eq.X" style
           const parts = expr.split(",").map((p) => p.trim().split("."));
@@ -110,12 +120,68 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(r.status, 401);
   });
 
-  it("returns [] when caller has no followers", async () => {
+  it("returns [] when caller has no followers and no other profiles exist", async () => {
     setup({ follows: [], profiles: [], blocks: [] });
     const r = await req("/users/suggestions");
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.deepEqual(body.users, []);
+  });
+
+  it("falls back to recent profiles when caller has no followers", async () => {
+    // New user (ME) has no followers — should see A and B from fallback query
+    setup({
+      follows: [],
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+        { id: ME, handle: "me", name: "Me",    avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids = body.users.map((u: any) => u.id);
+    assert.ok(ids.includes(A), "A should appear in fallback suggestions");
+    assert.ok(ids.includes(B), "B should appear in fallback suggestions");
+    assert.ok(!ids.includes(ME), "ME (self) should not appear");
+  });
+
+  it("fallback excludes blocked users", async () => {
+    // New user with no followers — fallback should not return C (blocked)
+    setup({
+      follows: [],
+      profiles: [
+        { id: B, handle: "bbb", name: "Bob",  avatar_url: null, is_private: false },
+        { id: C, handle: "ccc", name: "Carl", avatar_url: null, is_private: false },
+      ],
+      blocks: [{ blocker_id: ME, blocked_id: C }],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids = body.users.map((u: any) => u.id);
+    assert.ok(ids.includes(B),  "B (not blocked) should appear in fallback");
+    assert.ok(!ids.includes(C), "C (blocked) should not appear in fallback");
+  });
+
+  it("fallback excludes already-followed users", async () => {
+    // ME follows A but A doesn't follow back — fallback should not suggest A again
+    setup({
+      follows: [{ follower_id: ME, following_id: A }],
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids = body.users.map((u: any) => u.id);
+    assert.ok(!ids.includes(A), "A (already followed) should not appear in fallback");
+    assert.ok(ids.includes(B),  "B (not yet followed) should appear in fallback");
   });
 
   it("returns [] when all followers are already followed back", async () => {

@@ -272,8 +272,9 @@ router.get("/users/search", async (req, res) => {
 /* ===========================================================================
  * GET /users/suggestions  — "people you may know" when search is empty
  * ===========================================================================
- * Returns up to 10 followers the caller hasn't followed back yet, excluding
- * blocked users. Falls back gracefully if user_follows is empty.
+ * Primary: followers the caller hasn't followed back yet, excluding blocked.
+ * Fallback: when the caller has no followers (new user), returns a sample of
+ * recently-joined or popular profiles so the list is never empty.
  */
 router.get("/users/suggestions", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -284,37 +285,7 @@ router.get("/users/suggestions", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // 1. Who follows me?
-  const { data: followerRows, error: follErr } = await sc
-    .from("user_follows")
-    .select("follower_id")
-    .eq("following_id", user.id)
-    .limit(50);
-
-  if (follErr) {
-    req.log.error({ err: follErr }, "suggestions followers query failed");
-    res.status(200).json({ users: [] });
-    return;
-  }
-
-  const followerIds = (followerRows ?? []).map((r: any) => r.follower_id as string);
-  if (followerIds.length === 0) { res.status(200).json({ users: [] }); return; }
-
-  // 2. Who do I already follow? (so we can exclude them)
-  const { data: myFollowRows } = await sc
-    .from("user_follows")
-    .select("following_id")
-    .eq("follower_id", user.id)
-    .in("following_id", followerIds);
-
-  const alreadyFollowing = new Set<string>(
-    (myFollowRows ?? []).map((r: any) => r.following_id as string),
-  );
-
-  const candidateIds = followerIds.filter((id) => !alreadyFollowing.has(id)).slice(0, 20);
-  if (candidateIds.length === 0) { res.status(200).json({ users: [] }); return; }
-
-  // 3. Resolve blocks (fail-safe: on error return empty)
+  // 1. Resolve blocks up-front (fail-safe: on error continue with empty set)
   let blockedSet = new Set<string>();
   try {
     const { data: blockRows, error: blockErr } = await sc
@@ -329,10 +300,64 @@ router.get("/users/suggestions", async (req, res) => {
     }
   } catch { /* fail safe */ }
 
-  const safeIds = candidateIds.filter((id) => !blockedSet.has(id)).slice(0, 10);
+  // 2. Who follows me?
+  const { data: followerRows, error: follErr } = await sc
+    .from("user_follows")
+    .select("follower_id")
+    .eq("following_id", user.id)
+    .limit(50);
+
+  if (follErr) {
+    req.log.error({ err: follErr }, "suggestions followers query failed");
+    res.status(200).json({ users: [] });
+    return;
+  }
+
+  const followerIds = (followerRows ?? []).map((r: any) => r.follower_id as string);
+
+  // 3. Who do I already follow? (fetch all, not just intersection with followers)
+  const { data: myFollowRows } = await sc
+    .from("user_follows")
+    .select("following_id")
+    .eq("follower_id", user.id)
+    .limit(500);
+
+  const alreadyFollowingSet = new Set<string>(
+    (myFollowRows ?? []).map((r: any) => r.following_id as string),
+  );
+
+  // 4. Follow-back candidates: my followers I haven't followed back, not blocked
+  const candidateIds = followerIds
+    .filter((id) => !alreadyFollowingSet.has(id) && !blockedSet.has(id))
+    .slice(0, 10);
+
+  // 5. If no follow-back candidates, fall back to a sample of popular/recent profiles
+  let safeIds: string[];
+  if (candidateIds.length > 0) {
+    safeIds = candidateIds;
+  } else {
+    const { data: fallbackRows, error: fbErr } = await sc
+      .from("profiles")
+      .select("id")
+      .neq("id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (fbErr) {
+      req.log.error({ err: fbErr }, "suggestions fallback query failed");
+      res.status(200).json({ users: [] });
+      return;
+    }
+
+    safeIds = (fallbackRows ?? [])
+      .map((r: any) => r.id as string)
+      .filter((id) => !blockedSet.has(id) && !alreadyFollowingSet.has(id))
+      .slice(0, 10);
+  }
+
   if (safeIds.length === 0) { res.status(200).json({ users: [] }); return; }
 
-  // 4. Fetch profiles
+  // 6. Fetch profiles
   const { data: profiles, error: profErr } = await sc
     .from("profiles")
     .select("id, handle, name, avatar_url, is_private")
@@ -344,7 +369,7 @@ router.get("/users/suggestions", async (req, res) => {
     return;
   }
 
-  // 5. Follower counts for the candidate profiles
+  // 7. Follower counts for the candidate profiles
   const { data: countRows } = await sc
     .from("user_follows")
     .select("following_id")
