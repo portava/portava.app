@@ -712,6 +712,237 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(ids.includes(B), "B (not blocked, score 0) must still appear");
   });
 
+  // ── new profile fields: travel_group_style / looking_for / comfort_level / planning_style ──
+
+  it("ranking: overlapping travel_group_style ranks a candidate above one without", async () => {
+    // ME has travel_group_style ["couples", "solo"].
+    // A shares one entry (score 1). B shares none (score 0).
+    // Both A and B follow ME → primary follow-back path.
+    // A must rank before B in the result.
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          travel_group_style: ["couples", "solo"] },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          travel_group_style: ["couples"] },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          travel_group_style: [] },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (1 group_style match) should rank before B (0 matches), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: multiple travel_group_style matches accumulate score — higher overlap ranks first", async () => {
+    // ME has travel_group_style ["solo", "couples", "group"].
+    // A matches 2 entries (score 2). B matches 1 entry (score 1).
+    // A must rank before B.
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          travel_group_style: ["solo", "couples", "group"] },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          travel_group_style: ["solo", "couples"] },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          travel_group_style: ["group"] },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (score 2) should rank before B (score 1), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: overlapping looking_for ranks a candidate above one without", async () => {
+    // ME has looking_for ["travel_partner", "friends"].
+    // A shares one entry (score 1). B shares none (score 0).
+    // A must rank before B in the primary follow-back path.
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          looking_for: ["travel_partner", "friends"] },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          looking_for: ["travel_partner"] },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          looking_for: [] },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (1 looking_for match) should rank before B (0 matches), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: comfort_level exact match contributes +1 to score", async () => {
+    // ME has comfort_level "adventurous".
+    // A matches comfort_level → score 1. B does not → score 0.
+    // A must rank before B.
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          comfort_level: "adventurous" },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          comfort_level: "adventurous" },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          comfort_level: "comfortable" },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (comfort_level match, score 1) should rank before B (mismatch, score 0), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: planning_style exact match contributes +1 to score", async () => {
+    // ME has planning_style "spontaneous".
+    // A matches → score 1. B has a different planning_style → score 0.
+    // A must rank before B.
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          planning_style: "spontaneous" },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          planning_style: "spontaneous" },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          planning_style: "detailed_planner" },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (planning_style match, score 1) should rank before B (mismatch, score 0), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: new fields only — high scorer surfaces above low scorer (no overlap with old fields)", async () => {
+    // ME has ONLY the new fields set; old fields (travel_styles, travel_pace, budget_style) are empty.
+    // A matches on travel_group_style (2 pts) + looking_for (1 pt) + comfort_level (1 pt) + planning_style (1 pt) = 5 pts.
+    // B matches nothing → 0 pts.
+    // C matches only travel_group_style (1 pt) → 1 pt.
+    // Expected order: A (5) then C (1) then B (0).
+    const D_LOCAL = "user-d-local";
+    setup({
+      follows: [
+        { follower_id: A,       following_id: ME },
+        { follower_id: B,       following_id: ME },
+        { follower_id: C,       following_id: ME },
+        { follower_id: D_LOCAL, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",    avatar_url: null, is_private: false,
+          travel_group_style: ["solo", "couples"],
+          looking_for:        ["travel_partner"],
+          comfort_level:      "adventurous",
+          planning_style:     "spontaneous" },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          travel_group_style: ["solo", "couples"],
+          looking_for:        ["travel_partner"],
+          comfort_level:      "adventurous",
+          planning_style:     "spontaneous" },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          travel_group_style: [],
+          looking_for:        [],
+          comfort_level:      "comfortable",
+          planning_style:     "detailed_planner" },
+        { id: C,  handle: "ccc", name: "Carol", avatar_url: null, is_private: false,
+          travel_group_style: ["solo"],
+          looking_for:        [],
+          comfort_level:      null,
+          planning_style:     null },
+        { id: D_LOCAL, handle: "ddd", name: "Dave",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    const posC = ids.indexOf(C);
+    assert.ok(posA !== -1, "A (score 5) should appear");
+    assert.ok(posB !== -1, "B (score 0) should appear");
+    assert.ok(posC !== -1, "C (score 1) should appear");
+    assert.ok(
+      posA < posC,
+      `A (score 5) must rank above C (score 1), got order ${ids.join(", ")}`
+    );
+    assert.ok(
+      posC < posB,
+      `C (score 1) must rank above B (score 0), got order ${ids.join(", ")}`
+    );
+    assert.ok(
+      posA < posB,
+      `A (score 5) must rank above B (score 0), got order ${ids.join(", ")}`
+    );
+  });
+
   it("seen-cache is per-user and does not bleed between users", async () => {
     const ME2 = "user-me2";
     const ME2_TOK = "tok-me2";
