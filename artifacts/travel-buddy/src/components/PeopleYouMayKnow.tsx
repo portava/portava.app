@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { UserPlus, UserCheck, X, User, PlaneTakeoff } from 'lucide-react-native';
+import { UserPlus, UserCheck, X, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
 import {
   getSuggestedTravelers,
   getFollowStatus,
@@ -92,14 +92,13 @@ async function saveDismissed(map: Map<string, number>): Promise<void> {
 function signalIcon(signal: string) {
   const lower = signal.toLowerCase();
   if (lower.includes('follow')) return <User size={9} color={color.signal} />;
+  if (lower.includes('mutual')) return <Users size={9} color={color.signal} />;
+  if (lower.includes('style') || lower.includes('interest')) return <Sparkles size={9} color={color.signal} />;
   return <PlaneTakeoff size={9} color={color.signal} />;
 }
 
 function CardReasonLines({ reason }: { reason: string }) {
   const parts = reason.split(' · ');
-  if (parts.length < 2) {
-    return <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text>;
-  }
   return (
     <View style={styles.cardReasonMulti}>
       {parts.map((part, i) => (
