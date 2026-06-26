@@ -136,7 +136,27 @@ router.get("/me/following", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) { req.log.error({ err: error }, "following list failed"); sendError(res, "db_error", error.message); return; }
-  res.status(200).json({ users: (data ?? []).map(rowToUser) });
+
+  const rows = data ?? [];
+  if (rows.length === 0) { res.status(200).json({ users: [] }); return; }
+
+  // Determine which of these users also follow the caller back (mutual).
+  const followingIds = rows.map((r: any) => r.following_id as string);
+  const { getServiceClient } = await import("../lib/supabase");
+  const sc = getServiceClient();
+  let mutualSet = new Set<string>();
+  if (sc) {
+    const { data: back } = await sc
+      .from("user_follows")
+      .select("follower_id")
+      .eq("following_id", user.id)
+      .in("follower_id", followingIds);
+    mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
+  }
+
+  res.status(200).json({
+    users: rows.map((r: any) => ({ ...rowToUser(r), followsYou: mutualSet.has(r.following_id as string) })),
+  });
 });
 
 router.get("/me/followers", async (req, res) => {
@@ -150,7 +170,27 @@ router.get("/me/followers", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) { req.log.error({ err: error }, "followers list failed"); sendError(res, "db_error", error.message); return; }
-  res.status(200).json({ users: (data ?? []).map(rowToUser) });
+
+  const rows = data ?? [];
+  if (rows.length === 0) { res.status(200).json({ users: [] }); return; }
+
+  // Determine which of these followers the caller also follows back (mutual).
+  const followerIds = rows.map((r: any) => r.follower_id as string);
+  const { getServiceClient } = await import("../lib/supabase");
+  const sc = getServiceClient();
+  let youFollowSet = new Set<string>();
+  if (sc) {
+    const { data: fwd } = await sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", user.id)
+      .in("following_id", followerIds);
+    youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
+  }
+
+  res.status(200).json({
+    users: rows.map((r: any) => ({ ...rowToUser(r), youFollow: youFollowSet.has(r.follower_id as string) })),
+  });
 });
 
 function rowToUser(r: any) {

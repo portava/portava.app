@@ -149,14 +149,11 @@ export default function Circle() {
     }
   }
 
-  const followingSet = useMemo(() => new Set(following.map((u) => u.id)), [following]);
-  const followersSet = useMemo(() => new Set(followers.map((u) => u.id)), [followers]);
-
   function circleReason(u: FollowUser, activeTab: 'circle' | 'followers'): string | undefined {
     if (activeTab === 'circle') {
-      return followersSet.has(u.id) ? 'Follows you back' : undefined;
+      return u.followsYou ? 'Follows you back' : undefined;
     }
-    return followingSet.has(u.id) ? 'Mutual' : 'Follows you';
+    return u.youFollow ? 'Mutual' : 'Follows you';
   }
 
   const list = tab === 'circle' ? following : followers;

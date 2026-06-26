@@ -44,6 +44,8 @@ export interface FollowUser {
   name: string | null;
   avatarUrl: string | null;
   since: string;
+  followsYou?: boolean;
+  youFollow?: boolean;
 }
 
 /* ---------- Follow ---------- */
