@@ -67,10 +67,11 @@ async function fetchPushToken(db: any, userId: string): Promise<string | null> {
 }
 
 function buildNotificationBody(post: any): string {
-  const label: string | null =
-    (post.venue_name as string | null) ??
-    (post.public_location_label as string | null) ??
-    null;
+  // Use only the privacy-safe label — public_location_label is the field
+  // the server populates based on location_privacy_mode (city name or blurred
+  // area label). Never use venue_name directly as it may be more precise
+  // than the user's chosen privacy mode allows.
+  const label = (post.public_location_label as string | null) ?? null;
   return label ? `Your post at ${label} is now live` : "Your post is now live";
 }
 
@@ -79,8 +80,13 @@ function buildNotificationBody(post: any): string {
 /**
  * Publish a single eligible post. Sets post_status='published', published_at=now(),
  * optionally copies public coordinates, and appends a 'published' event.
+ *
+ * Returns true when the DB row was successfully updated, false on failure.
+ * Callers must check the return value before sending follow-up side-effects
+ * (e.g. push notifications) to avoid notifying users for posts that did not
+ * actually transition to published.
  */
-async function publishPost(db: any, post: any): Promise<void> {
+async function publishPost(db: any, post: any): Promise<boolean> {
   const now = new Date().toISOString();
 
   // Reveal coordinates only when the user opted in to exact-location mode.
@@ -106,7 +112,7 @@ async function publishPost(db: any, post: any): Promise<void> {
 
   if (error) {
     logger.warn({ err: error, postId: post.id }, "delayedPostPublisher: failed to publish post");
-    return;
+    return false;
   }
 
   // Append published event (non-fatal)
@@ -120,6 +126,7 @@ async function publishPost(db: any, post: any): Promise<void> {
   } catch { /* non-fatal */ }
 
   logger.info({ postId: post.id, mode: post.location_privacy_mode }, "delayedPostPublisher: post published");
+  return true;
 }
 
 /**
@@ -197,10 +204,15 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
         continue;
       }
 
-      await publishPost(db, post);
+      const ok = await publishPost(db, post);
+      if (!ok) {
+        errors++;
+        continue;
+      }
       published++;
 
-      // Send push notification — non-fatal, never blocks publish success
+      // Send push notification only on confirmed publish success.
+      // Fire-and-forget — never blocks publish count or throws.
       fetchPushToken(db, post.author_id).then((token) => {
         sendPushNotification([token], {
           title: "Post published",
