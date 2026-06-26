@@ -15,14 +15,13 @@
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Modal, StyleSheet,
+  View, Text, ScrollView, Pressable, StyleSheet,
   ActivityIndicator, Alert, Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import RNMapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import {
   Route, CheckCircle, SkipForward, StopCircle, ChevronDown, ChevronUp,
-  MapPin, Shield, Compass, Maximize2, Minimize2, Users, AlertTriangle,
+  MapPin, Shield, Compass, Maximize2, Users, AlertTriangle,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
@@ -30,6 +29,7 @@ import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
 import { postCompassAsk, type CompassAskRecommendation } from '../../src/services/compass';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
+import { RouteFullMapModal } from '../../src/components/RouteFullMapModal';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
 import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
@@ -82,158 +82,6 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-
-// ── Full-screen map modal ─────────────────────────────────────────────────────
-
-interface FullMapModalProps {
-  visible: boolean;
-  onClose: () => void;
-  stops: RouteStop[];
-  legs: RouteLeg[];
-  userLat?: number | null;
-  userLng?: number | null;
-}
-
-function computeRegionFromStops(stops: RouteStop[]) {
-  const pts = stops
-    .map((s) => ({ lat: s.structuredLocation?.lat, lng: s.structuredLocation?.lng }))
-    .filter((p): p is { lat: number; lng: number } => p.lat != null && p.lng != null);
-  if (pts.length === 0) return null;
-  const lats = pts.map((p) => p.lat);
-  const lngs = pts.map((p) => p.lng);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  return {
-    latitude:      (minLat + maxLat) / 2,
-    longitude:     (minLng + maxLng) / 2,
-    latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.015),
-    longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.015),
-  };
-}
-
-function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLat, userLng }: FullMapModalProps) {
-  void _legs;
-  const region = computeRegionFromStops(stops);
-  const nextStopId = stops.find((s) => s.checkpointStatus === 'pending')?.id ?? null;
-
-  const polylineCoords = stops
-    .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
-    .map((s) => ({ latitude: s.structuredLocation.lat, longitude: s.structuredLocation.lng }));
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
-        {region ? (
-          <RNMapView
-            style={{ flex: 1 }}
-            initialRegion={region}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            showsCompass
-            toolbarEnabled={false}
-          >
-            {polylineCoords.length >= 2 && (
-              <Polyline
-                coordinates={polylineCoords}
-                strokeColor={color.deep}
-                strokeWidth={3}
-                lineDashPattern={[8, 4]}
-              />
-            )}
-            {stops.map((stop, idx) => {
-              const loc = stop.structuredLocation;
-              if (loc?.lat == null || loc?.lng == null) return null;
-              const isNext   = stop.id === nextStopId;
-              const isDone   = stop.checkpointStatus === 'arrived';
-              const isSkipped = stop.checkpointStatus === 'skipped';
-              return (
-                <Marker key={stop.id} coordinate={{ latitude: loc.lat, longitude: loc.lng }} anchor={{ x: 0.5, y: 0.5 }}>
-                  <View style={[
-                    fmStyles.pin,
-                    isDone && fmStyles.pinDone,
-                    isSkipped && fmStyles.pinSkipped,
-                    isNext && fmStyles.pinNext,
-                  ]}>
-                    <Text style={fmStyles.pinLabel}>{idx + 1}</Text>
-                  </View>
-                </Marker>
-              );
-            })}
-            {userLat != null && userLng != null && (
-              <Circle
-                center={{ latitude: userLat, longitude: userLng }}
-                radius={15}
-                fillColor={color.deep + 'CC'}
-                strokeColor={color.deep}
-                strokeWidth={2}
-              />
-            )}
-          </RNMapView>
-        ) : (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff' }}>No location data</Text>
-          </View>
-        )}
-
-        {/* Close button */}
-        <Pressable style={fmStyles.closeBtn} onPress={onClose} hitSlop={12}>
-          <Minimize2 size={18} color={color.ink} />
-          <Text style={fmStyles.closeBtnText}>Close map</Text>
-        </Pressable>
-
-        {/* Legend */}
-        <View style={fmStyles.legend}>
-          {stops.map((s, idx) => (
-            <View key={s.id} style={fmStyles.legendRow}>
-              <View style={[fmStyles.legendDot, s.checkpointStatus === 'arrived' && fmStyles.legendDotDone, s.id === nextStopId && fmStyles.legendDotNext]}>
-                <Text style={fmStyles.legendDotLabel}>{idx + 1}</Text>
-              </View>
-              <Text style={fmStyles.legendTitle} numberOfLines={1}>{s.title}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const fmStyles = StyleSheet.create({
-  pin: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: '#fff',
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
-    elevation: 4,
-  },
-  pinDone:    { backgroundColor: '#999', borderColor: '#ddd' },
-  pinSkipped: { backgroundColor: '#ccc', borderColor: '#eee' },
-  pinNext:    { backgroundColor: color.deep, borderColor: '#fff', shadowColor: color.deep, shadowOpacity: 0.5, shadowRadius: 6, elevation: 6 },
-  pinLabel: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  closeBtn: {
-    position: 'absolute', top: 54, right: 16,
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: radius.md,
-    paddingHorizontal: 14, paddingVertical: 8,
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
-  },
-  closeBtnText: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
-  legend: {
-    position: 'absolute', bottom: 40, left: 16,
-    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: radius.md,
-    paddingVertical: space.sm, paddingHorizontal: space.md,
-    maxHeight: 200,
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
-  },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 3 },
-  legendDot: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
-  },
-  legendDotDone: { backgroundColor: '#999' },
-  legendDotNext: { backgroundColor: color.deep },
-  legendDotLabel: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  legendTitle: { ...t.small, color: color.ink, fontSize: 12, maxWidth: 140 },
-});
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
