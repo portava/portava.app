@@ -57,7 +57,8 @@ const RING_WINDOW_DAYS          = 7;
 const BOOKING_LOOP_MIN          = 5;    // >5 bookings between same pair in 30 days
 const BOOKING_LOOP_WINDOW_DAYS  = 30;
 const REFERRAL_FARM_MIN         = 10;   // referred >10 accounts that made no bookings
-const COMMENT_POD_MIN_MUTUAL    = 6;    // ≥6 mutual comment pairs in 72 h signals a pod
+const COMMENT_POD_MIN_MUTUAL    = 6;    // ≥6 genuinely mutual pairs in 72 h signals a pod
+const COMMENT_POD_MIN_DIRECTED  = 2;    // each side must comment on the other ≥2× (bidirectional check)
 const HASHTAG_SPAM_MIN          = 20;   // same hashtag >20 times in 24 h
 const GEOTAG_FARM_MIN           = 15;   // >15 stamps in 1 hour
 const AVAILABLE_TOGGLE_MIN      = 20;   // >20 toggles in 24 h
@@ -83,12 +84,13 @@ async function applyReachReduction(
   try {
     await db.from("compass_visibility_cooldowns").upsert(
       {
-        author_id:  userId,
-        reason:     `abuse_defense:${severity}`,
-        ends_at:    endsAt,
-        updated_at: new Date().toISOString(),
+        author_id:    userId,
+        cooldown_type: "reach_reduction",
+        reason:       `abuse_defense:${severity}`,
+        ends_at:      endsAt,
+        updated_at:   new Date().toISOString(),
       },
-      { onConflict: "author_id" },
+      { onConflict: "author_id,cooldown_type" },
     );
   } catch { /* non-fatal */ }
 }
@@ -354,19 +356,28 @@ async function detectCommentPods(
       postAuthorMap.set(p.id as string, p.user_id as string);
     }
 
-    // Build commenter → post_author pairs
-    const pairCount = new Map<string, number>();
+    // Build DIRECTED commenter → post_author pairs.
+    // Using directed keys (not sorted) lets us verify true bidirectionality:
+    // A one-way heavy commenter does not constitute a mutual pod.
+    const directedCounts = new Map<string, number>();
     for (const c of commentRows) {
       const postAuthor = postAuthorMap.get(c.post_id);
       if (!postAuthor || postAuthor === c.user_id) continue; // skip self-comment
-      const pair = [c.user_id as string, postAuthor].sort().join("|");
-      pairCount.set(pair, (pairCount.get(pair) ?? 0) + 1);
+      const directedKey = `${c.user_id as string}→${postAuthor}`;
+      directedCounts.set(directedKey, (directedCounts.get(directedKey) ?? 0) + 1);
     }
 
-    // Count mutual pairs (A comments on B AND B comments on A)
+    // A pair (A,B) is mutual only when BOTH A→B ≥ MIN_DIRECTED AND B→A ≥ MIN_DIRECTED.
+    // This prevents one-way heavy engagement from triggering punitive reach reduction.
     const mutualPairs = new Set<string>();
-    for (const [pair, count] of pairCount) {
-      if (count >= 3) mutualPairs.add(pair); // ≥3 cross-comments = suspicious pair
+    for (const [key, aToB] of directedCounts) {
+      if (aToB < COMMENT_POD_MIN_DIRECTED) continue;
+      const [commenter, author] = key.split("→") as [string, string];
+      const bToA = directedCounts.get(`${author}→${commenter}`) ?? 0;
+      if (bToA >= COMMENT_POD_MIN_DIRECTED) {
+        // Canonical sorted key so each pair is only counted once
+        mutualPairs.add([commenter, author].sort().join("|"));
+      }
     }
 
     if (mutualPairs.size >= COMMENT_POD_MIN_MUTUAL) {

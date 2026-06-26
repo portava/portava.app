@@ -474,7 +474,15 @@ export async function buildFeed(
   if (Object.keys(profile.categoryWeights).length > 0) {
     for (const [name, sectionItems] of sectionMap) {
       const adjusted = sectionItems.map((r) => {
-        const delta = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        // Look up weight by item type (e.g. "event", "post") AND by each
+        // interest/activity tag (e.g. "nightlife", "food") so both
+        // itemType-keyed and category-keyed feedback entries take effect.
+        const typeWeight = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        const tagWeight  = (r.item.interestTags ?? []).reduce(
+          (acc: number, tag: string) => acc + (profile.categoryWeights[tag] ?? 0),
+          0,
+        );
+        const delta = typeWeight + tagWeight;
         if (delta === 0) return r;
         return { ...r, finalScore: Math.max(0, r.finalScore + delta * 10) };
       });
