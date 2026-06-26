@@ -2120,11 +2120,26 @@ router.post("/api/rent-a-buddy/admin/restrictions/city-category", async (req, re
     created_by: admin.userId,
   }, { onConflict: "city,category" });
 
-  // Compass: city/category restriction changes affects all buddies in the city.
-  // Per-user invalidation would require enumerating all affected users — too broad
-  // for a synchronous request. Cache entries will expire naturally within their TTL.
-  // The admin's own cache is invalidated as an immediate acknowledgement.
-  await invalidateCompassCache(svc, admin.userId, "city_category_restriction");
+  // Compass: city/category restriction immediately invalidates all affected buddy caches.
+  // Enumerate buddies in the city (and optionally in the given category) and fan out
+  // synchronously. Capped at 200 users to keep the request latency bounded.
+  {
+    let q = svc
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("city", city)
+      .eq("status", "active")
+      .limit(200);
+    if (category) q = (q as any).contains("categories", [category]);
+    const { data: affectedBuddies } = await q;
+    if (affectedBuddies?.length) {
+      await Promise.allSettled(
+        (affectedBuddies as Array<{ user_id: string }>).map(b =>
+          invalidateCompassCache(svc, b.user_id, "city_category_restriction"),
+        ),
+      );
+    }
+  }
 
   res.json({ ok: true });
 });

@@ -16,8 +16,8 @@
  *   extra feed pages, older posts, map tile hints
  *
  * Network-aware tier ceiling:
- *   offline / slow → max Tier 0
- *   cellular       → max Tier 1 (no video previews)
+ *   offline        → max Tier 0 (no data at all beyond safety/auth)
+ *   slow / cellular → max Tier 1 (no video previews; slow avoids heavy Tier 2+ loads)
  *   wifi (default) → all tiers
  *
  * Battery-aware:
@@ -212,8 +212,10 @@ export function resolveMaxTier(
   networkHint: NetworkHint,
   batteryHint: BatteryHint,
 ): FrontLoadTier {
-  if (networkHint === 'offline' || networkHint === 'slow') return 0;
-  if (networkHint === 'cellular') return 1;
+  if (networkHint === 'offline') return 0;
+  // slow and cellular both cap at Tier 1: avoid heavy Tier 2+ DB queries on limited links;
+  // slow caps at 1 (not 0) so critical feed data is still preloaded — just no events/buddies.
+  if (networkHint === 'slow' || networkHint === 'cellular') return 1;
   if (batteryHint === 'low') return 2;
   return 3;
 }

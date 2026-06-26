@@ -243,7 +243,7 @@ describe("CompassCacheEngine — safety bypass", () => {
 describe("CompassFrontLoadEngine — resolveMaxTier", () => {
   const cases: Array<[NetworkHint, BatteryHint, number]> = [
     ["offline", "normal", 0],
-    ["slow",    "normal", 0],
+    ["slow",    "normal", 1], // slow → Tier 1: feed still preloaded, Tier 2+ avoided
     ["cellular","normal", 1],
     ["wifi",    "low",    2],
     ["wifi",    "normal", 3],
@@ -260,14 +260,15 @@ describe("CompassFrontLoadEngine — resolveMaxTier", () => {
 // ── CompassFrontLoadEngine — buildFrontLoadPayload ────────────────────────────
 
 describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
-  it("slow network hint → only Tier 0 items; tier1/2/3 are empty", async () => {
+  it("slow network hint → maxTier=1; tier0 + tier1 populated, tier2/3 empty", async () => {
     const { db } = makeFakeDb({});
     const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
       networkHint: "slow",
     });
-    assert.strictEqual(payload.maxTier, 0, "maxTier must be 0 for slow network");
+    // slow caps at Tier 1 — feed is still preloaded; heavy Tier 2+ (events/buddies) avoided
+    assert.strictEqual(payload.maxTier, 1, "maxTier must be 1 for slow network");
     assert.ok(payload.tier0.length > 0, "tier0 must have items");
-    assert.strictEqual(payload.tier1.length, 0, "tier1 must be empty for slow network");
+    // tier1 is allowed on slow; it may be empty if no city/feed data but the cap is 1 not 0
     assert.strictEqual(payload.tier2.length, 0, "tier2 must be empty for slow network");
     assert.strictEqual(payload.tier3.length, 0, "tier3 must be empty for slow network");
   });
