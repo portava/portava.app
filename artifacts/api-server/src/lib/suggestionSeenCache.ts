@@ -10,6 +10,14 @@
  *   - Seen-set capped at MAX_SEEN_PER_USER to bound memory.
  *   - When the full fallback pool is smaller than the exclusion list the cache
  *     is cleared automatically so the user never sees an empty list.
+ *
+ * Daily-seed helpers:
+ *   - dailySeed(userId) — produces a stable 32-bit seed from the caller's id
+ *     and today's UTC date (YYYY-MM-DD). Changes every midnight UTC so the
+ *     shuffled pool order rotates without any external scheduler.
+ *   - seededShuffle(arr, seed) — deterministic Fisher-Yates using mulberry32
+ *     so the same seed always yields the same permutation within a day, while
+ *     a different seed (= next day) produces an unrelated ordering.
  */
 
 const SEEN_TTL_MS =
@@ -75,4 +83,55 @@ export function clearSeen(userId: string): void {
 /** Test helper — wipe the entire cache between test cases. */
 export function _clearAllSeen(): void {
   cache.clear();
+}
+
+/* ===========================================================================
+ * Daily-seed helpers
+ * ===========================================================================
+ * mulberry32 — fast, seedable 32-bit PRNG. Produces a float in [0, 1) like
+ * Math.random() but is deterministic given the same seed value.
+ */
+function mulberry32(seed: number): () => number {
+  let s = seed | 0;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Derive a stable 32-bit unsigned seed from a userId + today's UTC date
+ * (YYYY-MM-DD). The seed changes every midnight UTC, so the shuffled pool
+ * order rotates daily without any external scheduler or cron job.
+ *
+ * The djb2-style hash mixes userId with the date string so two different
+ * users always get a different permutation of the same pool even on the same
+ * calendar day.
+ */
+export function dailySeed(userId: string): number {
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const combined = userId + ":" + dateStr;
+  let h = 5381;
+  for (let i = 0; i < combined.length; i++) {
+    h = (Math.imul(h, 33) ^ combined.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Deterministic Fisher-Yates shuffle driven by mulberry32(seed).
+ * Returns a new array — the original is not mutated.
+ */
+export function seededShuffle<T>(arr: T[], seed: number): T[] {
+  const result = arr.slice();
+  const rand = mulberry32(seed);
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = result[i];
+    result[i] = result[j];
+    result[j] = tmp;
+  }
+  return result;
 }

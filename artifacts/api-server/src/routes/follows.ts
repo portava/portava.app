@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { decideFollow, decideUnfollow, isUuid } from "../lib/followDecisions";
-import { getSeenIds, markAsSeen, clearSeen } from "../lib/suggestionSeenCache";
+import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
 
 const router = Router();
 
@@ -371,11 +371,12 @@ router.get("/users/suggestions", async (req, res) => {
       freshPool = pool;
     }
 
-    // Fisher-Yates shuffle so each new user sees a different sample
-    for (let i = freshPool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [freshPool[i], freshPool[j]] = [freshPool[j], freshPool[i]];
-    }
+    // Seeded daily shuffle: same user + same UTC calendar day → same base order,
+    // so the strip feels stable within a session but rotates to a completely
+    // different set of faces the next day.  The seen-IDs exclusion above still
+    // advances the window within the same day when the user pulls to refresh.
+    const seed = dailySeed(user.id);
+    freshPool = seededShuffle(freshPool, seed);
 
     safeIds = freshPool.slice(0, 10);
   }
