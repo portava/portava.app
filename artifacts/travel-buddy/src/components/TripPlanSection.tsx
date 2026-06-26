@@ -708,9 +708,8 @@ export function TripPlanSection({
             title: i.title,
             lat: i.lat as number,
             lng: i.lng as number,
-            sourceType: i.sourceType ?? 'manual',
-            sourceId: i.sourceId ?? undefined,
-            category: i.category ?? null,
+            sourceType: 'plan_item',
+            sourceId: i.id,
           }))}
         onRouteCreated={(route) => {
           setRouteBuilderOpen(false);

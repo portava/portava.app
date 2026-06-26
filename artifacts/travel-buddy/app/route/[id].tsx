@@ -27,6 +27,7 @@ import {
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
 import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
+import { postCompassAsk, type CompassAskRecommendation } from '../../src/services/compass';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { useRouteCheckpointMonitor } from '../../src/hooks/useRouteCheckpointMonitor';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
@@ -37,6 +38,17 @@ import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const FINAL_STOP_WARN_THRESHOLD = 1_500; // metres
+
+/**
+ * Static fallback chips shown until the Compass pipeline responds.
+ * Matches CompassAskRecommendation['nextActions'] shape so the same
+ * renderer handles both Compass-driven and fallback chips.
+ */
+const STATIC_COMPASS_FALLBACK: Array<{ label: string; kind: string }> = [
+  { label: '⏭ Skip stop',           kind: 'skip'      },
+  { label: '🚗 Long leg: rideshare?', kind: 'rideshare' },
+  { label: '🗺️ About stop order',     kind: 'reorder'   },
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -245,6 +257,7 @@ export default function ActiveRouteScreen() {
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(false);
+  const [compassActions, setCompassActions]     = useState<CompassAskRecommendation['nextActions'] | null>(null);
 
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
@@ -288,6 +301,54 @@ export default function ActiveRouteScreen() {
 
   const showFinalStopWarning = lastStopDistanceToHome != null
     && lastStopDistanceToHome > FINAL_STOP_WARN_THRESHOLD;
+
+  // ── Compass pipeline — fetch route suggestions when plan first loads ──────────
+  useEffect(() => {
+    if (!fullPlan || fullPlan.stops.length < 2) return;
+    const stopTitles = fullPlan.stops.map((s) => s.title).join(', ');
+    const city = fullPlan.plan.startLocation?.label ?? '';
+    postCompassAsk(
+      `Suggest route adjustments for these stops in order: ${stopTitles}`,
+      { city: city || undefined, mode: 'itinerary' },
+    )
+      .then((res) => {
+        if (res.ok && res.data?.nextActions && res.data.nextActions.length > 0) {
+          setCompassActions(res.data.nextActions);
+        }
+      })
+      .catch(() => { /* non-fatal — chips fall back to static */ });
+    // Only run once per plan load (plan id stable after fetch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullPlan?.plan.id]);
+
+  // ── Compass chip action dispatcher ───────────────────────────────────────────
+  const handleCompassAction = useCallback((kind: string, label: string) => {
+    switch (kind) {
+      case 'skip':
+        if (nextStop && nextStop.checkpointStatus !== 'arrived') {
+          Alert.alert(
+            'Skip stop?',
+            `Skip "${nextStop.title}"?`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Skip', style: 'destructive', onPress: () => { void skipStop(nextStop.id); } },
+            ],
+          );
+        }
+        break;
+      case 'rideshare':
+        Alert.alert('Rideshare tip', 'One or more legs are over 20 min walk. Consider a rideshare for those segments.');
+        break;
+      case 'reorder':
+        Alert.alert(
+          'Stop order',
+          'Stops are ordered to minimise total walking distance. To rearrange, edit the route and rebuild.',
+        );
+        break;
+      default:
+        Alert.alert('Route tip', label);
+    }
+  }, [nextStop, skipStop]);
 
   // Join/leave for trip members who are not the plan owner
   const handleJoinRoute = useCallback(async () => {
@@ -432,42 +493,17 @@ export default function ActiveRouteScreen() {
               {compassExpanded ? (
                 <Text style={styles.compassBody}>{plan.compassExplanation}</Text>
               ) : null}
-              {/* Actionable Compass chips — surface quick route adjustments */}
+              {/* Actionable Compass chips — driven by Compass pipeline response */}
               <View style={styles.compassChips}>
-                {nextStop && nextStop.checkpointStatus !== 'arrived' && (
+                {(compassActions ?? STATIC_COMPASS_FALLBACK).map((action) => (
                   <Pressable
+                    key={action.kind + action.label}
                     style={styles.compassChip}
-                    onPress={() => {
-                      Alert.alert(
-                        'Skip stop?',
-                        `Skip "${nextStop.title}"?`,
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Skip', style: 'destructive', onPress: () => { void skipStop(nextStop.id); } },
-                        ],
-                      );
-                    }}
+                    onPress={() => handleCompassAction(action.kind, action.label)}
                   >
-                    <Text style={styles.compassChipText}>⏭ Skip stop</Text>
+                    <Text style={styles.compassChipText}>{action.label}</Text>
                   </Pressable>
-                )}
-                {stops.some((s) => {
-                  const leg = legByFromStop.get(s.id);
-                  return leg && leg.durationSeconds / 60 > 20;
-                }) && (
-                  <Pressable
-                    style={styles.compassChip}
-                    onPress={() => Alert.alert('Rideshare tip', 'One or more legs are over 20 min walk. Consider a rideshare for those segments.')}
-                  >
-                    <Text style={styles.compassChipText}>🚗 Long leg: rideshare?</Text>
-                  </Pressable>
-                )}
-                <Pressable
-                  style={styles.compassChip}
-                  onPress={() => Alert.alert('Route order', 'Stops are ordered to minimise walking distance. Reorder manually by editing the route.')}
-                >
-                  <Text style={styles.compassChipText}>🗺️ About stop order</Text>
-                </Pressable>
+                ))}
               </View>
             </View>
           ) : null}
