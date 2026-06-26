@@ -94,7 +94,7 @@ async function buildProfile(
       .select("city, country")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("location_preferences")
+    db.from("user_location_preferences")
       .select("location_mode, sharing_paused, safe_return_enabled")
       .eq("user_id", userId)
       .maybeSingle(),

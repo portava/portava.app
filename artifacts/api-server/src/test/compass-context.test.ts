@@ -80,7 +80,7 @@ interface FakeState {
   trust_profiles: any[];
   user_preference_profiles: any[];
   user_location_state: any[];
-  location_preferences: any[];
+  user_location_preferences: any[];
   blocks: any[];
   trips: any[];
   trip_members: any[];
@@ -151,7 +151,7 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     trust_profiles: [],
     user_preference_profiles: [],
     user_location_state: [],
-    location_preferences: [],
+    user_location_preferences: [],
     blocks: [],
     trips: [],
     trip_members: [],

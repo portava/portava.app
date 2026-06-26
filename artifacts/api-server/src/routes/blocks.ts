@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { publishToUsers } from "../lib/telegraphEvents";
+import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 
 const router = Router();
 
@@ -46,6 +47,10 @@ router.post("/users/:userId/block", async (req, res) => {
 
   res.status(200).json({ blocked: true, userId: target });
 
+  // Evict Compass profile cache for both parties — block changes affect signals immediately.
+  invalidateCompassProfile(user.id);
+  invalidateCompassProfile(target);
+
   // Realtime: let the blocker's other sessions refresh (threads/follow state
   // may have changed). Not sent to the blocked user.
   void publishToUsers([user.id], {
@@ -80,6 +85,10 @@ router.delete("/users/:userId/block", async (req, res) => {
   }
 
   res.status(200).json({ blocked: false, userId: target });
+
+  // Evict Compass profile cache for both parties — unblock changes block signals immediately.
+  invalidateCompassProfile(user.id);
+  invalidateCompassProfile(target);
 });
 
 /* ===========================================================================

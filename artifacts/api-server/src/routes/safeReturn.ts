@@ -27,6 +27,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
+import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import {
   createSession,
   startSession,
@@ -249,6 +250,9 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     return;
   }
 
+  // Evict Compass profile cache — safeReturnActive signal changes immediately.
+  invalidateCompassProfile(user.id);
+
   res.status(201).json({ ok: true, session: toPublicSession(session) });
 });
 
@@ -269,6 +273,9 @@ router.post("/me/safe-return/sessions/:id/start", async (req, res) => {
     sendError(res, "not_found", "Session not found or cannot be started");
     return;
   }
+
+  // Evict Compass profile cache — session is now active.
+  invalidateCompassProfile(user.id);
 
   res.status(200).json({ ok: true, session: toPublicSession(session) });
 });
@@ -374,6 +381,9 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
     } catch {}
   })();
 
+  // Evict Compass profile cache — session confirmed/closed, safeReturnActive changes.
+  invalidateCompassProfile(user.id);
+
   res.status(200).json({ ok: true, session: toPublicSession(session) });
 });
 
@@ -394,6 +404,9 @@ router.post("/me/safe-return/sessions/:id/cancel", async (req, res) => {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
+
+  // Evict Compass profile cache — session cancelled, safeReturnActive changes.
+  invalidateCompassProfile(user.id);
 
   res.status(200).json({ ok: true, session: toPublicSession(session) });
 });
