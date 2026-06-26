@@ -150,6 +150,8 @@ export interface TravelerSearchResult {
   followerCount: number;
   isFollowing: boolean;
   isPrivate: boolean;
+  mutualCount?: number;
+  reason?: string | null;
 }
 
 export async function searchUsers(query: string, limit = 20): Promise<FollowResult<TravelerSearchResult[]>> {

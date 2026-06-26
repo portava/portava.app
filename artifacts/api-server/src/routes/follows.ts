@@ -388,20 +388,51 @@ router.get("/users/suggestions", async (req, res) => {
     followerCounts[fid] = (followerCounts[fid] ?? 0) + 1;
   }
 
+  // 8. Mutual connections: people the caller follows who also follow each candidate
+  const mutualCounts: Record<string, number> = {};
+  const myFollowingList = Array.from(alreadyFollowingSet);
+  if (myFollowingList.length > 0) {
+    try {
+      const { data: mutualRows } = await sc
+        .from("user_follows")
+        .select("following_id, follower_id")
+        .in("following_id", safeIds)
+        .in("follower_id", myFollowingList);
+      for (const r of (mutualRows ?? [])) {
+        const cid = (r as any).following_id as string;
+        mutualCounts[cid] = (mutualCounts[cid] ?? 0) + 1;
+      }
+    } catch { /* fail-safe: proceed with zero mutual counts */ }
+  }
+
+  // Which candidates follow the caller back (primary path)
+  const followerSet = new Set(followerIds);
+
   // Re-order profiles to match the (possibly shuffled) safeIds order
   const profileById = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
   const users = safeIds
     .map((id) => profileById.get(id))
     .filter(Boolean)
-    .map((p: any) => ({
-      id: p.id,
-      displayName: (p.name as string | null) ?? null,
-      username: (p.handle as string | null) ?? null,
-      avatarUrl: (p.avatar_url as string | null) ?? null,
-      followerCount: followerCounts[p.id as string] ?? 0,
-      isFollowing: false,
-      isPrivate: (p.is_private as boolean) ?? false,
-    }));
+    .map((p: any) => {
+      const mc = mutualCounts[p.id as string] ?? 0;
+      let reason: string | null = null;
+      if (followerSet.has(p.id as string)) {
+        reason = "Follows you";
+      } else if (mc > 0) {
+        reason = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
+      }
+      return {
+        id: p.id,
+        displayName: (p.name as string | null) ?? null,
+        username: (p.handle as string | null) ?? null,
+        avatarUrl: (p.avatar_url as string | null) ?? null,
+        followerCount: followerCounts[p.id as string] ?? 0,
+        isFollowing: false,
+        isPrivate: (p.is_private as boolean) ?? false,
+        mutualCount: mc,
+        reason,
+      };
+    });
 
   res.status(200).json({ users });
 });

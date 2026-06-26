@@ -50,6 +50,7 @@ function SuggestionCard({ user, onFollowed }: CardProps) {
 
   const displayName = user.displayName ?? user.username ?? 'Traveler';
   const handle = user.username ? `@${user.username}` : null;
+  const reason = user.reason ?? null;
 
   return (
     <Pressable style={styles.card} onPress={handlePress}>
@@ -62,6 +63,7 @@ function SuggestionCard({ user, onFollowed }: CardProps) {
       )}
       <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
       {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
+      {reason ? <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text> : null}
       <Pressable
         style={[styles.followBtn, following && styles.followingBtn]}
         onPress={handleFollow}
@@ -204,6 +206,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Courier',
     fontSize: 10,
     color: color.mute,
+    textAlign: 'center',
+    width: '100%',
+  },
+  cardReason: {
+    ...t.small,
+    fontSize: 10,
+    color: color.signal,
     textAlign: 'center',
     width: '100%',
   },

@@ -286,5 +286,85 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(typeof u.followerCount, "number");
     assert.equal(u.isFollowing, false);
     assert.equal(u.isPrivate, false);
+    assert.equal(typeof u.mutualCount, "number");
+  });
+
+  it("follow-back candidate gets reason 'Follows you'", async () => {
+    // B follows ME — so B is a follow-back candidate
+    setup({
+      follows: [{ follower_id: B, following_id: ME }],
+      profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const u = body.users[0];
+    assert.equal(u.reason, "Follows you");
+  });
+
+  it("mutual connection count is computed and reflected in reason", async () => {
+    // ME follows A; A also follows B; B is in the fallback pool (doesn't follow ME)
+    // => 1 mutual connection between ME and B (via A)
+    setup({
+      follows: [
+        { follower_id: ME, following_id: A },   // ME follows A
+        { follower_id: A,  following_id: B },   // A follows B
+      ],
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const bUser = body.users.find((u: any) => u.id === B);
+    assert.ok(bUser, "B should appear in suggestions");
+    assert.equal(bUser.mutualCount, 1);
+    assert.equal(bUser.reason, "1 mutual connection");
+  });
+
+  it("plural mutual connections reason when count > 1", async () => {
+    // ME follows A and C; both A and C follow B
+    const D = "user-d"; // ME follows D; D follows B too
+    setup({
+      follows: [
+        { follower_id: ME, following_id: A },
+        { follower_id: ME, following_id: D },
+        { follower_id: A,  following_id: B },
+        { follower_id: D,  following_id: B },
+      ],
+      profiles: [
+        { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+        { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+        { id: D, handle: "ddd", name: "Dave",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const bUser = body.users.find((u: any) => u.id === B);
+    assert.ok(bUser, "B should appear in suggestions");
+    assert.equal(bUser.mutualCount, 2);
+    assert.equal(bUser.reason, "2 mutual connections");
+  });
+
+  it("reason is null when no mutual connections and candidate does not follow back", async () => {
+    // Pure fallback: ME has no followers, B has no connection to ME at all
+    setup({
+      follows: [],
+      profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const bUser = body.users.find((u: any) => u.id === B);
+    assert.ok(bUser, "B should appear in fallback suggestions");
+    assert.equal(bUser.mutualCount, 0);
+    assert.equal(bUser.reason, null);
   });
 });
