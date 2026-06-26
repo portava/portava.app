@@ -53,3 +53,5 @@ Thumbs.db
 
 expo-env.d.ts
 # @end expo-cli
+# Expo Router duplicate route quarantine
+.route-quarantine/

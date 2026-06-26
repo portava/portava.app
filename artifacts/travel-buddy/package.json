@@ -8,7 +8,9 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts"
+    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts",
+    "routes:guard": "pnpm --filter @workspace/scripts run routes:guard",
+    "routes:self-heal": "pnpm --filter @workspace/scripts run routes:self-heal"
   },
   "dependencies": {
     "@react-native-community/datetimepicker": "^9.1.0",

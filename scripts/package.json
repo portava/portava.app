@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "routes:guard": "tsx ./src/guard-expo-router-duplicates.ts",
+    "routes:self-heal": "SELF_HEAL_EXPO_ROUTES=1 tsx ./src/guard-expo-router-duplicates.ts",
+    "test:routes-guard": "node --import tsx/esm --test ./src/guard-expo-router-duplicates.test.ts"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -1,0 +1,161 @@
+Fix the recurring Expo Router duplicate route/layout collision and add a self-healing guard.
+
+Problem:
+The app crashes in preview with:
+
+“The layouts './(auth)/_layout.tsx' and './(auth)/_layout.js' conflict on the route '/(auth)/_layout'. Remove or rename one of these files.”
+
+This class of error happens too often. It must be fixed permanently, not just manually deleted once.
+
+Goal:
+1. Remove duplicate Expo Router route files that map to the same route.
+2. Prefer TypeScript route files over JavaScript duplicates.
+3. Add a self-healing/guard script that detects and removes or quarantines generated duplicate JS route files before preview/build.
+4. Add CI/test coverage so duplicate route files cannot regress.
+5. Make the fix safe: do not delete intentional JS-only routes that do not have TS/TSX equivalents.
+
+Root cause:
+Expo Router treats files with the same route stem as the same route even if extensions differ.
+Examples that conflict:
+- app/(auth)/_layout.tsx and app/(auth)/_layout.js
+- app/login.tsx and app/login.js
+- app/profile/index.tsx and app/profile/index.js
+- app/(tabs)/_layout.tsx and app/(tabs)/_layout.jsx
+
+Immediate fix:
+Find duplicate route files under the app directory where the same path stem exists with multiple route extensions.
+
+Route extensions to compare:
+- .tsx
+- .ts
+- .jsx
+- .js
+
+Preferred extension order:
+1. .tsx
+2. .ts
+3. .jsx
+4. .js
+
+For this specific crash:
+- Keep app/(auth)/_layout.tsx
+- Remove or quarantine app/(auth)/_layout.js
+
+Do not delete arbitrary files blindly.
+Only remove/quarantine a JS/JSX file if a TS/TSX file with the same route stem exists and the JS/JSX file appears to be duplicate/generated/stale.
+
+Add a script:
+Create scripts/guard-expo-router-duplicates.ts or scripts/guard-expo-router-duplicates.mjs.
+
+The script should:
+- Walk the app directory recursively.
+- Find route files ending in .tsx, .ts, .jsx, .js.
+- Ignore non-route helper files if they are not inside app routes or if project conventions already exclude them.
+- Group files by normalized route stem:
+  Example:
+  app/(auth)/_layout.tsx → app/(auth)/_layout
+  app/(auth)/_layout.js → app/(auth)/_layout
+- If more than one extension exists for the same route stem:
+  - Keep the highest-priority file based on preferred extension order.
+  - If SELF_HEAL_EXPO_ROUTES=1 is set, move lower-priority duplicates to a quarantine folder:
+    .route-quarantine/<same-relative-path>.<timestamp>.bak
+  - If SELF_HEAL_EXPO_ROUTES is not set, fail with a clear error and list the duplicates.
+- Print a clear summary:
+  - checked route files count
+  - duplicates found
+  - files kept
+  - files quarantined
+  - files requiring manual review
+
+Quarantine behavior:
+Do not permanently delete duplicates.
+Move them to:
+.route-quarantine/
+
+Example:
+app/(auth)/_layout.js
+becomes:
+.route-quarantine/app/(auth)/_layout.js.<timestamp>.bak
+
+Add .route-quarantine/ to .gitignore.
+
+Self-heal mode:
+Add package scripts:
+
+"routes:guard": "tsx scripts/guard-expo-router-duplicates.ts"
+"routes:self-heal": "SELF_HEAL_EXPO_ROUTES=1 tsx scripts/guard-expo-router-duplicates.ts"
+
+If the project does not use tsx, use node-compatible .mjs instead.
+
+Wire guard into validation:
+- Add routes:guard to the normal validation/test script.
+- Add routes:self-heal before preview/dev/build if appropriate.
+- Do not make dev scripts destructive without quarantine.
+- Prefer quarantine over deletion.
+
+Suggested package scripts:
+- "predev": "npm run routes:self-heal"
+- "prebuild": "npm run routes:guard"
+- "validate": existing checks + "npm run routes:guard"
+
+If predev is too risky, add a dedicated command and document it:
+npm run routes:self-heal
+
+Add test:
+Create a test for the guard script.
+
+Test cases:
+1. app/(auth)/_layout.tsx + app/(auth)/_layout.js conflicts.
+   Expected:
+   - guard fails in normal mode.
+   - self-heal keeps .tsx and quarantines .js.
+
+2. app/login.tsx only.
+   Expected:
+   - no failure.
+
+3. app/help.js only.
+   Expected:
+   - no failure because there is no TS/TSX duplicate.
+
+4. app/profile/index.tsx + app/profile/index.jsx.
+   Expected:
+   - keep .tsx and quarantine .jsx in self-heal mode.
+
+5. Multiple duplicates.
+   Expected:
+   - all duplicate groups are reported clearly.
+
+Also add a simple smoke check:
+Run Expo Router route discovery or app preview validation after self-heal to confirm the crash is gone.
+
+Important:
+This patch must not rename route groups like (auth), (tabs), or change navigation behavior.
+This patch must not remove the intended TypeScript layout.
+This patch must not hide real route conflicts silently in CI.
+In CI/validation, duplicate routes should fail unless explicitly running self-heal.
+
+Implementation steps:
+1. Inspect app directory for duplicate route stems.
+2. Fix the current app/(auth)/_layout.tsx vs app/(auth)/_layout.js conflict.
+3. Add the route duplicate guard script.
+4. Add quarantine folder and gitignore entry.
+5. Add package scripts.
+6. Add tests.
+7. Run:
+   - npm run routes:self-heal
+   - npm run routes:guard
+   - npm run typecheck
+   - npm test or available validation
+   - Expo preview/build validation if available
+
+Acceptance criteria:
+- Preview no longer crashes with duplicate layout conflict.
+- app/(auth)/_layout.tsx is the active layout.
+- app/(auth)/_layout.js is removed or quarantined.
+- Duplicate route stems are detected automatically.
+- Self-heal mode quarantines lower-priority duplicates safely.
+- CI/validation fails if duplicate routes reappear.
+- The guard is documented and available as npm scripts.
+- No intended JS-only route is removed.
+- Existing navigation still works.

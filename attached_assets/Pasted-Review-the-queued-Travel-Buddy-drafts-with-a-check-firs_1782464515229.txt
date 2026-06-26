@@ -1,0 +1,107 @@
+Review the queued Travel Buddy drafts with a check-first, reuse-first implementation process.
+
+Before working on any queued Travel Buddy task, inspect the codebase and verify whether the feature already exists, partially exists, is only mocked, is hidden behind a migration/feature flag, or is missing entirely. Do not assume the system needs to be rebuilt.
+
+Core rule:
+Check first, then build or update accordingly. Reuse, wire, repair, validate, and complete existing work before creating anything new.
+
+Process:
+
+1. Check first
+For each queued task, search the codebase before editing:
+- existing database tables
+- migrations
+- API routes
+- services
+- hooks
+- screens
+- components
+- tests
+- feature flags
+- navigation wiring
+- mock/fixture data
+- background workers
+- notification handlers
+
+2. Classify before building
+Report one of these statuses before implementation:
+- Already implemented — do not rebuild; verify and mark complete only if tests pass.
+- Partially implemented — reuse existing work and update, wire, or repair the missing pieces.
+- Mocked only — keep usable UI if possible, but replace mock/fixture data with real backend data.
+- Migration/flag blocked — apply or wire the missing migration/feature flag instead of duplicating schema.
+- Missing — build the smallest safe implementation using existing project patterns.
+
+3. Build or update accordingly
+- If complete: run verification only.
+- If partial: finish the missing pieces on top of the current implementation.
+- If mocked: connect the current UI to real API/backend data.
+- If migration-blocked: apply, validate, or wire the migration/flag.
+- If missing: build narrowly and consistently with the existing architecture.
+
+4. No duplicate systems
+Do not create duplicate:
+- tables
+- migrations
+- routes
+- services
+- screens
+- components
+- hooks
+- background jobs
+- notification flows
+
+If a system already exists, extend it safely instead of creating a parallel version.
+
+5. Prioritize foundation blockers first
+Start with items that unblock the most queued work:
+- pending database migrations
+- Rent a Buddy booking/API/database wiring
+- delayed geotag/geofence posting
+- Telegraph/group chat fixes
+- Saved screen real-data wiring
+- Trip Detail fixture replacement
+- blocking/hiding safety behavior
+
+6. Per-task report before edits
+Before editing each item, report:
+- task number
+- what already exists
+- what is missing
+- what will be reused
+- what will be built or updated
+- what will not be rebuilt
+- migration or feature-flag dependency
+- likely files affected
+
+7. Implementation rules
+- Keep changes narrow.
+- Preserve existing naming and architecture.
+- Do not break live app navigation.
+- Do not remove feature flags unless explicitly required.
+- Do not replace working components with new versions.
+- Do not introduce duplicate APIs.
+- Do not rewrite screens from scratch if the current screen can be wired.
+- Keep user-facing copy consistent with existing Travel Buddy tone.
+
+8. Verification
+After each task or small batch, run the relevant checks:
+- targeted unit tests
+- affected route/API tests
+- typecheck
+- lint/guards if available
+- migration validation if migrations are touched
+
+If a check cannot run because of environment limits, report exactly why and run the closest safe targeted verification.
+
+9. Completion report
+After each completed item, report:
+- task number
+- status: complete / already implemented / partially fixed / blocked
+- files changed
+- existing systems reused
+- tests run
+- exact pass/fail counts
+- any follow-up needed
+
+Acceptance:
+Every queued Travel Buddy task is handled with a check-first approach. Existing work is reused, partial work is completed, mock data is replaced with real backend data where safe, migrations and feature flags are applied when needed, and missing features are built only after proving they are not already implemented. No duplicate Travel Buddy systems are created.
