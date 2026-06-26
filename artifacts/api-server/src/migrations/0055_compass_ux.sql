@@ -6,7 +6,7 @@
 --   compass_explanation_reasons     — optional override explanations (admin-editable)
 --   compass_notification_decisions  — audit log for notification send/suppress decisions
 --   compass_abuse_flags             — patterns detected by CompassAbuseDefenseEngine
---   compass_recommendation_scores   — per-user recommendation records used by the /why endpoint
+--   compass_served_recommendations  — per-user recommendation records used by the /why endpoint
 --
 -- All tables enable RLS.  Service role handles all writes.
 -- Users may read their own rows where indicated.
@@ -108,29 +108,32 @@ ALTER TABLE public.compass_abuse_flags ENABLE ROW LEVEL SECURITY;
 
 -- Only service role reads/writes abuse flags; no user access
 
--- ── compass_recommendation_scores ────────────────────────────────────────────
--- Per-user recommendation context records.
--- Written when the /why endpoint is first called for a given token.
--- Used to verify the caller is the original recipient and to log explanation lookups.
+-- ── compass_served_recommendations ───────────────────────────────────────────
+-- Per-user served recommendation registry.  The feed route writes one row per
+-- item before returning the response; the /why endpoint reads from this table
+-- to verify the recommendation was legitimately served to the caller and to
+-- resolve the stored explanation_key.
+--
+-- NOTE: compass_recommendation_scores (created in 0052_compass_pipeline_logs)
+-- is a separate DEBUG table for score-component inspection and is NOT this table.
 
-CREATE TABLE IF NOT EXISTS public.compass_recommendation_scores (
+CREATE TABLE IF NOT EXISTS public.compass_served_recommendations (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  recommendation_id TEXT      NOT NULL UNIQUE,  -- the opaque token
+  recommendation_id TEXT      NOT NULL UNIQUE,  -- opaque HMAC-signed token from CompassExplanationEngine
   explanation_key TEXT        NOT NULL,
   item_id         TEXT        NOT NULL,
   item_type       TEXT        NOT NULL,
   section_name    TEXT,
-  final_score     NUMERIC(6,2),
   explanation_looked_up_at TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS compass_recommendation_scores_user_idx
-  ON public.compass_recommendation_scores (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS compass_served_recs_user_idx
+  ON public.compass_served_recommendations (user_id, created_at DESC);
 
-ALTER TABLE public.compass_recommendation_scores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.compass_served_recommendations ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "users read own recommendation scores"
-  ON public.compass_recommendation_scores FOR SELECT
+CREATE POLICY "users read own served recommendations"
+  ON public.compass_served_recommendations FOR SELECT
   USING (auth.uid() = user_id);

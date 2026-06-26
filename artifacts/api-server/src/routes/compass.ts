@@ -58,7 +58,7 @@ const router = Router();
 // ── Feed recommendation enrichment ────────────────────────────────────────────
 // Generates HMAC-signed recommendationId tokens for each feed item, adds them
 // to the response payload (so the client can call /why), and returns DB rows
-// ready for pre-registration in compass_recommendation_scores.
+// ready for pre-registration in compass_served_recommendations.
 //
 // Tokens are generated exactly once per item — same token used for both the
 // response and the DB write (no double-generation).
@@ -238,7 +238,7 @@ router.get("/compass/feed", async (req, res) => {
 
     // Enrich feed with signed recommendationId tokens per item.
     // The client uses these tokens to call GET /api/compass/why/:recommendationId.
-    // Tokens are pre-registered in compass_recommendation_scores (fire-and-forget)
+    // Tokens are pre-registered in compass_served_recommendations
     // so the /why endpoint can do an authoritative DB lookup.
     const { enrichedFeed, registrationRows } = enrichFeedWithRecommendationIds(user.id, feed);
 
@@ -246,7 +246,7 @@ router.get("/compass/feed", async (req, res) => {
     // recommendationId is guaranteed to find the row — no race window.
     if (registrationRows.length > 0) {
       await sc
-        .from("compass_recommendation_scores")
+        .from("compass_served_recommendations")
         .upsert(registrationRows, { onConflict: "recommendation_id" });
     }
 
@@ -508,10 +508,10 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 
   try {
     // Step 2: Authoritative DB lookup — recommendation must have been served via the feed.
-    // The feed route pre-registers all served recommendations in compass_recommendation_scores.
+    // The feed route pre-registers all served recommendations in compass_served_recommendations.
     // If the row doesn't exist, the recommendation was never served to this user.
     const { data: row } = await sc
-      .from("compass_recommendation_scores")
+      .from("compass_served_recommendations")
       .select("explanation_key")
       .eq("recommendation_id", recommendationId)
       .eq("user_id", user.id)
@@ -523,7 +523,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     }
 
     // Step 3: Record the lookup timestamp (non-blocking)
-    sc.from("compass_recommendation_scores")
+    sc.from("compass_served_recommendations")
       .upsert(
         { recommendation_id: recommendationId, user_id: user.id, explanation_looked_up_at: new Date().toISOString() },
         { onConflict: "recommendation_id" },
