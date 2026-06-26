@@ -36,6 +36,15 @@ import {
   type BatteryHint,
 } from "../compass/CompassFrontLoadEngine.js";
 import { getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
+import {
+  resolveExplanation,
+  decodeRecommendationToken,
+} from "../compass/CompassExplanationEngine.js";
+import {
+  processFeedback,
+  FEEDBACK_ACTIONS,
+  type FeedbackAction,
+} from "../compass/CompassFeedbackEngine.js";
 import type {
   CompassContextResponse,
   CompassFallbackResponse,
@@ -400,6 +409,110 @@ router.put("/compass/me/boost-visibility", async (req, res) => {
   }
 
   res.status(200).json({ ok: true, enabled: parsed.data.enabled });
+});
+
+// ── GET /api/compass/why/:recommendationId ────────────────────────────────────
+// Returns a human-readable "Why am I seeing this?" string for a recommendation.
+// The recommendationId is the opaque base64url token produced by
+// CompassExplanationEngine.encodeRecommendationToken (attached to each FeedItem).
+
+router.get("/compass/why/:recommendationId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { recommendationId } = req.params;
+  if (!recommendationId || typeof recommendationId !== "string") {
+    sendError(res, "invalid_payload", "Missing recommendationId");
+    return;
+  }
+
+  // Decode token
+  const token = decodeRecommendationToken(recommendationId);
+
+  // Validate caller is the original recipient
+  if (!token || token.userId !== user.id) {
+    res.json({ explanation: "Recommendation not found or not available for your account." });
+    return;
+  }
+
+  const sc = getServiceClient();
+
+  // Log the lookup to compass_recommendation_scores (fire-and-forget)
+  if (sc) {
+    sc.from("compass_recommendation_scores")
+      .upsert(
+        {
+          user_id:                  user.id,
+          recommendation_id:        recommendationId,
+          explanation_key:          token.explanationKey,
+          item_id:                  token.itemId,
+          item_type:                token.itemType,
+          section_name:             token.sectionName,
+          explanation_looked_up_at: new Date().toISOString(),
+        },
+        { onConflict: "recommendation_id" },
+      )
+      .then(() => {}, () => {});
+  }
+
+  try {
+    // Load city from profile (best-effort)
+    let city: string | null = null;
+    if (sc) {
+      const profile = await getCompassProfile(sc, user.id).catch(() => null);
+      city = profile?.currentCity ?? null;
+    }
+
+    const explanation = await resolveExplanation(
+      token.explanationKey,
+      sc ?? null,
+      city,
+    );
+
+    res.json({ explanation });
+  } catch (err) {
+    req.log.error({ err }, "compass/why: resolution failed");
+    res.json({ explanation: "Based on your travel preferences and recent activity." });
+  }
+});
+
+// ── POST /api/compass/feedback ────────────────────────────────────────────────
+// Accepts user feedback on a Compass recommendation and updates preferences.
+
+const feedbackBodySchema = z.object({
+  recommendationId: z.string().min(1),
+  action:           z.enum([...FEEDBACK_ACTIONS] as [FeedbackAction, ...FeedbackAction[]]),
+  itemType:         z.string().min(1).max(60),
+  category:         z.string().max(80).optional(),
+  hashtag:          z.string().max(120).optional(),
+  topic:            z.string().max(120).optional(),
+});
+
+router.post("/compass/feedback", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = feedbackBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  try {
+    const result = await processFeedback(sc, user.id, parsed.data);
+    res.json({ updated: result.updated });
+  } catch (err) {
+    req.log.error({ err }, "compass/feedback: processing failed");
+    sendError(res, "db_error", "Could not process feedback");
+  }
 });
 
 export default router;
