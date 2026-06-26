@@ -434,6 +434,71 @@ describe("CompassEligibilityEngine", () => {
     assert.equal(passed.length, 1);
     assert.equal(rejected.length, 2);
   });
+
+  // ── Age eligibility gate ──────────────────────────────────────────────────
+  it("rejects item when viewer's confirmed age is below minAgeRequired", () => {
+    const item   = makeItem({ id: "el-age1", type: "event", minAgeRequired: 21 });
+    const viewer = baseProfile({ viewerAge: 19 });
+    const result = runEligibilityCheck(item, viewer, baseContext());
+    assert.equal(result.eligible, false);
+    assert.equal(result.reason, "viewer_age_below_minimum");
+  });
+
+  it("allows item when viewer's confirmed age meets minAgeRequired exactly", () => {
+    const item   = makeItem({ id: "el-age2", type: "event", minAgeRequired: 21 });
+    const viewer = baseProfile({ viewerAge: 21 });
+    assert.equal(runEligibilityCheck(item, viewer, baseContext()).eligible, true);
+  });
+
+  it("allows item when minAgeRequired is set but viewerAge is not confirmed (fail-open)", () => {
+    // viewerAge undefined → safety filter handles this with a conservative default;
+    // eligibility stays silent to avoid blocking users whose age simply isn't on profile
+    const item   = makeItem({ id: "el-age3", type: "event", minAgeRequired: 21 });
+    const viewer = baseProfile(); // viewerAge not set
+    assert.equal(runEligibilityCheck(item, viewer, baseContext()).eligible, true);
+  });
+
+  it("allows item with no minAgeRequired regardless of viewerAge", () => {
+    const viewer = baseProfile({ viewerAge: 15 });
+    const item   = makeItem({ id: "el-age4", type: "event" });
+    assert.equal(runEligibilityCheck(item, viewer, baseContext()).eligible, true);
+  });
+
+  // ── Country launch gate ───────────────────────────────────────────────────
+  it("rejects item when COMPASS_COUNTRY_LAUNCH_REQUIRED and country flag is false", () => {
+    const item  = makeItem({ id: "el-ctry1", type: "event", country: "Nigeria" });
+    const flags = {
+      COMPASS_COUNTRY_LAUNCH_REQUIRED: true,
+      COMPASS_COUNTRY_NIGERIA_ENABLED:  false,
+    };
+    const result = runEligibilityCheck(item, baseProfile(), baseContext(), null, flags);
+    assert.equal(result.eligible, false);
+    assert.equal(result.reason, "country_not_in_launch");
+  });
+
+  it("allows item when COMPASS_COUNTRY_LAUNCH_REQUIRED but country flag is absent (default allow)", () => {
+    const item  = makeItem({ id: "el-ctry2", type: "event", country: "Nigeria" });
+    const flags = { COMPASS_COUNTRY_LAUNCH_REQUIRED: true }; // country key absent = allow
+    const result = runEligibilityCheck(item, baseProfile(), baseContext(), null, flags);
+    assert.equal(result.eligible, true);
+  });
+
+  it("allows item when country flag is false but COMPASS_COUNTRY_LAUNCH_REQUIRED is absent", () => {
+    const item  = makeItem({ id: "el-ctry3", type: "event", country: "Nigeria" });
+    const flags = { COMPASS_COUNTRY_NIGERIA_ENABLED: false }; // gate control flag absent = skip gate
+    const result = runEligibilityCheck(item, baseProfile(), baseContext(), null, flags);
+    assert.equal(result.eligible, true);
+  });
+
+  it("allows item when country is enabled in launch flags", () => {
+    const item  = makeItem({ id: "el-ctry4", type: "event", country: "Nigeria" });
+    const flags = {
+      COMPASS_COUNTRY_LAUNCH_REQUIRED: true,
+      COMPASS_COUNTRY_NIGERIA_ENABLED:  true,
+    };
+    const result = runEligibilityCheck(item, baseProfile(), baseContext(), null, flags);
+    assert.equal(result.eligible, true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -574,6 +639,44 @@ describe("CompassPrivacyGuard", () => {
     });
     const sanitized = sanitizeItem(item, baseProfile({ userId: ALICE_ID }));
     assert.equal(sanitized.contentBody, "My draft");
+  });
+
+  // ── Unpublished coordinate stripping (privacy leak fix) ───────────────────
+  it("strips publicLat/Lng/LocationLabel for unpublished items not authored by viewer", () => {
+    const item = makeItem({
+      id: "p-upub1", type: "post",
+      isUnpublished: true, authorId: BOB_ID,
+      publicLat: 40.7128, publicLng: -74.006,
+      publicLocationLabel: "New York, NY",
+    });
+    const sanitized = sanitizeItem(item, baseProfile({ userId: ALICE_ID }));
+    assert.ok(!("publicLat" in sanitized),          "publicLat must be stripped from unpublished non-author item");
+    assert.ok(!("publicLng" in sanitized),          "publicLng must be stripped from unpublished non-author item");
+    assert.ok(!("publicLocationLabel" in sanitized), "publicLocationLabel must be stripped from unpublished non-author item");
+  });
+
+  it("preserves publicLat/Lng for unpublished items authored by the viewer", () => {
+    const item = makeItem({
+      id: "p-upub2", type: "post",
+      isUnpublished: true, authorId: ALICE_ID,
+      publicLat: 40.7128, publicLng: -74.006,
+      publicLocationLabel: "New York, NY",
+    });
+    const sanitized = sanitizeItem(item, baseProfile({ userId: ALICE_ID }));
+    assert.equal(sanitized.publicLat,           40.7128,         "owner may see their own draft coordinates");
+    assert.equal(sanitized.publicLng,           -74.006,          "owner may see their own draft coordinates");
+    assert.equal(sanitized.publicLocationLabel, "New York, NY",  "owner may see their own draft location label");
+  });
+
+  it("strips unpublished coordinates even when isDelayedPost is false (not just delayed posts)", () => {
+    const item = makeItem({
+      id: "p-upub3", type: "post",
+      isUnpublished: true, isDelayedPost: false, authorId: BOB_ID,
+      publicLat: 51.5074, publicLng: -0.1278,
+    });
+    const sanitized = sanitizeItem(item, baseProfile({ userId: ALICE_ID }));
+    assert.ok(!("publicLat" in sanitized), "non-delayed unpublished coords must also be stripped");
+    assert.ok(!("publicLng" in sanitized), "non-delayed unpublished coords must also be stripped");
   });
 
   it("buildPrivacySafeLocationText helper returns correct phrases", () => {

@@ -7,14 +7,17 @@
  * Eligibility checks (any fail → ineligible):
  *   1.  Per-type feature flag: COMPASS_<TYPE>_ENABLED must be true
  *   2.  Minimum Trust Score floor (DEFAULT_TRUST_FLOOR = 20)
- *   3.  City/country launch gate: if COMPASS_CITY_LAUNCH_REQUIRED is true,
+ *   3.  Age eligibility: viewer's confirmed age must meet item's minAgeRequired
+ *   4.  Country launch gate: if COMPASS_COUNTRY_LAUNCH_REQUIRED is true,
+ *       the item's country must match COMPASS_COUNTRY_<COUNTRY>_ENABLED flag
+ *   5.  City launch gate: if COMPASS_CITY_LAUNCH_REQUIRED is true,
  *       the item's city must match COMPASS_CITY_<CITY>_ENABLED flag
- *   4.  Verification: item requires verification but is unverified
- *   5.  Event capacity: event is full → not eligible
- *   6.  Circle-only content: viewer must be in the item's circle
- *   7.  Trip-only content: viewer must be a trip member
- *   8.  Buddy booking eligibility: buddy must have active status
- *   9.  Private items not owned by viewer
+ *   6.  Verification: item requires verification but is unverified
+ *   7.  Event capacity: event is full → not eligible
+ *   8.  Circle-only content: viewer must be in the item's circle
+ *   9.  Trip-only content: viewer must be a trip member
+ *  10.  Buddy booking eligibility: buddy must have active status
+ *  11.  Private items not owned by viewer
  *
  * Ineligible items are logged to compass_eligibility_logs (fire-and-forget).
  * Exception policy: FAIL-OPEN — bugs here should not hide content from users.
@@ -54,7 +57,29 @@ function checkEligibility(
     return ineligible("author_trust_score_below_floor");
   }
 
-  // 3. City-level launch gate
+  // 3. Age eligibility gate.
+  // When the viewer's age is explicitly known (profile.viewerAge is set), it must
+  // meet the item's minAgeRequired. This is defense-in-depth alongside the Safety
+  // Filter's hard-block (which uses a conservative default when age is unknown).
+  if (item.minAgeRequired && item.minAgeRequired > 0 && profile.viewerAge !== undefined) {
+    if (profile.viewerAge < item.minAgeRequired) {
+      return ineligible("viewer_age_below_minimum");
+    }
+  }
+
+  // 4. Country launch gate.
+  // When COMPASS_COUNTRY_LAUNCH_REQUIRED is true, item's country must have an
+  // explicit COMPASS_COUNTRY_<COUNTRY>_ENABLED flag set to true.
+  // Unlike the Safety Filter's launch control, this check is ELIGIBILITY-level
+  // (fail-open) and driven by a separate flag key.
+  if (preloadedFlags["COMPASS_COUNTRY_LAUNCH_REQUIRED"] && item.country) {
+    const countryKey = `COMPASS_COUNTRY_${item.country.toUpperCase().replace(/\s+/g, "_")}_ENABLED`;
+    if (countryKey in preloadedFlags && !preloadedFlags[countryKey]) {
+      return ineligible("country_not_in_launch");
+    }
+  }
+
+  // 5. City-level launch gate.
   // When COMPASS_CITY_LAUNCH_REQUIRED is true, item city must have its own flag enabled.
   if (preloadedFlags["COMPASS_CITY_LAUNCH_REQUIRED"] && item.city) {
     const cityKey = `COMPASS_CITY_${item.city.toUpperCase().replace(/\s+/g, "_")}_ENABLED`;
@@ -63,12 +88,12 @@ function checkEligibility(
     }
   }
 
-  // 4. Verification required (item-level, e.g. verified-only buddy events)
+  // 6. Verification required (item-level, e.g. verified-only buddy events)
   if (item.requiresVerification && !item.isVerified) {
     return ineligible("item_requires_verification");
   }
 
-  // 5. Event capacity: full events are ineligible for new attendees
+  // 7. Event capacity: full events are ineligible for new attendees
   if (item.type === "event") {
     const capacity = item.capacity ?? null;
     const attendees = item.currentAttendees ?? 0;
@@ -77,22 +102,22 @@ function checkEligibility(
     }
   }
 
-  // 6. Circle-only: viewer must be in the circle
+  // 8. Circle-only: viewer must be in the circle
   if (item.visibilityScope === "circle_only" && !item.viewerIsInCircle) {
     return ineligible("viewer_not_in_circle");
   }
 
-  // 7. Trip-only: viewer must be a member of the trip
+  // 9. Trip-only: viewer must be a member of the trip
   if (item.visibilityScope === "trip_only" && !item.viewerIsInTrip) {
     return ineligible("viewer_not_in_trip");
   }
 
-  // 8. Buddy booking eligibility
+  // 10. Buddy booking eligibility
   if (item.type === "buddy" && item.buddyStatus !== "active") {
     return ineligible("buddy_not_accepting_bookings");
   }
 
-  // 9. Private items are never eligible for feed (use direct access instead)
+  // 11. Private items are never eligible for feed (use direct access instead)
   if (item.visibilityScope === "private" && item.authorId !== profile.userId) {
     return ineligible("item_is_private");
   }

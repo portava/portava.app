@@ -12,9 +12,11 @@
  *   - adminNotes → removed
  *   - idDocument fields → removed
  *   - privateBookingNotes → removed
- *   - Pending delayed-post coordinates → removed (publishEligibleAt not yet passed)
+ *   - Unpublished item coordinates (publicLat/Lng/LocationLabel) → always removed
+ *     for items not authored by the viewer, regardless of delayed-post status
+ *   - Pending delayed-post coordinates → also removed (publishEligibleAt not yet passed)
  *   - locationText → rewritten to privacy-safe phrasing when GPS was present
- *   - unpublishedContent → removed
+ *   - unpublishedContent body/url → removed for non-author viewers
  *
  * Privacy-safe location text phrase list:
  *   - Has city + neighbourhood → "around [neighbourhood], [city]"
@@ -97,23 +99,40 @@ export function sanitizeItem(
       }
     }
 
-    // Strip unpublished content body
+    // Strip unpublished content body and coordinates for non-author viewers.
+    // This covers ALL unpublished items (drafts, scheduled, delayed posts, etc.).
     if (sanitized.isUnpublished && sanitized.authorId !== profile.userId) {
       delete sanitized.contentBody;
       delete sanitized.contentUrl;
+      // Also strip any public/sanitized coordinate fields — unpublished location
+      // must never leave the server even in "public" form.
+      const unpubCoordFields = ["publicLat", "publicLng", "publicLocationLabel"] as const;
+      for (const f of unpubCoordFields) {
+        if (f in sanitized) {
+          delete sanitized[f];
+          scrubbedFields.push(f);
+        }
+      }
       scrubbedFields.push("contentBody", "contentUrl");
     }
 
-    // Strip delayed post coordinates if not yet eligible
-    const hasDelayedCoords = item.type === "post" && item.isDelayedPost;
-    const publishTime = item.publishEligibleAt
-      ? new Date(item.publishEligibleAt).getTime()
-      : null;
-    if (hasDelayedCoords && (publishTime === null || publishTime > Date.now())) {
-      delete sanitized.publicLat;
-      delete sanitized.publicLng;
-      delete sanitized.publicLocationLabel;
-      scrubbedFields.push("publicLat", "publicLng", "publicLocationLabel");
+    // Defense-in-depth: also strip delayed-post coordinates when the post is not
+    // yet eligible for publication (publishEligibleAt in the future or unset).
+    // This catches cases where isUnpublished may not be set but the post is still
+    // in a pending delayed state.
+    const isDelayedPending =
+      item.type === "post" &&
+      item.isDelayedPost &&
+      (item.publishEligibleAt === undefined ||
+        new Date(item.publishEligibleAt as string).getTime() > Date.now());
+    if (isDelayedPending) {
+      const delayedCoordFields = ["publicLat", "publicLng", "publicLocationLabel"] as const;
+      for (const f of delayedCoordFields) {
+        if (f in sanitized) {
+          delete sanitized[f];
+          if (!scrubbedFields.includes(f)) scrubbedFields.push(f);
+        }
+      }
     }
 
     // Rewrite locationText to privacy-safe phrasing when GPS was present
