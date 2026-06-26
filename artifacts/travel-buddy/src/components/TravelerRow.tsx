@@ -11,9 +11,10 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState';
 interface Props {
   user: TravelerSearchResult;
   isOwnProfile?: boolean;
+  onFollowed?: (userId: string) => void;
 }
 
-export function TravelerRow({ user, isOwnProfile = false }: Props) {
+export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [followerCount, setFollowerCount] = useState(user.followerCount);
   const [toggling, setToggling] = useState(false);
@@ -34,6 +35,8 @@ export function TravelerRow({ user, isOwnProfile = false }: Props) {
     if (!res.ok) {
       setIsFollowing(wasFollowing);
       setFollowerCount((c) => wasFollowing ? c + 1 : Math.max(0, c - 1));
+    } else if (!wasFollowing) {
+      onFollowed?.(user.id);
     }
     setToggling(false);
   }

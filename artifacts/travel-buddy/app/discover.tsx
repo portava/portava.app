@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, FlatList, ActivityIndicator,
-  Pressable, StyleSheet, KeyboardAvoidingView, Platform,
+  Pressable, StyleSheet, KeyboardAvoidingView, Platform, LayoutAnimation,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Search, X } from 'lucide-react-native';
@@ -70,6 +70,11 @@ export default function DiscoverScreen() {
     inputRef.current?.focus();
   }
 
+  const handleSuggestionFollowed = useCallback((userId: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSuggestions((prev) => prev.filter((s) => s.id !== userId));
+  }, []);
+
   const showEmpty = searched && !loading && results.length === 0;
   const showIdle = !searched && !loading && !query.trim();
 
@@ -124,7 +129,9 @@ export default function DiscoverScreen() {
               ListFooterComponent={
                 loadingSuggestions ? <ActivityIndicator color={color.signal} style={{ marginTop: space.lg }} /> : null
               }
-              renderItem={({ item }) => <TravelerRow user={item} />}
+              renderItem={({ item }) => (
+                <TravelerRow user={item} onFollowed={handleSuggestionFollowed} />
+              )}
             />
           ) : loadingSuggestions ? (
             <View style={styles.center}>
