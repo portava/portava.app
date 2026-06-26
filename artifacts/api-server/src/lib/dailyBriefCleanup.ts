@@ -16,6 +16,7 @@
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
+import { purgeExpiredSuggestionSeen } from "./suggestionSeenCleanup.js";
 
 // ---------------------------------------------------------------------------
 // Test-only client injection — lets unit tests drive queryCleanupHealth with
@@ -185,11 +186,18 @@ export let _purgeCallCount = 0;
  * Never throws — errors are logged and returned.
  */
 export async function purgeOldBriefs(opts?: {
-  client?: any;
+  client?: any | null;
   retentionDays?: number;
 }): Promise<{ deleted: number | null; error: unknown }> {
   _purgeCallCount++;
-  const client = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
+  // Explicit null means "no client" (used in tests to force the skip path).
+  // Undefined means "use the service client if available".
+  const client =
+    opts !== undefined && "client" in opts && opts.client !== undefined
+      ? opts.client
+      : isServiceClientReady
+        ? getServiceClient()
+        : null;
   const retentionDays = opts?.retentionDays ?? RETENTION_DAYS;
 
   if (!client) {
@@ -214,10 +222,21 @@ export async function purgeOldBriefs(opts?: {
       recordError(error);
       purgeResult = { deleted: null, error };
     } else {
-      const deleted = count ?? 0;
-      recordSuccess(deleted);
-      logger.info({ deleted, cutoffDate }, "dailyBriefCleanup: purged old briefs");
-      purgeResult = { deleted, error: null };
+      const briefsDeleted = count ?? 0;
+
+      // Secondary: purge expired suggestion-seen rows on the same cadence.
+      // Failures here are non-fatal — logged as warnings, never change purgeResult.
+      const { deleted: seenDeleted } = await purgeExpiredSuggestionSeen({
+        client: opts?.client,
+      });
+
+      const totalDeleted = briefsDeleted + (seenDeleted ?? 0);
+      recordSuccess(totalDeleted);
+      logger.info(
+        { briefsDeleted, seenDeleted: seenDeleted ?? 0, totalDeleted, cutoffDate },
+        "dailyBriefCleanup: purge complete",
+      );
+      purgeResult = { deleted: totalDeleted, error: null };
     }
   } catch (err) {
     recordError(err);

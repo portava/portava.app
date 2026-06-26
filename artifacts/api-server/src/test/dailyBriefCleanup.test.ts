@@ -41,23 +41,28 @@ function makeFakeClient(opts: {
   throwOnDelete?: boolean;
 } = {}) {
   const calls: { table: string; ltValue?: string }[] = [];
+  // Capture the lt value only for the daily_briefs table so secondary
+  // cleanup calls (e.g. suggestion-seen) don't overwrite it.
   let capturedLtValue: string | undefined;
 
   function from(table: string) {
+    const isBriefs = table === "daily_briefs";
     const builder: any = {
       delete(_opts?: any) { return builder; },
-      lt(col: string, val: string) {
-        capturedLtValue = val;
+      lt(_col: string, val: string) {
+        if (isBriefs) capturedLtValue = val;
         calls.push({ table, ltValue: val });
         return builder;
       },
       then(onF: any, onR: any) {
-        if (opts.throwOnDelete) {
+        if (isBriefs && opts.throwOnDelete) {
           return Promise.reject(new Error("DB connection lost")).then(onF, onR);
         }
         return Promise.resolve({
-          count: opts.count ?? 0,
-          error: opts.error ?? null,
+          // Secondary cleanup tables always return 0 so they don't affect
+          // the count assertions for the primary daily_briefs purge.
+          count: isBriefs ? (opts.count ?? 0) : 0,
+          error: isBriefs ? (opts.error ?? null) : null,
         }).then(onF, onR);
       },
     };
@@ -152,8 +157,8 @@ describe("G — parseIntervalHours", () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe("G — purgeOldBriefs", () => {
-  it("G17: no client provided returns { deleted: null, error: null }", async () => {
-    const result = await purgeOldBriefs({ client: undefined, retentionDays: 60 });
+  it("G17: explicit null client returns { deleted: null, error: null } (skip path)", async () => {
+    const result = await purgeOldBriefs({ client: null, retentionDays: 60 });
     assert.equal(result.deleted, null);
     assert.equal(result.error, null);
   });
