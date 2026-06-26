@@ -301,21 +301,34 @@ router.get("/users/suggestions", async (req, res) => {
     }
   } catch { /* fail safe */ }
 
-  // 2. Who follows me? Ordered by follower_id for deterministic input to seededShuffle —
-  // without an explicit ORDER BY, Postgres row order is undefined and can vary per request,
-  // which would break same-day stability even with a seeded shuffle.
-  const { data: followerRows, error: follErr } = await sc
-    .from("user_follows")
-    .select("follower_id")
-    .eq("following_id", user.id)
-    .order("follower_id", { ascending: true })
-    .limit(50);
+  // 2. Who follows me? + caller's travel-interest profile (in parallel).
+  // Followers are ordered by follower_id for deterministic seededShuffle input —
+  // without an explicit ORDER BY Postgres row order is undefined and can vary per
+  // request, breaking same-day stability even with a seeded shuffle.
+  const [followerResult, callerProfileResult] = await Promise.all([
+    sc.from("user_follows")
+      .select("follower_id")
+      .eq("following_id", user.id)
+      .order("follower_id", { ascending: true })
+      .limit(50),
+    sc.from("profiles")
+      .select("travel_styles, travel_pace, budget_style")
+      .eq("id", user.id)
+      .maybeSingle(),
+  ]);
+
+  const { data: followerRows, error: follErr } = followerResult;
 
   if (follErr) {
     req.log.error({ err: follErr }, "suggestions followers query failed");
     res.status(200).json({ users: [] });
     return;
   }
+
+  // Extract caller interest fields — gracefully absent when profile is sparse.
+  const callerTravelStyles: string[] = (callerProfileResult.data as any)?.travel_styles ?? [];
+  const callerTravelPace: string | null = (callerProfileResult.data as any)?.travel_pace ?? null;
+  const callerBudgetStyle: string | null = (callerProfileResult.data as any)?.budget_style ?? null;
 
   const followerIds = (followerRows ?? []).map((r: any) => r.follower_id as string);
 
@@ -347,8 +360,8 @@ router.get("/users/suggestions", async (req, res) => {
     freshCandidates = unshuffled;
   }
 
-  const filtered = seededShuffle(freshCandidates, dailySeed(user.id));
-  const candidateIds = filtered.slice(0, 10);
+  // Keep the full shuffled list; interest scoring will select the final 10 below.
+  const candidateIds = seededShuffle(freshCandidates, dailySeed(user.id));
 
   // 5. If no follow-back candidates, fall back to a sample of popular/recent profiles
   let safeIds: string[];
@@ -390,15 +403,18 @@ router.get("/users/suggestions", async (req, res) => {
     const seed = dailySeed(user.id);
     freshPool = seededShuffle(freshPool, seed);
 
-    safeIds = freshPool.slice(0, 10);
+    // Keep the full shuffled list; interest scoring will select the final 10 below.
+    safeIds = freshPool;
   }
 
   if (safeIds.length === 0) { res.status(200).json({ users: [] }); return; }
 
-  // 6. Fetch profiles
-  const { data: profiles, error: profErr } = await sc
+  // 6. Fetch pool profiles (display fields + interest fields) for scoring and rendering.
+  //    We fetch the full pool here and slice to 10 after scoring, so that higher-overlap
+  //    candidates from deeper in the shuffle can still surface in the final list.
+  const { data: poolProfiles, error: profErr } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private")
+    .select("id, handle, name, avatar_url, is_private, travel_styles, travel_pace, budget_style")
     .in("id", safeIds);
 
   if (profErr) {
@@ -406,6 +422,37 @@ router.get("/users/suggestions", async (req, res) => {
     res.status(200).json({ users: [] });
     return;
   }
+
+  // Score each candidate by travel-interest overlap with the caller.
+  // Returns 0 for all when the caller's profile is sparse — no change in ordering.
+  const callerStylesSet = new Set<string>(callerTravelStyles);
+  const hasCallerInterests = callerStylesSet.size > 0 || !!callerTravelPace || !!callerBudgetStyle;
+  const poolProfileMap = new Map((poolProfiles ?? []).map((p: any) => [p.id as string, p]));
+
+  function interestScore(p: any): number {
+    if (!hasCallerInterests) return 0;
+    let s = 0;
+    for (const style of ((p.travel_styles as string[] | null) ?? [])) {
+      if (callerStylesSet.has(style)) s++;
+    }
+    if (callerTravelPace && p.travel_pace === callerTravelPace) s++;
+    if (callerBudgetStyle && p.budget_style === callerBudgetStyle) s++;
+    return s;
+  }
+
+  // Map id → score before sorting (reused later for reason label).
+  const interestScores = new Map<string, number>(
+    safeIds.map((id) => [id, interestScore(poolProfileMap.get(id) ?? {})])
+  );
+
+  // Stable sort: higher score first; equal-score candidates keep their
+  // seeded-shuffle order (Array.prototype.sort is stable in V8).
+  safeIds = safeIds
+    .filter((id) => poolProfileMap.has(id))
+    .sort((a, b) => (interestScores.get(b) ?? 0) - (interestScores.get(a) ?? 0))
+    .slice(0, 10);
+
+  const profiles = safeIds.map((id) => poolProfileMap.get(id)!);
 
   // 7. Follower counts for the candidate profiles
   const { data: countRows } = await sc
@@ -553,6 +600,8 @@ router.get("/users/suggestions", async (req, res) => {
         reason = "Follows you";
       } else if (mc > 0) {
         reason = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
+      } else if ((interestScores.get(p.id as string) ?? 0) > 0) {
+        reason = "Shares your travel style";
       }
       return {
         id: p.id,
