@@ -2,49 +2,54 @@
  * Active Route Screen — app/route/[id].tsx
  *
  * Full-screen route view:
- *  - RouteMinimapView at top
+ *  - RouteMinimapView at top (tapping expand opens full-screen RouteFullMapModal)
  *  - Scrollable leg cards (from → to, estimated walk time, distance, mode chip)
  *  - Checkpoint status pills per stop
  *  - "Start route" / "Arrived" / "Skip stop" / "End session" action bar
  *  - Compass explanation (collapsible "Why this order?" card)
  *  - Safe Return integration (pre-fill return time)
- *  - GPS auto-checkpoint driven by existing useActiveLocation (no parallel location subsystem)
+ *  - Final-stop distance-to-end-location warning (> 1.5 km)
+ *  - GPS auto-checkpoint driven by useActiveLocation coords (reactive, no poll loop)
  *  - Manual fallback if GPS is denied
+ *  - Group member progress (trip-linked routes)
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Alert, Linking,
+  View, Text, ScrollView, Pressable, Modal, StyleSheet,
+  ActivityIndicator, Alert, Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import RNMapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import {
   Route, CheckCircle, SkipForward, StopCircle, ChevronDown, ChevronUp,
-  MapPin, Shield, Compass,
+  MapPin, Shield, Compass, Maximize2, Minimize2, Users, AlertTriangle,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
-import type { RouteStop } from '../../src/services/routePlan';
+import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ARRIVAL_RADIUS_M = 80;
+const ARRIVAL_RADIUS_M          = 80;
+const FINAL_STOP_WARN_THRESHOLD = 1_500; // metres
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const MODE_LABEL: Record<string, string> = {
-  walk: '🚶 Walk',
+  walk:      '🚶 Walk',
   rideshare: '🚗 Rideshare',
-  transit: '🚌 Transit',
-  bike: '🚴 Bike',
-  drive: '🚙 Drive',
+  transit:   '🚌 Transit',
+  bike:      '🚴 Bike',
+  drive:     '🚙 Drive',
 };
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   if (m < 60) return `~${m} min`;
-  const h = Math.floor(m / 60);
+  const h   = Math.floor(m / 60);
   const rem = m % 60;
   return rem > 0 ? `~${h}h ${rem}m` : `~${h}h`;
 }
@@ -55,33 +60,186 @@ function formatDistance(meters: number): string {
 }
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6_371_000;
+  const R     = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
+  const dLat  = toRad(lat2 - lat1);
+  const dLng  = toRad(lng2 - lng1);
+  const a     =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// ── Full-screen map modal ─────────────────────────────────────────────────────
+
+interface FullMapModalProps {
+  visible: boolean;
+  onClose: () => void;
+  stops: RouteStop[];
+  legs: RouteLeg[];
+  userLat?: number | null;
+  userLng?: number | null;
+}
+
+function computeRegionFromStops(stops: RouteStop[]) {
+  const pts = stops
+    .map((s) => ({ lat: s.structuredLocation?.lat, lng: s.structuredLocation?.lng }))
+    .filter((p): p is { lat: number; lng: number } => p.lat != null && p.lng != null);
+  if (pts.length === 0) return null;
+  const lats = pts.map((p) => p.lat);
+  const lngs = pts.map((p) => p.lng);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  return {
+    latitude:      (minLat + maxLat) / 2,
+    longitude:     (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.015),
+    longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.015),
+  };
+}
+
+function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLat, userLng }: FullMapModalProps) {
+  void _legs;
+  const region = computeRegionFromStops(stops);
+  const nextStopId = stops.find((s) => s.checkpointStatus === 'pending')?.id ?? null;
+
+  const polylineCoords = stops
+    .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
+    .map((s) => ({ latitude: s.structuredLocation.lat, longitude: s.structuredLocation.lng }));
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {region ? (
+          <RNMapView
+            style={{ flex: 1 }}
+            initialRegion={region}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
+            showsCompass
+            toolbarEnabled={false}
+          >
+            {polylineCoords.length >= 2 && (
+              <Polyline
+                coordinates={polylineCoords}
+                strokeColor={color.deep}
+                strokeWidth={3}
+                lineDashPattern={[8, 4]}
+              />
+            )}
+            {stops.map((stop, idx) => {
+              const loc = stop.structuredLocation;
+              if (!loc?.lat || !loc?.lng) return null;
+              const isNext   = stop.id === nextStopId;
+              const isDone   = stop.checkpointStatus === 'arrived';
+              const isSkipped = stop.checkpointStatus === 'skipped';
+              return (
+                <Marker key={stop.id} coordinate={{ latitude: loc.lat, longitude: loc.lng }} anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={[
+                    fmStyles.pin,
+                    isDone && fmStyles.pinDone,
+                    isSkipped && fmStyles.pinSkipped,
+                    isNext && fmStyles.pinNext,
+                  ]}>
+                    <Text style={fmStyles.pinLabel}>{idx + 1}</Text>
+                  </View>
+                </Marker>
+              );
+            })}
+            {userLat != null && userLng != null && (
+              <Circle
+                center={{ latitude: userLat, longitude: userLng }}
+                radius={15}
+                fillColor={color.deep + 'CC'}
+                strokeColor={color.deep}
+                strokeWidth={2}
+              />
+            )}
+          </RNMapView>
+        ) : (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff' }}>No location data</Text>
+          </View>
+        )}
+
+        {/* Close button */}
+        <Pressable style={fmStyles.closeBtn} onPress={onClose} hitSlop={12}>
+          <Minimize2 size={18} color={color.ink} />
+          <Text style={fmStyles.closeBtnText}>Close map</Text>
+        </Pressable>
+
+        {/* Legend */}
+        <View style={fmStyles.legend}>
+          {stops.map((s, idx) => (
+            <View key={s.id} style={fmStyles.legendRow}>
+              <View style={[fmStyles.legendDot, s.checkpointStatus === 'arrived' && fmStyles.legendDotDone, s.id === nextStopId && fmStyles.legendDotNext]}>
+                <Text style={fmStyles.legendDotLabel}>{idx + 1}</Text>
+              </View>
+              <Text style={fmStyles.legendTitle} numberOfLines={1}>{s.title}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const fmStyles = StyleSheet.create({
+  pin: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#fff',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
+    elevation: 4,
+  },
+  pinDone:    { backgroundColor: '#999', borderColor: '#ddd' },
+  pinSkipped: { backgroundColor: '#ccc', borderColor: '#eee' },
+  pinNext:    { backgroundColor: color.deep, borderColor: '#fff', shadowColor: color.deep, shadowOpacity: 0.5, shadowRadius: 6, elevation: 6 },
+  pinLabel: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  closeBtn: {
+    position: 'absolute', top: 54, right: 16,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: radius.md,
+    paddingHorizontal: 14, paddingVertical: 8,
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
+  },
+  closeBtnText: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  legend: {
+    position: 'absolute', bottom: 40, left: 16,
+    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: radius.md,
+    paddingVertical: space.sm, paddingHorizontal: space.md,
+    maxHeight: 200,
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
+  },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 3 },
+  legendDot: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
+  },
+  legendDotDone: { backgroundColor: '#999' },
+  legendDotNext: { backgroundColor: color.deep },
+  legendDotLabel: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  legendTitle: { ...t.small, color: color.ink, fontSize: 12, maxWidth: 140 },
+});
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ActiveRouteScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
+  const router  = useRouter();
   const {
     plan: fullPlan, loading, error,
     markArrived, skipStop,
     completedCount, totalCount, progressFraction, nextStop,
+    memberProgress,
   } = useRoutePlan({ planId: id ?? null });
 
-  // Use the existing location infrastructure — no parallel expo-location subsystem.
   const { locationState, requestLocation } = useActiveLocation();
-  const [compassExpanded, setCompassExpanded] = useState(false);
+  const [compassExpanded, setCompassExpanded]   = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
-  const [routeStarted, setRouteStarted] = useState(false);
-  const [mapExpanded, setMapExpanded] = useState(false);
+  const [routeStarted, setRouteStarted]         = useState(false);
+  const [fullMapVisible, setFullMapVisible]     = useState(false);
+  const [membersExpanded, setMembersExpanded]   = useState(false);
 
   // Track stops we've already auto-checked to avoid duplicate PATCH calls.
   const notifiedStops = useRef(new Set<string>());
@@ -90,7 +248,6 @@ export default function ActiveRouteScreen() {
   const userLng = locationState.coords?.lng ?? null;
 
   // Auto-checkpoint: react to coordinate changes from the existing location system.
-  // This reuses the location subsystem rather than introducing a parallel poll loop.
   useEffect(() => {
     if (!routeStarted || !fullPlan) return;
     if (userLat == null || userLng == null) return;
@@ -111,9 +268,23 @@ export default function ActiveRouteScreen() {
     }
   }, [routeStarted, fullPlan, userLat, userLng, markArrived]);
 
+  // Final-stop distance-to-end-location warning
+  const lastStopDistanceToEnd = React.useMemo(() => {
+    if (!fullPlan) return null;
+    const endLoc = fullPlan.plan.endLocation;
+    if (!endLoc?.lat || !endLoc?.lng) return null;
+    const lastStop = fullPlan.stops[fullPlan.stops.length - 1];
+    if (!lastStop?.structuredLocation?.lat || !lastStop?.structuredLocation?.lng) return null;
+    return haversineMeters(
+      lastStop.structuredLocation.lat, lastStop.structuredLocation.lng,
+      endLoc.lat, endLoc.lng,
+    );
+  }, [fullPlan]);
+
+  const showFinalStopWarning = lastStopDistanceToEnd != null
+    && lastStopDistanceToEnd > FINAL_STOP_WARN_THRESHOLD;
+
   const handleStartRoute = useCallback(async () => {
-    // Request a location refresh when the route starts so proximity checks fire promptly.
-    // Falls back to manual checkpoints if permission is denied.
     if (locationState.permissionStatus !== 'denied') {
       requestLocation().catch(() => {});
     }
@@ -156,7 +327,6 @@ export default function ActiveRouteScreen() {
   }
 
   const { plan, stops, legs } = fullPlan;
-
   const legByFromStop = new Map(legs.map((l) => [l.fromStopId, l]));
 
   return (
@@ -165,14 +335,14 @@ export default function ActiveRouteScreen() {
 
       <View style={styles.root}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Mini-map */}
+          {/* Mini-map — expand opens full-screen modal */}
           <View style={styles.mapWrapper}>
             <RouteMinimapView
               routePlan={fullPlan}
               userLat={userLat}
               userLng={userLng}
-              onExpand={() => setMapExpanded((v) => !v)}
-              height={mapExpanded ? 360 : 220}
+              onExpand={() => setFullMapVisible(true)}
+              height={220}
             />
           </View>
 
@@ -190,6 +360,18 @@ export default function ActiveRouteScreen() {
               ℹ️ Distances and times are approximate (straight-line). No live routing provider.
             </Text>
           </View>
+
+          {/* Final-stop distance-to-end warning */}
+          {showFinalStopWarning && (
+            <View style={styles.finalStopWarning}>
+              <AlertTriangle size={13} color="#C62828" />
+              <Text style={styles.finalStopWarningText}>
+                Your last stop is{' '}
+                <Text style={{ fontWeight: '700' }}>{formatDistance(Math.round(lastStopDistanceToEnd!))}</Text>
+                {' '}from your set end point — consider arranging a rideshare back.
+              </Text>
+            </View>
+          )}
 
           {/* GPS status when route is active */}
           {routeStarted && locationState.permissionStatus === 'denied' && (
@@ -214,13 +396,44 @@ export default function ActiveRouteScreen() {
             </View>
           ) : null}
 
+          {/* Group member progress (trip-linked) */}
+          {plan.tripId && memberProgress && memberProgress.members.length > 0 && (
+            <View style={styles.membersCard}>
+              <Pressable style={styles.membersHeader} onPress={() => setMembersExpanded((v) => !v)}>
+                <Users size={14} color={color.deep} />
+                <Text style={styles.membersTitle}>
+                  {memberProgress.members.length} trip member{memberProgress.members.length !== 1 ? 's' : ''}
+                </Text>
+                {membersExpanded ? <ChevronUp size={13} color={color.mute} /> : <ChevronDown size={13} color={color.mute} />}
+              </Pressable>
+              {membersExpanded && (
+                <View style={styles.membersList}>
+                  {memberProgress.members.map((m) => (
+                    <View key={m.userId} style={styles.memberRow}>
+                      <View style={styles.memberAvatar}>
+                        <Text style={styles.memberAvatarText}>
+                          {(m.displayName ?? 'T')[0]?.toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text style={styles.memberName} numberOfLines={1}>{m.displayName}</Text>
+                      {m.isOwner && <View style={styles.ownerBadge}><Text style={styles.ownerBadgeText}>owner</Text></View>}
+                    </View>
+                  ))}
+                  <Text style={styles.memberProgressNote}>
+                    {memberProgress.arrivedCount}/{memberProgress.totalStops} checkpoints completed
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Stop + leg cards */}
           {stops.map((stop: RouteStop, idx: number) => {
-            const nextLeg = legByFromStop.get(stop.id);
-            const isNext = nextStop?.id === stop.id;
-            const isDone = stop.checkpointStatus === 'arrived';
+            const nextLeg  = legByFromStop.get(stop.id);
+            const isNext   = nextStop?.id === stop.id;
+            const isDone   = stop.checkpointStatus === 'arrived';
             const isSkipped = stop.checkpointStatus === 'skipped';
-            const loc = stop.structuredLocation;
+            const loc      = stop.structuredLocation;
 
             return (
               <View key={stop.id}>
@@ -321,6 +534,15 @@ export default function ActiveRouteScreen() {
         }
         suggestionReason={`Your route has ${totalCount} stops — estimated ~${estimatedReturnMinutes} min total.`}
       />
+
+      <RouteFullMapModal
+        visible={fullMapVisible}
+        onClose={() => setFullMapVisible(false)}
+        stops={stops}
+        legs={legs}
+        userLat={userLat}
+        userLng={userLng}
+      />
     </>
   );
 }
@@ -340,9 +562,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
     paddingHorizontal: space.lg, marginBottom: space.sm,
   },
-  progressBg: {
-    flex: 1, height: 6, backgroundColor: color.haze, borderRadius: 3, overflow: 'hidden',
-  },
+  progressBg: { flex: 1, height: 6, backgroundColor: color.haze, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: 6, backgroundColor: color.deep },
   progressLabel: { ...t.small, color: color.mute, fontSize: 12 },
   approxBanner: {
@@ -350,6 +570,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF8E1', borderRadius: radius.sm, padding: space.sm,
   },
   approxText: { ...t.small, color: '#7B5E00', fontSize: 11 },
+  finalStopWarning: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.xs,
+    marginHorizontal: space.lg, marginBottom: space.sm,
+    backgroundColor: '#FFEBEE', borderRadius: radius.sm, padding: space.sm,
+  },
+  finalStopWarningText: { ...t.small, color: '#C62828', fontSize: 11, flex: 1, lineHeight: 16 },
   gpsWarning: {
     marginHorizontal: space.lg, marginBottom: space.sm,
     backgroundColor: '#FFF3E0', borderRadius: radius.sm, padding: space.sm,
@@ -362,6 +588,24 @@ const styles = StyleSheet.create({
   compassHeader: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   compassTitle: { ...t.bodyStrong, color: color.deep, fontSize: 13, flex: 1 },
   compassBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 18, marginTop: space.sm },
+  membersCard: {
+    marginHorizontal: space.lg, marginBottom: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, padding: space.md,
+  },
+  membersHeader: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  membersTitle: { ...t.bodyStrong, color: color.ink, fontSize: 13, flex: 1 },
+  membersList: { marginTop: space.sm, gap: space.xs },
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  memberAvatar: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
+  },
+  memberAvatarText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  memberName: { ...t.small, color: color.ink, fontSize: 12, flex: 1 },
+  ownerBadge: { backgroundColor: '#EAF2F4', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  ownerBadgeText: { ...t.small, color: color.deep, fontSize: 10, fontWeight: '600' },
+  memberProgressNote: { ...t.small, color: color.mute, fontSize: 11, marginTop: 4 },
   stopCard: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
     marginHorizontal: space.lg, marginBottom: 2,
@@ -375,9 +619,9 @@ const styles = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
   },
-  stopBadgeDone: { backgroundColor: '#999' },
+  stopBadgeDone:    { backgroundColor: '#999' },
   stopBadgeSkipped: { backgroundColor: '#ccc' },
-  stopBadgeNext: { backgroundColor: color.deep },
+  stopBadgeNext:    { backgroundColor: color.deep },
   stopBadgeText: { ...t.small, color: '#fff', fontSize: 12, fontWeight: '700' },
   stopCardBody: { flex: 1 },
   stopTitle: { ...t.body, color: color.ink, fontSize: 14 },

@@ -108,6 +108,7 @@ router.post("/route-plans", async (req, res) => {
       start_location: startLocation ?? null,
       end_location: endLocation ?? null,
       status: "draft",
+      compass_explanation: optimized.compassExplanation ?? null,
       is_approximated: true,
     })
     .select("*")
@@ -266,6 +267,73 @@ router.patch("/route-plans/:id/stops/:stopId", async (req, res) => {
   }
 
   res.json(toCamel(updated as Record<string, unknown>));
+});
+
+// ── GET /api/route-plans/:id/members ─────────────────────────────────────────
+// Returns trip member list enriched with their checkpoint progress on this plan.
+// Only available for trip-linked plans.
+
+router.get("/route-plans/:id/members", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
+
+  const { data: plan } = await client
+    .from("route_plans")
+    .select("id, owner_user_id, trip_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
+
+  const tripId = (plan as any).trip_id as string | null;
+  if (!tripId) {
+    sendError(res, "invalid_payload", "This plan is not linked to a trip");
+    return;
+  }
+
+  // Verify caller is the owner or a trip member
+  const isOwner = (plan as any).owner_user_id === user.id;
+  if (!isOwner) {
+    const isMember = await isAcceptedTripMember(client, tripId, user.id);
+    if (!isMember) { sendError(res, "forbidden", "Not a trip member"); return; }
+  }
+
+  // Fetch accepted trip members + their profiles
+  const { data: members } = await (client as any)
+    .from("trip_members")
+    .select("user_id, role, profiles(id, display_name, avatar_url)")
+    .eq("trip_id", tripId)
+    .in("role", ["owner", "member"]);
+
+  // Fetch all stops for this plan (to compute per-member progress later)
+  const { data: stops } = await (client as any)
+    .from("route_stops")
+    .select("id, checkpoint_status")
+    .eq("route_plan_id", id);
+
+  const totalStops = (stops ?? []).length;
+  const arrivedCount = (stops ?? []).filter(
+    (s: Record<string, unknown>) => s.checkpoint_status === "arrived",
+  ).length;
+
+  // Since checkpoint_status is shared (not per-user), we return member list +
+  // shared progress for display purposes.
+  const result = (members ?? []).map((m: any) => ({
+    userId: m.user_id,
+    displayName: m.profiles?.display_name ?? "Traveler",
+    avatarUrl: m.profiles?.avatar_url ?? null,
+    role: m.role,
+    isOwner: m.user_id === (plan as any).owner_user_id,
+    // Shared progress — route checkpoints are tracked per-plan not per-member
+    arrivedCount,
+    totalCount: totalStops,
+  }));
+
+  res.json({ members: result, totalStops, arrivedCount });
 });
 
 // ── DELETE /api/route-plans/:id ───────────────────────────────────────────────

@@ -1,16 +1,20 @@
 /**
  * useRoutePlan — loads and periodically polls a route plan for checkpoint updates.
+ * For trip-linked plans, also fetches group member progress.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchRoutePlan,
+  fetchRoutePlanMembers,
   patchRoutePlanStop,
   type FullRoutePlan,
   type CheckpointStatus,
   type PatchStopPayload,
+  type RoutePlanMembersResult,
 } from '../services/routePlan';
 
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS    = 10_000;
+const MEMBERS_POLL_MS     = 30_000;
 
 export interface UseRoutePlanOptions {
   planId: string | null;
@@ -29,13 +33,17 @@ export interface UseRoutePlanResult {
   totalCount: number;
   progressFraction: number;
   nextStop: FullRoutePlan['stops'][number] | null;
+  memberProgress: RoutePlanMembersResult | null;
 }
 
 export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOptions): UseRoutePlanResult {
-  const [plan, setPlan] = useState<FullRoutePlan | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [plan, setPlan]               = useState<FullRoutePlan | null>(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [memberProgress, setMemberProgress] = useState<RoutePlanMembersResult | null>(null);
+
+  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const membersRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!planId) return;
@@ -51,9 +59,26 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
     }
   }, [planId]);
 
+  const loadMembers = useCallback(async () => {
+    if (!planId || !plan?.plan.tripId) return;
+    try {
+      const result = await fetchRoutePlanMembers(planId);
+      setMemberProgress(result);
+    } catch {
+      // Non-fatal: member progress is supplementary
+    }
+  }, [planId, plan?.plan.tripId]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  // Fetch member progress once the plan loads (only for trip-linked plans)
+  useEffect(() => {
+    if (plan?.plan.tripId) {
+      loadMembers();
+    }
+  }, [plan?.plan.tripId, loadMembers]);
 
   useEffect(() => {
     if (!pollingEnabled || !planId) return;
@@ -62,6 +87,15 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [load, planId, pollingEnabled]);
+
+  // Poll member progress less frequently
+  useEffect(() => {
+    if (!pollingEnabled || !planId || !plan?.plan.tripId) return;
+    membersRef.current = setInterval(loadMembers, MEMBERS_POLL_MS);
+    return () => {
+      if (membersRef.current) clearInterval(membersRef.current);
+    };
+  }, [loadMembers, planId, pollingEnabled, plan?.plan.tripId]);
 
   const patchStop = useCallback(async (stopId: string, payload: PatchStopPayload) => {
     if (!planId) return;
@@ -83,11 +117,10 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
     await patchStop(stopId, { checkpointStatus: 'skipped' });
   }, [patchStop]);
 
-  const completedCount = plan?.stops.filter((s) => s.checkpointStatus === 'arrived').length ?? 0;
-  const totalCount = plan?.stops.length ?? 0;
+  const completedCount   = plan?.stops.filter((s) => s.checkpointStatus === 'arrived').length ?? 0;
+  const totalCount       = plan?.stops.length ?? 0;
   const progressFraction = totalCount > 0 ? completedCount / totalCount : 0;
-
-  const nextStop = plan?.stops.find((s) => s.checkpointStatus === 'pending') ?? null;
+  const nextStop         = plan?.stops.find((s) => s.checkpointStatus === 'pending') ?? null;
 
   return {
     plan,
@@ -101,5 +134,6 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
     totalCount,
     progressFraction,
     nextStop,
+    memberProgress,
   };
 }

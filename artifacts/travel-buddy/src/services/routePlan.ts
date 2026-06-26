@@ -165,3 +165,30 @@ export async function deleteRoutePlan(id: string): Promise<void> {
     throw new Error((err as any).message ?? `deleteRoutePlan ${res.status}`);
   }
 }
+
+// ── Group member progress ──────────────────────────────────────────────────────
+
+export interface RoutePlanMember {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  role: string;
+  isOwner: boolean;
+  arrivedCount: number;
+  totalCount: number;
+}
+
+export interface RoutePlanMembersResult {
+  members: RoutePlanMember[];
+  totalStops: number;
+  arrivedCount: number;
+}
+
+export async function fetchRoutePlanMembers(planId: string): Promise<RoutePlanMembersResult> {
+  const res = await authedFetch(`${apiBase()}/api/route-plans/${planId}/members`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `fetchRoutePlanMembers ${res.status}`);
+  }
+  return res.json();
+}
