@@ -8,7 +8,7 @@
  *  - "Start route" / "Arrived" / "Skip stop" / "End session" action bar
  *  - Compass explanation (collapsible "Why this order?" card)
  *  - Safe Return integration (pre-fill return time)
- *  - GPS auto-checkpoint using expo-location (80 m radius, foreground only)
+ *  - GPS auto-checkpoint driven by existing useActiveLocation (no parallel location subsystem)
  *  - Manual fallback if GPS is denied
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -16,10 +16,9 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Alert, Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import * as Location from 'expo-location';
 import {
   Route, CheckCircle, SkipForward, StopCircle, ChevronDown, ChevronUp,
-  MapPin, Clock, Shield, Compass,
+  MapPin, Shield, Compass,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
@@ -31,7 +30,6 @@ import type { RouteStop } from '../../src/services/routePlan';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ARRIVAL_RADIUS_M = 80;
-const GPS_POLL_MS = 10_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,64 +76,49 @@ export default function ActiveRouteScreen() {
     completedCount, totalCount, progressFraction, nextStop,
   } = useRoutePlan({ planId: id ?? null });
 
-  const { locationState } = useActiveLocation();
+  // Use the existing location infrastructure — no parallel expo-location subsystem.
+  const { locationState, requestLocation } = useActiveLocation();
   const [compassExpanded, setCompassExpanded] = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
   const [routeStarted, setRouteStarted] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
+
+  // Track stops we've already auto-checked to avoid duplicate PATCH calls.
   const notifiedStops = useRef(new Set<string>());
 
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
 
+  // Auto-checkpoint: react to coordinate changes from the existing location system.
+  // This reuses the location subsystem rather than introducing a parallel poll loop.
   useEffect(() => {
     if (!routeStarted || !fullPlan) return;
+    if (userLat == null || userLng == null) return;
 
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    for (const stop of fullPlan.stops) {
+      if (stop.checkpointStatus !== 'pending') continue;
+      if (notifiedStops.current.has(stop.id)) continue;
+      const loc = stop.structuredLocation;
+      if (!loc?.lat || !loc?.lng) continue;
 
-    async function checkProximity() {
-      if (cancelled) return;
-      const { status } = await Location.getForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-
-      let pos: Location.LocationObject;
-      try {
-        pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      } catch {
-        return;
-      }
-
-      const { latitude, longitude } = pos.coords;
-
-      for (const stop of fullPlan!.stops) {
-        if (stop.checkpointStatus !== 'pending') continue;
-        if (notifiedStops.current.has(stop.id)) continue;
-        const loc = stop.structuredLocation;
-        if (!loc?.lat || !loc?.lng) continue;
-
-        const dist = haversineMeters(latitude, longitude, loc.lat, loc.lng);
-        if (dist <= ARRIVAL_RADIUS_M) {
-          notifiedStops.current.add(stop.id);
-          markArrived(stop.id).catch(() => {
-            notifiedStops.current.delete(stop.id);
-          });
-        }
+      const dist = haversineMeters(userLat, userLng, loc.lat, loc.lng);
+      if (dist <= ARRIVAL_RADIUS_M) {
+        notifiedStops.current.add(stop.id);
+        markArrived(stop.id).catch(() => {
+          notifiedStops.current.delete(stop.id);
+        });
       }
     }
+  }, [routeStarted, fullPlan, userLat, userLng, markArrived]);
 
-    void checkProximity();
-    timer = setInterval(() => { void checkProximity(); }, GPS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-    };
-  }, [routeStarted, fullPlan, markArrived]);
-
-  const handleStartRoute = useCallback(() => {
+  const handleStartRoute = useCallback(async () => {
+    // Request a location refresh when the route starts so proximity checks fire promptly.
+    // Falls back to manual checkpoints if permission is denied.
+    if (locationState.permissionStatus !== 'denied') {
+      requestLocation().catch(() => {});
+    }
     setRouteStarted(true);
-  }, []);
+  }, [locationState.permissionStatus, requestLocation]);
 
   const handleEndSession = useCallback(() => {
     Alert.alert(
@@ -208,6 +191,15 @@ export default function ActiveRouteScreen() {
             </Text>
           </View>
 
+          {/* GPS status when route is active */}
+          {routeStarted && locationState.permissionStatus === 'denied' && (
+            <View style={styles.gpsWarning}>
+              <Text style={styles.gpsWarningText}>
+                📍 GPS is off — mark stops manually using the "Arrived" button.
+              </Text>
+            </View>
+          )}
+
           {/* Compass explanation */}
           {plan.compassExplanation ? (
             <View style={styles.compassCard}>
@@ -223,7 +215,7 @@ export default function ActiveRouteScreen() {
           ) : null}
 
           {/* Stop + leg cards */}
-          {stops.map((stop, idx) => {
+          {stops.map((stop: RouteStop, idx: number) => {
             const nextLeg = legByFromStop.get(stop.id);
             const isNext = nextStop?.id === stop.id;
             const isDone = stop.checkpointStatus === 'arrived';
@@ -358,6 +350,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF8E1', borderRadius: radius.sm, padding: space.sm,
   },
   approxText: { ...t.small, color: '#7B5E00', fontSize: 11 },
+  gpsWarning: {
+    marginHorizontal: space.lg, marginBottom: space.sm,
+    backgroundColor: '#FFF3E0', borderRadius: radius.sm, padding: space.sm,
+  },
+  gpsWarningText: { ...t.small, color: '#E65100', fontSize: 11 },
   compassCard: {
     marginHorizontal: space.lg, marginBottom: space.md,
     backgroundColor: '#EAF2F4', borderRadius: radius.md, padding: space.md,

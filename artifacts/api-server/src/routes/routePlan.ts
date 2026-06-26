@@ -126,7 +126,7 @@ router.post("/route-plans", async (req, res) => {
     return {
       route_plan_id: planId,
       source_type: src?.sourceType ?? "manual",
-      source_id: src?.sourceType !== "manual" && stops[i] ? (stops[i] as any).sourceId ?? null : null,
+      source_id: src?.sourceType !== "manual" ? (src as any)?.sourceId ?? null : null,
       title: os.stop.title,
       structured_location: {
         label: os.stop.title,

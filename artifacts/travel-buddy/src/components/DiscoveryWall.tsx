@@ -4,8 +4,9 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
-  Gem, Star, Share2,
+  Gem, Star, Share2, Route,
 } from 'lucide-react-native';
+import type { RouteStopDraft } from './RouteBuilderSheet';
 import type { DiscoveryItem } from '../data/discovery';
 import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
@@ -201,7 +202,7 @@ function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; ava
 }
 
 /* ── Hidden Gems ── */
-export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
+export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
   const [shareVisible, setShareVisible] = useState(false);
   const sharePayload: DiscoverySharePayload = {
@@ -239,6 +240,16 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
               onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
               <Text style={g.addText}>Add to Plan</Text>
             </Pressable>
+            {onAddToRoute ? (
+              <Pressable
+                style={({ pressed }) => [g.routeBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => onAddToRoute({ id: gem.id, title: gem.name, lat: null, lng: null, sourceType: 'hidden_gem', sourceId: gem.id, category: gem.category as string })}
+                hitSlop={layout.hitSlop}
+              >
+                <Route size={12} color={color.deep} />
+                <Text style={g.routeText}>Route</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               style={({ pressed }) => [g.shareBtn, pressed && { opacity: layout.pressedOpacity }]}
               hitSlop={layout.hitSlop}
@@ -258,7 +269,7 @@ export function HiddenGemCard({ gem }: { gem: DiscoveryItem }) {
   );
 }
 
-export function HiddenGemsSection({ gems }: { gems: DiscoveryItem[] }) {
+export function HiddenGemsSection({ gems, onAddToRoute }: { gems: DiscoveryItem[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   return (
     <View>
       <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/saved')} />
@@ -266,7 +277,7 @@ export function HiddenGemsSection({ gems }: { gems: DiscoveryItem[] }) {
         <TravelEmptyState title="No hidden gems yet" sub="Be the first to share a spot travelers should know about." />
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={g.strip}>
-          {gems.slice(0, 5).map((gem) => <HiddenGemCard key={gem.id} gem={gem} />)}
+          {gems.slice(0, 5).map((gem) => <HiddenGemCard key={gem.id} gem={gem} onAddToRoute={onAddToRoute} />)}
         </ScrollView>
       )}
     </View>
@@ -299,7 +310,7 @@ export function NeighborhoodsSection({ items }: { items: NeighborhoodVibe[] }) {
 }
 
 /* ── Traveler Picks ── */
-export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
+export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
   return (
     <View style={tpk.card}>
@@ -327,6 +338,15 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
         <Pressable style={({ pressed }) => [tpk.saveBtn, pressed && { opacity: layout.pressedOpacity }]} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving traveler picks is coming in a future update.')}>
           <Bookmark size={14} color={color.mute} /><Text style={tpk.saveText}>Save</Text>
         </Pressable>
+        {onAddToRoute ? (
+          <Pressable
+            style={({ pressed }) => [tpk.routeBtn, pressed && { opacity: layout.pressedOpacity }]}
+            onPress={() => onAddToRoute({ id: pick.id, title: pick.place, lat: null, lng: null, sourceType: 'place', sourceId: pick.id, category: pick.tag })}
+          >
+            <Route size={12} color={color.deep} />
+            <Text style={tpk.routeText}>Route</Text>
+          </Pressable>
+        ) : null}
         <Pressable style={({ pressed }) => [tpk.addBtn, pressed && { opacity: layout.pressedOpacity }]}
           onPress={() => planPicker.open({ id: pick.id, type: 'place', title: pick.place, city: pick.city, category: pick.tag })}>
           <Text style={tpk.addText}>Add to Plan</Text>
@@ -336,7 +356,7 @@ export function TravelerPickCard({ pick }: { pick: TravelerPick }) {
   );
 }
 
-export function TravelerPicksSection({ picks }: { picks: TravelerPick[] }) {
+export function TravelerPicksSection({ picks, onAddToRoute }: { picks: TravelerPick[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   return (
     <View>
       <TravelSectionHeader title="Traveler Picks" onAction={() => router.push('/saved')} />
@@ -344,7 +364,7 @@ export function TravelerPicksSection({ picks }: { picks: TravelerPick[] }) {
         <TravelEmptyState title="No traveler picks yet" sub="Recommendations from travelers will show up here." />
       ) : (
         <View style={tpk.strip}>
-          {picks.slice(0, 3).map((p) => <TravelerPickCard key={p.id} pick={p} />)}
+          {picks.slice(0, 3).map((p) => <TravelerPickCard key={p.id} pick={p} onAddToRoute={onAddToRoute} />)}
         </View>
       )}
     </View>
@@ -508,6 +528,8 @@ const g = StyleSheet.create({
   btnRow: { marginTop: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.xs },
   addBtn: { flex: 1, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
+  routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
+  routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
   shareBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
 });
 
@@ -538,6 +560,8 @@ const tpk = StyleSheet.create({
   saveText: { ...t.small, color: color.mute, fontWeight: '700' },
   addBtn: { flex: 1, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center' },
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
+  routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
+  routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
 });
 
 const sv = StyleSheet.create({

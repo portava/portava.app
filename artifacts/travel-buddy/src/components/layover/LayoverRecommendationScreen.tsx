@@ -10,7 +10,7 @@ import {
   View, Text, ScrollView, Pressable,
   StyleSheet, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { Shield, Clock, MapPin, AlertTriangle, Plane, Coffee, Building, Compass, Bookmark, CalendarPlus, Users, Send, PlaneTakeoff } from 'lucide-react-native';
+import { Shield, Clock, MapPin, AlertTriangle, Plane, Coffee, Building, Compass, Bookmark, CalendarPlus, Users, Send, PlaneTakeoff, Route as RouteIcon } from 'lucide-react-native';
 import {
   getRecommendations,
   getSessionSafety,
@@ -26,6 +26,7 @@ interface Props {
   onAskCompass?: () => void;
   onSafeReturn?: () => void;
   onAddToPlan?: (rec: LayoverRecommendation) => void;
+  onAddToRoute?: (rec: LayoverRecommendation) => void;
   onInviteCrew?: (rec: LayoverRecommendation) => void;
   onSendTelegraph?: (rec: LayoverRecommendation) => void;
 }
@@ -35,6 +36,7 @@ interface RecCardProps {
   onAskCompass?: () => void;
   onSafeReturn?: () => void;
   onAddToPlan?: (rec: LayoverRecommendation) => void;
+  onAddToRoute?: (rec: LayoverRecommendation) => void;
   onInviteCrew?: (rec: LayoverRecommendation) => void;
   onSendTelegraph?: (rec: LayoverRecommendation) => void;
 }
@@ -68,7 +70,7 @@ function SafetyBadge({ rating }: { rating: SafetyRating }) {
   );
 }
 
-function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, onSendTelegraph }: RecCardProps) {
+function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, onInviteCrew, onSendTelegraph }: RecCardProps) {
   const isRisky      = rec.safetyRating === 'not_recommended' || rec.safetyRating === 'possible_but_risky';
   const isAirportOnly = rec.safetyRating === 'airport_only';
 
@@ -156,6 +158,12 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, o
             <Text style={styles.actionBtnSecondaryText}>Send in Chat</Text>
           </Pressable>
         )}
+        {onAddToRoute && !isAirportOnly && (
+          <Pressable style={styles.actionBtnSecondary} onPress={() => onAddToRoute(rec)}>
+            <RouteIcon size={12} color="#555" />
+            <Text style={styles.actionBtnSecondaryText}>Add to Route</Text>
+          </Pressable>
+        )}
         {isAirportOnly && (
           <View style={styles.airportOnlyBadge}>
             <PlaneTakeoff size={12} color="#1565C0" />
@@ -169,7 +177,7 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, o
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onInviteCrew, onSendTelegraph }: Props) {
+export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, onInviteCrew, onSendTelegraph }: Props) {
   const [recs, setRecs]           = useState<LayoverRecommendation[]>([]);
   const [safety, setSafety]       = useState<LayoverSafetyResult | null>(null);
   const [loading, setLoading]     = useState(true);
@@ -248,6 +256,7 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
               onAskCompass={onAskCompass}
               onSafeReturn={onSafeReturn}
               onAddToPlan={onAddToPlan}
+              onAddToRoute={onAddToRoute}
               onInviteCrew={onInviteCrew}
               onSendTelegraph={onSendTelegraph}
             />

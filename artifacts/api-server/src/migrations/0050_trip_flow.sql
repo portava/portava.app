@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS route_plans (
   id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   trip_id           uuid        NULL REFERENCES trips(id) ON DELETE SET NULL,
+  circle_id         uuid        NULL REFERENCES circles(id) ON DELETE SET NULL,
   title             text        NOT NULL DEFAULT 'My Route',
   start_location    jsonb       NULL,
   -- { label: string, lat: number, lng: number }
