@@ -8,12 +8,13 @@
  *
  * Run: node --import tsx/esm --test src/test/userSuggestions.test.ts
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { _clearAllSeen } from "../lib/suggestionSeenCache.js";
 import followsRouter from "../routes/follows.js";
 
 // ── fake state ────────────────────────────────────────────────────────────────
@@ -114,6 +115,8 @@ function setup(state: Parameters<typeof makeFakeClient>[0]) {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 describe("GET /api/users/suggestions", () => {
+  // Wipe the seen-IDs cache between every test so exclusion state doesn't bleed across cases.
+  beforeEach(() => _clearAllSeen());
   it("returns 401 when unauthenticated", async () => {
     setup({ follows: [], profiles: [], blocks: [] });
     const r = await req("/users/suggestions", "bad-token");
@@ -394,5 +397,110 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(bUser, "B should appear in fallback suggestions");
     assert.equal(bUser.mutualCount, 0);
     assert.equal(bUser.reason, null);
+  });
+
+  // ── seen-cache exclusion ─────────────────────────────────────────────────────
+
+  it("fallback excludes IDs seen in a previous request", async () => {
+    // Pool of 20 profiles — larger than the 10-item per-request slice.
+    // First call returns up to 10; second call must only return IDs not yet seen.
+    const pool = Array.from({ length: 20 }, (_, i) => ({
+      id: `pool-${i}`,
+      handle: `u${i}`,
+      name: `User ${i}`,
+      avatar_url: null,
+      is_private: false,
+    }));
+    setup({ follows: [], profiles: pool, blocks: [] });
+
+    const r1 = await req("/users/suggestions");
+    const body1 = await r1.json() as any;
+    const seenAfterFirst = new Set<string>(body1.users.map((u: any) => u.id));
+    assert.ok(seenAfterFirst.size > 0, "first request should return some users");
+
+    // Second call — the seen IDs should not reappear (pool still has unseen profiles)
+    const r2 = await req("/users/suggestions");
+    const body2 = await r2.json() as any;
+    for (const u of body2.users) {
+      assert.ok(
+        !seenAfterFirst.has(u.id),
+        `${u.id} was already seen in the first request and should be excluded`
+      );
+    }
+  });
+
+  it("fallback resets and returns results when all pool IDs have been seen", async () => {
+    // Only 2 profiles in the pool. After the first call both are seen.
+    // The second call should reset and still return results (not an empty list).
+    const pool = [
+      { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+      { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+    ];
+    setup({ follows: [], profiles: pool, blocks: [] });
+
+    const r1 = await req("/users/suggestions");
+    assert.equal(r1.status, 200);
+    const body1 = await r1.json() as any;
+    assert.ok(body1.users.length > 0, "first call should have results");
+
+    // After first call the whole pool is exhausted — second call must still work.
+    const r2 = await req("/users/suggestions");
+    assert.equal(r2.status, 200);
+    const body2 = await r2.json() as any;
+    assert.ok(body2.users.length > 0, "second call should reset and return results instead of empty list");
+  });
+
+  it("seen-cache is per-user and does not bleed between users", async () => {
+    const ME2 = "user-me2";
+    const ME2_TOK = "tok-me2";
+
+    const pool = [
+      { id: A, handle: "aaa", name: "Alice", avatar_url: null, is_private: false },
+      { id: B, handle: "bbb", name: "Bob",   avatar_url: null, is_private: false },
+    ];
+
+    // Create a second fake client that authenticates ME2
+    const me2Client = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME2_TOK
+            ? { data: { user: { id: ME2 } }, error: null }
+            : { data: { user: null }, error: { message: "bad token" } },
+      },
+      from: (table: string) => {
+        const builder: any = {
+          select() { return builder; },
+          eq()    { return builder; },
+          neq()   { return builder; },
+          in()    { return builder; },
+          not()   { return builder; },
+          or()    { return builder; },
+          limit() { return builder; },
+          order() { return builder; },
+          maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+          then(onF: any, onR: any) {
+            const rows = table === "profiles" ? pool : [];
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          },
+        };
+        return builder;
+      },
+    };
+
+    // ME does a first call — A and B get marked as seen for ME
+    setup({ follows: [], profiles: pool, blocks: [] });
+    const r1 = await req("/users/suggestions");
+    const body1 = await r1.json() as any;
+    assert.ok(body1.users.length > 0, "ME first call should have results");
+
+    // Now switch to ME2 — their seen cache should be empty so they still see A and B
+    _setTestClient(me2Client as any, true);
+    _setTestServiceClient(me2Client as any);
+    const r2 = await fetch(`${base}/users/suggestions`, {
+      headers: { Authorization: `Bearer ${ME2_TOK}` },
+    });
+    assert.equal(r2.status, 200);
+    const body2 = await r2.json() as any;
+    assert.ok(body2.users.length > 0, "ME2 should still see suggestions (independent cache)");
   });
 });

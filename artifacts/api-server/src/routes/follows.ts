@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { decideFollow, decideUnfollow, isUuid } from "../lib/followDecisions";
+import { getSeenIds, markAsSeen, clearSeen } from "../lib/suggestionSeenCache";
 
 const router = Router();
 
@@ -355,17 +356,28 @@ router.get("/users/suggestions", async (req, res) => {
       return;
     }
 
+    const seenIds = getSeenIds(user.id);
+
     const pool = (fallbackRows ?? [])
       .map((r: any) => r.id as string)
       .filter((id) => !blockedSet.has(id) && !alreadyFollowingSet.has(id));
 
-    // Fisher-Yates shuffle so each new user sees a different sample
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
+    // Exclude recently-seen IDs so each refresh surfaces genuinely fresh faces.
+    // If excluding seen IDs would empty the pool, clear the cache and use the
+    // full pool instead — the user has exhausted all available suggestions.
+    let freshPool = pool.filter((id) => !seenIds.has(id));
+    if (freshPool.length === 0 && pool.length > 0) {
+      clearSeen(user.id);
+      freshPool = pool;
     }
 
-    safeIds = pool.slice(0, 10);
+    // Fisher-Yates shuffle so each new user sees a different sample
+    for (let i = freshPool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [freshPool[i], freshPool[j]] = [freshPool[j], freshPool[i]];
+    }
+
+    safeIds = freshPool.slice(0, 10);
   }
 
   if (safeIds.length === 0) { res.status(200).json({ users: [] }); return; }
@@ -439,6 +451,10 @@ router.get("/users/suggestions", async (req, res) => {
         reason,
       };
     });
+
+  // Record served IDs so the next fallback request excludes them.
+  const servedIds = users.map((u: any) => u.id as string);
+  if (servedIds.length > 0) markAsSeen(user.id, servedIds);
 
   res.status(200).json({ users });
 });
