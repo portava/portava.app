@@ -312,7 +312,7 @@ router.get("/users/suggestions", async (req, res) => {
       .order("follower_id", { ascending: true })
       .limit(50),
     sc.from("profiles")
-      .select("travel_styles, travel_pace, budget_style")
+      .select("travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style")
       .eq("id", user.id)
       .maybeSingle(),
   ]);
@@ -329,6 +329,10 @@ router.get("/users/suggestions", async (req, res) => {
   const callerTravelStyles: string[] = (callerProfileResult.data as any)?.travel_styles ?? [];
   const callerTravelPace: string | null = (callerProfileResult.data as any)?.travel_pace ?? null;
   const callerBudgetStyle: string | null = (callerProfileResult.data as any)?.budget_style ?? null;
+  const callerTravelGroupStyle: string[] = (callerProfileResult.data as any)?.travel_group_style ?? [];
+  const callerLookingFor: string[] = (callerProfileResult.data as any)?.looking_for ?? [];
+  const callerComfortLevel: string | null = (callerProfileResult.data as any)?.comfort_level ?? null;
+  const callerPlanningStyle: string | null = (callerProfileResult.data as any)?.planning_style ?? null;
 
   const followerIds = (followerRows ?? []).map((r: any) => r.follower_id as string);
 
@@ -414,7 +418,7 @@ router.get("/users/suggestions", async (req, res) => {
   //    candidates from deeper in the shuffle can still surface in the final list.
   const { data: poolProfiles, error: profErr } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private, travel_styles, travel_pace, budget_style")
+    .select("id, handle, name, avatar_url, is_private, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style")
     .in("id", safeIds);
 
   if (profErr) {
@@ -426,17 +430,36 @@ router.get("/users/suggestions", async (req, res) => {
   // Score each candidate by travel-interest overlap with the caller.
   // Returns 0 for all when the caller's profile is sparse — no change in ordering.
   const callerStylesSet = new Set<string>(callerTravelStyles);
-  const hasCallerInterests = callerStylesSet.size > 0 || !!callerTravelPace || !!callerBudgetStyle;
+  const callerGroupStyleSet = new Set<string>(callerTravelGroupStyle);
+  const callerLookingForSet = new Set<string>(callerLookingFor);
+  const hasCallerInterests =
+    callerStylesSet.size > 0 ||
+    !!callerTravelPace ||
+    !!callerBudgetStyle ||
+    callerGroupStyleSet.size > 0 ||
+    callerLookingForSet.size > 0 ||
+    !!callerComfortLevel ||
+    !!callerPlanningStyle;
   const poolProfileMap = new Map((poolProfiles ?? []).map((p: any) => [p.id as string, p]));
 
   function interestScore(p: any): number {
     if (!hasCallerInterests) return 0;
     let s = 0;
+    // Array fields: +1 per matching entry
     for (const style of ((p.travel_styles as string[] | null) ?? [])) {
       if (callerStylesSet.has(style)) s++;
     }
+    for (const gs of ((p.travel_group_style as string[] | null) ?? [])) {
+      if (callerGroupStyleSet.has(gs)) s++;
+    }
+    for (const lf of ((p.looking_for as string[] | null) ?? [])) {
+      if (callerLookingForSet.has(lf)) s++;
+    }
+    // Scalar fields: +1 on exact match
     if (callerTravelPace && p.travel_pace === callerTravelPace) s++;
     if (callerBudgetStyle && p.budget_style === callerBudgetStyle) s++;
+    if (callerComfortLevel && p.comfort_level === callerComfortLevel) s++;
+    if (callerPlanningStyle && p.planning_style === callerPlanningStyle) s++;
     return s;
   }
 
