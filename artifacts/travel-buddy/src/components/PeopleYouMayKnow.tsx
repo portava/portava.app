@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Image,
   ActivityIndicator,
   StyleSheet,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -52,6 +53,10 @@ interface CardProps {
 function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
   const [following, setFollowing] = useState(user.isFollowing);
   const [toggling, setToggling] = useState(false);
+  const opacity = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(1)).current;
+  const width = useRef(new Animated.Value(120)).current;
+  const marginRight = useRef(new Animated.Value(0)).current;
 
   async function handleFollow() {
     if (toggling || following) return;
@@ -59,11 +64,27 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
     setFollowing(true);
     const res = await followUser(user.id);
     if (res.ok) {
-      onFollowed(user.id);
+      animateOut(() => onFollowed(user.id));
     } else {
       setFollowing(false);
     }
     setToggling(false);
+  }
+
+  function animateOut(onDone: () => void) {
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: false }),
+      Animated.timing(scale, { toValue: 0.85, duration: 200, useNativeDriver: false }),
+      Animated.sequence([
+        Animated.delay(150),
+        Animated.timing(width, { toValue: 0, duration: 180, useNativeDriver: false }),
+        Animated.timing(marginRight, { toValue: -12, duration: 0, useNativeDriver: false }),
+      ]),
+    ]).start(() => onDone());
+  }
+
+  function handleDismiss() {
+    animateOut(() => onDismiss(user.id));
   }
 
   function handlePress() {
@@ -75,44 +96,46 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
   const reason = user.reason ?? null;
 
   return (
-    <Pressable style={styles.card} onPress={handlePress}>
-      <Pressable
-        style={styles.dismissBtn}
-        onPress={() => onDismiss(user.id)}
-        hitSlop={8}
-      >
-        <X size={11} color={color.mute} />
-      </Pressable>
-      {user.avatarUrl ? (
-        <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-      ) : (
-        <View style={[styles.avatar, styles.avatarEmpty]}>
-          <Text style={{ fontSize: 20 }}>👤</Text>
-        </View>
-      )}
-      <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
-      {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
-      {reason ? <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text> : null}
-      <Pressable
-        style={[styles.followBtn, following && styles.followingBtn]}
-        onPress={handleFollow}
-        disabled={toggling || following}
-      >
-        {toggling ? (
-          <ActivityIndicator size="small" color={following ? color.mute : color.onInk} />
-        ) : following ? (
-          <>
-            <UserCheck size={11} color={color.mute} />
-            <Text style={styles.followingText}>Following</Text>
-          </>
+    <Animated.View style={{ opacity, transform: [{ scale }], width, marginRight, overflow: 'hidden' }}>
+      <Pressable style={styles.card} onPress={handlePress}>
+        <Pressable
+          style={styles.dismissBtn}
+          onPress={handleDismiss}
+          hitSlop={8}
+        >
+          <X size={11} color={color.mute} />
+        </Pressable>
+        {user.avatarUrl ? (
+          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
         ) : (
-          <>
-            <UserPlus size={11} color={color.onInk} />
-            <Text style={styles.followText}>Follow</Text>
-          </>
+          <View style={[styles.avatar, styles.avatarEmpty]}>
+            <Text style={{ fontSize: 20 }}>👤</Text>
+          </View>
         )}
+        <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
+        {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
+        {reason ? <Text style={styles.cardReason} numberOfLines={1}>{reason}</Text> : null}
+        <Pressable
+          style={[styles.followBtn, following && styles.followingBtn]}
+          onPress={handleFollow}
+          disabled={toggling || following}
+        >
+          {toggling ? (
+            <ActivityIndicator size="small" color={following ? color.mute : color.onInk} />
+          ) : following ? (
+            <>
+              <UserCheck size={11} color={color.mute} />
+              <Text style={styles.followingText}>Following</Text>
+            </>
+          ) : (
+            <>
+              <UserPlus size={11} color={color.onInk} />
+              <Text style={styles.followText}>Follow</Text>
+            </>
+          )}
+        </Pressable>
       </Pressable>
-    </Pressable>
+    </Animated.View>
   );
 }
 
