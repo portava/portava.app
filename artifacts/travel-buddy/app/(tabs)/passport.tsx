@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, MessageCircle, Users } from 'lucide-react-native';
+import { Share2, MessageCircle, Users, Clock } from 'lucide-react-native';
+import { getPendingPosts } from '../../src/services/posts';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
@@ -315,9 +316,13 @@ function PassportContent({
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
   const { messages: unreadMessages } = useUnreadCounts();
+  const [pendingCount, setPendingCount] = useState(0);
 
   useFocusEffect(useCallback(() => {
     reload();
+    getPendingPosts().then((r) => {
+      if (r.ok && r.data) setPendingCount(r.data.length);
+    }).catch(() => {});
   }, [reload]));
 
   return (
@@ -373,6 +378,22 @@ function PassportContent({
               <Text style={styles.telegraphSub}>Become a local Buddy or find one for your trip</Text>
             </View>
             <Text style={styles.buddyArrow}>→</Text>
+          </Pressable>
+        )}
+
+        {/* Pending posts entry point — only shown when there are posts waiting */}
+        {pendingCount > 0 && (
+          <Pressable style={styles.pendingRow} onPress={() => router.push('/pending-posts' as any)}>
+            <View style={[styles.telegraphIcon, { backgroundColor: '#8B5CF620' }]}>
+              <Clock size={18} color="#8B5CF6" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.telegraphTitle}>Pending posts</Text>
+              <Text style={styles.telegraphSub}>Posts waiting to be shared</Text>
+            </View>
+            <View style={styles.pendingBadge}>
+              <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
+            </View>
           </Pressable>
         )}
 
@@ -583,6 +604,31 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   buddyArrow: { ...t.bodyStrong, color: color.signal, fontSize: 16 },
+
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginHorizontal: space.lg,
+    marginTop: space.xs,
+    marginBottom: space.xs,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: '#8B5CF630',
+    borderRadius: 14,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+  },
+  pendingBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#8B5CF6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  pendingBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   tabBarWrap: { marginTop: space.md },
   tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },
