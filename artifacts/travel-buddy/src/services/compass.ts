@@ -312,9 +312,15 @@ export async function postCompassFrontloadEvent(event: {
 }): Promise<void> {
   if (!isSupabaseConfigured || !apiBase()) return;
   try {
+    // Server schema uses snake_case: event_type, screen, city.
+    const body = {
+      event_type: event.eventType,
+      screen:     event.screen,
+      city:       event.city,
+    };
     await authedFetch('/api/compass/frontload/event', {
       method: 'POST',
-      body: JSON.stringify(event),
+      body: JSON.stringify(body),
     });
   } catch {
     // fire-and-forget

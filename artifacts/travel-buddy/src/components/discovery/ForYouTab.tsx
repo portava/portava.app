@@ -129,7 +129,16 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
   // load() call can detect they've been superseded and bail out safely.
   const loadIdRef = React.useRef(0);
 
-  // When the Compass feed resolves with enabled items, upgrade to Compass source.
+  // Refs for Compass state — lets load() read current values without listing
+  // them in its dependency array, preventing spurious resets when Compass data
+  // arrives after the initial render.
+  const compassEnabledRef = React.useRef(compass.compassEnabled);
+  const compassDataRef    = React.useRef(compass.data);
+  useEffect(() => { compassEnabledRef.current = compass.compassEnabled; }, [compass.compassEnabled]);
+  useEffect(() => { compassDataRef.current    = compass.data;           }, [compass.data]);
+
+  // When the Compass feed resolves with enabled items, upgrade to Compass source
+  // WITHOUT clearing existing items first (avoids flash of empty state).
   useEffect(() => {
     if (!compass.data) return;
     const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
@@ -150,22 +159,23 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
 
     if (!isRefresh) setLoading(true);
 
-    // When Compass is enabled and already has data, it is the primary source —
-    // no need to fire OSM/Telegraph at all.  The Compass useEffect will set items
-    // as soon as compass.data resolves (it runs in parallel with load()).
-    // Only fall back to OSM/Telegraph when Compass is explicitly disabled.
-    if (compass.compassEnabled && compass.data) {
-      // Compass data already in state — items will be set by the Compass useEffect.
+    // Read Compass state from refs — avoids depending on compass.* in useCallback,
+    // which would cause load() to recreate whenever Compass data arrives and
+    // re-trigger the reset effect (clearing Compass items immediately after they load).
+    const compassEnabled = compassEnabledRef.current;
+    const compassData    = compassDataRef.current;
+
+    // When Compass is enabled and already has data, it is the primary source.
+    // The Compass useEffect above populates items; nothing more to do here.
+    if (compassEnabled && compassData) {
       if (!stale()) { setLoading(false); setRefreshing(false); }
       return;
     }
 
-    // When compass.compassEnabled is true but data hasn't loaded yet, wait
-    // for Compass to resolve (it fires independently).  Only start OSM/Telegraph
-    // when Compass is disabled (compassEnabled === false).
-    if (compass.compassEnabled) {
-      // Still loading Compass — clear skeleton after a grace period so the user
-      // doesn't stare at an infinite loader if Compass is slow.
+    // When Compass is enabled but data hasn't arrived yet, wait for the
+    // Compass useEffect to fire (it runs independently).  Clear the skeleton
+    // after a grace period so the user doesn't stare at an infinite loader.
+    if (compassEnabled) {
       setTimeout(() => {
         if (!stale()) { setLoading(false); setRefreshing(false); }
       }, 8000);
@@ -173,15 +183,11 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
     }
 
     // ── Compass disabled — fall back to OSM + Telegraph ───────────────────────
-    // Fire OSM and Telegraph simultaneously.
-    // OSM is a simple geocode + database query (~1–2 s).
-    // Telegraph is an AI call — capped at 10 s by AbortController in the service.
     const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode);
     const telPromise = isAuthed
       ? getForYouRecommendations({ destination, count: 5 })
       : null;
 
-    // Show OSM content the instant it resolves — clears the skeleton immediately.
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
@@ -199,7 +205,6 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
-    // Silently upgrade to Telegraph AI picks when (if) the AI call returns.
     if (telPromise) {
       try {
         const tel = await telPromise;
@@ -219,13 +224,15 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       }
       if (!stale()) { setLoading(false); setRefreshing(false); }
     }
-  }, [destination, isAuthed, compass.compassEnabled, compass.data]);
+  }, [destination, isAuthed]); // No compass.* deps — read via refs above
 
+  // Reset and reload only when destination or auth changes, NOT when load()
+  // identity changes (which would happen if compass.* were in load's deps).
   useEffect(() => {
     setItems([]);
     setSource('none');
     load(false);
-  }, [destination, isAuthed, load]);
+  }, [destination, isAuthed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
     setRefreshing(true);
