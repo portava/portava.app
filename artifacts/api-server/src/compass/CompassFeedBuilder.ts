@@ -376,13 +376,67 @@ async function runFeedPipeline(
   // just globally.
   const sectionMap = new Map<SectionName, PipelineResult[]>();
   for (const [name, sectionItems] of rawSectionMap) {
-    sectionMap.set(name, diversifySection(sectionItems, profile));
+    sectionMap.set(name, diversifySection(sectionItems, profile, { sectionName: name }));
   }
 
   return {
     sectionMap,
     pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount },
   };
+}
+
+// ── rankItemsForDiscovery ──────────────────────────────────────────────────────
+
+/**
+ * Run the full feed-intelligence stack (Phase 2 pipeline → active-user reward
+ * boosts → fair-exposure injection) and return a flat list of all passed items
+ * sorted by finalScore descending, with no section split and no pagination.
+ *
+ * Use this instead of buildFeed when the caller needs to rank the entire
+ * candidate set and apply its own pagination (e.g. the Discovery route).
+ */
+export async function rankItemsForDiscovery(
+  items:   CompassItem[],
+  profile: CompassProfile,
+  context: CompassContext,
+  db:      SupabaseClient | null,
+): Promise<PipelineResult[]> {
+  // Reuse the internal feed pipeline — stops before section assignment
+  const { results, inputCount: _i, blockedCount: _b, rejectedCount: _r, passedCount: _p } =
+    await runPipeline(items, profile, context, db, {});
+
+  // Active-user reward boosts
+  const authorScores = new Map<string, ActiveUserScoreResult>();
+  if (db) {
+    const authorIds = [...new Set(results.map((r) => r.item.authorId).filter(Boolean) as string[])];
+    await Promise.allSettled(
+      authorIds.map(async (aid) => {
+        const score = await computeActiveUserScore(db, aid);
+        if (score) authorScores.set(aid, score);
+      }),
+    );
+  }
+  const boosted: PipelineResult[] = results.map((r) => {
+    if (!r.item.authorId) return r;
+    const score = authorScores.get(r.item.authorId!);
+    const boost = computeItemVisibilityBoost(score ?? null);
+    if (boost <= 0) return r;
+    return { ...r, finalScore: r.finalScore + boost, item: { ...r.item, activeVisibilityBoost: boost } };
+  });
+  boosted.sort((a, b) => b.finalScore - a.finalScore);
+
+  // Fair exposure
+  let finalPool = boosted;
+  if (boosted.length > 0) {
+    const preloaded = await preloadFairExposureData(db, boosted);
+    const { items: fairInserts } = applyFairExposure([], boosted, profile, db, preloaded.counts, preloaded.cooldowns);
+    if (fairInserts.length > 0) {
+      const fairIds = new Set(fairInserts.map((r) => r.item.id));
+      finalPool = [...fairInserts, ...boosted.filter((r) => !fairIds.has(r.item.id))];
+    }
+  }
+
+  return finalPool;
 }
 
 // ── buildFeed ─────────────────────────────────────────────────────────────────

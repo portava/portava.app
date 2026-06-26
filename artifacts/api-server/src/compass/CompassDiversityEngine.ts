@@ -311,13 +311,14 @@ function insertExplorationCards(
 export function applyDiversity(
   items: PipelineResult[],
   profile: CompassProfile,
+  opts: { skipNightlifeCap?: boolean } = {},
 ): DiversityResult {
   if (items.length === 0) {
     return { items: [], explorationCount: 0, reorderedCount: 0 };
   }
 
-  // Step 1: Cap nightlife/paid at 25%
-  const capped = applyNightlifePaidCap(items);
+  // Step 1: Cap nightlife/paid at 25% (skipped for nightlife-focused sections)
+  const capped = opts.skipNightlifeCap ? items : applyNightlifePaidCap(items);
 
   // Step 2: Break consecutive same-type runs
   const { out: broken, reorderedCount: typeReorder } = breakConsecutiveRuns(capped);
@@ -334,10 +335,15 @@ export function applyDiversity(
 /**
  * Apply diversity within a named section. This is the primary call site from
  * the FeedBuilder — each section is diversified independently.
+ *
+ * Sections with a nightlife/entertainment focus (e.g. `tonight`) skip the
+ * 25% nightlife/paid cap so their thematic utility is not collapsed.
  */
 export function diversifySection(
   sectionItems: PipelineResult[],
   profile: CompassProfile,
+  opts: { sectionName?: string } = {},
 ): PipelineResult[] {
-  return applyDiversity(sectionItems, profile).items;
+  const skipNightlifeCap = opts.sectionName === "tonight";
+  return applyDiversity(sectionItems, profile, { skipNightlifeCap }).items;
 }

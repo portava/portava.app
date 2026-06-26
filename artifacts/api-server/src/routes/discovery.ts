@@ -27,7 +27,7 @@ import { calculateUserAge } from "../lib/ageEligibility";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
-import { runPipeline } from "../compass/CompassPipeline";
+import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
 import { isEnabled } from "../compass/flags";
 
 const router = Router();
@@ -590,15 +590,13 @@ router.get("/discovery", async (req, res) => {
             const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
             const compassItems   = places.map(discoveryPlaceToCompassItem);
 
-            // Run the full pipeline on ALL candidate items and sort by finalScore.
-            // We use runPipeline directly (not buildFeed) so no page-size cap
-            // is applied — the full ranked list is available for discovery's
-            // own pagination logic.
-            const { results } = await runPipeline(
+            // Use the full feed-intelligence stack (pipeline + active-user
+            // reward boosts + fair exposure) to rank ALL candidate items.
+            // rankItemsForDiscovery returns a flat sorted list with no page-
+            // size limit so discovery applies its own pagination below.
+            const scored = await rankItemsForDiscovery(
               compassItems, compassProfile, compassContext, compassSc,
             );
-            // Sort descending by Compass score
-            const scored = results.slice().sort((a, b) => b.finalScore - a.finalScore);
 
             // Build lookup so we can restore all original DiscoveryPlace fields
             const placeById = new Map(places.map((p) => [p.id, p]));

@@ -182,6 +182,9 @@ router.get("/pulse", async (req, res) => {
   // Safety Mode: verified-location posts surface first (explicit city+venue labels).
   // Night Mode: filter to last 8 hours of posts (peak night content), fallback to full.
   let orderedPosts = posts;
+  // Prompt cards (e.g. safe-return) are returned separately so the `posts`
+  // shape stays homogeneous and existing clients are unaffected.
+  let prompts: Array<{ type: string; id: string; title: string; body: string; action: string }> = [];
   try {
     const compassEnabled = await sc
       .from("feature_flags")
@@ -195,22 +198,23 @@ router.get("/pulse", async (req, res) => {
       const primaryMode    = intentMode.primary;
 
       if (compassContext.contextState === "safety_mode" || primaryMode === "safety_mode") {
-        // Safety Mode: inject a synthetic safe-return prompt card first so the
-        // user is immediately prompted to signal their status to their crew.
-        // The prompt appears before any posts regardless of location data.
-        const safeReturnPrompt = {
-          type:    "safe_return_prompt",
-          id:      `safe_return_prompt_${Date.now()}`,
-          title:   "Are you safe?",
-          body:    "Let your travel crew know you've arrived safely.",
-          action:  "safe_return",
-          synthetic: true,
-        };
-        // After the prompt: posts with explicit location data (actionable context)
-        // come before those with no location attached.
+        // Safety Mode: surface safe-return prompt cards in a dedicated `prompts`
+        // field so existing clients consuming the `posts` array are unaffected.
+        // The prompt is typed separately; clients that understand it display it
+        // above the post list. Posts with location context come before those without.
+        prompts = [
+          {
+            type:   "safe_return_prompt",
+            id:     `safe_return_prompt_${Date.now()}`,
+            title:  "Are you safe?",
+            body:   "Let your travel crew know you've arrived safely.",
+            action: "safe_return",
+          },
+        ];
+        // After prompts: location-rich posts first (actionable context)
         const withLocation    = posts.filter((p: any) => p.venueName || (p.locationCity && p.locationCountry));
         const withoutLocation = posts.filter((p: any) => !(p.venueName || (p.locationCity && p.locationCountry)));
-        orderedPosts = [safeReturnPrompt as any, ...withLocation, ...withoutLocation];
+        orderedPosts = [...withLocation, ...withoutLocation];
       } else if (compassContext.contextState === "night_mode" || primaryMode === "night_mode") {
         // Night Mode: filter to last 8 hours — fresh night content only
         const cutoff = new Date(Date.now() - 8 * 60 * 60 * 1_000).toISOString();
@@ -221,7 +225,7 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* Compass enrichment is non-fatal — return unmodified posts */ }
 
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab });
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts });
 });
 
 export default router;
