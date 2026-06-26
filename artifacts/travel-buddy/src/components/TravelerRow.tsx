@@ -83,6 +83,9 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
             {followerCount === 1 ? '1 follower' : `${followerCount} followers`}
           </Text>
         )}
+        {user.reason ? (
+          <Text style={styles.reason} numberOfLines={1}>{user.reason}</Text>
+        ) : null}
       </View>
 
       {!isOwnProfile && !user.isPrivate && (
@@ -156,6 +159,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: color.faint,
     marginTop: 1,
+  },
+  reason: {
+    fontSize: 11,
+    color: color.signal,
+    marginTop: 2,
   },
   privateBadge: {
     flexDirection: 'row',
