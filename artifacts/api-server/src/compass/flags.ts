@@ -38,7 +38,7 @@ async function loadFlags(db: SupabaseClient): Promise<Record<string, boolean>> {
 }
 
 /** Return all Compass flags, using cache when fresh. */
-async function getFlags(db: SupabaseClient): Promise<Record<string, boolean>> {
+export async function getFlags(db: SupabaseClient): Promise<Record<string, boolean>> {
   if (_cache && Date.now() - _cache.cachedAt < CACHE_TTL_MS) {
     return _cache.flags;
   }

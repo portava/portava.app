@@ -32,6 +32,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassItemType, CompassProfile } from "./types.js";
 import { runSafetyFilterBatch }                              from "./CompassSafetyFilter.js";
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
+import { getFlags }                                          from "./flags.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,8 +55,14 @@ export interface FallbackItem {
   data:     Record<string, unknown>;
 }
 
+export interface FallbackSection {
+  name:  string;
+  items: FallbackItem[];
+  total: number;
+}
+
 export interface FallbackFeedResult {
-  sections:       [];
+  sections:       FallbackSection[];
   nextCursor:     null;
   fallback:       true;
   fallbackReason: string;
@@ -156,10 +163,13 @@ function applySafetyAndPrivacy(
   items:   FallbackItem[],
   profile: CompassProfile,
   db:      SupabaseClient | null,
+  flags:   Record<string, boolean> = {},
 ): FallbackItem[] {
   if (items.length === 0) return [];
   const compassItems    = items.map(toCompassItem);
-  const { passed }      = runSafetyFilterBatch(compassItems, profile, db);
+  // Pass pre-loaded flags so COMPASS_LAUNCH_CONTROL_ENABLED and
+  // COMPASS_<TYPE>_SAFETY_BLOCK checks are enforced identically in fallback.
+  const { passed }      = runSafetyFilterBatch(compassItems, profile, db, flags);
 
   // Run sanitizeItem and APPLY the sanitized output so privacy transformations
   // (e.g. authorId masking) are reflected in the returned FallbackItems rather
@@ -560,6 +570,11 @@ export async function buildFallbackFeed(
   const blockedIds = await loadBlockedIds(db, userId);
   const safeProf   = buildSafeProfile(userId, blockedIds, city);
 
+  // Load all Compass feature flags once so the safety filter can enforce
+  // COMPASS_LAUNCH_CONTROL_ENABLED and COMPASS_<TYPE>_SAFETY_BLOCK in fallback
+  // mode identically to the normal pipeline.
+  const flags = await getFlags(db).catch(() => ({} as Record<string, boolean>));
+
   // Static safety tools are always included first — they are not user content
   // and do not require safety-filter evaluation.
   const safetyTools = buildSafetyTools();
@@ -583,6 +598,7 @@ export async function buildFallbackFeed(
     [...activeTrips, ...savedTrips, ...bookings, ...threads, ...events, ...cityGuide, ...posts, ...passport, ...discovery],
     safeProf,
     db,
+    flags,
   );
 
   // Merge: safety tools first, then safety-filtered content (deduplicate by id)
@@ -596,8 +612,20 @@ export async function buildFallbackFeed(
     }
   }
 
+  // Group safeItems by category to populate the standard feed sections envelope.
+  // Clients that understand the normal feed shape get degraded-but-usable section
+  // content; clients that check fallback:true can also iterate safeItems directly.
+  const sectionMap = new Map<string, FallbackItem[]>();
+  for (const item of safeItems) {
+    if (!sectionMap.has(item.category)) sectionMap.set(item.category, []);
+    sectionMap.get(item.category)!.push(item);
+  }
+  const sections: FallbackSection[] = [...sectionMap.entries()].map(
+    ([name, items]) => ({ name, items, total: items.length }),
+  );
+
   return {
-    sections:       [],
+    sections,
     nextCursor:     null,
     fallback:       true,
     fallbackReason: reason,
