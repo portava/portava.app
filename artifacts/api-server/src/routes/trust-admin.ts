@@ -247,6 +247,8 @@ router.post("/admin/trust/restrictions/:id/remove", async (req, res) => {
 
   try {
     const result = await adminLiftRestriction(sc, adminId, parsed.data.targetUser, id, parsed.data.reason);
+    // Await so the affected user's compass cache is cleared before we respond
+    await invalidateCompassCache(sc, parsed.data.targetUser, "trust_restriction_lifted");
     res.json(result);
   } catch (err: any) {
     sendError(res, "db_error", err?.message ?? "Could not lift restriction");
@@ -283,6 +285,8 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
       source_id:   parsed.data.capId,
       metadata:    {},
     });
+    // Await so the affected user's compass cache is cleared before we respond
+    await invalidateCompassCache(sc, userId, "trust_cap_lifted");
     res.json({ ok: true, capId: parsed.data.capId });
   } catch (err: any) {
     sendError(res, "db_error", err?.message ?? "Could not lift cap");

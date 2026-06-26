@@ -27,9 +27,11 @@ import {
   recordNavigationEvent,
   resolveMaxTier,
   computePreloadScore,
+  CONTENT_SCORE_FACTORS,
   type NetworkHint,
   type BatteryHint,
   type FrontLoadTier,
+  type FrontLoadItem,
 } from "../compass/CompassFrontLoadEngine.js";
 import type { CompassProfile } from "../compass/types.js";
 
@@ -428,41 +430,85 @@ describe("buildPreloadManifest", () => {
   });
 });
 
-// ── computePreloadScore — rule-driven tier scoring ────────────────────────────
+// ── computePreloadScore — formula-based scoring ───────────────────────────────
+//
+// Formula: score = likelihood × safetyPriority × timeSensitivity
+//                − heavyMediaCost × 0.5 − stalenessRisk × 0.3 − privacyRisk × 0.2
+//
+// All operands are in [0,1]; result is clamped to [0,100].
+// Known types use CONTENT_SCORE_FACTORS; unknown types fall back to tier-derived score.
+//
+// Expected scores (computed from CONTENT_SCORE_FACTORS):
+//   safety_state       → 100  (1.0×1.0×1.0 − 0 − 0 − 0 = 1.0)
+//   first_feed_page    →  58  (0.9×0.9×0.8 − 0.10×0.5 − 0.05×0.3 − 0.02×0.2 = 0.579)
+//   top_events         →  32  (0.6×0.7×0.8 − 0 − 0.05×0.3 − 0 = 0.321)
+//   trip_crew_location →  10  (0.3×0.9×0.9 − 0.10×0.5 − 0.10×0.3 − 0.30×0.2 = 0.103)
 
-describe("computePreloadScore — rule-driven tier scoring", () => {
-  it("Tier 0 types score 100, Tier 1 score 75, Tier 2 score 50, Tier 3 score 25", () => {
-    const rules = new Map<string, FrontLoadTier>([
-      ['safety_state',    0],
-      ['first_feed_page', 1],
-      ['top_events',      2],
-      ['trip_crew_location', 3],
-    ]);
-    assert.strictEqual(computePreloadScore('safety_state',    rules), 100, "Tier 0 must score 100");
-    assert.strictEqual(computePreloadScore('first_feed_page', rules), 75,  "Tier 1 must score 75");
-    assert.strictEqual(computePreloadScore('top_events',      rules), 50,  "Tier 2 must score 50");
-    assert.strictEqual(computePreloadScore('trip_crew_location', rules), 25, "Tier 3 must score 25");
+describe("computePreloadScore — formula-based scoring", () => {
+  const rules = new Map<string, FrontLoadTier>();
+
+  it("safety_state scores 100 (max product, no penalties)", () => {
+    const f = CONTENT_SCORE_FACTORS['safety_state']!;
+    const expectedRaw = f.likelihood * f.safetyPriority * f.timeSensitivity
+      - f.heavyMediaCost * 0.5 - f.stalenessRisk * 0.3 - f.privacyRisk * 0.2;
+    const expected = Math.max(0, Math.min(100, Math.round(expectedRaw * 100)));
+    assert.strictEqual(computePreloadScore('safety_state', rules), expected);
+    assert.strictEqual(expected, 100, "safety_state must score 100");
   });
 
-  it("unknown type defaults to Tier 3 score (25)", () => {
-    const rules = new Map<string, FrontLoadTier>();
+  it("first_feed_page formula score is correct and lower than safety_state", () => {
+    const f = CONTENT_SCORE_FACTORS['first_feed_page']!;
+    const expectedRaw = f.likelihood * f.safetyPriority * f.timeSensitivity
+      - f.heavyMediaCost * 0.5 - f.stalenessRisk * 0.3 - f.privacyRisk * 0.2;
+    const expected = Math.max(0, Math.min(100, Math.round(expectedRaw * 100)));
+    assert.strictEqual(computePreloadScore('first_feed_page', rules), expected);
+    assert.ok(expected < 100, "first_feed_page must score below safety_state");
+    assert.ok(expected > 0,   "first_feed_page must score above 0");
+  });
+
+  it("formula scores preserve tier urgency ordering: safety_state > first_feed_page > top_events > trip_crew_location", () => {
+    const score = (t: string) => computePreloadScore(t, rules);
+    assert.ok(score('safety_state')    > score('first_feed_page'),   "safety > feed");
+    assert.ok(score('first_feed_page') > score('top_events'),         "feed > events");
+    assert.ok(score('top_events')      > score('trip_crew_location'), "events > trip_crew (more private)");
+  });
+
+  it("navWeight boosts the score by increasing likelihood component", () => {
+    const baseScore    = computePreloadScore('top_events', rules, 0.0);
+    const boostedScore = computePreloadScore('top_events', rules, 0.5);
+    assert.ok(boostedScore >= baseScore, "navWeight must not decrease score");
+    // With navWeight=0.5: boostedLikelihood = min(1, 0.6 + 0.5×0.2) = 0.7 vs 0.6 baseline
+    const f = CONTENT_SCORE_FACTORS['top_events']!;
+    const raw0 = f.likelihood * f.safetyPriority * f.timeSensitivity
+      - f.heavyMediaCost * 0.5 - f.stalenessRisk * 0.3 - f.privacyRisk * 0.2;
+    const raw5 = Math.min(1, f.likelihood + 0.5 * 0.2) * f.safetyPriority * f.timeSensitivity
+      - f.heavyMediaCost * 0.5 - f.stalenessRisk * 0.3 - f.privacyRisk * 0.2;
+    assert.strictEqual(boostedScore, Math.max(0, Math.min(100, Math.round(raw5 * 100))));
+    assert.ok(raw5 > raw0, "navWeight=0.5 must increase the raw product");
+  });
+
+  it("unknown type with no rules falls back to tier 3 score (25)", () => {
     assert.strictEqual(computePreloadScore('totally_unknown_type', rules), 25,
-      "unknown types must default to tier 3 score");
+      "unknown types with no rule entry must default to tier 3 score (25)");
   });
 
-  it("operator DB override changes tier assignment", () => {
-    // Simulate operator promoting top_events from Tier 2 → Tier 1 via DB rules
-    const rules = new Map<string, FrontLoadTier>([
-      ['top_events', 1],
-    ]);
-    assert.strictEqual(computePreloadScore('top_events', rules), 75,
-      "DB override should change top_events from tier 2 (50) to tier 1 (75)");
+  it("operator DB override changes tier for unknown types: tier 0 → 100", () => {
+    // Simulate operator assigning a new custom content type to tier 0 via DB rule
+    const rulesWithOverride = new Map<string, FrontLoadTier>([['custom_safety_widget', 0]]);
+    assert.strictEqual(computePreloadScore('custom_safety_widget', rulesWithOverride), 100,
+      "operator DB override to tier 0 must yield score 100 for unknown types");
+    // Tier 1 override
+    const rulesTier1 = new Map<string, FrontLoadTier>([['custom_safety_widget', 1]]);
+    assert.strictEqual(computePreloadScore('custom_safety_widget', rulesTier1), 75,
+      "operator DB override to tier 1 must yield score 75 for unknown types");
   });
 });
 
 // ── Per-item authz — blocked users excluded from city_pulse_preview ───────────
 
 describe("Per-item authz — blocked users excluded from city_pulse_preview", () => {
+  before(() => clearL1Cache());
+
   it("posts from blocked users do not appear in city_pulse_preview", async () => {
     const BLOCKED_USER = "00000000-0000-0000-9999-000000000099";
     const SAFE_USER    = "00000000-0000-0000-8888-000000000088";
@@ -500,6 +546,7 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
   });
 
   it("delayed/unpublished posts never appear in city_pulse_preview", async () => {
+    clearL1Cache();   // isolate from previous test's L1 back-fill (same user, same cache key)
     const fakeDelayedPost = {
       id: "post-delayed", body: "not yet!", created_at: new Date().toISOString(),
       user_id: USER_B, post_status: "delayed", status: "active",
@@ -527,6 +574,140 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
       pulseData.find((p) => p.id === "post-published"),
       "fully published posts must appear in city_pulse_preview",
     );
+  });
+});
+
+// ── Cellular mode — no video previews ────────────────────────────────────────
+
+describe("Cellular mode — no video previews in city_pulse_preview", () => {
+  before(() => clearL1Cache());
+
+  it("video posts are stripped from city_pulse_preview when networkHint=cellular", async () => {
+    const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
+    const fakeVideoPost = {
+      id: "post-video", body: "watch this!", created_at: new Date().toISOString(),
+      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "video",
+    };
+    const fakeTextPost = {
+      id: "post-text", body: "hello world", created_at: new Date().toISOString(),
+      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "text",
+    };
+
+    const { db } = makeFakeDb({ posts: [fakeVideoPost, fakeTextPost] });
+    const profile = baseProfile({ currentCity: "Barcelona" });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "cellular" });
+
+    const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
+    const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
+
+    assert.ok(
+      !pulseData.find((p) => p.id === "post-video"),
+      "cellular mode must strip video posts from city_pulse_preview",
+    );
+    assert.ok(
+      pulseData.find((p) => p.id === "post-text"),
+      "cellular mode must still include non-video posts",
+    );
+  });
+
+  it("video posts appear in city_pulse_preview on wifi", async () => {
+    clearL1Cache();   // isolate from the previous cellular test's L1 back-fill
+    const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
+    const fakeVideoPost = {
+      id: "post-video-wifi", body: "watch this!", created_at: new Date().toISOString(),
+      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "video",
+    };
+
+    const { db } = makeFakeDb({ posts: [fakeVideoPost] });
+    const profile = baseProfile({ currentCity: "Barcelona" });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
+    const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
+
+    assert.ok(
+      pulseData.find((p) => p.id === "post-video-wifi"),
+      "wifi mode must include video posts in city_pulse_preview",
+    );
+  });
+});
+
+// ── Cache-backed tier 1–3 assembly ───────────────────────────────────────────
+
+describe("Cache-backed tier 1–3 assembly", () => {
+  before(() => clearL1Cache());
+
+  it("tier 1 is served from L1 cache on cache hit (payload matches pre-seeded data)", async () => {
+    clearL1Cache();
+
+    // Pre-populate L1 cache with a known tier1 payload via setCachedFeed
+    const cachedPayload: FrontLoadItem[] = [{
+      type: 'city_pulse_preview', tier: 1,
+      cachedAt: new Date().toISOString(),
+      data: [{ id: 'from-l1-cache', body: 'pre-cached pulse post' }],
+    }];
+
+    const tableData: Record<string, FakeDbRow[]> = {
+      compass_feed_cache: [],
+      compass_cache_invalidations: [],
+      // Only this post exists in DB — it must NOT appear in tier1 on cache hit
+      posts: [{ id: 'fresh-post', body: 'should not appear', user_id: USER_B,
+                post_status: null, status: 'active', created_at: new Date().toISOString() }],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    // Seed the L1 in-process cache (setCachedFeed stores in L1 synchronously)
+    await setCachedFeed(db, USER_A, 'frontload:tier1', 'frontload', cachedPayload);
+
+    // buildFrontLoadPayload should detect the L1 hit and return the cached tier1
+    const profile = baseProfile({ currentCity: 'Rome' });
+    const result = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: 'wifi' });
+
+    // The returned tier1 must be the exact cached payload (L1 hit)
+    assert.deepStrictEqual(result.tier1, cachedPayload,
+      "tier1 must be served from L1 cache when cache hit is present");
+    // The fresh-post from DB must not appear (would only appear on cache miss)
+    const allIds = (result.tier1 as FrontLoadItem[])
+      .flatMap(item => Array.isArray(item.data) ? (item.data as any[]).map((d: any) => d.id) : []);
+    assert.ok(!allIds.includes('fresh-post'),
+      "fresh DB post must not appear when tier1 is served from L1 cache");
+  });
+
+  it("tier 1 is built fresh and back-filled into L1 on cache miss", async () => {
+    clearL1Cache();
+
+    const tableData: Record<string, FakeDbRow[]> = {
+      compass_feed_cache: [],
+      compass_cache_invalidations: [],
+      posts: [],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    // Verify L1 is empty before the call
+    const before = await getCachedFeed(db, USER_A, 'frontload:tier1', 'frontload');
+    assert.strictEqual(before, null, "L1 must be empty before buildFrontLoadPayload on cache miss");
+
+    const profile = baseProfile({ currentCity: 'Berlin' });
+    await buildFrontLoadPayload(db, USER_A, profile, { networkHint: 'wifi' });
+
+    // After a cache miss, setCachedFeed sets L1 synchronously inside buildFrontLoadPayload.
+    // The fire-and-forget DB upsert may still be in-flight, but L1 is available immediately.
+    const after = await getCachedFeed(db, USER_A, 'frontload:tier1', 'frontload');
+    assert.ok(after !== null,
+      "cache miss must back-fill L1 so the next call is a cache hit");
+    assert.ok(Array.isArray(after),
+      "back-filled L1 cache entry must be a FrontLoadItem array");
+  });
+
+  it("tier 0 items (safety/auth) are never served from cache", async () => {
+    // getCachedFeed with entryType='safety' returns null — safety data always live
+    clearL1Cache();
+    const { db } = makeFakeDb({ compass_feed_cache: [] });
+    const safetyResult = await getCachedFeed(db, USER_A, 'safety_state', 'safety');
+    assert.strictEqual(safetyResult, null,
+      "safety entryType must always return null from getCachedFeed (TTL=0, never cached)");
   });
 });
 

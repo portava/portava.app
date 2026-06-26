@@ -17,13 +17,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type CacheEntryType = 'feed' | 'section' | 'city_guide' | 'booking';
+export type CacheEntryType = 'feed' | 'section' | 'city_guide' | 'booking' | 'frontload' | 'safety';
 
-/** Per-type TTLs in milliseconds. 'safety' always bypasses cache. */
+/** Per-type TTLs in milliseconds. 'safety' is 0 — always bypasses cache. */
 const CACHE_TTL_MS: Record<CacheEntryType, number> = {
+  safety:     0,             // never cached — see bypass check in getCachedFeed
   booking:    30_000,
   section:    2 * 60_000,
   feed:       5 * 60_000,
+  frontload:  5 * 60_000,   // tier 1–3 preload assembly, same TTL as feed
   city_guide: 4 * 60 * 60_000,
 };
 

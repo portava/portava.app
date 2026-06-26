@@ -34,6 +34,7 @@ import type { CompassProfile } from "./types.js";
 import { buildFeed } from "./CompassFeedBuilder.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { hydrateCompassItems } from "./CompassItemHydrator.js";
+import { getCachedFeed, setCachedFeed } from "./CompassCacheEngine.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -116,15 +117,90 @@ async function loadTierRules(db: SupabaseClient | null): Promise<Map<string, Fro
 }
 
 /**
- * Compute a PreloadScore for an item type given the current rule map.
- * Score is determined by the tier (lower tier = higher urgency).
- * Items in Tier 0 score 100, Tier 1 score 75, Tier 2 score 50, Tier 3 score 25.
- * Unknown types default to Tier 3 score.
+ * Per-content-type scoring factors for the PreloadScore formula.
+ *
+ * Formula: likelihood × safetyPriority × timeSensitivity
+ *          − heavyMediaCost − stalenessRisk − privacyRisk
+ *
+ * Each factor is in [0, 1]:
+ *   likelihood      — probability the user needs this content at app open
+ *   safetyPriority  — how critical for user safety/auth
+ *   timeSensitivity — how quickly the data becomes irrelevant
+ *   heavyMediaCost  — bandwidth/CPU cost of loading (0 = lightweight)
+ *   stalenessRisk   — how quickly data becomes incorrect (0 = long-lived)
+ *   privacyRisk     — data sensitivity (0 = public, 1 = highly private)
  */
-export function computePreloadScore(type: string, rules: Map<string, FrontLoadTier>): number {
-  const TIER_SCORES: Record<FrontLoadTier, number> = { 0: 100, 1: 75, 2: 50, 3: 25 };
-  const tier = rules.get(type) ?? 3;
-  return TIER_SCORES[tier as FrontLoadTier] ?? 25;
+export interface PreloadScoreFactors {
+  likelihood:      number;
+  safetyPriority:  number;
+  timeSensitivity: number;
+  heavyMediaCost:  number;
+  stalenessRisk:   number;
+  privacyRisk:     number;
+}
+
+/**
+ * Baseline scoring factors per content type.
+ *
+ * Calibrated so formula scores correlate with tier urgency:
+ *   Tier 0 (safety/auth/booking):  ~89–100
+ *   Tier 1 (feed/notifications):   ~55–78
+ *   Tier 2 (events/buddies):       ~11–39
+ *   Tier 3 (background/location):  ~8–10
+ *
+ * `safetyPriority` is the weight given to this content's role in user wellbeing
+ * and trust — not just safety-labelled content. Even feed content should be high
+ * here because serving wrong/stale feed damages trust.
+ *
+ * `stalenessRisk` and `heavyMediaCost` are applied as penalties in the formula,
+ * reducing the score proportionally. They should stay small (≤0.1) so the
+ * positive likelihood × safetyPriority × timeSensitivity product dominates.
+ */
+export const CONTENT_SCORE_FACTORS: Record<string, PreloadScoreFactors> = {
+  //                                  likelihood  safety  time    media   stale   privacy
+  safety_state:       { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 1.0, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.00 },  // → 100
+  feature_flags:      { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 0.9, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.00 },  // →  90
+  active_booking:     { likelihood: 0.9, safetyPriority: 1.0, timeSensitivity: 1.0, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.05 },  // →  89
+  blocked_users:      { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 1.0, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.10 },  // →  98
+  privacy_settings:   { likelihood: 1.0, safetyPriority: 1.0, timeSensitivity: 0.8, heavyMediaCost: 0.00, stalenessRisk: 0.00, privacyRisk: 0.10 },  // →  78
+  first_feed_page:    { likelihood: 0.9, safetyPriority: 0.9, timeSensitivity: 0.8, heavyMediaCost: 0.10, stalenessRisk: 0.05, privacyRisk: 0.02 },  // →  58
+  notifications:      { likelihood: 0.9, safetyPriority: 0.9, timeSensitivity: 0.9, heavyMediaCost: 0.00, stalenessRisk: 0.05, privacyRisk: 0.10 },  // →  69
+  city_pulse_preview: { likelihood: 0.7, safetyPriority: 0.8, timeSensitivity: 0.8, heavyMediaCost: 0.05, stalenessRisk: 0.10, privacyRisk: 0.00 },  // →  39
+  top_events:         { likelihood: 0.6, safetyPriority: 0.7, timeSensitivity: 0.8, heavyMediaCost: 0.00, stalenessRisk: 0.05, privacyRisk: 0.00 },  // →  32
+  top_buddies:        { likelihood: 0.5, safetyPriority: 0.7, timeSensitivity: 0.5, heavyMediaCost: 0.05, stalenessRisk: 0.05, privacyRisk: 0.15 },  // →  11
+  saved_places:       { likelihood: 0.5, safetyPriority: 0.6, timeSensitivity: 0.4, heavyMediaCost: 0.05, stalenessRisk: 0.05, privacyRisk: 0.00 },  // →   8
+  trip_crew_location: { likelihood: 0.3, safetyPriority: 0.9, timeSensitivity: 0.9, heavyMediaCost: 0.10, stalenessRisk: 0.10, privacyRisk: 0.30 },  // →  10
+};
+
+/**
+ * Compute a PreloadScore for an item type.
+ *
+ * Uses the formula:
+ *   score = likelihood × safetyPriority × timeSensitivity
+ *           − heavyMediaCost × 0.5 − stalenessRisk × 0.3 − privacyRisk × 0.2
+ *
+ * An optional `navWeight` (0–1) boosts the likelihood component based on how
+ * frequently the user navigates to this content type.
+ *
+ * Falls back to a tier-derived score (100/75/50/25) for unknown types.
+ */
+export function computePreloadScore(
+  type:      string,
+  rules:     Map<string, FrontLoadTier>,
+  navWeight: number = 0,
+): number {
+  const f = CONTENT_SCORE_FACTORS[type];
+  if (!f) {
+    // Unknown type: derive score from operator-configured tier
+    const tier = rules.get(type) ?? 3;
+    return Math.max(0, 100 - tier * 25);
+  }
+  const boostedLikelihood = Math.min(1, f.likelihood + navWeight * 0.2);
+  const raw = boostedLikelihood * f.safetyPriority * f.timeSensitivity
+    - f.heavyMediaCost * 0.5
+    - f.stalenessRisk  * 0.3
+    - f.privacyRisk    * 0.2;
+  return Math.max(0, Math.min(100, Math.round(raw * 100)));
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -237,9 +313,11 @@ async function loadTier1(
   userId: string,
   profile: CompassProfile,
   rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
+  networkHint: NetworkHint = 'wifi',
 ): Promise<FrontLoadItem[]> {
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
+  const isCellular = networkHint === 'cellular';
 
   // 1. First feed page — built from the full Compass pipeline (cached 5 min)
   let firstFeedPage: unknown = null;
@@ -248,7 +326,14 @@ async function loadTier1(
       const signals = defaultSignals(profile);
       const context = buildCompassContext(profile, signals);
       const items_  = await hydrateCompassItems(db, profile);
-      firstFeedPage  = await buildFeed(items_, profile, context, db, null);
+      let   feed    = await buildFeed(items_, profile, context, db, null);
+      // Cellular: strip video items from the first feed page (no video previews on cellular)
+      if (isCellular && feed && typeof feed === 'object' && Array.isArray((feed as any).items)) {
+        (feed as any).items = (feed as any).items.filter(
+          (item: any) => item.post_type !== 'video' && item.type !== 'video',
+        );
+      }
+      firstFeedPage = feed;
     } catch { /* non-fatal — client falls back to direct feed request */ }
   }
   items.push({ type: 'first_feed_page', tier: 1, cachedAt: now, data: firstFeedPage });
@@ -271,10 +356,12 @@ async function loadTier1(
           // Authorization: exclude posts from blocked users
           !blockedSet.has(p.user_id as string) &&
           // Privacy: exclude posts pending delayed-publish
-          (!p.post_status || p.post_status === "published"),
+          (!p.post_status || p.post_status === "published") &&
+          // Cellular: no video previews (bandwidth-sensitive)
+          !(isCellular && p.post_type === "video"),
         )
         .slice(0, 5)
-        .map(({ post_status: _ps, status: _s, ...rest }: any) => rest);
+        .map(({ post_status: _ps, status: _s, post_type: _pt, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'city_pulse_preview', tier: 1, cachedAt: now, data: pulsePreview });
@@ -422,9 +509,48 @@ export async function buildFrontLoadPayload(
   // Tier 0 is always live — safety/auth/booking state never cached
   const tier0 = await loadTier0(db, userId, profile, rules);
 
-  const tier1: FrontLoadItem[] = maxTier >= 1 ? await loadTier1(db, userId, profile, rules) : [];
-  const tier2: FrontLoadItem[] = maxTier >= 2 ? await loadTier2(db, userId, profile, rules) : [];
-  const tier3: FrontLoadItem[] = maxTier >= 3 ? await loadTier3(db, userId, profile, rules) : [];
+  // Tier 1–3: cache-backed assembly.
+  // Check the cache first; build live and back-fill the cache on a miss.
+  // Cache keys are per-user so they are invalidated atomically when the user's
+  // compass cache entry is evicted (e.g. on block, booking change, etc.).
+  // Safety/auth items live in Tier 0 and are deliberately excluded from this path.
+  const t1Key = `frontload:tier1`;
+  const t2Key = `frontload:tier2`;
+  const t3Key = `frontload:tier3`;
+
+  let tier1: FrontLoadItem[] = [];
+  if (maxTier >= 1) {
+    const cached = await getCachedFeed<FrontLoadItem[]>(db, userId, t1Key, 'frontload');
+    if (cached) {
+      tier1 = cached;
+    } else {
+      tier1 = await loadTier1(db, userId, profile, rules, networkHint);
+      // Back-fill asynchronously — caller already has the data it needs
+      void setCachedFeed(db, userId, t1Key, 'frontload', tier1);
+    }
+  }
+
+  let tier2: FrontLoadItem[] = [];
+  if (maxTier >= 2) {
+    const cached = await getCachedFeed<FrontLoadItem[]>(db, userId, t2Key, 'frontload');
+    if (cached) {
+      tier2 = cached;
+    } else {
+      tier2 = await loadTier2(db, userId, profile, rules);
+      void setCachedFeed(db, userId, t2Key, 'frontload', tier2);
+    }
+  }
+
+  let tier3: FrontLoadItem[] = [];
+  if (maxTier >= 3) {
+    const cached = await getCachedFeed<FrontLoadItem[]>(db, userId, t3Key, 'frontload');
+    if (cached) {
+      tier3 = cached;
+    } else {
+      tier3 = await loadTier3(db, userId, profile, rules);
+      void setCachedFeed(db, userId, t3Key, 'frontload', tier3);
+    }
+  }
 
   return { tier0, tier1, tier2, tier3, networkHint, batteryHint, maxTier, builtAt };
 }
