@@ -82,6 +82,7 @@ A social travel passport mobile app — log trips, track destinations, and share
 | `0049_delayed_geotag_posts.sql` | Adds `location_privacy_mode` enum, `delayed_post_status` enum, `location_sensitivity_level` enum; new columns to `posts` (`post_status`, `location_privacy_mode`, `original_lat/lng`, `public_lat/lng`, `public_location_label`, `venue_name/id`, `geofence_radius_meters`, `publish_after_exit`, `publish_after_time`, `publish_eligible_at`, `exited_geofence_at`, `published_at`, `geotag_credit_awarded`, `location_sensitivity_level`, `user_gps_lat/lng`); creates `delayed_post_location_events` table (audit log: exit_detected/manually_released/geotag_credit_awarded/privacy_changed/publish_skipped/safe_return_hold/canceled) with RLS | 2026-06-26 |
 | `0050_suggestion_seen.sql` | Creates `user_suggestion_seen` table (user_id PK→profiles, seen_ids text[], expires_at, updated_at); RLS enabled (service role only — no user-facing policies); `user_suggestion_seen_expires_idx` on expires_at for fast nightly purge; backs the hybrid L1/L2 suggestion-seen cache so the 7-day freshness window survives server restarts | 2026-06-26 |
 | `0051_trip_members_user_role_idx.sql` | `trip_members_user_role_idx` composite index on `trip_members(user_id, role)` — lets Postgres seek directly to a user's trip memberships instead of seq-scanning the full table; hot path for the shared-destination caller query in GET /users/search and GET /users/suggestions | 2026-06-26 |
+| *(inline — task 520)* | Creates `rent_buddy_global_controls` (id=1 singleton, all pause flags default false) and `rent_buddy_city_rollouts` (city + status enum, RLS public-read) tables not included in migration 0047; both are required by `checkRentBuddyAccess` in `rentABuddyRollout.ts`; `rent_buddy_enabled` feature flag flipped to `true` | 2026-06-26 |
 
 ## Gotchas
 
@@ -90,6 +91,8 @@ A social travel passport mobile app — log trips, track destinations, and share
 - `DAILY_BRIEF_RETENTION_DAYS` (optional, default `60`) — how many days of daily briefs to keep before the cleanup job purges them. Set in `artifacts/api-server/.env` to tune without a code deploy.
 - `DAILY_BRIEF_CLEANUP_INTERVAL_HOURS` (optional, default `24`) — how many hours between cleanup runs. Accepts decimals (e.g. `0.5` for every 30 minutes). Set in `artifacts/api-server/.env` to tune without a code deploy.
 - `EXPO_PUBLIC_API_BASE_URL` in `artifacts/travel-buddy/.env` must point to the Replit dev domain (not the Expo domain) so the mobile app can reach the API server.
+- `GET /api/feature-flags` was registered as `"/api/feature-flags"` in `featureFlags.ts` but the Express app mounts the router at `app.use("/api", router)` — the route path must be `"/feature-flags"` (no `/api` prefix). All other routes in `routes/*.ts` follow this pattern; `featureFlags.ts` was the exception and is now fixed.
+- `rent_buddy_city_rollouts` city check: when the table is empty, all city-specific browse/book calls return `city_not_available`. Add rows with `status = 'live'` for each launch city via the Supabase dashboard or the admin API (`POST /api/rent-buddy/admin/cities`).
 
 ## Pointers
 

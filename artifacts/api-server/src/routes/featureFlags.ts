@@ -9,7 +9,7 @@ const router = Router();
  * Returns all feature flags from the feature_flags table.
  * Public endpoint — flags only control UI behavior, contain no sensitive data.
  */
-router.get("/api/feature-flags", async (req, res) => {
+router.get("/feature-flags", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) {
     return sendError(res, "server_not_configured");
