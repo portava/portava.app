@@ -15,6 +15,15 @@ const ALLOWED_AVATAR_MIME: Record<string, string> = {
 };
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5 MB
 
+/** Creates the storage bucket if it doesn't already exist (service-role required). */
+async function ensureStorageBucket(sc: ReturnType<typeof getServiceClient>, bucket: string, req: import("express").Request): Promise<void> {
+  if (!sc) return;
+  const { error } = await sc.storage.createBucket(bucket, { public: true });
+  if (error && !error.message.includes("already exists")) {
+    req.log.warn({ err: error, bucket }, "Could not ensure storage bucket");
+  }
+}
+
 const SUPPORTED_LANGUAGE_CODES = new Set([
   'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'zh-TW',
   'pt', 'it', 'ru', 'ar', 'th', 'vi', 'id', 'tl',
@@ -298,7 +307,10 @@ router.patch("/me/profile", async (req, res) => {
 router.get("/users/check-username", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { client, user } = auth;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   const username = String(req.query.username ?? "").toLowerCase().trim();
   if (!username) {
@@ -312,7 +324,7 @@ router.get("/users/check-username", async (req, res) => {
     return;
   }
 
-  const { data } = await client
+  const { data } = await sc
     .from("profiles")
     .select("id")
     .eq("username", username)
@@ -345,7 +357,10 @@ router.post(
   async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { client, user } = auth;
+    const { user } = auth;
+
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
     const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
     const ext = ALLOWED_AVATAR_MIME[mimeType];
@@ -363,11 +378,13 @@ router.post(
       return;
     }
 
+    await ensureStorageBucket(sc, AVATAR_BUCKET, req);
+
     const { randomUUID } = await import("crypto");
     const uuid = randomUUID();
     const path = `avatars/${user.id}/${uuid}.${ext}`;
 
-    const { error } = await client.storage
+    const { error } = await sc.storage
       .from(AVATAR_BUCKET)
       .upload(path, rawBody, { contentType: mimeType, upsert: true });
 
@@ -377,7 +394,7 @@ router.post(
       return;
     }
 
-    const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    const { data: urlData } = sc.storage.from(AVATAR_BUCKET).getPublicUrl(path);
     res.status(201).json({ url: urlData.publicUrl, path });
   },
 );
@@ -404,7 +421,10 @@ router.post(
   async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { client, user } = auth;
+    const { user } = auth;
+
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
     const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
     const ext = ALLOWED_AVATAR_MIME[mimeType];
@@ -422,9 +442,11 @@ router.post(
       return;
     }
 
+    await ensureStorageBucket(sc, AVATAR_BUCKET, req);
+
     const path = `covers/${user.id}/cover.${ext}`;
 
-    const { error } = await client.storage
+    const { error } = await sc.storage
       .from(AVATAR_BUCKET)
       .upload(path, rawBody, { contentType: mimeType, upsert: true });
 
@@ -434,7 +456,7 @@ router.post(
       return;
     }
 
-    const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    const { data: urlData } = sc.storage.from(AVATAR_BUCKET).getPublicUrl(path);
     res.status(201).json({ url: urlData.publicUrl, path });
   },
 );
