@@ -7,6 +7,7 @@ import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
+import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 
 const NAV_ITEMS = [
@@ -93,6 +94,10 @@ export default function TabLayout() {
   const isDesktop = useIsDesktop();
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
   const [pendingRequests, setPendingRequests] = useState(0);
+
+  // Monitor geofence exits for pending_location_exit posts.
+  // Lives here so it runs across all tabs, not just passport.
+  useGeofenceMonitor();
 
   useEffect(() => {
     getIncomingMessageRequests().then((res) => {
