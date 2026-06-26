@@ -631,6 +631,192 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
   }
 });
 
+// ── POST /api/compass/ask ─────────────────────────────────────────────────────
+// Conversational AI-buddy endpoint: takes a natural-language travel prompt and
+// returns an AiRecommendation shaped object using the compass pipeline.
+
+const askBodySchema = z.object({
+  prompt: z.string().min(1).max(400),
+  city:   z.string().max(80).optional(),
+  mode:   z.enum(["recommend", "itinerary"]).default("recommend"),
+});
+
+function _extractDayCount(prompt: string): number {
+  const m = prompt.match(/(\d+)[- ]day/i);
+  return m && m[1] ? Math.min(Math.max(parseInt(m[1], 10), 2), 7) : 3;
+}
+
+function _itemLabel(item: Record<string, unknown> | null | undefined): string {
+  return String(item?.title ?? item?.category ?? item?.type ?? "local spot");
+}
+
+function _itemCity(item: Record<string, unknown> | null | undefined): string {
+  return String(item?.city ?? "");
+}
+
+function _buildFallbackRec(city: string, isItinerary: boolean): Record<string, unknown> {
+  if (isItinerary) {
+    return {
+      id:               `ask_${Date.now()}`,
+      bestPick:         `3-Day Itinerary: ${city}`,
+      why:              "Arrive, settle in, explore the neighbourhood. Try a local food market in the evening.",
+      whyLabel:         "Day 1",
+      socialProof:      "Key sights, street food, and a cultural spot. Ask locals for their go-to.",
+      socialProofLabel: "Day 2",
+      tradeoff:         "Day trip or deeper local exploration. Perfect for a slow morning before heading out.",
+      tradeoffLabel:    "Day 3",
+      usedPostIds:      [],
+      nextActions:      [{ label: "Add to trip", kind: "addTrip" }],
+    };
+  }
+  return {
+    id:          `ask_${Date.now()}`,
+    bestPick:    city,
+    why:         "Based on your travel preferences and community activity.",
+    socialProof: "Trending with travelers this week.",
+    usedPostIds: [],
+    nextActions: [
+      { label: "Add to trip",       kind: "addTrip" },
+      { label: "Build itinerary",   kind: "buildItinerary" },
+      { label: "Ask community",     kind: "askCommunity" },
+    ],
+  };
+}
+
+router.post("/compass/ask", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = askBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
+    return;
+  }
+  const { prompt, city, mode } = parsed.data;
+
+  const isItinerary =
+    mode === "itinerary" ||
+    /itinerary|day[\s-]by[\s-]day|day\s+trip|schedule|full\s+plan|\d+[\s-]day/i.test(prompt);
+
+  try {
+    const profile = await getCompassProfile(sc, user.id);
+    const signals = defaultSignals(profile);
+    const context = buildCompassContext(profile, signals);
+
+    // If caller specified a city, blend it in for scoring/hydration
+    const effectiveProfile = city
+      ? ({ ...profile, currentCity: city } as typeof profile)
+      : profile;
+
+    const rawItems = await hydrateCompassItems(sc, effectiveProfile);
+
+    const { section: feedSection } = await buildSection(
+      "for_you",
+      rawItems,
+      effectiveProfile,
+      context,
+      sc,
+    );
+
+    const topItems = feedSection.items.slice(0, 3);
+
+    if (topItems.length === 0) {
+      const profileAny = profile as unknown as Record<string, unknown>;
+      const fallbackCity = city ?? String(profileAny.currentCity ?? "your destination");
+      res.json(_buildFallbackRec(fallbackCity, isItinerary));
+      return;
+    }
+
+    const top    = topItems[0] as unknown as Record<string, unknown>;
+    const second = topItems[1] as unknown as (Record<string, unknown> | undefined);
+    const third  = topItems[2] as unknown as (Record<string, unknown> | undefined);
+
+    const item0  = (top.item    ?? {}) as Record<string, unknown>;
+    const item1  = second ? ((second.item ?? {}) as Record<string, unknown>) : null;
+    const item2  = third  ? ((third.item  ?? {}) as Record<string, unknown>) : null;
+
+    const topTitle   = _itemLabel(item0);
+    const topCity    = _itemCity(item0) || city || "";
+    const tags       = (item0.interestTags as string[] | undefined) ?? [];
+    const interests  = tags.slice(0, 3);
+
+    let bestPick: string;
+    let why: string;
+    let whyLabel: string | undefined;
+    let socialProof: string;
+    let socialProofLabel: string | undefined;
+    let tradeoff: string | undefined;
+    let tradeoffLabel: string | undefined;
+    let nextActions: Array<{ label: string; kind: string }>;
+
+    if (isItinerary) {
+      const dayCount  = _extractDayCount(prompt);
+      const dest      = topCity || topTitle;
+      bestPick        = `${dayCount}-Day Itinerary: ${dest}`;
+      whyLabel        = "Day 1";
+      socialProofLabel = "Day 2";
+
+      why = item1
+        ? `${topTitle} in the morning. Afternoon: ${_itemLabel(item1)}.`
+        : `Explore ${topTitle}. Morning activity, local lunch, neighbourhood walk.`;
+
+      socialProof = item1
+        ? `${_itemLabel(item1)}${_itemCity(item1) ? ` · ${_itemCity(item1)}` : ""}. ${item2 ? `Then: ${_itemLabel(item2)}.` : ""}`.trim()
+        : `Flexibility day — follow local tips from traveler posts and your saves.`;
+
+      if (dayCount >= 3) {
+        tradeoffLabel = "Day 3";
+        tradeoff = item2
+          ? `${_itemLabel(item2)}${_itemCity(item2) ? ` · ${_itemCity(item2)}` : ""} — great as a final day or day trip.`
+          : `Day trip or slow exploration. Check community posts for hidden gems near ${dest}.`;
+      }
+
+      nextActions = [{ label: "Add to trip", kind: "addTrip" }];
+    } else {
+      bestPick = topCity ? `${topTitle} · ${topCity}` : topTitle;
+
+      why = interests.length
+        ? `Matches your ${interests.join(" + ")} interests${topCity ? ` — ${topCity} is active this week` : ""}.`
+        : `Top pick based on your travel profile${topCity ? ` in ${topCity}` : ""}.`;
+
+      socialProof = item1
+        ? `${_itemLabel(item1)} is also trending with travelers sharing your style.`
+        : `Traveler interest in ${topCity || "this area"} is high this week.`;
+
+      tradeoff = item2
+        ? `${_itemLabel(item2)} is worth considering as a day trip or alternative base.`
+        : undefined;
+
+      nextActions = [
+        { label: "Add to trip",     kind: "addTrip" },
+        { label: "Build itinerary", kind: "buildItinerary" },
+        { label: "Ask community",   kind: "askCommunity" },
+      ];
+    }
+
+    res.json({
+      id:               `ask_${Date.now()}`,
+      bestPick,
+      why,
+      whyLabel,
+      socialProof,
+      socialProofLabel,
+      tradeoff,
+      tradeoffLabel,
+      usedPostIds:      [],
+      nextActions,
+    });
+  } catch (err: unknown) {
+    req.log.error({ err }, "compass/ask failed");
+    const fallbackCity = city ?? "your destination";
+    res.json(_buildFallbackRec(fallbackCity, isItinerary));
+  }
+});
+
 // ── POST /api/compass/feedback ────────────────────────────────────────────────
 // Accepts user feedback on a Compass recommendation and updates preferences.
 

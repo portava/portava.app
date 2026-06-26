@@ -345,6 +345,38 @@ export async function putCompassBoostVisibility(
   }
 }
 
+// ── AI Buddy (ask) ────────────────────────────────────────────────────────────
+
+export interface CompassAskRecommendation {
+  id: string;
+  bestPick: string;
+  why: string;
+  whyLabel?: string;
+  socialProof: string;
+  socialProofLabel?: string;
+  tradeoff?: string;
+  tradeoffLabel?: string;
+  usedPostIds: string[];
+  nextActions: Array<{ label: string; kind: string }>;
+}
+
+export async function postCompassAsk(
+  prompt: string,
+  opts: { city?: string; mode?: 'recommend' | 'itinerary' } = {},
+): Promise<{ ok: boolean; data?: CompassAskRecommendation; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/ask', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, ...opts }),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true, data: await r.json() };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';

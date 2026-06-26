@@ -188,8 +188,14 @@ export interface AiRecommendation {
   id: ID;
   bestPick: string;
   why: string;
+  /** Override the "Why" section label (e.g. "Day 1" for itinerary mode). */
+  whyLabel?: string;
   socialProof: string;
+  /** Override the "Travelers are saying" section label (e.g. "Day 2"). */
+  socialProofLabel?: string;
   tradeoff?: string;
+  /** Override the "Tradeoff" section label (e.g. "Day 3"). */
+  tradeoffLabel?: string;
   usedPostIds: ID[];
   nextActions: AiAction[];
 }
