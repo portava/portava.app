@@ -25,6 +25,7 @@ const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
 const DISMISSED_KEY = 'people_you_may_know_dismissed';
 const DISMISSED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const UNDO_TIMEOUT_MS = 4000;
 
 interface DismissedEntry {
   id: string;
@@ -40,13 +41,11 @@ async function loadDismissed(): Promise<Map<string, number>> {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      // Corrupt JSON — clear and start fresh
       await AsyncStorage.removeItem(DISMISSED_KEY);
       return new Map();
     }
 
     if (!Array.isArray(parsed)) {
-      // Unexpected shape — clear and start fresh
       await AsyncStorage.removeItem(DISMISSED_KEY);
       return new Map();
     }
@@ -54,7 +53,6 @@ async function loadDismissed(): Promise<Map<string, number>> {
     const now = Date.now();
     let migrated = false;
 
-    // Normalize each element: support legacy plain string[] and new DismissedEntry[]
     const entries: DismissedEntry[] = parsed.map((item) => {
       if (typeof item === 'string') {
         migrated = true;
@@ -63,15 +61,12 @@ async function loadDismissed(): Promise<Map<string, number>> {
       if (item && typeof item === 'object' && typeof (item as DismissedEntry).id === 'string' && typeof (item as DismissedEntry).dismissedAt === 'number') {
         return item as DismissedEntry;
       }
-      // Malformed element — treat as fresh dismissal so it eventually expires
       migrated = true;
       return { id: String((item as { id?: unknown })?.id ?? ''), dismissedAt: now };
     }).filter((e) => e.id.length > 0);
 
-    // Prune entries older than TTL
     const active = entries.filter((e) => now - e.dismissedAt < DISMISSED_TTL_MS);
 
-    // Persist if: legacy format was migrated OR entries were pruned
     if (migrated || active.length < entries.length) {
       await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify(active));
     }
@@ -189,6 +184,44 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
   );
 }
 
+interface UndoToastProps {
+  visible: boolean;
+  onUndo: () => void;
+}
+
+function UndoToast({ visible, onUndo }: UndoToastProps) {
+  const translateY = useRef(new Animated.Value(20)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const prevVisible = useRef(false);
+
+  useEffect(() => {
+    if (visible && !prevVisible.current) {
+      Animated.parallel([
+        Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+    } else if (!visible && prevVisible.current) {
+      Animated.parallel([
+        Animated.timing(translateY, { toValue: 20, duration: 180, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start();
+    }
+    prevVisible.current = visible;
+  }, [visible, translateY, opacity]);
+
+  return (
+    <Animated.View
+      style={[styles.toast, { opacity, transform: [{ translateY }] }]}
+      pointerEvents={visible ? 'auto' : 'none'}
+    >
+      <Text style={styles.toastLabel}>Suggestion removed</Text>
+      <Pressable onPress={onUndo} hitSlop={8}>
+        <Text style={styles.toastUndo}>Undo</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 interface PeopleYouMayKnowProps {
   refreshKey?: number;
 }
@@ -199,6 +232,11 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const [followingCount, setFollowingCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [dismissed, setDismissed] = useState<Map<string, number>>(new Map());
+
+  // Undo state — ref holds live pending data to avoid stale closures in timer
+  const pendingRef = useRef<{ user: TravelerSearchResult; index: number } | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
 
   const load = useCallback(async () => {
     if (!isAuthed || !userId) { setLoading(false); return; }
@@ -223,26 +261,89 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  // Commit a pending dismissal to AsyncStorage + dismissed state
+  const commitPending = useCallback((user: TravelerSearchResult) => {
+    setDismissed((prev) => {
+      const next = new Map(prev);
+      next.set(user.id, Date.now());
+      saveDismissed(next);
+      return next;
+    });
+  }, []);
+
   const handleFollowed = useCallback((uid: string) => {
     setSuggestions((prev) => prev.filter((u) => u.id !== uid));
     setFollowingCount((c) => (c !== null ? c + 1 : c));
   }, []);
 
   const handleDismiss = useCallback((uid: string) => {
-    setSuggestions((prev) => prev.filter((u) => u.id !== uid));
-    setDismissed((prev) => {
-      const next = new Map(prev);
-      next.set(uid, Date.now());
-      saveDismissed(next);
+    setSuggestions((prev) => {
+      const index = prev.findIndex((u) => u.id === uid);
+      const user = prev[index];
+      if (!user) return prev;
+
+      // If another dismissal was pending, commit it first
+      if (pendingRef.current) {
+        commitPending(pendingRef.current.user);
+      }
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
+      pendingRef.current = { user, index };
+      setToastVisible(true);
+
+      timerRef.current = setTimeout(() => {
+        if (pendingRef.current?.user.id === uid) {
+          commitPending(pendingRef.current.user);
+          pendingRef.current = null;
+        }
+        timerRef.current = null;
+        setToastVisible(false);
+      }, UNDO_TIMEOUT_MS);
+
+      return prev.filter((u) => u.id !== uid);
+    });
+  }, [commitPending]);
+
+  const handleUndo = useCallback(() => {
+    if (!pendingRef.current) return;
+
+    const { user, index } = pendingRef.current;
+    pendingRef.current = null;
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Re-insert at the original position (clamped to current list length)
+    setSuggestions((prev) => {
+      const insertAt = Math.min(index, prev.length);
+      const next = [...prev];
+      next.splice(insertAt, 0, user);
       return next;
     });
+
+    setToastVisible(false);
   }, []);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      // Commit any pending dismissal so it isn't lost
+      if (pendingRef.current) {
+        commitPending(pendingRef.current.user);
+      }
+    };
+  }, [commitPending]);
 
   // Hide: not authed, still loading with no data, following >= threshold, or no suggestions
   if (!isAuthed) return null;
   if (loading && suggestions.length === 0) return null;
   if (followingCount !== null && followingCount >= FOLLOWING_THRESHOLD) return null;
-  if (suggestions.length === 0) return null;
+  if (suggestions.length === 0 && !toastVisible) return null;
 
   return (
     <View style={styles.container}>
@@ -266,6 +367,7 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
           />
         ))}
       </ScrollView>
+      <UndoToast visible={toastVisible} onUndo={handleUndo} />
     </View>
   );
 }
@@ -375,5 +477,26 @@ const styles = StyleSheet.create({
     ...t.bodyStrong,
     color: color.mute,
     fontSize: 11,
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    backgroundColor: color.ink,
+    borderRadius: radius.md,
+  },
+  toastLabel: {
+    ...t.body,
+    color: color.onInk,
+    fontSize: 13,
+  },
+  toastUndo: {
+    ...t.bodyStrong,
+    color: color.signal,
+    fontSize: 13,
   },
 });
