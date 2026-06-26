@@ -1071,6 +1071,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
+  // Invalidate compass cache: active_booking state changed for both traveler and buddy
+  const scComplete = getServiceClient();
+  void invalidateCompassCache(scComplete, auth.user.id, "booking_complete");
+  if (buddyUserId) void invalidateCompassCache(scComplete, buddyUserId, "booking_complete");
+
   // Compass activity ingestion — both traveler and buddy get credit
   recordActivityEvent(serviceClient, auth.user.id, "booking_completed", { category: "buddy_session" });
   if (buddyUserId) {
@@ -2504,10 +2509,12 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res)
   const { sc: serviceClient, userId } = admin;
   const { buddyId } = req.params;
   const { reason } = req.body ?? {};
-  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id, user_id").eq("id", buddyId).maybeSingle();
   if (!buddy) return res.status(404).json({ error: "not_found" });
   await serviceClient.from("rent_buddy_profiles").update({ admin_status: "disabled", status: "suspended", updated_at: new Date().toISOString() }).eq("id", buddyId);
   await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "suspended", notes: reason ?? null });
+  // Invalidate compass cache for the suspended buddy
+  if ((buddy as any).user_id) void invalidateCompassCache(serviceClient, (buddy as any).user_id as string, "buddy_suspend");
   return res.json({ ok: true });
 });
 

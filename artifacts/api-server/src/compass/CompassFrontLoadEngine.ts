@@ -199,19 +199,25 @@ async function loadTier1(
   items.push({ type: 'first_feed_page', tier: 1, cachedAt: now, data: firstFeedPage });
 
   // 2. City pulse preview — last 5 published posts from current city
+  //    Per-item authz: exclude posts from blocked users and unverified/delayed posts.
   let pulsePreview: unknown[] = [];
   if (db && profile.currentCity) {
     try {
+      const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
         .from("posts")
         .select("id, body, created_at, user_id, post_status, status")
         .eq("city", profile.currentCity)
         .eq("status", "active")
         .order("created_at", { ascending: false })
-        .limit(10);
-      // Exclude posts pending delayed-publish (only show fully published content)
+        .limit(20);
       pulsePreview = ((raw as any[]) ?? [])
-        .filter((p: any) => !p.post_status || p.post_status === "published")
+        .filter((p: any) =>
+          // Authorization: exclude posts from blocked users
+          !blockedSet.has(p.user_id as string) &&
+          // Privacy: exclude posts pending delayed-publish
+          (!p.post_status || p.post_status === "published"),
+        )
         .slice(0, 5)
         .map(({ post_status: _ps, status: _s, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
@@ -253,34 +259,47 @@ async function loadTier2(
   const now = new Date().toISOString();
 
   // 1. Top upcoming events in current city
+  //    Per-item authz: exclude events from blocked users; only published/active events.
   let topEvents: unknown[] = [];
   if (db && profile.currentCity) {
     try {
-      const { data } = await db
+      const blockedSet = new Set(profile.blockedUserIds ?? []);
+      const { data: raw } = await db
         .from("posts")
-        .select("id, body, event_starts_at, city, created_at")
+        .select("id, body, event_starts_at, city, created_at, user_id, status, post_status")
         .eq("city", profile.currentCity)
         .eq("post_type", "event")
+        .eq("status", "active")
         .gt("event_starts_at", now)
         .order("event_starts_at", { ascending: true })
-        .limit(3);
-      topEvents = (data as any[]) ?? [];
+        .limit(10);
+      topEvents = ((raw as any[]) ?? [])
+        .filter((e: any) =>
+          !blockedSet.has(e.user_id as string) &&
+          (!e.post_status || e.post_status === "published"),
+        )
+        .slice(0, 3)
+        .map(({ user_id: _u, status: _s, post_status: _ps, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'top_events', tier: 2, cachedAt: now, data: topEvents });
 
   // 2. Top available buddy profiles
+  //    Per-item authz: exclude buddies the user has blocked or who have blocked them.
   let topBuddies: unknown[] = [];
   if (db) {
     try {
-      const { data } = await db
+      const blockedSet = new Set(profile.blockedUserIds ?? []);
+      const { data: raw } = await db
         .from("buddy_profiles")
         .select("user_id, display_name, tagline, city, hourly_rate_usd, average_rating")
         .eq("status", "active")
         .eq("verified", true)
         .order("average_rating", { ascending: false })
-        .limit(3);
-      topBuddies = (data as any[]) ?? [];
+        .limit(10);
+      topBuddies = ((raw as any[]) ?? [])
+        .filter((b: any) => !blockedSet.has(b.user_id as string))
+        .slice(0, 3);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'top_buddies', tier: 2, cachedAt: now, data: topBuddies });

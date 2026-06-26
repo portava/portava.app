@@ -40,6 +40,7 @@ import {
   syncCircleChatMembers,
 } from '../services/groupChatSync';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
+import { invalidate as invalidateCompassCache } from '../compass/CompassCacheEngine.js';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
@@ -1888,6 +1889,9 @@ router.post('/threads/:threadId/leave', async (req, res) => {
     .is('left_at', null);
 
   if (error) { req.log.error({ err: error }, 'leave thread failed'); sendError(res, 'db_error', error.message); return; }
+
+  // Invalidate compass cache: group membership changed (affects feed composition)
+  void invalidateCompassCache(sc, user.id, "group_leave");
 
   res.status(200).json({ ok: true });
 

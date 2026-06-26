@@ -153,9 +153,11 @@ ALTER TABLE compass_media_preload_manifest ENABLE ROW LEVEL SECURITY;
 CREATE POLICY compass_media_preload_manifest_select ON compass_media_preload_manifest
   FOR SELECT USING (auth.uid() = user_id);
 
+-- Plain index on expires_at (no partial index predicate — now() is not immutable in Postgres)
 CREATE INDEX IF NOT EXISTS compass_media_preload_manifest_user_tier_idx
-  ON compass_media_preload_manifest (user_id, tier, priority DESC)
-  WHERE expires_at > now();
+  ON compass_media_preload_manifest (user_id, tier, priority DESC);
+CREATE INDEX IF NOT EXISTS compass_media_preload_manifest_expires_idx
+  ON compass_media_preload_manifest (expires_at);
 
 -- ── compass_frontload_rules ───────────────────────────────────────────────────
 -- Operator-configurable rules controlling which data goes in which tier.

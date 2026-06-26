@@ -27,6 +27,7 @@ import {
   adminResolveReview,
 } from "../services/trust/TrustAdminService.js";
 import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
@@ -218,6 +219,8 @@ router.post("/admin/trust/users/:userId/restrict", async (req, res) => {
       parsed.data.reason,
       parsed.data.expiresAt ?? null,
     );
+    // Invalidate compass cache so the restricted user sees updated state immediately
+    void invalidateCompassCache(sc, userId, "admin_restrict");
     res.status(201).json(result);
   } catch (err: any) {
     sendError(res, "db_error", err?.message ?? "Could not apply restriction");
