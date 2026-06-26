@@ -175,7 +175,41 @@ router.get("/pulse", async (req, res) => {
     };
   });
 
-  res.json({ posts, total: posts.length, tab });
+  // When COMPASS_ENABLED is true, inject intent-mode context for Safety and Night modes:
+  // Safety Mode surfaces safe-location posts first; Night Mode applies a recency sort.
+  let orderedPosts = posts;
+  try {
+    const compassEnabled = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "COMPASS_ENABLED")
+      .maybeSingle();
+    if ((compassEnabled.data as any)?.enabled) {
+      const profileRes = await sc
+        .from("profiles")
+        .select("travel_styles")
+        .eq("id", user.id)
+        .maybeSingle();
+      const hour = new Date().getUTCHours();
+      const isNight = hour >= 22 || hour < 5;
+      if (isNight) {
+        // Night Mode: most recent first (already sorted), no extra filter needed
+        orderedPosts = posts;
+      }
+      // Safety Mode: items with explicit location labels come first
+      // (proxy for well-tagged posts that have verifiable location data)
+      const safetyModeActive =
+        (profileRes.data as any)?.travel_styles?.includes("safety_conscious") ?? false;
+      if (safetyModeActive) {
+        orderedPosts = [
+          ...posts.filter((p: any) => p.locationCity && p.locationCountry),
+          ...posts.filter((p: any) => !(p.locationCity && p.locationCountry)),
+        ];
+      }
+    }
+  } catch { /* Compass enrichment is non-fatal — return unmodified posts */ }
+
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab });
 });
 
 export default router;

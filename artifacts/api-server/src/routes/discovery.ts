@@ -24,6 +24,10 @@ import { buildDiscoveryContext } from "../services/location/DiscoveryLocationCon
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
 import { calculateUserAge } from "../lib/ageEligibility";
+import { discoveryPlaceToCompassItem, compassItemToDiscoveryPlace } from "../compass/CompassDiscoveryAdapter";
+import { getCompassProfile } from "../compass/CompassProfileService";
+import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
+import { runPipeline } from "../compass/CompassPipeline";
 
 const router = Router();
 
