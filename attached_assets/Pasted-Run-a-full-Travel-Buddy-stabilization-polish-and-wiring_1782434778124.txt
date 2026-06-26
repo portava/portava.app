@@ -1,0 +1,465 @@
+Run a full Travel Buddy stabilization, polish, and wiring audit before adding any new features.
+
+Goal:
+Review the entire app page by page and function by function. Confirm every existing feature is wired correctly, works as intended, has clean mobile UX, respects privacy/safety rules, and does not have broken navigation, dead buttons, disconnected mock data, or inconsistent state.
+
+Do not add new major features in this pass.
+Do not expand scope.
+Focus only on:
+- fixing broken flows
+- wiring existing features
+- polishing UI
+- removing dead buttons
+- connecting pages to the right stores/APIs
+- making empty/loading/error states clean
+- confirming privacy and safety rules
+- adding tests for the flows that already exist
+
+Core instruction:
+Audit first, then fix in small safe passes. Do not rewrite the app.
+
+Review order:
+
+1. App shell / navigation
+Check:
+- bottom tabs
+- top headers
+- back buttons
+- modal/bottom-sheet behavior
+- safe-area spacing
+- menu bar opacity
+- fixed button placement
+- no horizontal overflow
+- no duplicate tabs
+- no dead routes
+- no broken deep links
+
+Current expected main tabs:
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+
+Messaging should be accessible as Telegraph, but not as a cluttered bottom tab unless intentionally placed.
+
+Acceptance:
+- Every tab loads.
+- Every header action works.
+- Every back button returns correctly.
+- No screen is unreachable.
+- No screen crashes on missing data.
+
+2. Authentication / onboarding
+Check:
+- signup
+- login
+- profile creation
+- default language
+- home country/city
+- verification status
+- permissions prompts
+- location permission fallback
+- onboarding to main app
+
+Acceptance:
+- New user can enter app successfully.
+- Missing optional fields do not crash profile/discovery.
+- Default language is available for Telegraph translation.
+- Verification badge does not show unless verified.
+
+3. Passport / Profile
+Review:
+- Passport profile hero
+- verified badge
+- About Me fields
+- travel style
+- interests
+- languages
+- availability
+- stamps
+- postcards
+- plans tab
+- visibility controls
+- edit profile flow
+
+Fix:
+- broken profile loading
+- broken edit/save
+- missing empty states
+- inconsistent badges
+- fields showing publicly when private
+- layout overflow
+
+Acceptance:
+- User can edit and save profile.
+- Public profile only shows allowed fields.
+- Empty fields are hidden.
+- Profile loads reliably.
+- About Me data can be read by Discovery/Telegraph AI without exposing private data.
+
+4. Pulse / City Pulse
+Review:
+- feed loading
+- post cards
+- geotag logic
+- delayed posting flow
+- likes/comments if present
+- save/share actions
+- post creation entry points
+- privacy indicators
+- empty/loading states
+
+Delayed posting rule:
+- user can create geotagged post
+- user can earn geotagged credit
+- public post does not publish until user exits location/geofence
+
+Acceptance:
+- Pulse feed loads.
+- Create post works or clearly shows not implemented.
+- Delayed posts are clearly marked.
+- No exact live location is exposed publicly.
+- Save/share buttons are not dead.
+
+5. Discovery
+Review:
+- For You
+- Nearby
+- Activities
+- Food
+- Nightlife
+- Events
+- People
+- Groups
+- filters
+- search
+- city selector
+- save
+- add to plan
+- add to trip
+- send to Telegraph
+- detail screen
+
+Acceptance:
+- Discovery loads with mock/provider service data.
+- Tabs work.
+- Filters work or are visibly disabled.
+- Search returns items/empty state.
+- Add to Plan uses correct bottom sheet.
+- Send to Telegraph creates rich preview.
+- People discovery respects opt-in/privacy.
+- Nearby falls back to trip city when location is off.
+
+6. Create flow
+Review:
+- create event
+- create plan
+- create trip
+- create post/postcard
+- age limit setting
+- language preferences
+- host settings
+- invite-only settings
+- minimum trust threshold
+- visibility settings
+- save/publish buttons
+
+Acceptance:
+- User can create each supported object.
+- Required fields are validated.
+- Draft/publish state is clear.
+- Age limits and visibility are saved.
+- Create buttons do not silently fail.
+
+7. Trips
+Review:
+- trip list
+- trip detail
+- today/next up
+- timeline
+- saved ideas
+- plans
+- Trip Crew
+- Compass Brief
+- stamps
+- map
+- safety
+- posts
+- trip chat/Telegraph button
+
+Acceptance:
+- Trip screen loads.
+- Trip sections do not crash if empty.
+- Add to trip works from Discovery.
+- Trip group Telegraph opens for accepted members.
+- Invited but unaccepted users cannot access trip Telegraph.
+- Removed members lose access.
+
+8. Plans / Events
+Review:
+- plan detail
+- event detail
+- join/request flow
+- invite flow
+- age filtering
+- capacity limits
+- language preference
+- gender/comfort filters if present
+- trust threshold
+- add to calendar if present
+- Boarding Pass/Gate acceptance
+
+Acceptance:
+- Join/request flow works.
+- Host can approve/deny if implemented.
+- Age filtering is enforced.
+- Accepted user gets Boarding Pass/Gate state.
+- Non-eligible users see clear reason.
+
+9. Telegraph messaging
+Review:
+- inbox
+- direct threads
+- trip group threads
+- circle threads
+- message requests
+- auto-translation
+- Discovery card share
+- AI recommendations
+- mute/block/report
+- unread count
+- read receipts
+- send failure retry
+
+Acceptance:
+- Telegraph branding is consistent.
+- Threads load and send messages.
+- Translation stores original + translated text.
+- Discovery cards render as rich previews.
+- Blocked users cannot message.
+- Removed trip/circle members cannot read.
+- Message requests work for unconnected users.
+
+10. Circles / Trusted Circle
+Review:
+- circle creation
+- invite/accept flow
+- members list
+- privacy settings
+- circle Telegraph
+- add to trusted circle
+- remove member
+
+Acceptance:
+- Circle member access works.
+- Removed members lose circle Telegraph access.
+- Privacy settings are respected.
+- Circle actions are not dead buttons.
+
+11. Rent a Buddy
+Review:
+- marketplace listing
+- local companion profile
+- booking request
+- deposit/full payment labels
+- non-dating/non-adult boundary copy
+- verification requirement
+- reporting/blocking
+- booking status
+
+Acceptance:
+- Feature is clearly bounded as non-dating.
+- Booking flow does not imply unsupported payment if payments are not live.
+- Verified/local companion status is clear.
+- Report/block is available.
+
+12. Safe Return / Safety
+Review:
+- Safe Return setup
+- check-in schedule
+- missed check-in prompt
+- escalation
+- emergency help
+- trusted contact/circle alert
+- panic button placeholder if present
+- location sharing privacy
+
+Acceptance:
+- Safe Return screens open.
+- Check-in state is clear.
+- Missed check-in prompt works.
+- Escalation path is wired or safely stubbed.
+- Panic button does not falsely claim law enforcement integration unless real.
+
+13. Notifications / Activity Center
+Review:
+- notification list
+- unread count
+- trip updates
+- Telegraph updates
+- plan invites
+- safety alerts
+- discovery recommendations
+- push placeholder
+
+Acceptance:
+- Activity center loads.
+- Notification taps route to correct screen.
+- Muted Telegraph threads do not notify.
+- Safety alerts are prioritized.
+
+14. GPS / Map / Stamps
+Review:
+- GPS permission flow
+- city fallback
+- stamps
+- geotag credit
+- map markers
+- route/detail navigation
+- hidden gems
+- delayed posting geofence
+
+Acceptance:
+- Location permission denied does not break app.
+- Exact live location is not exposed.
+- Stamps and geotag credit are consistent.
+- Map markers open correct detail screens.
+
+15. Trust Score / Abuse controls
+Review:
+- trust score display
+- weighted trust formula
+- penalties
+- report/block
+- suspicious behavior flags
+- score recovery limits
+- admin review if present
+
+Acceptance:
+- Trust score does not hide serious recent bad behavior.
+- Penalties are visible internally.
+- User-facing copy is fair and not misleading.
+- Abuse reports create records.
+
+16. Admin / moderation
+Review:
+- user lookup
+- reports
+- verification
+- event/circle moderation
+- safety logs
+- delayed post review if present
+- Rent a Buddy verification
+- panic/safety events
+
+Acceptance:
+- Admin routes are protected.
+- Reports can be viewed.
+- Actions are audit logged.
+- Normal users cannot access admin screens.
+
+17. Data/store/API wiring
+Audit:
+- all screens with mock data
+- all screens with API calls
+- all local stores/context
+- loading state
+- error state
+- retry state
+- stale data behavior
+- optimistic updates
+- cache invalidation
+
+For every page, classify:
+- fully wired
+- partially wired
+- mock-only
+- broken
+- unreachable
+
+Do not pretend mock-only is live.
+
+18. Mobile polish checklist
+For every screen:
+- no horizontal overflow
+- no clipped buttons
+- bottom sheet fits
+- keyboard does not cover composer/forms
+- safe-area respected
+- skeleton loading exists
+- empty states are polished
+- destructive actions confirm
+- buttons have consistent size/placement
+- menu bar opacity and fixed placement are correct
+
+19. Testing requirements
+Add or update tests for:
+- navigation smoke test for every main page
+- profile save/load
+- Discovery tabs/search/filter
+- Add to Plan
+- Send to Telegraph
+- Trip group access
+- Circle group access
+- Telegraph send/read/unread
+- translation fallback
+- Safe Return setup
+- delayed posting rule
+- age filtering
+- privacy visibility
+- blocked user cannot message
+- removed member cannot access
+- location permission fallback
+
+20. Final report format
+After review, produce a page-by-page report:
+
+For each page:
+- Status: Pass / Partial / Fail
+- What works
+- What is broken
+- What is mock-only
+- Dead buttons
+- Missing empty/loading/error states
+- Privacy/safety risks
+- Tests added
+- Files changed
+- Remaining follow-up tasks
+
+Priority order for fixes:
+P0:
+- crashes
+- broken navigation
+- privacy leaks
+- unsafe access rules
+- Telegraph/trip/circle permission failures
+- location exposure
+
+P1:
+- broken core flows
+- dead buttons
+- save/load failures
+- incorrect state
+- missing API wiring
+
+P2:
+- UI polish
+- empty states
+- copy cleanup
+- layout overflow
+- skeleton loaders
+
+P3:
+- nice-to-have refinements
+
+Acceptance criteria:
+- Every main page has been reviewed.
+- Every existing major function is classified.
+- Broken core flows are fixed or clearly marked.
+- No dead buttons without disabled/explanatory state.
+- No page crashes on empty/missing data.
+- Privacy and safety rules are enforced server-side where needed.
+- Mobile UI is clean across primary screens.
+- Tests cover core flows.
+- Final report gives exact remaining issues before new feature work resumes.

@@ -23,6 +23,7 @@ import { useSession } from '../context/SessionContext';
 import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 /* ── Types ── */
 
@@ -175,6 +176,7 @@ export function UnifiedPostComposer({
   const [filterId, setFilterId] = useState<string>('original');
   const [filterIntensity, setFilterIntensity] = useState<number>(100);
   const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none');
+  const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
 
   // Auto-select delayed_until_exit when the user attaches a GPS location
   useEffect(() => {
@@ -196,6 +198,7 @@ export function UnifiedPostComposer({
       setLoc({ source: 'none' });
       setManualText('');
       setLocationPrivacyMode('none');
+      setScheduledTime(null);
       setAddToPassport(false);
       setError(null);
       setHighlightComposerOpen(false);
@@ -321,6 +324,7 @@ export function UnifiedPostComposer({
       filterId,
       filterIntensity,
       locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
+      publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
     });
 
     if (res.ok) {
@@ -533,12 +537,14 @@ export function UnifiedPostComposer({
                 {loc.source !== 'none' && (
                   <View style={uc.field}>
                     <Text style={uc.fieldLabel}>Share location</Text>
-                    <View style={uc.chipRow}>
+                    <View style={uc.chipRowWrap}>
                       {([
                         { mode: 'delayed_until_exit' as LocationPrivacyMode, label: 'After I leave' },
+                        { mode: 'delayed_until_time' as LocationPrivacyMode, label: 'At a time' },
                         { mode: 'city_only' as LocationPrivacyMode, label: 'City only' },
                         { mode: 'none' as LocationPrivacyMode, label: 'Now' },
                         { mode: 'hidden' as LocationPrivacyMode, label: 'Hidden' },
+                        { mode: 'trusted_circle_only' as LocationPrivacyMode, label: 'Trusted circle' },
                       ] satisfies { mode: LocationPrivacyMode; label: string }[]).map(({ mode, label }) => (
                         <Pressable
                           key={mode}
@@ -556,11 +562,33 @@ export function UnifiedPostComposer({
                         Location will appear after you've left this spot.
                       </Text>
                     )}
+                    {locationPrivacyMode === 'delayed_until_time' && (
+                      <>
+                        <Text style={uc.privacyHint}>
+                          {scheduledTime
+                            ? `Publishing at ${scheduledTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                            : 'Pick a time to publish your location'}
+                        </Text>
+                        <DateTimePicker
+                          value={scheduledTime ?? new Date(Date.now() + 60 * 60 * 1_000)}
+                          mode="time"
+                          is24Hour={false}
+                          display="spinner"
+                          onChange={(_e: any, date?: Date) => { if (date) setScheduledTime(date); }}
+                          style={{ height: 100 }}
+                        />
+                      </>
+                    )}
                     {locationPrivacyMode === 'city_only' && (
                       <Text style={uc.privacyHint}>Only the city name will be shared.</Text>
                     )}
                     {locationPrivacyMode === 'hidden' && (
                       <Text style={uc.privacyHint}>Location stays completely hidden.</Text>
+                    )}
+                    {locationPrivacyMode === 'trusted_circle_only' && (
+                      <Text style={uc.privacyHint}>
+                        Only people in your Trusted Circle can see where you are.
+                      </Text>
                     )}
                   </View>
                 )}
@@ -774,6 +802,7 @@ const uc = StyleSheet.create({
 
   /* visibility */
   chipRow: { flexDirection: 'row', gap: 8 },
+  chipRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   visChip: {
     paddingHorizontal: 14, paddingVertical: 8,
     borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,

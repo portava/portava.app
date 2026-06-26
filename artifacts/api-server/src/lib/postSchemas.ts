@@ -139,6 +139,28 @@ export function safeLocationLabel(
   return locationName ?? ([locationCity, locationCountry].filter(Boolean).join(", ") || null);
 }
 
+/**
+ * Redact sensitive location fields for public-facing responses.
+ *
+ * Rule: when a location_privacy_mode is active, the raw location_name
+ * (exact venue) is suppressed — consumers should use public_location_label.
+ *
+ * Exceptions:
+ *   - mode null / 'none' → no privacy; pass through unchanged.
+ *   - delayed_until_exit / delayed_until_time + post_status 'published' →
+ *     geofence was cleared; location intentionally revealed.
+ */
+export function mapPublicPost(row: any): any {
+  const mode = row.location_privacy_mode as string | null | undefined;
+  if (!mode || mode === "none") return row;
+  if (mode === "city_only" || mode === "hidden" || mode === "trusted_circle_only") {
+    return { ...row, location_name: null };
+  }
+  // delayed_until_exit / delayed_until_time: suppress until published
+  if (row.post_status === "published") return row;
+  return { ...row, location_name: null };
+}
+
 // ── Create schema ─────────────────────────────────────────────────────────────
 
 /**

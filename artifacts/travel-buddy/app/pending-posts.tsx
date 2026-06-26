@@ -84,10 +84,11 @@ interface PostCardProps {
   post: PendingPostRow;
   onPublishWithoutLocation: () => void;
   onCancel: () => void;
+  onMakePrivate: () => void;
   exited: boolean;
 }
 
-function PendingPostCard({ post, onPublishWithoutLocation, onCancel, exited }: PostCardProps) {
+function PendingPostCard({ post, onPublishWithoutLocation, onCancel, onMakePrivate, exited }: PostCardProps) {
   const preview = post.content.replace(/^\[[^\]]+\]\s*/, '').slice(0, 120);
   return (
     <View style={s.card}>
@@ -120,7 +121,11 @@ function PendingPostCard({ post, onPublishWithoutLocation, onCancel, exited }: P
       <View style={s.actions}>
         <Pressable style={s.actionBtn} onPress={onPublishWithoutLocation}>
           <Eye size={14} color={color.deep} />
-          <Text style={s.actionBtnText}>Publish now (no location)</Text>
+          <Text style={s.actionBtnText}>Publish (no location)</Text>
+        </Pressable>
+        <Pressable style={[s.actionBtn, s.privateBtn]} onPress={onMakePrivate}>
+          <XCircle size={14} color={color.mute} />
+          <Text style={[s.actionBtnText, { color: color.mute }]}>Make private</Text>
         </Pressable>
         <Pressable style={[s.actionBtn, s.cancelBtn]} onPress={onCancel}>
           <XCircle size={14} color={color.signal} />
@@ -207,6 +212,28 @@ export default function PendingPostsScreen() {
 
     return () => { sub?.remove(); };
   }, [posts, load]);
+
+  async function handleMakePrivate(post: PendingPostRow) {
+    Alert.alert(
+      'Make post private?',
+      "The post will be saved to your profile but visible only to you.",
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Make private',
+          style: 'default',
+          onPress: async () => {
+            const result = await changeLocationPrivacy(post.id, 'hidden');
+            if (result.ok) {
+              setPosts((prev) => prev.filter((p) => p.id !== post.id));
+            } else {
+              Alert.alert('Error', result.message ?? 'Could not update post');
+            }
+          },
+        },
+      ],
+    );
+  }
 
   async function handlePublishWithoutLocation(post: PendingPostRow) {
     Alert.alert(
@@ -297,6 +324,7 @@ export default function PendingPostsScreen() {
               post={item}
               exited={exitedPostIds.current.has(item.id)}
               onPublishWithoutLocation={() => handlePublishWithoutLocation(item)}
+              onMakePrivate={() => handleMakePrivate(item)}
               onCancel={() => handleCancel(item)}
             />
           )}
@@ -357,5 +385,6 @@ const s = StyleSheet.create({
     backgroundColor: color.paper,
   },
   cancelBtn: { borderColor: color.signal + '40' },
+  privateBtn: { borderColor: color.mute + '40' },
   actionBtnText: { ...t.small, fontWeight: '700', color: color.deep },
 });

@@ -22,6 +22,7 @@ import {
   geofenceRadius,
   defaultPrivacyMode,
   safeLocationLabel,
+  mapPublicPost,
 } from "../lib/postSchemas.js";
 
 import {
@@ -301,5 +302,99 @@ describe("runDelayedPostPublisher — no client", () => {
     assert.equal(result.published, 0);
     assert.equal(result.skipped, 0);
     assert.equal(result.errors, 0);
+  });
+});
+
+// ── mapPublicPost — privacy redaction ─────────────────────────────────────────
+
+describe("mapPublicPost — no privacy mode", () => {
+  it("passes through unchanged when mode is null", () => {
+    const row = { id: "p1", location_name: "The Ritz", location_privacy_mode: null };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, "The Ritz");
+  });
+  it("passes through unchanged when mode is 'none'", () => {
+    const row = { id: "p2", location_name: "Blue Bottle", location_privacy_mode: "none" };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, "Blue Bottle");
+  });
+});
+
+describe("mapPublicPost — city_only mode", () => {
+  it("redacts location_name", () => {
+    const row = { id: "p3", location_name: "The Ritz Paris", location_privacy_mode: "city_only" };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, null);
+  });
+});
+
+describe("mapPublicPost — hidden mode", () => {
+  it("redacts location_name", () => {
+    const row = { id: "p4", location_name: "My Home", location_privacy_mode: "hidden" };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, null);
+  });
+});
+
+describe("mapPublicPost — trusted_circle_only mode", () => {
+  it("redacts location_name", () => {
+    const row = { id: "p5", location_name: "Private Club", location_privacy_mode: "trusted_circle_only" };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, null);
+  });
+});
+
+describe("mapPublicPost — delayed_until_exit pending", () => {
+  it("redacts location_name before geofence exit", () => {
+    const row = {
+      id: "p6",
+      location_name: "Conference Center",
+      location_privacy_mode: "delayed_until_exit",
+      post_status: "pending_location_exit",
+    };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, null);
+  });
+  it("reveals location_name after published", () => {
+    const row = {
+      id: "p7",
+      location_name: "Conference Center",
+      location_privacy_mode: "delayed_until_exit",
+      post_status: "published",
+    };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, "Conference Center");
+  });
+});
+
+describe("mapPublicPost — delayed_until_time pending", () => {
+  it("redacts location_name before time window", () => {
+    const row = {
+      id: "p8",
+      location_name: "Surprise Restaurant",
+      location_privacy_mode: "delayed_until_time",
+      post_status: "pending_delay",
+    };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, null);
+  });
+  it("reveals after published", () => {
+    const row = {
+      id: "p9",
+      location_name: "Surprise Restaurant",
+      location_privacy_mode: "delayed_until_time",
+      post_status: "published",
+    };
+    const out = mapPublicPost(row);
+    assert.equal(out.location_name, "Surprise Restaurant");
+  });
+});
+
+describe("mapPublicPost — does not mutate original", () => {
+  it("returns a new object when redacting", () => {
+    const row = { id: "p10", location_name: "Secret Spot", location_privacy_mode: "hidden" };
+    const out = mapPublicPost(row);
+    assert.notEqual(out, row, "should be a new object");
+    assert.equal(row.location_name, "Secret Spot", "original should be unchanged");
   });
 });

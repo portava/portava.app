@@ -16,6 +16,7 @@ import {
   defaultPrivacyMode,
   geofenceRadius,
   safeLocationLabel,
+  mapPublicPost,
   type LocationPrivacyMode,
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
@@ -94,8 +95,29 @@ const POST_COLUMNS =
   "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
   "location_name, location_city, location_country, " +
   "location_privacy_mode, post_status, " +
-  "public_lat, public_lng, public_location_label, venue_name, geofence_radius_meters, " +
+  "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level";
+
+/**
+ * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
+ * private fields safe to serve exclusively to the post owner:
+ *   - location_lat / location_lng — used by the mobile geofence watcher
+ *   - venue_name                  — internal venue used for geotag credit
+ */
+const PENDING_POST_COLUMNS =
+  POST_COLUMNS + ", location_lat, location_lng, venue_name";
+
+/**
+ * Redact sensitive location fields from responses served to non-author
+ * audiences.  The raw location_name (exact venue) must be suppressed
+ * whenever a privacy mode is active — callers should use
+ * public_location_label instead.
+ *
+ * Exceptions:
+ *   - mode is null or 'none' → no privacy is set; expose as-is.
+ *   - mode is delayed_until_exit/time AND post_status='published' → the
+ *     geofence was cleared; location intentionally revealed.
+ */
 
 /* ===========================================================================
  * POST /posts  — create a standalone or trip-attached post
@@ -542,11 +564,12 @@ router.get("/posts", async (req, res) => {
 
     // Step 6: merge author + engagement + spans into each post.
     const merged = posts.map((p) => {
+      const safe = mapPublicPost(p);
       const pr = profileMap[p.author_id];
       const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
-        ...p,
+        ...safe,
         author: pr
           ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
           : null,
@@ -623,11 +646,12 @@ router.get("/posts", async (req, res) => {
     : {};
 
   const mergedGlobal = globalPosts.map((p) => {
+    const safe = mapPublicPost(p);
     const pr = globalProfileMap[p.author_id];
     const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
-      ...p,
+      ...safe,
       author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
@@ -792,7 +816,7 @@ router.get("/posts/pending", async (req, res) => {
 
   const { data, error } = await client
     .from("posts")
-    .select(POST_COLUMNS)
+    .select(PENDING_POST_COLUMNS)
     .eq("author_id", user.id)
     .eq("status", "active")
     .in("post_status", ["pending_location_exit", "pending_delay", "pending_safety_review"])
@@ -841,7 +865,7 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  res.status(200).json(post);
+  res.status(200).json(isAuthor ? post : mapPublicPost(post));
 });
 
 /* ===========================================================================

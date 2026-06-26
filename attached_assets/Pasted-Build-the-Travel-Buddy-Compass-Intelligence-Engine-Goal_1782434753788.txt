@@ -1,0 +1,1265 @@
+Build the Travel Buddy Compass Intelligence Engine.
+
+Goal:
+Create the core app-wide intelligence system that governs what users see, how they see it, when they see it, why they see it, and how fast it loads. Compass should make Travel Buddy smarter, safer, faster, more personalized, more adaptive, and more rewarding for active high-quality users.
+
+Important:
+Compass is not just a feed algorithm.
+Compass is the operating brain of Travel Buddy.
+
+Compass must govern:
+- Discovery feed
+- City Pulse
+- Events
+- Trips
+- Rent a Buddy
+- Telegraph suggestions
+- Hidden Gems
+- Passport Stamps
+- Nearby travelers
+- Group plans
+- Notifications
+- Safety prompts
+- Delayed posting
+- Search suggestions
+- Active-user visibility rewards
+- Content front-loading and caching
+
+Core principle:
+Safety, privacy, eligibility, and user controls must always run before ranking, boosting, front-loading, or personalization.
+
+Hard law:
+Safety Filter → Eligibility Rules → Privacy Guard → Front Load Eligibility → Scoring → Diversity → Explanation → Display
+
+Never do:
+Scoring → Safety
+Front-load → Permission Check
+Boost → Safety Filter
+
+Compass system rules:
+- Safety beats engagement.
+- Privacy beats personalization.
+- Eligibility beats ranking.
+- User explicit controls beat algorithm guesses.
+- Admin pause beats all recommendations.
+- Fresh safety state beats cached feed.
+- Active-user rewards cannot override safety.
+- Sponsored/boosted content cannot override safety.
+- Front-loaded content must be permission-checked before it reaches the client.
+- Never trust client-side hiding as privacy.
+
+Feature flags:
+Add feature/config flags:
+- COMPASS_ENABLED
+- COMPASS_V1_RULE_BASED_ENABLED
+- COMPASS_FRONTLOAD_ENABLED
+- COMPASS_ACTIVE_REWARD_ENABLED
+- COMPASS_EXPLAIN_WHY_ENABLED
+- COMPASS_ADMIN_CONTROLS_ENABLED
+- COMPASS_FALLBACK_MODE_ENABLED
+- COMPASS_ABUSE_DEFENSE_ENABLED
+- COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED
+
+Main Compass modules:
+1. Compass Profile
+2. Compass Context Engine
+3. Compass Intent Mode Engine
+4. Compass Safety Filter
+5. Compass Eligibility Engine
+6. Compass Privacy Guard
+7. Compass Scoring Engine
+8. Compass Diversity Engine
+9. Compass Fair Exposure Engine
+10. Compass Active User Reward Engine
+11. Compass Feed Builder
+12. Compass Front Load Engine
+13. Compass Cache + Invalidation Engine
+14. Compass Explanation Engine
+15. Compass Feedback Engine
+16. Compass Notification Engine
+17. Compass Abuse Defense Engine
+18. Compass Admin Cockpit
+19. Compass Testing Sandbox
+20. Compass Versioning/Rollback Engine
+21. Compass Fallback Mode
+
+1. Compass Profile:
+Create a user intelligence profile that stores user preferences and behavior signals.
+
+Store:
+- user_id
+- preferred cities
+- current city
+- upcoming trip cities
+- languages
+- budget preference
+- travel style
+- social style
+- safety preferences
+- visibility preferences
+- posting privacy preferences
+- preferred event categories
+- hidden categories
+- muted topics
+- preferred Buddy types
+- nightlife preference
+- food preference
+- creator/content preference
+- shopping preference
+- arrival help preference
+- group size preference
+- availability windows
+- weekly recurring availability
+- trip date windows
+- saved content signals
+- hidden content signals
+- ignored content signals
+- joined events
+- attended events
+- hosted events
+- completed bookings
+- Rent a Buddy preferences
+- delayed posting choices
+- Passport Stamp history
+- review behavior
+- blocked users
+- reported users
+- Trust Score
+- internal safety risk status
+- active user score
+- city reputation scores
+- category reputation scores
+- created_at
+- updated_at
+
+2. Compass Context Engine:
+Create a context engine that understands the user’s current situation.
+
+Inputs:
+- current city
+- upcoming trip
+- current local time
+- trip date/time window
+- active Safe Return session
+- active Rent a Buddy booking
+- active Telegraph threads
+- pending delayed posts
+- nearby Passport Stamp opportunities
+- user availability
+- recently saved items
+- recent interactions
+- weather/city context if already available
+- launch controls
+- safety mode
+- device/network hints if available
+
+Context states:
+- normal
+- exploring_now
+- planning_ahead
+- arrival_mode
+- night_mode
+- safety_mode
+- private_mode
+- creator_mode
+- budget_mode
+- social_mode
+- active_booking_mode
+- active_trip_mode
+
+3. Compass Intent Mode Engine:
+Detect the user’s likely intent and adjust ranking and front-loading.
+
+Modes:
+- Explore Now: nearby, immediate activities, available people, active plans.
+- Plan Ahead: trip dates, saved places, future events, itineraries.
+- Arrival Mode: Arrival Buddy, transport help, SIM/eSIM help, first-day plans.
+- Night Mode: stricter safety, public meetups, nightlife rules, Safe Return.
+- Social Mode: events, nearby travelers, group plans, Telegraph.
+- Safety Mode: Safe Return, public places, trusted users, emergency tools.
+- Creator Mode: photo/video spots, Content Buddy, delayed posting.
+- Budget Mode: cheap/free plans, budget-friendly Buddies/events.
+- Private Mode: lower visibility, safer location display, less nearby exposure.
+
+4. Compass Safety Filter:
+Safety filter must run before scoring, boosting, recommendations, and front-loading.
+
+Hard-block:
+- blocked users
+- reported users where policy requires exclusion
+- suspended users
+- underage conflicts
+- unverified users where verification required
+- unapproved Rent a Buddy profiles
+- unapproved Buddy categories
+- expired events
+- canceled events
+- hidden posts
+- muted topics
+- unsafe private meetup requests
+- adult/escort/romantic/sexual-service intent
+- off-app payment attempts
+- users with severe active safety flags
+- delayed posts not yet public
+- content restricted by privacy settings
+- city/category/country not launched
+- users outside age rules
+- users outside Trust Score minimum
+- inactive or revoked Telegraph membership
+- group/circle content after user leaves group
+- event content after user is removed or banned
+
+Safety penalties:
+Downrank or review:
+- repeated no-shows
+- repeated reports
+- repeated cash disputes
+- repeated route changes
+- repeated private meetup attempts
+- repeated off-app language
+- venue scam patterns
+- adult-service keyword flags
+- harassment flags
+- fake reviews
+- suspicious engagement rings
+- geotag farming
+- low Trust Score
+- active dispute
+- recent safety incident
+
+5. Compass Eligibility Engine:
+Check whether the user is eligible to see, join, book, message, or interact with each item.
+
+Eligibility checks:
+- user age
+- verification status
+- city launch status
+- country launch status
+- category enabled
+- feature flag enabled
+- Trust Score minimum
+- blocked/reported relationship
+- event age rule
+- event capacity
+- event time validity
+- Rent a Buddy category approval
+- Rent a Buddy city rollout
+- payment-mode eligibility
+- Safe Return requirement
+- public meetup requirement
+- group/circle membership
+- Telegraph thread membership
+- delayed post publish eligibility
+- privacy mode
+- user visibility settings
+- admin pause/kill switch
+
+6. Compass Privacy Guard:
+Ensure private data is never leaked through feed, preload, search, recommendation, notification, or explanation.
+
+Never expose publicly:
+- exact live location
+- hotel/private address
+- Safe Return route
+- emergency contacts
+- ID documents
+- legal name
+- private admin notes
+- private safety flags
+- original delayed-post coordinates
+- unpublished delayed posts
+- private Telegraph messages
+- private booking notes
+- precise location history
+- private user preferences
+- sensitive moderation details
+
+Privacy-safe location wording:
+Use:
+- “nearby”
+- “in your area”
+- “around this neighborhood”
+- “in [city]”
+- “during your trip”
+- “after the user left this location”
+
+Do not expose:
+- “47 feet away”
+- exact hotel name unless user allows
+- live venue if delayed posting should hide it
+- exact route or active meetup location to unauthorized users
+
+7. Compass Scoring Engine:
+Build transparent rule-based Compass v1 before adding AI.
+
+Create separate scoring formulas for:
+- events
+- posts
+- users/travelers
+- Rent a Buddy profiles
+- trips/group plans
+- hidden gems
+- Passport Stamp opportunities
+- Telegraph suggestions
+- notifications
+- safety prompts
+
+General score:
+Final Score =
+Interest Match
++ City/Trip Match
++ Availability Match
++ Language Match
++ Trust Score Boost
++ Active User Reward Boost
++ Freshness
++ Social Compatibility
++ Safety Compatibility
++ Quality Score
++ Diversity Boost
++ Fair Exposure Boost
+- Safety Risk
+- Repetition Penalty
+- User Ignored Similar Content
+- Report/Block Penalty
+- Expired/Unavailable Penalty
+- Spam Penalty
+- Privacy Risk Penalty
+
+Event score factors:
+- category match
+- city/trip match
+- time availability
+- distance/proximity privacy-safe
+- host Trust Score
+- host active contribution
+- age eligibility
+- language fit
+- group size fit
+- budget fit
+- friends/circle attending
+- event freshness
+- event quality
+- verified attendance history
+- weather/time context if available
+- safety requirements
+- cancellation/no-show history
+
+Rent a Buddy score factors:
+- safety eligibility first
+- category approval
+- city match
+- availability
+- language match
+- budget match
+- Trust Score
+- reviews
+- response time
+- completed bookings
+- Buddy level
+- public meetup support
+- Safe Return compatibility
+- traveler safety preferences
+- active contribution
+- category reputation
+- recent dispute/report status
+- new Buddy fair exposure
+
+Post score factors:
+- city relevance
+- delayed-post public eligibility
+- freshness
+- poster Trust Score
+- poster active contribution
+- content quality
+- saves
+- helpful comments
+- language fit
+- category match
+- mutual circle relevance
+- privacy mode
+- negative engagement/report penalty
+- repetition penalty
+- hashtag spam penalty
+
+Traveler/user score factors:
+- mutual city/trip overlap
+- shared interests
+- language compatibility
+- Trust Score
+- active contribution
+- verified status
+- availability overlap
+- safety compatibility
+- blocked/reported history
+- age rules
+- mutual circles
+- past positive interactions
+- user visibility preference
+
+8. Compass Diversity Engine:
+Prevent repetitive feeds.
+
+Rules:
+- Do not show too many cards from one category in a row.
+- Do not show too many posts from the same user.
+- Do not show the same Buddy too often.
+- Do not let nightlife dominate the feed.
+- Do not let paid/featured content dominate the feed.
+- Rotate safe new users/events/Buddies.
+- Mix discovery, social, safety, trips, posts, and Passport opportunities.
+- Respect user ignores and fatigue.
+- Add exploration content so users discover new things.
+
+Example feed mix:
+- Tonight near you
+- Compass Picks
+- Travelers you may vibe with
+- Rent a Buddy available now
+- Events during your free time
+- Hidden gems near your trip
+- Passport Stamp opportunities
+- Safety tip/Safe Return reminder
+- Trending City Pulse posts
+- Plans your Circle may like
+
+9. Compass Fair Exposure Engine:
+Give new safe contributors a chance without overriding safety.
+
+Fair exposure rules:
+- New verified users get limited exposure tests.
+- New approved Buddies get limited safe exposure.
+- New events get a fair test window.
+- New hosts can be shown if verified and eligible.
+- Exposure is capped.
+- Fair exposure ends if reports, no-shows, spam, or safety flags appear.
+- High performers can earn more exposure.
+- Overexposed users get temporary cooldown.
+
+10. Compass Active User Reward Engine:
+Reward active, safe, helpful users by pushing their feeds, posts, events, profiles, and booking surfaces to more compatible people.
+
+Important:
+Reward contribution, not attention.
+Reward quality, not spam.
+Activity alone should not override safety.
+
+Active User Score should be separate from Trust Score.
+
+Trust Score = can this person be trusted?
+Active User Score = how much are they contributing?
+Compass Visibility = should we show them more, to whom, and where?
+
+Reward high-value activity:
+- completed event attendance
+- successful hosted event
+- completed Rent a Buddy booking
+- positive review from verified/high-trust user
+- helpful city post saved by others
+- verified Passport Stamp
+- fast response to booking/message
+- no-show-free streak
+- Safe Return completed during plan
+- delayed posting used correctly
+- helpful review
+- invite verified active users
+- create high-quality events
+- help travelers in Telegraph
+- report real safety issues
+- complete profile
+- add availability/languages/interests
+
+Lower-value activity:
+- likes
+- raw views
+- random comments
+- scrolling
+- repeated hashtags
+- mass invites
+- app opens
+
+Negative activity:
+- no-show
+- late cancellation
+- confirmed harassment
+- adult-service request
+- off-app payment pressure
+- unsafe private meetup request
+- cash dispute confirmed against user
+- fake review
+- spam report confirmed
+- venue scam pattern
+- repeated blocks
+- abandoned events
+- abandoned chats
+- misleading posts
+- suspicious review loops
+
+Active User Score formula:
+Active Visibility Boost =
+Helpful Activity Score
++ Verified Attendance Score
++ Hosting Success Score
++ Review Quality Score
++ Response Reliability
++ City Contribution Score
++ Category Contribution Score
++ Safety Clean Streak
++ Consistency Streak
+- Spam Penalty
+- Report Penalty
+- No-Show Penalty
+- Dispute Penalty
+- Repetition Penalty
+- Abuse Penalty
+
+Final Visibility Reward =
+Active Contribution Score
+× Trust Multiplier
+× Quality Multiplier
+× City Relevance
+× Category Relevance
+- Risk Penalties
+
+Trust multiplier:
+- High Trust + high activity = more visibility.
+- Low Trust + high activity = limited visibility.
+- Safety flags + high activity = no boost or downrank.
+- Severe flags immediately override active-user rewards.
+
+Active user reward surfaces:
+- City Pulse reach
+- profile impressions
+- event exposure
+- Rent a Buddy search placement
+- nearby traveler recommendations
+- Compass Pick eligibility
+- Trip Crew suggestions
+- Passport feed
+- group/event suggestions
+- invite/giveaway entries
+- badges
+- Passport Perks
+- City Ambassador eligibility
+
+Activity tiers:
+- Active Traveler
+- Trusted Explorer
+- City Contributor
+- Community Builder
+- City Ambassador Candidate
+
+Badges:
+- Reliable Attendee
+- Great Host
+- Helpful Reviewer
+- Safe Explorer
+- City Contributor
+- Fast Responder
+- No-Show Free
+- Delayed Posting Pro
+- Trusted Buddy
+- Community Builder
+
+Time windows:
+Use:
+- 24-hour activity
+- 7-day activity
+- 30-day activity
+- 90-day activity
+- lifetime trust
+
+Recent positive activity should help.
+Recent safety problems should hurt immediately.
+Old activity should decay over time.
+
+Boost cooldown:
+If Compass boosts a user heavily, apply cooldown so they do not dominate a city/feed.
+Other high-quality users should get a chance.
+
+City/category reputation:
+Track active contribution by city and category.
+Example:
+A user active in Da Nang should be boosted in Da Nang.
+A user strong in food should be boosted in food.
+A user strong in nightlife should only be boosted in nightlife if stricter safety checks pass.
+
+User privacy control:
+Add setting:
+“Boost my visibility when I’m active.”
+
+Granular controls:
+- Show me in nearby travelers
+- Show my posts wider
+- Recommend my events
+- Recommend me for Trip Crew
+- Show my Buddy profile more
+
+If disabled, do not use active-user boost to increase that user’s visibility beyond normal eligibility.
+
+11. Compass Feed Builder:
+Build final feeds as sections, not just one ranked list.
+
+Feed builder should:
+- take eligible items
+- apply scoring
+- apply safety rules
+- apply diversity
+- apply fair exposure
+- apply active-user rewards
+- apply user fatigue
+- apply front-load availability
+- create sections
+- attach explanation reasons
+- return fast payloads
+
+Feed sections:
+- For You
+- Available Now
+- During Your Trip
+- Tonight
+- Near Your Area
+- Compass Picks
+- People You May Vibe With
+- Rent a Buddy
+- Hidden Gems
+- City Pulse
+- Passport Stamp Opportunities
+- Safety Recommended
+- Your Circle May Like
+- New in This City
+- Budget Friendly
+- Creator Spots
+- Arrival Help
+
+12. Compass Front Load Engine:
+Create a predictive front-load system that prepares content before the user taps so the app feels instant.
+
+Goal:
+Compass should decide what to prepare early, not just what to show.
+
+Front-load tiers:
+
+Tier 0 — Immediate critical:
+- user profile
+- session/auth state
+- safety status
+- unread message count
+- active trip status
+- active Rent a Buddy booking
+- active Safe Return session
+- emergency tools
+- feature flags
+- city/country launch controls
+- blocked/reported users
+- privacy settings
+
+Tier 1 — First screen:
+- cached Home/Discovery first page
+- City Pulse preview
+- top nearby events
+- recommended travelers
+- Rent a Buddy available-now preview
+- Passport summary
+- upcoming trip card
+- notifications/activity center
+- pending delayed posts
+
+Tier 2 — Likely next taps:
+- full event details for top recommendations
+- Buddy profiles for top 5–10 Buddies
+- top Telegraph threads
+- trip itinerary details
+- saved places
+- hidden gems
+- nearby map pins
+- review prompts
+- booking checkout requirements
+- availability slots
+
+Tier 3 — Background nice-to-have:
+- more feed pages
+- older posts
+- extra images
+- video previews
+- full maps
+- long city guides
+- past bookings
+- archived Telegraph threads
+- deep analytics
+
+Front-load timing:
+At app launch:
+- load Tier 0 first
+- return cached safe feed immediately
+- refresh feed in background
+- preload likely next screens
+
+Before trip:
+- city guide
+- Arrival Buddy options
+- safe areas
+- airport help
+- trip itinerary
+- saved plans
+- language help
+- first-day recommendations
+- SIM/eSIM tips
+- hidden gems
+- top events during trip dates
+
+When user lands:
+- Arrival Buddy
+- nearby food
+- transport tips
+- hotel-area safety notes
+- currency/ATM tips
+- Telegraph translation settings
+- Safe Return prompt
+- local emergency info
+- first-night plans
+
+Before nighttime:
+- nightlife safety prompts
+- late-night events
+- verified Nightlife Buddies
+- Safe Return
+- public meetup zones
+- transport-home options
+- delayed posting defaults
+
+During Rent a Buddy booking:
+- booking detail
+- Telegraph thread
+- safety panel
+- emergency button
+- Safe Return
+- route plan
+- cash balance confirmation
+- Add Time options
+- delayed posting rules
+- tagging consent flow
+
+After leaving location:
+- delayed post publish check
+- Passport Stamp credit
+- review prompt
+- Postcard creation
+- memory summary
+- nearby next recommendation
+
+Front-load security:
+Never preload sensitive data unless the same user is authorized to view it right now.
+Never preload private exact location, ID documents, emergency contacts, admin notes, unpublished posts, blocked content, restricted age/category content, or messages the user is no longer allowed to access.
+Backend must permission-check before sending data.
+
+Front-load scoring:
+Preload Score =
+Likelihood User Opens It
++ Safety/Critical Priority
++ Time Sensitivity
++ Trip Relevance
++ Active Booking Relevance
++ Message Urgency
++ Low Cost To Load
+- Heavy Media Cost
+- Staleness Risk
+- Privacy Risk
+- Low Network Penalty
+
+Device/network awareness:
+If fast Wi-Fi:
+- preload images, map pins, next feed page, top profiles.
+
+If slow connection:
+- preload text, small thumbnails, safety tools, first feed.
+
+If low battery:
+- pause heavy background loads.
+
+If cellular:
+- reduce video previews and large media.
+
+If active safety mode:
+- prioritize safety, messages, route, emergency tools.
+
+Media loading:
+- thumbnails first
+- lazy-load full images
+- do not preload full videos unless likely
+- preload first frame for video
+- compress feed media
+- prioritize visible cards
+- cancel media loads when user scrolls away
+- cache profile pictures/category icons
+- use skeleton cards or blurred previews
+
+13. Compass Cache + Invalidation Engine:
+Add feed caching, precomputed scores, and instant invalidation.
+
+Cache types:
+- compass_feed_cache
+- compass_preload_queue
+- compass_preload_events
+- compass_cache_invalidations
+- compass_user_navigation_patterns
+- compass_content_freshness
+- compass_media_preload_manifest
+- compass_frontload_rules
+
+Cache rules:
+- safety data: always fresh or very short cache
+- active bookings: fresh/near-real-time
+- messages: short cache/real-time
+- feed recommendations: 2–10 minutes
+- city guides: hours/days
+- hidden gems: hours
+- profile photos: longer
+- launch controls: short cache but immediate invalidation on admin change
+- blocked users: always fresh or immediately invalidated
+
+Invalidate immediately when:
+- user blocks someone
+- user reports someone
+- admin suspends user
+- Buddy loses approval
+- city/category paused
+- global pause enabled
+- user age/verification changes
+- Safe Return starts
+- booking enters dispute
+- delayed post privacy changes
+- user deletes/hides post
+- event canceled
+- user leaves group/circle
+- Telegraph thread membership changes
+- Trust Score risk status changes
+- payment fails
+- Rent a Buddy booking status changes
+
+14. Compass Explanation Engine:
+Every major recommendation should include “Why am I seeing this?”
+
+Examples:
+Event:
+“Matches your food interest, starts during your free window, and is hosted by a verified traveler.”
+
+Buddy:
+“Available tonight, speaks English, approved for Arrival Buddy, and has a 94 Trust Score.”
+
+Post:
+“Popular with travelers in Da Nang and posted after the user left the location.”
+
+Traveler:
+“You are both in Da Nang this week, like food crawls, and share similar availability.”
+
+Safety prompt:
+“This plan is late at night, so Safe Return is recommended.”
+
+Active reward:
+“This user is shown more because they have completed safe meetups and helpful city posts.”
+
+Privacy:
+Do not reveal sensitive reasons.
+Do not say:
+“This person was downranked because of harassment reports.”
+Use:
+“This profile is not currently eligible to appear.”
+
+15. Compass Feedback Engine:
+Users should train Compass.
+
+Feedback actions:
+- show more like this
+- show less like this
+- not interested
+- hide category
+- save
+- join
+- maybe
+- report
+- block
+- too expensive
+- too far
+- not my vibe
+- already went here
+- verified users only
+- public meetups only
+- no alcohol
+- no clubs
+- hide from my feed
+- mute topic
+- mute hashtag
+- hide user
+
+Feedback should update:
+- user preferences
+- feed ranking
+- category weights
+- front-load order
+- notification priority
+- active-user reward calculation
+- repetition penalties
+- diversity needs
+
+16. Compass Notification Engine:
+Compass should govern notifications intelligently.
+
+Notification priority:
+1. Emergency/safety
+2. Active booking/trip
+3. Telegraph messages
+4. Buddy request expiring
+5. Event starting soon
+6. Trip arrival help
+7. Delayed post published
+8. Passport Stamp earned
+9. High-match plan nearby
+10. General discovery
+
+Rules:
+- Do not spam.
+- Respect quiet hours unless safety-critical.
+- Do not repeatedly push ignored categories.
+- Do not send nightlife pushes to users who hide nightlife.
+- Do not notify users about unsafe/ineligible content.
+- Do not leak private location in notification text.
+- Safety-critical notifications override normal quieting only when appropriate.
+
+17. Compass Abuse Defense:
+Prevent users from gaming visibility.
+
+Detect:
+- fake reviews
+- review rings
+- same users boosting each other
+- fake event attendance
+- Buddy booking loops
+- referral farms
+- comment pods
+- spam posts
+- mass invites
+- hashtag abuse
+- geotag farming
+- fake engagement
+- repeated low-quality events
+- off-app payment language
+- suspicious device/IP patterns if available
+- suspicious repeated mutual 5-star reviews
+- “available now” abuse
+- repeated refund/payment abuse
+
+Response:
+- reduce reach
+- remove active-user boost eligibility
+- flag for admin review
+- require verification
+- require manual approval
+- disable rewards
+- limit category visibility
+- suspend if confirmed severe
+
+18. Compass Admin Cockpit:
+Build admin controls for the Compass governor.
+
+Admin can:
+- view feed health
+- view active algorithm version
+- view ranking reasons
+- view hidden reasons
+- adjust scoring weights
+- boost category/city safely
+- feature safe content
+- remove content from Compass
+- pause category
+- pause city
+- pause recommendations globally
+- force safety-first mode
+- require verified-only recommendations
+- disable nightlife recommendations
+- rollback algorithm version
+- rebuild feed cache
+- view safety filters firing
+- view overexposed users
+- view under-supplied cities
+- view active-user rewards
+- remove user boost eligibility
+- pause active rewards in city
+- reset suspicious boost credits
+- view front-load cost/performance
+- disable heavy media preloading
+- preview feed as test user
+
+Admin dashboard metrics:
+- categories shown
+- click/save/join/book rates
+- hides/not interested
+- reports
+- blocks
+- safety filter counts
+- feed load time
+- cache hit rate
+- preload hit rate
+- media cost
+- API cost
+- top boosted users
+- overexposed users
+- new user exposure
+- city supply/demand
+- Buddy exposure
+- event completion rate
+- Rent a Buddy conversion
+- delayed post publish rate
+- notification open/mute rate
+
+19. Compass Testing Sandbox:
+Before changing rankings, admin can test feed outcomes.
+
+Sandbox options:
+- user type: new user, solo traveler, budget traveler, nightlife traveler, safety-mode traveler, female traveler safety mode, creator, Rent a Buddy user, event host
+- city: Tokyo, Da Nang, Bangkok, Manila, Seoul, etc.
+- intent mode
+- feed preview
+- ranking reasons
+- hidden reasons
+- safety filters
+- diversity mix
+- active-user rewards
+- front-load plan
+- load time estimate
+- cache behavior
+- notification preview
+
+20. Compass Versioning/Rollback:
+Add algorithm versioning.
+
+Store:
+- algorithm_version
+- scoring_weight_set
+- safety_filter_version
+- diversity_version
+- active_reward_version
+- frontload_version
+- launched_by_admin_id
+- rollout_status
+- created_at
+- rollback_available
+
+Rules:
+- Admin can roll back to previous version.
+- A/B testing can be added later.
+- A/B tests must never weaken safety, privacy, age rules, eligibility, or compliance.
+- Only ranking/layout/content mix can be tested.
+
+21. Compass Fallback Mode:
+If Compass fails, the app must still work.
+
+Fallback feed should show:
+- safety tools
+- active trips
+- active Rent a Buddy booking
+- Telegraph messages
+- saved trips
+- verified safe events
+- admin-approved city guide
+- popular public content
+- Passport summary
+- waitlist prompts
+- basic discovery
+
+Fallback must not:
+- expose restricted content
+- show blocked users
+- show delayed posts early
+- bypass launch controls
+- bypass safety filters
+
+Database:
+Create or extend tables as needed:
+
+compass_user_profiles
+compass_user_preferences
+compass_user_context_snapshots
+compass_intent_modes
+compass_recommendation_logs
+compass_recommendation_scores
+compass_feed_cache
+compass_feed_sections
+compass_feedback_events
+compass_safety_filter_logs
+compass_eligibility_logs
+compass_privacy_guard_logs
+compass_explanation_reasons
+compass_frontload_queue
+compass_frontload_events
+compass_cache_invalidations
+compass_user_navigation_patterns
+compass_content_freshness
+compass_media_preload_manifest
+compass_frontload_rules
+compass_active_user_scores
+compass_active_user_events
+compass_active_user_badges
+compass_city_reputation
+compass_category_reputation
+compass_visibility_boosts
+compass_visibility_cooldowns
+compass_abuse_flags
+compass_admin_weight_sets
+compass_algorithm_versions
+compass_rollbacks
+compass_admin_actions
+compass_testing_scenarios
+compass_notification_decisions
+
+Suggested APIs:
+
+User/feed:
+- GET /api/compass/feed
+- GET /api/compass/feed/section/:section
+- GET /api/compass/why/:recommendationId
+- POST /api/compass/feedback
+- GET /api/compass/me/preferences
+- PATCH /api/compass/me/preferences
+- GET /api/compass/me/context
+- GET /api/compass/me/active-reward
+- PATCH /api/compass/me/visibility-reward-settings
+
+Front-load:
+- GET /api/compass/frontload
+- POST /api/compass/frontload/event
+- GET /api/compass/preload-manifest
+
+Admin:
+- GET /api/admin/compass/dashboard
+- GET /api/admin/compass/feed-preview
+- GET /api/admin/compass/recommendation/:id
+- GET /api/admin/compass/hidden-reasons
+- GET /api/admin/compass/safety-filters
+- GET /api/admin/compass/active-rewards
+- POST /api/admin/compass/users/:userId/remove-boost-eligibility
+- POST /api/admin/compass/users/:userId/restore-boost-eligibility
+- GET /api/admin/compass/abuse-flags
+- POST /api/admin/compass/weights
+- PATCH /api/admin/compass/weights/:id
+- POST /api/admin/compass/version
+- POST /api/admin/compass/rollback
+- POST /api/admin/compass/rebuild-cache
+- PATCH /api/admin/compass/frontload-rules
+- GET /api/admin/compass/testing-sandbox
+- POST /api/admin/compass/testing-sandbox/preview
+
+Mobile UI:
+Add Compass-powered surfaces:
+- personalized Discovery feed
+- City Pulse personalized feed
+- “Why am I seeing this?” sheet
+- “Show more/less like this” controls
+- Compass Preferences screen
+- active-user visibility progress
+- visibility privacy settings
+- feed loading skeletons
+- cached feed with background refresh
+- safety-first prompts
+- notification preference controls
+
+Compass Preferences screen:
+Let users control:
+- interests
+- travel style
+- budget
+- languages
+- safety preferences
+- visibility preferences
+- content hidden
+- categories muted
+- blocked users
+- location privacy
+- delayed posting defaults
+- Rent a Buddy preferences
+- notification preferences
+- boost my visibility when active
+
+Active-user UI:
+Show simple user-facing messages:
+- “Your helpful city posts are reaching more travelers.”
+- “Your event reliability improved your host visibility.”
+- “Your no-show reduced your event visibility.”
+- “Your profile is being shown more because you completed safe meetups.”
+- “Your Rent a Buddy visibility is limited while a dispute is under review.”
+
+Do not show raw internal algorithm score publicly.
+
+Admin UI:
+Add Compass Admin Cockpit:
+- feed health
+- ranking reasons
+- hidden reasons
+- scoring weights
+- active-user reward dashboard
+- abuse detection
+- city/category supply
+- overexposure controls
+- front-load performance
+- cache status
+- recommendation logs
+- testing sandbox
+- version/rollback controls
+
+Performance requirements:
+- First feed response should use cached safe feed when available.
+- Tier 0 data must load first.
+- Safety-critical state must not rely on stale cache.
+- Feed should support pagination.
+- Media should lazy-load.
+- Full videos should not preload unless likely and network allows.
+- Background refresh should not blank the feed.
+- Preload must be cancellable/limited.
+- Cache invalidation must happen on safety/privacy/eligibility changes.
+
+Testing:
+Add tests for:
+- Safety filter runs before scoring.
+- Eligibility runs before front-load.
+- Private data is never preloaded for unauthorized users.
+- Blocked users do not appear in feed or preload.
+- Delayed posts do not appear before eligible.
+- Active Safe Return prioritizes safety content.
+- Rent a Buddy active booking preloads safety panel and Telegraph thread.
+- Slow network reduces media preload.
+- Cached feed returns quickly and refreshes in background.
+- Cache invalidates when user blocks/reports someone.
+- Cache invalidates when admin pauses city/category.
+- Cache invalidates when Buddy approval changes.
+- Front-load never sends ID docs/emergency contacts/private coordinates.
+- “Why am I seeing this?” returns safe explanation.
+- Feedback changes future ranking.
+- Hide category reduces that category.
+- Active-user reward boosts safe helpful users.
+- Active-user reward does not boost users with severe safety flags.
+- Spam activity does not increase visibility.
+- No-show reduces visibility.
+- New verified users receive limited fair exposure.
+- Overexposed users enter cooldown.
+- User can disable active visibility boost.
+- Admin can remove/restore boost eligibility.
+- Abuse detection flags suspicious review rings.
+- Compass fallback mode returns safe basic feed.
+- Admin can preview feed in testing sandbox.
+- Admin can roll back algorithm version.
+- Notification engine does not push ineligible content.
+- Safety alerts outrank discovery notifications.
+- Public APIs do not expose private location or moderation data.
+- Compass works when COMPASS_ENABLED is off by falling back safely.
+
+Acceptance criteria:
+- Compass governs the Travel Buddy experience across feed, discovery, posts, events, Rent a Buddy, Telegraph suggestions, notifications, safety prompts, delayed posting, and front-loading.
+- Safety, privacy, eligibility, and user controls always run before ranking or preload.
+- Feed is personalized, explainable, diverse, and fast.
+- Front-load system makes likely next screens feel instant without leaking private data.
+- Active, safe, high-quality users earn more visibility.
+- Spammy or risky activity reduces visibility.
+- Users can control preferences and visibility rewards.
+- Admin can audit, tune, pause, test, and roll back Compass.
+- Fallback mode keeps the app usable if Compass fails.
+- Tests prove governance, security, performance, active-user rewards, cache invalidation, explainability, and privacy behavior.
