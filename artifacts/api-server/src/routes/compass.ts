@@ -241,10 +241,13 @@ router.get("/compass/feed", async (req, res) => {
     // Tokens are pre-registered in compass_recommendation_scores (fire-and-forget)
     // so the /why endpoint can do an authoritative DB lookup.
     const { enrichedFeed, registrationRows } = enrichFeedWithRecommendationIds(user.id, feed);
+
+    // Await pre-registration so that a subsequent /why call on any returned
+    // recommendationId is guaranteed to find the row — no race window.
     if (registrationRows.length > 0) {
-      sc.from("compass_recommendation_scores")
-        .upsert(registrationRows, { onConflict: "recommendation_id" })
-        .then(() => {}, () => {});
+      await sc
+        .from("compass_recommendation_scores")
+        .upsert(registrationRows, { onConflict: "recommendation_id" });
     }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)

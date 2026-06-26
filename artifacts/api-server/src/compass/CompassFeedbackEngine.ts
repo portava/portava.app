@@ -115,14 +115,13 @@ async function applyPrefsUpdate(
   update:  PrefsUpdate,
 ): Promise<void> {
   if (Object.keys(update).length === 0) return;
-  try {
-    await db
-      .from("compass_user_preferences")
-      .upsert(
-        { user_id: userId, ...update, updated_at: new Date().toISOString() },
-        { onConflict: "user_id" },
-      );
-  } catch { /* non-fatal */ }
+  const { error } = await db
+    .from("compass_user_preferences")
+    .upsert(
+      { user_id: userId, ...update, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+  if (error) throw new Error(`compass_user_preferences upsert failed: ${error.message}`);
 }
 
 // ── Event logger ──────────────────────────────────────────────────────────────
@@ -161,7 +160,8 @@ async function logFeedbackEvent(
 /**
  * Process a user feedback action on a Compass recommendation.
  *
- * Always returns { updated: true } unless the DB is unavailable.
+ * Returns { updated: true } when the preference write succeeded.
+ * Returns { updated: false } when the DB is unavailable or the write fails.
  */
 export async function processFeedback(
   db:     SupabaseClient | null,
@@ -284,13 +284,21 @@ export async function processFeedback(
     }
   }
 
-  await Promise.allSettled([
-    applyPrefsUpdate(db, userId, update),
-    logFeedbackEvent(db, userId, req, update),
-  ]);
+  try {
+    // applyPrefsUpdate throws on DB error — we must treat this as a hard failure.
+    // Feedback returning { updated: true } when the write silently failed would
+    // mislead clients into thinking preferences changed when they didn't.
+    await applyPrefsUpdate(db, userId, update);
+  } catch {
+    return { updated: false };
+  }
 
-  // Invalidate cache so the next feed build reflects the new preferences
-  await invalidate(db, userId, `feedback:${req.action}`);
+  // Log the event and invalidate cache concurrently (non-critical — failures here
+  // don't affect the correctness of the preference write).
+  await Promise.allSettled([
+    logFeedbackEvent(db, userId, req, update),
+    invalidate(db, userId, `feedback:${req.action}`),
+  ]);
 
   return { updated: true, prefsChanged: update };
 }
