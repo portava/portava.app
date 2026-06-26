@@ -333,6 +333,33 @@ describe("CompassFairExposureEngine", () => {
     assert.doesNotThrow(() => endFairExposure(null, BOB_ID, "report"));
   });
 
+  it("fair exposure is blocked after endFairExposure (report received)", () => {
+    // Simulate: a report arrives → endFairExposure is called → author lands on cooldown.
+    // Downstream: applyFairExposure must not insert the same author again.
+    const newAuthorItem = makePipelineResult({
+      id:             "report-subject-item",
+      type:           "buddy",
+      authorId:       BOB_ID,
+      authorJoinedAt: recentJoined,
+    });
+    const sectionItems = makeResults(["post"]);
+    const allPool = [...sectionItems, newAuthorItem];
+
+    // Before report: author is new and eligible → must be inserted
+    const before = applyFairExposure(sectionItems, allPool, baseProfile(), null);
+    assert.equal(before.insertedCount, 1, "before report: eligible new author should be inserted");
+
+    // After report: author is on cooldown (endFairExposure persists this via DB;
+    // here we pass the cooldown set directly to simulate that state).
+    const cooldownAfterReport = new Set<string>([BOB_ID]);
+    const after = applyFairExposure(
+      sectionItems, allPool, baseProfile(), null,
+      new Map(),       // empty appearance counts
+      cooldownAfterReport,
+    );
+    assert.equal(after.insertedCount, 0, "after report: cooldown must block fair-exposure insertion");
+  });
+
   it("inserts at most MAX_FAIR_INSERTS (2) items per call", () => {
     const newAuthorItems = Array.from({ length: 5 }, (_, i) =>
       makePipelineResult({

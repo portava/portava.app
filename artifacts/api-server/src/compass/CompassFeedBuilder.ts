@@ -23,7 +23,12 @@
  *   creator_spots              — suggestion items in creator_mode context
  *   arrival_help               — arrival_mode targeted items
  *
- * Each FeedItem carries an explanationKey string (used in Phase 5 explanations).
+ * Fair exposure (global cap):
+ *   Up to MAX_FAIR_INSERTS (2) fair-exposure items are inserted per feed build.
+ *   This is a GLOBAL limit across the entire feed, not per section.
+ *   Appearance counts and cooldowns are preloaded from DB before insertion.
+ *
+ * Each FeedItem carries an explanationKey string.
  *
  * Cursor-based pagination:
  *   The cursor is a base64-encoded JSON { section, index } pointer.
@@ -45,7 +50,7 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE    = 20;
+const PAGE_SIZE       = 20;
 const MAX_PER_SECTION = 30;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -106,6 +111,10 @@ export interface FeedBuilderTestOverrides extends PipelineTestOverrides {
   skipFairExposure?:    boolean;
   skipActiveRewards?:   boolean;
   authorScores?:        Map<string, ActiveUserScoreResult>;
+  /** Pre-loaded appearance counts (item.id → count) — skip DB load in tests */
+  appearanceCounts?:    Map<string, number>;
+  /** Pre-loaded author cooldown set — skip DB load in tests */
+  cooldownSet?:         Set<string>;
 }
 
 // ── Explanation key generation ─────────────────────────────────────────────────
@@ -126,8 +135,6 @@ function assignSections(
   context: CompassContext,
 ): Map<SectionName, PipelineResult[]> {
   const now = new Date();
-  const tonightEnd = new Date(now);
-  tonightEnd.setHours(23, 59, 59, 999);
   const twelveHoursLater = new Date(now.getTime() + 12 * 60 * 60 * 1_000);
 
   const sections = new Map<SectionName, PipelineResult[]>(
@@ -141,19 +148,16 @@ function assignSections(
 
   for (const r of items) {
     const { item } = r;
-    let assigned = false;
 
     // available_now — buddy items with active status
     if (item.type === "buddy" && item.buddyStatus === "active") {
       push("available_now", r);
       push("rent_a_buddy", r);
-      assigned = true;
     }
 
-    // during_your_trip — items with trip scope when viewer has active trip
+    // during_your_trip — trip-scoped items when viewer has active trip
     if (profile.hasActiveTrip && item.visibilityScope === "trip_only") {
       push("during_your_trip", r);
-      assigned = true;
     }
 
     // tonight — events starting within next 12 hours
@@ -161,87 +165,78 @@ function assignSections(
       const start = new Date(item.eventStartsAt as string);
       if (start >= now && start <= twelveHoursLater) {
         push("tonight", r);
-        assigned = true;
       }
     }
 
     // near_your_area — items in viewer's current city
     if (profile.currentCity && item.city === profile.currentCity) {
       push("near_your_area", r);
-      assigned = true;
     }
 
     // people_you_may_vibe_with — user or buddy types
     if (item.type === "user" || item.type === "buddy") {
       push("people_you_may_vibe_with", r);
-      if (item.type === "buddy" && !assigned) push("rent_a_buddy", r);
-      assigned = true;
+      if (item.type === "buddy") push("rent_a_buddy", r);
     }
 
     // hidden_gems — suggestion type
     if (item.type === "suggestion") {
       push("hidden_gems", r);
-      assigned = true;
     }
 
     // city_pulse — posts
     if (item.type === "post") {
       push("city_pulse", r);
-      assigned = true;
     }
 
     // passport_stamp_opportunities — stamps
     if (item.type === "stamp") {
       push("passport_stamp_opportunities", r);
-      assigned = true;
     }
 
-    // safety_recommended — high safety tier items
-    if (item.safetyTier === "relaxed" || (item.safetyTier === "standard" && profile.safetyPreference === "cautious")) {
+    // safety_recommended — high safety tier or cautious viewer preference
+    if (item.safetyTier === "relaxed" ||
+        (item.safetyTier === "standard" && profile.safetyPreference === "cautious")) {
       push("safety_recommended", r);
-      assigned = true;
     }
 
-    // new_in_this_city — items by recently joined authors
+    // new_in_this_city — items by recently joined authors (< 30 days)
     if (item.authorJoinedAt) {
-      const joinedDays = (Date.now() - new Date(item.authorJoinedAt as string).getTime()) / (1000 * 60 * 60 * 24);
-      if (joinedDays < 30) {
+      const ageDays = (Date.now() - new Date(item.authorJoinedAt as string).getTime())
+        / (1000 * 60 * 60 * 24);
+      if (ageDays < 30) {
         push("new_in_this_city", r);
-        assigned = true;
       }
     }
 
     // budget_friendly
-    if (profile.budgetStyle === "budget" || item.interestTags?.includes("budget") || item.interestTags?.includes("free")) {
+    if (profile.budgetStyle === "budget" ||
+        item.interestTags?.includes("budget") ||
+        item.interestTags?.includes("free")) {
       push("budget_friendly", r);
-      assigned = true;
     }
 
     // creator_spots — suggestions in creator context
     if (context.contextState === "creator_mode" && item.type === "suggestion") {
       push("creator_spots", r);
-      assigned = true;
     }
 
     // arrival_help — arrival mode context
     if (context.contextState === "arrival_mode") {
       push("arrival_help", r);
-      assigned = true;
     }
 
-    // your_circle_may_like — circle_only scope items visible to viewer
+    // your_circle_may_like — circle_only scope visible to viewer
     if (item.visibilityScope === "circle_only" && item.viewerIsInCircle) {
       push("your_circle_may_like", r);
-      assigned = true;
     }
 
     // compass_picks — top-scoring items of any type
     if (r.finalScore >= 70) {
       push("compass_picks", r);
-      assigned = true;
     }
 
-    // for_you — everything (catch-all)
+    // for_you — catch-all (every item)
     push("for_you", r);
   }
 
@@ -264,6 +259,49 @@ function decodeCursor(raw: string): FeedCursor | null {
   } catch {
     return null;
   }
+}
+
+// ── Fair exposure data preloader ──────────────────────────────────────────────
+
+async function preloadFairExposureData(
+  db: SupabaseClient | null,
+  items: PipelineResult[],
+): Promise<{ counts: Map<string, number>; cooldowns: Set<string> }> {
+  const counts   = new Map<string, number>();
+  const cooldowns = new Set<string>();
+  if (!db || items.length === 0) return { counts, cooldowns };
+
+  try {
+    const itemIds   = items.map((r) => r.item.id).slice(0, 100);
+    const authorIds = [...new Set(
+      items.map((r) => r.item.authorId).filter(Boolean) as string[]
+    )].slice(0, 100);
+
+    const [boostsRes, cooldownsRes] = await Promise.allSettled([
+      db.from("compass_visibility_boosts")
+        .select("item_id, appearance_count")
+        .in("item_id", itemIds),
+      authorIds.length > 0
+        ? db.from("compass_visibility_cooldowns")
+            .select("author_id")
+            .in("author_id", authorIds)
+            .gt("ends_at", new Date().toISOString())
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (boostsRes.status === "fulfilled") {
+      for (const row of (boostsRes.value.data as any[]) ?? []) {
+        counts.set(row.item_id, row.appearance_count as number);
+      }
+    }
+    if (cooldownsRes.status === "fulfilled") {
+      for (const row of (cooldownsRes.value.data as any[]) ?? []) {
+        cooldowns.add(row.author_id as string);
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  return { counts, cooldowns };
 }
 
 // ── Main feed builder ─────────────────────────────────────────────────────────
@@ -294,7 +332,9 @@ export async function buildFeed(
   const authorScores: Map<string, ActiveUserScoreResult> = _overrides.authorScores ?? new Map();
 
   if (db && !_overrides.skipActiveRewards) {
-    const authorIds = [...new Set(results.map((r) => r.item.authorId).filter(Boolean))] as string[];
+    const authorIds = [...new Set(
+      results.map((r) => r.item.authorId).filter(Boolean) as string[]
+    )];
     await Promise.allSettled(
       authorIds.map(async (authorId) => {
         if (authorScores.has(authorId)) return;
@@ -307,8 +347,8 @@ export async function buildFeed(
   // Apply active-user visibility boosts to finalScore
   const boosted: PipelineResult[] = results.map((r) => {
     if (!r.item.authorId) return r;
-    const authorScore  = authorScores.get(r.item.authorId!);
-    const boost        = computeItemVisibilityBoost(authorScore ?? null);
+    const authorScore = authorScores.get(r.item.authorId!);
+    const boost       = computeItemVisibilityBoost(authorScore ?? null);
     if (boost <= 0) return r;
     return {
       ...r,
@@ -323,28 +363,44 @@ export async function buildFeed(
   // ── Diversity pass ─────────────────────────────────────────────────────────
   const { items: diversified } = applyDiversity(boosted, profile);
 
-  // ── Assign sections ────────────────────────────────────────────────────────
-  const sectionMap = assignSections(diversified, profile, context);
+  // ── Fair exposure — GLOBAL CAP (at most 2 per feed build) ─────────────────
+  let finalPool = diversified;
+  if (!_overrides.skipFairExposure && diversified.length > 0) {
+    const appearanceCounts = _overrides.appearanceCounts
+      ?? (await preloadFairExposureData(db, diversified)).counts;
+    const cooldownSet = _overrides.cooldownSet
+      ?? (await preloadFairExposureData(db, diversified)).cooldowns;
 
-  // ── Fair exposure per section ──────────────────────────────────────────────
-  if (!_overrides.skipFairExposure) {
-    for (const [name, sectionItems] of sectionMap) {
-      const fairResult = applyFairExposure(sectionItems, diversified, profile, db);
-      sectionMap.set(name, fairResult.items);
-    }
+    // Apply once with an empty sectionItems: the returned insertions are the
+    // global fair-exposure candidates, capped at MAX_FAIR_INSERTS (2) total.
+    const { items: withFair } = applyFairExposure(
+      [],        // no existing section items — we want the pool itself
+      diversified,
+      profile,
+      db,
+      appearanceCounts,
+      cooldownSet,
+    );
+    // withFair = [fairItem1?, fairItem2?, ...diversified items NOT already in the insertion]
+    // We merge: fair-exposure inserts appear first, then the rest of diversified
+    const fairIds = new Set(withFair.slice(0, withFair.length - diversified.length).map((r) => r.item.id));
+    const fairInserts = withFair.filter((r) => fairIds.has(r.item.id));
+    finalPool = [...fairInserts, ...diversified];
   }
+
+  // ── Assign sections ────────────────────────────────────────────────────────
+  const sectionMap = assignSections(finalPool, profile, context);
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const parsedCursor = cursor ? decodeCursor(cursor) : null;
 
-  // Determine page slices per section
   const sections: FeedSection[] = [];
   let nextCursor: string | null = null;
 
   for (const name of SECTION_NAMES) {
     const allItems = sectionMap.get(name) ?? [];
-    const startIdx  = parsedCursor?.section === name ? parsedCursor.index : 0;
-    const endIdx    = startIdx + PAGE_SIZE;
+    const startIdx = parsedCursor?.section === name ? parsedCursor.index : 0;
+    const endIdx   = startIdx + PAGE_SIZE;
     const pageItems = allItems.slice(startIdx, endIdx);
 
     const feedItems: FeedItem[] = pageItems.map((r) => ({
@@ -357,7 +413,6 @@ export async function buildFeed(
     if (feedItems.length > 0) {
       sections.push({ name, items: feedItems, total: allItems.length });
 
-      // Emit cursor pointing to next batch in this section
       if (endIdx < allItems.length && !nextCursor) {
         nextCursor = encodeCursor({ section: name, index: endIdx });
       }
@@ -385,7 +440,7 @@ export async function buildSection(
   cursor:      string | null = null,
   _overrides:  FeedBuilderTestOverrides = {},
 ): Promise<{ section: FeedSection; nextCursor: string | null; fallback: false }> {
-  const feed = await buildFeed(items, profile, context, db, cursor, _overrides);
+  const feed  = await buildFeed(items, profile, context, db, cursor, _overrides);
   const found = feed.sections.find((s) => s.name === sectionName);
   const empty: FeedSection = { name: sectionName, items: [], total: 0 };
   return {

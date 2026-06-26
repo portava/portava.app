@@ -164,6 +164,33 @@ CREATE INDEX IF NOT EXISTS compass_vis_cooldowns_author
 
 ALTER TABLE compass_visibility_cooldowns ENABLE ROW LEVEL SECURITY;
 
+-- ── compass_feed_sections ─────────────────────────────────────────────────────
+-- Caches the last built feed sections per user so Phase 4 (Front Load Engine)
+-- can do incremental updates instead of rebuilding from scratch on every request.
+-- Service role writes; users may read their own rows.
+CREATE TABLE IF NOT EXISTS compass_feed_sections (
+  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  section_name TEXT        NOT NULL,
+  item_ids     TEXT[]      NOT NULL DEFAULT '{}',
+  cursor       TEXT,
+  built_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at   TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '1 hour'),
+  UNIQUE (user_id, section_name)
+);
+
+CREATE INDEX IF NOT EXISTS compass_feed_sections_user_built
+  ON compass_feed_sections (user_id, built_at DESC);
+
+CREATE INDEX IF NOT EXISTS compass_feed_sections_expires
+  ON compass_feed_sections (expires_at);
+
+ALTER TABLE compass_feed_sections ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "users read own feed sections"
+  ON compass_feed_sections FOR SELECT
+  USING (auth.uid() = user_id);
+
 -- Feature flag seeds (idempotent)
 INSERT INTO feature_flags (flag, enabled, description)
 VALUES

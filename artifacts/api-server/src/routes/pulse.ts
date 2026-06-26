@@ -1,4 +1,7 @@
 import { enrichSpans } from '../lib/enrichSpans';
+import { getCompassProfile } from "../compass/CompassProfileService";
+import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
+import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 
 /**
  * Pulse feed routes
@@ -175,8 +178,9 @@ router.get("/pulse", async (req, res) => {
     };
   });
 
-  // When COMPASS_ENABLED is true, inject intent-mode context for Safety and Night modes:
-  // Safety Mode surfaces safe-location posts first; Night Mode applies a recency sort.
+  // When COMPASS_ENABLED, apply Compass intent-mode ordering to the Pulse feed.
+  // Safety Mode: verified-location posts surface first (explicit city+venue labels).
+  // Night Mode: filter to last 8 hours of posts (peak night content), fallback to full.
   let orderedPosts = posts;
   try {
     const compassEnabled = await sc
@@ -185,27 +189,24 @@ router.get("/pulse", async (req, res) => {
       .eq("flag", "COMPASS_ENABLED")
       .maybeSingle();
     if ((compassEnabled.data as any)?.enabled) {
-      const profileRes = await sc
-        .from("profiles")
-        .select("travel_styles")
-        .eq("id", user.id)
-        .maybeSingle();
-      const hour = new Date().getUTCHours();
-      const isNight = hour >= 22 || hour < 5;
-      if (isNight) {
-        // Night Mode: most recent first (already sorted), no extra filter needed
-        orderedPosts = posts;
-      }
-      // Safety Mode: items with explicit location labels come first
-      // (proxy for well-tagged posts that have verifiable location data)
-      const safetyModeActive =
-        (profileRes.data as any)?.travel_styles?.includes("safety_conscious") ?? false;
-      if (safetyModeActive) {
+      const compassProfile = await getCompassProfile(sc, user.id);
+      const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
+      const intentMode     = deriveIntentMode(compassContext);
+      const primaryMode    = intentMode.primary;
+
+      if (compassContext.contextState === "safety_mode" || primaryMode === "safety_mode") {
+        // Safety Mode: posts with explicit venue name OR both city+country come first
         orderedPosts = [
-          ...posts.filter((p: any) => p.locationCity && p.locationCountry),
-          ...posts.filter((p: any) => !(p.locationCity && p.locationCountry)),
+          ...posts.filter((p: any) => p.venueName || (p.locationCity && p.locationCountry)),
+          ...posts.filter((p: any) => !(p.venueName || (p.locationCity && p.locationCountry))),
         ];
+      } else if (compassContext.contextState === "night_mode" || primaryMode === "night_mode") {
+        // Night Mode: filter to last 8 hours — fresh night content only
+        const cutoff = new Date(Date.now() - 8 * 60 * 60 * 1_000).toISOString();
+        const recent = posts.filter((p: any) => p.createdAt >= cutoff);
+        orderedPosts  = recent.length >= 3 ? recent : posts; // graceful fallback
       }
+      // All other modes: default recency order (already sorted created_at DESC)
     }
   } catch { /* Compass enrichment is non-fatal — return unmodified posts */ }
 

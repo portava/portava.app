@@ -24,10 +24,11 @@ import { buildDiscoveryContext } from "../services/location/DiscoveryLocationCon
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
 import { calculateUserAge } from "../lib/ageEligibility";
-import { discoveryPlaceToCompassItem, compassItemToDiscoveryPlace } from "../compass/CompassDiscoveryAdapter";
+import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { runPipeline } from "../compass/CompassPipeline";
+import { isEnabled } from "../compass/flags";
 
 const router = Router();
 
@@ -575,6 +576,47 @@ router.get("/discovery", async (req, res) => {
     // 2 hours if Overpass timed out or returned nothing transiently.
     if (places.length > 0) {
       cache.set(key, { places, cachedAt: Date.now() });
+    }
+
+    // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
+    // instead of the rule-based scoreWithContext to rank OSM places.
+    if (category === "for_you" && callerUserId && isServiceClientReady) {
+      const compassSc = getServiceClient();
+      if (compassSc) {
+        try {
+          const compassFlagOn = await isEnabled(compassSc, "COMPASS_V1_RULE_BASED_ENABLED");
+          if (compassFlagOn) {
+            const compassProfile = await getCompassProfile(compassSc, callerUserId);
+            const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
+            const compassItems   = places.map(discoveryPlaceToCompassItem);
+            const pipeline       = await runPipeline(compassItems, compassProfile, compassContext, compassSc);
+
+            // Build lookup so we can restore all original DiscoveryPlace fields
+            const placeById = new Map(places.map((p) => [p.id, p]));
+            const compassRanked: DiscoveryPlace[] = pipeline.results
+              .sort((a, b) => b.finalScore - a.finalScore)
+              .map((r) => {
+                const originalId = r.item.id.replace(/^discovery:/, "");
+                return placeById.get(originalId) ?? {
+                  id: originalId, name: String(r.item.contentBody ?? ""),
+                  category: (r.item.interestTags ?? [])[0] ?? "places",
+                  type: null, description: null, distanceKm: null,
+                  lat: null, lng: null, tags: [], address: null,
+                  website: null, phone: null, openingHours: null,
+                  rating: null, isOpenNow: null,
+                };
+              });
+            // Items blocked/rejected by Compass pipeline fall to the back
+            const passedIds = new Set(compassRanked.map((p) => p.id));
+            const unranked  = places.filter((p) => !passedIds.has(p.id));
+            const merged    = [...compassRanked, ...unranked];
+            const cFiltered  = applyFilters(merged);
+            const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+            res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta });
+            return;
+          }
+        } catch { /* fall through to normal rule-based path */ }
+      }
     }
 
     // Apply context-aware composite ranking when DiscoveryContext is available

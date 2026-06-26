@@ -4,6 +4,8 @@
  * Computes an ActiveUserScore (separate from Trust Score) using time-windowed
  * sums of positive activity events. Applies a Trust Multiplier so safety flags
  * suppress rewards. Writes results to `compass_active_user_scores`.
+ * Also populates `compass_city_reputation` and `compass_category_reputation`
+ * from the user's historical activity events.
  * Assigns tier and badge eligibility. Respects the user's
  * "boost_visibility_enabled" preference.
  *
@@ -14,7 +16,7 @@
  *   90d   — this quarter
  *   lifetime — all-time signal
  *
- * ActiveVisibilityBoost formula (from spec):
+ * ActiveVisibilityBoost formula:
  *   score = (w24 * s24 + w7 * s7 + w30 * s30 + w90 * s90 + wL * sL) * trustMultiplier
  *
  * Trust Multiplier:
@@ -54,9 +56,9 @@ const EVENT_WEIGHTS: Record<string, number> = {
   review_posted:            2.0,
   post_published:           1.0,
   stamp_earned:             1.5,
-  no_show:                 -5.0,  // penalty
-  dispute_raised:          -4.0,  // penalty
-  report_received:         -6.0,  // penalty
+  no_show:                 -5.0,
+  dispute_raised:          -4.0,
+  report_received:         -6.0,
 };
 
 // ── Trust Multiplier thresholds ───────────────────────────────────────────────
@@ -69,9 +71,9 @@ const TRUST_MULTIPLIER_FULL   = 1.0;
 
 // ── Tier boundaries ───────────────────────────────────────────────────────────
 
-const TIER_LOCAL_GUIDE  = 15;
-const TIER_CITY_CONN    = 35;
-const TIER_AMBASSADOR   = 60;
+const TIER_LOCAL_GUIDE = 15;
+const TIER_CITY_CONN   = 35;
+const TIER_AMBASSADOR  = 60;
 
 export type ActiveUserTier =
   | "active_traveler"
@@ -80,18 +82,18 @@ export type ActiveUserTier =
   | "city_ambassador_candidate";
 
 export interface ActiveUserScoreResult {
-  userId:           string;
-  score24h:         number;
-  score7d:          number;
-  score30d:         number;
-  score90d:         number;
-  scoreLifetime:    number;
-  activeUserScore:  number;
-  trustMultiplier:  number;
-  tier:             ActiveUserTier;
-  boostEligible:    boolean;
+  userId:                string;
+  score24h:              number;
+  score7d:               number;
+  score30d:              number;
+  score90d:              number;
+  scoreLifetime:         number;
+  activeUserScore:       number;
+  trustMultiplier:       number;
+  tier:                  ActiveUserTier;
+  boostEligible:         boolean;
   boostVisibilityEnabled: boolean;
-  badgeEligibility: string[];
+  badgeEligibility:      string[];
 }
 
 function nowMinus(days: number): Date {
@@ -107,7 +109,7 @@ function scoreEvents(events: any[], windowStart: Date): number {
       total += w * (Number(e.weight) || 1);
     }
   }
-  return Math.max(total, 0); // floor at 0 (negative windows not allowed)
+  return Math.max(total, 0); // floor at 0 for window scores
 }
 
 function computeTrustMultiplier(
@@ -137,7 +139,7 @@ function computeBadgeEligibility(
   trustMultiplier: number,
 ): string[] {
   const badges: string[] = [];
-  if (trustMultiplier === 0) return badges; // no badges with severe safety flag
+  if (trustMultiplier === 0) return badges;
 
   if (tier === "city_ambassador_candidate") badges.push("city_ambassador_candidate");
   if (tier === "city_connector" || tier === "city_ambassador_candidate") {
@@ -155,11 +157,8 @@ function computeBadgeEligibility(
   return [...new Set(badges)];
 }
 
-/** Load active user events from DB for a given user. Never throws. */
-async function loadEvents(
-  db: SupabaseClient,
-  userId: string,
-): Promise<any[]> {
+/** Load active user events from DB. Never throws. */
+async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
   try {
     const since = nowMinus(365).toISOString();
     const { data } = await db
@@ -175,10 +174,7 @@ async function loadEvents(
 }
 
 /** Check if user has an active trust cap. Never throws. */
-async function hasActiveTrustCap(
-  db: SupabaseClient,
-  userId: string,
-): Promise<boolean> {
+async function hasActiveTrustCap(db: SupabaseClient, userId: string): Promise<boolean> {
   try {
     const now = new Date().toISOString();
     const { data } = await db
@@ -195,17 +191,13 @@ async function hasActiveTrustCap(
 }
 
 /** Load boost_visibility_enabled preference from profiles. Never throws. */
-async function loadBoostPreference(
-  db: SupabaseClient,
-  userId: string,
-): Promise<boolean> {
+async function loadBoostPreference(db: SupabaseClient, userId: string): Promise<boolean> {
   try {
     const { data } = await db
       .from("profiles")
       .select("boost_visibility_enabled")
       .eq("id", userId)
       .maybeSingle();
-    // Default to true when column absent or null
     return (data as any)?.boost_visibility_enabled !== false;
   } catch {
     return true;
@@ -213,16 +205,75 @@ async function loadBoostPreference(
 }
 
 /**
+ * Upsert city and category reputation from event history (fire-and-forget).
+ * Uses raw counts from events as a proxy for reputation. Never throws.
+ */
+function updateReputations(
+  db: SupabaseClient,
+  userId: string,
+  events: any[],
+): void {
+  try {
+    const now = new Date().toISOString();
+
+    // City reputation: count positive events per city
+    const cityCounts = new Map<string, number>();
+    for (const e of events) {
+      if (!e.city || (EVENT_WEIGHTS[e.event_type] ?? 0) <= 0) continue;
+      cityCounts.set(e.city, (cityCounts.get(e.city) ?? 0) + 1);
+    }
+    for (const [city, count] of cityCounts) {
+      const reputationScore = Math.min(100, count * 5);
+      db.from("compass_city_reputation")
+        .upsert(
+          {
+            user_id:          userId,
+            city,
+            reputation_score: reputationScore,
+            visit_count:      count,
+            last_active_at:   now,
+            updated_at:       now,
+          },
+          { onConflict: "user_id,city" },
+        )
+        .then(() => {}, () => {});
+    }
+
+    // Category reputation: count positive events per category
+    const catCounts = new Map<string, number>();
+    for (const e of events) {
+      if (!e.category || (EVENT_WEIGHTS[e.event_type] ?? 0) <= 0) continue;
+      catCounts.set(e.category, (catCounts.get(e.category) ?? 0) + 1);
+    }
+    for (const [category, count] of catCounts) {
+      const reputationScore = Math.min(100, count * 5);
+      db.from("compass_category_reputation")
+        .upsert(
+          {
+            user_id:           userId,
+            category,
+            reputation_score:  reputationScore,
+            interaction_count: count,
+            last_active_at:    now,
+            updated_at:        now,
+          },
+          { onConflict: "user_id,category" },
+        )
+        .then(() => {}, () => {});
+    }
+  } catch { /* non-fatal */ }
+}
+
+/**
  * Compute the ActiveUserScore for a single user and write it to the DB.
+ * Also populates city/category reputation tables.
  * Never throws. Returns null on unexpected error.
  */
 export async function computeActiveUserScore(
   db: SupabaseClient,
   userId: string,
   profile: CompassProfile,
-  options: {
-    hasSevereSafetyFlag?: boolean;
-  } = {},
+  options: { hasSevereSafetyFlag?: boolean } = {},
 ): Promise<ActiveUserScoreResult | null> {
   try {
     const [events, trustCapActive, boostPref] = await Promise.all([
@@ -238,18 +289,18 @@ export async function computeActiveUserScore(
       trustCapActive,
     );
 
-    const score24h     = scoreEvents(events, nowMinus(1));
-    const score7d      = scoreEvents(events, nowMinus(7));
-    const score30d     = scoreEvents(events, nowMinus(30));
-    const score90d     = scoreEvents(events, nowMinus(90));
+    const score24h      = scoreEvents(events, nowMinus(1));
+    const score7d       = scoreEvents(events, nowMinus(7));
+    const score30d      = scoreEvents(events, nowMinus(30));
+    const score90d      = scoreEvents(events, nowMinus(90));
     const scoreLifetime = scoreEvents(events, new Date(0));
 
     const { w24, w7, w30, w90, wL } = WINDOW_WEIGHTS;
     const rawScore =
-      w24 * score24h +
-      w7  * score7d  +
-      w30 * score30d +
-      w90 * score90d +
+      w24 * score24h  +
+      w7  * score7d   +
+      w30 * score30d  +
+      w90 * score90d  +
       wL  * scoreLifetime;
 
     const activeUserScore = Math.round(rawScore * trustMultiplier * 100) / 100;
@@ -272,22 +323,22 @@ export async function computeActiveUserScore(
       badgeEligibility,
     };
 
-    // Persist (fire-and-forget)
+    // Persist active user score (fire-and-forget)
     db.from("compass_active_user_scores")
       .upsert(
         {
-          user_id:               userId,
-          score_24h:             score24h,
-          score_7d:              score7d,
-          score_30d:             score30d,
-          score_90d:             score90d,
-          score_lifetime:        scoreLifetime,
-          active_user_score:     activeUserScore,
-          trust_multiplier:      trustMultiplier,
+          user_id:                 userId,
+          score_24h:               score24h,
+          score_7d:                score7d,
+          score_30d:               score30d,
+          score_90d:               score90d,
+          score_lifetime:          scoreLifetime,
+          active_user_score:       activeUserScore,
+          trust_multiplier:        trustMultiplier,
           tier,
-          boost_eligible:        boostEligible,
+          boost_eligible:          boostEligible,
           boost_visibility_enabled: boostPref,
-          last_computed_at:      new Date().toISOString(),
+          last_computed_at:        new Date().toISOString(),
         },
         { onConflict: "user_id" },
       )
@@ -297,15 +348,14 @@ export async function computeActiveUserScore(
     for (const badge of badgeEligibility) {
       db.from("compass_active_user_badges")
         .upsert(
-          {
-            user_id:    userId,
-            badge_type: badge,
-            eligible:   true,
-          },
+          { user_id: userId, badge_type: badge, eligible: true },
           { onConflict: "user_id,badge_type" },
         )
         .then(() => {}, () => {});
     }
+
+    // Populate city + category reputation (fire-and-forget)
+    updateReputations(db, userId, events);
 
     return result;
   } catch {
@@ -316,20 +366,15 @@ export async function computeActiveUserScore(
 /**
  * Compute a visibility boost delta for a pipeline item based on its author's
  * ActiveUserScore. Returns a score modifier in [0, MAX_BOOST].
- *
- * If boost_visibility_enabled is false for the author → returns 0.
- * If trustMultiplier is 0 (severe safety flag) → returns 0.
+ * Returns 0 if boost is disabled or trust multiplier is zero.
  */
 const MAX_BOOST = 5.0;
 
-export function computeItemVisibilityBoost(
-  authorScore: ActiveUserScoreResult | null,
-): number {
-  if (!authorScore) return 0;
-  if (!authorScore.boostVisibilityEnabled) return 0;
-  if (authorScore.trustMultiplier === 0)   return 0;
-  if (!authorScore.boostEligible)          return 0;
-  // Normalise: city_ambassador_candidate gets full MAX_BOOST
+export function computeItemVisibilityBoost(authorScore: ActiveUserScoreResult | null): number {
+  if (!authorScore)                           return 0;
+  if (!authorScore.boostVisibilityEnabled)    return 0;
+  if (authorScore.trustMultiplier === 0)      return 0;
+  if (!authorScore.boostEligible)             return 0;
   const tierMultiplier =
     authorScore.tier === "city_ambassador_candidate" ? 1.0 :
     authorScore.tier === "city_connector"            ? 0.7 :
@@ -349,12 +394,12 @@ export function recordActivityEvent(
 ): void {
   if (!db) return;
   const weight = meta.weight ?? EVENT_WEIGHTS[eventType] ?? 1;
-  if (Math.abs(weight) < 0.01) return; // unknown event type
+  if (Math.abs(weight) < 0.01) return;
   db.from("compass_active_user_events")
     .insert({
       user_id:    userId,
       event_type: eventType,
-      weight:     Math.abs(weight), // always positive; sign is embedded in EVENT_WEIGHTS
+      weight:     Math.abs(weight),
       city:       meta.city ?? null,
       category:   meta.category ?? null,
     })

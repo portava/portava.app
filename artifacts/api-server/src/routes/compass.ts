@@ -27,7 +27,7 @@ import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName } from "../compass/CompassFeedBuilder.js";
-import type { CompassItem } from "../compass/types.js";
+import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
 import type {
   CompassContextResponse,
   CompassFallbackResponse,
@@ -161,11 +161,9 @@ router.get("/compass/feed", async (req, res) => {
     const signals  = defaultSignals(profile);
     const context  = buildCompassContext(profile, signals);
 
-    // In Phase 3 the caller is expected to supply candidate items via POST body
-    // or through a dedicated item-hydration service. For the GET endpoint we
-    // return an empty feed with meta so clients can detect the feature is live.
-    // Phase 4 will wire up front-loading.
-    const items: CompassItem[] = [];
+    // Hydrate real candidate items from the DB.
+    // Phase 4 (Front Load Engine) will replace this with a pre-computed cache.
+    const items = await hydrateCompassItems(sc, profile);
 
     const feed = await buildFeed(items, profile, context, sc, cursor ?? null);
     res.json(feed);
@@ -212,7 +210,8 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     const signals  = defaultSignals(profile);
     const context  = buildCompassContext(profile, signals);
 
-    const items: CompassItem[] = [];
+    // Hydrate real candidate items; Phase 4 will replace with pre-computed cache.
+    const items = await hydrateCompassItems(sc, profile);
 
     const result = await buildSection(
       sectionParam as SectionName,
