@@ -50,6 +50,7 @@ interface SocialProfile {
   availabilityTags: string[];
   planningStyle: string | null;
   comfortLevel: string | null;
+  reason: string | null;
 }
 
 // ── Friend action button ─────────────────────────────────────────────────────
@@ -325,6 +326,7 @@ export default function PublicPassportScreen() {
         availabilityTags: data.availabilityTags ?? [],
         planningStyle: data.planningStyle ?? null,
         comfortLevel: data.comfortLevel ?? null,
+        reason: data.reason ?? null,
       });
     }
 
@@ -454,6 +456,13 @@ export default function PublicPassportScreen() {
           allHighlightsViewed={(ringState?.allViewed ?? false) || sessionAllViewed}
           onHighlightRingPress={ringState?.hasActive ? () => setHighlightViewerOpen(true) : undefined}
         />
+
+        {/* Match reason badge — only shown to other users when a shared signal exists */}
+        {!isOwn && social?.reason && (
+          <View style={styles.reasonBadge}>
+            <Text style={styles.reasonText}>✈ {social.reason}</Text>
+          </View>
+        )}
 
         {/* Stats row */}
         <View style={styles.statsRow}>
@@ -632,6 +641,15 @@ const styles = StyleSheet.create({
   statsDivider: { width: 1, height: 28, backgroundColor: color.haze },
   statsN: { ...t.heading, color: color.ink, fontSize: 18 },
   statsL: { fontFamily: 'Courier', fontSize: 9, color: color.mute, fontWeight: '700' },
+
+  reasonBadge: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: space.lg, marginTop: space.sm,
+    paddingVertical: 7, paddingHorizontal: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: color.haze, alignSelf: 'flex-start',
+  },
+  reasonText: { ...t.small, color: color.deep, fontWeight: '700', fontSize: 12 },
 
   followingPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

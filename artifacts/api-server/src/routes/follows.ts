@@ -774,6 +774,81 @@ router.get("/users/suggestions", async (req, res) => {
 });
 
 /* ===========================================================================
+ * getSharedDestinationReason  — shared helper
+ * ===========================================================================
+ * Returns "Both going to <city/country>" if caller and target share an upcoming
+ * trip destination, null otherwise.  Fails open (returns null) on any error.
+ */
+async function getSharedDestinationReason(
+  sc: any,
+  callerId: string,
+  targetId: string,
+): Promise<string | null> {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [callerMemberRes, callerOwnedRes] = await Promise.all([
+      sc.from("trip_members")
+        .select("trip_id, trips!inner(destination_city, destination_country)")
+        .eq("user_id", callerId)
+        .in("role", ["owner", "member"])
+        .gte("trips.end_date", today),
+      sc.from("trips")
+        .select("id, destination_city, destination_country")
+        .eq("owner_id", callerId)
+        .gte("end_date", today),
+    ]);
+
+    const callerCityKeys = new Set<string>();
+    const callerCountryKeys = new Set<string>();
+    const cityDisplayMap = new Map<string, string>();
+
+    for (const r of (callerMemberRes.data ?? [])) {
+      const t = (r as any).trips as { destination_city: string | null; destination_country: string | null } | null;
+      const city = t?.destination_city?.trim();
+      const country = t?.destination_country?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
+    for (const t of (callerOwnedRes.data ?? [])) {
+      const city = ((t as any).destination_city as string | null)?.trim();
+      const country = ((t as any).destination_country as string | null)?.trim();
+      if (city) { const k = city.toLowerCase(); callerCityKeys.add(k); cityDisplayMap.set(k, city); }
+      if (country) callerCountryKeys.add(country.toLowerCase());
+    }
+
+    if (callerCityKeys.size === 0 && callerCountryKeys.size === 0) return null;
+
+    const [targetMemberRes, targetOwnedRes] = await Promise.all([
+      sc.from("trip_members")
+        .select("trip_id, trips!inner(destination_city, destination_country)")
+        .eq("user_id", targetId)
+        .in("role", ["owner", "member"])
+        .gte("trips.end_date", today),
+      sc.from("trips")
+        .select("id, destination_city, destination_country")
+        .eq("owner_id", targetId)
+        .gte("end_date", today),
+    ]);
+
+    for (const r of (targetMemberRes.data ?? [])) {
+      const t = (r as any).trips as { destination_city: string | null; destination_country: string | null } | null;
+      const city = t?.destination_city?.trim();
+      const country = t?.destination_country?.trim();
+      if (city && callerCityKeys.has(city.toLowerCase())) return `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+      if (country && callerCountryKeys.has(country.toLowerCase())) return `Both going to ${country}`;
+    }
+    for (const t of (targetOwnedRes.data ?? [])) {
+      const city = ((t as any).destination_city as string | null)?.trim();
+      const country = ((t as any).destination_country as string | null)?.trim();
+      if (city && callerCityKeys.has(city.toLowerCase())) return `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+      if (country && callerCountryKeys.has(country.toLowerCase())) return `Both going to ${country}`;
+    }
+    return null;
+  } catch { return null; }
+}
+
+/* ===========================================================================
  * GET /users/:userId  — public profile for Passport page
  * ===========================================================================
  * Returns safe public fields + follower/following counts + isFollowing state.
@@ -815,16 +890,17 @@ router.get("/users/:userId", async (req, res) => {
     return;
   }
 
-  // Is the authenticated caller already following this user?
+  // Is the authenticated caller already following this user? Also fetch match reason.
   let isFollowing = false;
+  let reason: string | null = null;
   if (callerId && callerId !== target) {
-    const { data: edge } = await sc
-      .from("user_follows")
-      .select("follower_id")
-      .eq("follower_id", callerId)
-      .eq("following_id", target)
-      .maybeSingle();
-    isFollowing = Boolean(edge);
+    const [edgeRes, reasonResult] = await Promise.all([
+      sc.from("user_follows").select("follower_id")
+        .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
+      getSharedDestinationReason(sc, callerId, target),
+    ]);
+    isFollowing = Boolean(edgeRes.data);
+    reason = reasonResult;
   }
 
   const p = profileRes.data as any;
@@ -849,6 +925,7 @@ router.get("/users/:userId", async (req, res) => {
     followingCount: followingRes.count ?? 0,
     isFollowing,
     isOwnProfile: callerId === target,
+    reason,
     spokenLanguages: p.spoken_languages ?? [],
     defaultLanguage: p.default_language ?? null,
     travelStyles: p.travel_styles ?? [],
@@ -904,11 +981,15 @@ router.get("/users/by-handle/:handle", async (req, res) => {
   ]);
 
   let isFollowing = false;
+  let reason: string | null = null;
   if (callerId && callerId !== target) {
-    const { data: edge } = await sc
-      .from("user_follows").select("follower_id")
-      .eq("follower_id", callerId).eq("following_id", target).maybeSingle();
-    isFollowing = Boolean(edge);
+    const [edgeRes, reasonResult] = await Promise.all([
+      sc.from("user_follows").select("follower_id")
+        .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
+      getSharedDestinationReason(sc, callerId, target),
+    ]);
+    isFollowing = Boolean(edgeRes.data);
+    reason = reasonResult;
   }
 
   const p = profileRes.data as any;
@@ -933,6 +1014,7 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     followingCount: followingRes.count ?? 0,
     isFollowing,
     isOwnProfile: callerId === target,
+    reason,
     spokenLanguages: p.spoken_languages ?? [],
     defaultLanguage: p.default_language ?? null,
     travelStyles: p.travel_styles ?? [],
