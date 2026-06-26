@@ -357,7 +357,7 @@ router.get("/users/suggestions", async (req, res) => {
   // Deprioritise candidates already shown within the seen window (default 7 days).
   // Fresh candidates come first; if all have been seen, the cache is cleared and
   // the full set is used so the list never goes empty.
-  const primarySeenIds = getSeenIds(user.id);
+  const primarySeenIds = await getSeenIds(user.id);
   let freshCandidates = unshuffled.filter((id) => !primarySeenIds.has(id));
   if (freshCandidates.length === 0 && unshuffled.length > 0) {
     clearSeen(user.id);
@@ -385,7 +385,7 @@ router.get("/users/suggestions", async (req, res) => {
       return;
     }
 
-    const seenIds = getSeenIds(user.id);
+    const seenIds = await getSeenIds(user.id);
 
     const pool = (fallbackRows ?? [])
       .map((r: any) => r.id as string)

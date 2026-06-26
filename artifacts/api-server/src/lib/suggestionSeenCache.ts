@@ -5,9 +5,14 @@
  * the next request can exclude them and surface genuinely fresh faces.
  *
  * Design constraints:
- *   - Single in-process Map; no external dependency (no Redis required).
+ *   - Hybrid write-through cache: in-process Map (L1) + DB persistence (L2).
+ *   - After a server restart the L1 cache is empty; the first getSeenIds() call
+ *     loads from the DB so users continue to see fresh faces across deploys.
+ *   - DB writes (markAsSeen / clearSeen) are fire-and-forget: the in-memory
+ *     state is updated synchronously, then the DB is written asynchronously
+ *     so the response path is never blocked.
  *   - Each user entry expires after SEEN_TTL_MS of inactivity (default 168 h / 7 days).
- *   - Seen-set capped at MAX_SEEN_PER_USER to bound memory.
+ *   - Seen-set capped at MAX_SEEN_PER_USER to bound memory and DB row size.
  *   - When the full candidate pool is smaller than the exclusion list the cache
  *     is cleared automatically so the user never sees an empty list.
  *
@@ -43,16 +48,85 @@ function getEntry(userId: string): Entry | null {
   return entry;
 }
 
+/* ---------------------------------------------------------------------------
+ * DB helpers (fire-and-forget; all errors swallowed)
+ * ---------------------------------------------------------------------------
+ */
+
+async function persistSeenIds(userId: string, entry: Entry): Promise<void> {
+  try {
+    const { getServiceClient } = await import("./supabase.js");
+    const sc = getServiceClient();
+    if (!sc) return;
+    await sc.from("user_suggestion_seen").upsert(
+      {
+        user_id: userId,
+        seen_ids: Array.from(entry.ids),
+        expires_at: new Date(entry.expiresAt).toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  } catch {
+    /* fire-and-forget — never block the response path */
+  }
+}
+
+async function clearSeenFromDb(userId: string): Promise<void> {
+  try {
+    const { getServiceClient } = await import("./supabase.js");
+    const sc = getServiceClient();
+    if (!sc) return;
+    await sc.from("user_suggestion_seen").delete().eq("user_id", userId);
+  } catch {
+    /* fire-and-forget */
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Public API
+ * ---------------------------------------------------------------------------
+ */
+
 /**
  * Return the set of IDs the user has already seen (empty set if none / expired).
+ *
+ * Checks the in-process L1 cache first; on a miss (e.g. after a server restart)
+ * falls back to the DB so seen state survives deploys.
  */
-export function getSeenIds(userId: string): Set<string> {
-  return getEntry(userId)?.ids ?? new Set();
+export async function getSeenIds(userId: string): Promise<Set<string>> {
+  // L1: in-process cache (fast path — avoids DB round-trip within a session)
+  const entry = getEntry(userId);
+  if (entry) return entry.ids;
+
+  // L2: DB fallback (first call after a restart, or after TTL expiry)
+  try {
+    const { getServiceClient } = await import("./supabase.js");
+    const sc = getServiceClient();
+    if (!sc) return new Set();
+    const { data, error } = await sc
+      .from("user_suggestion_seen")
+      .select("seen_ids, expires_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error || !data) return new Set();
+    const row = data as { seen_ids: string[] | null; expires_at: string };
+    const expiresAt = new Date(row.expires_at).getTime();
+    if (expiresAt < Date.now()) {
+      void clearSeenFromDb(userId);
+      return new Set();
+    }
+    const ids = new Set<string>(row.seen_ids ?? []);
+    cache.set(userId, { ids, expiresAt });
+    return ids;
+  } catch {
+    return new Set();
+  }
 }
 
 /**
  * Record a batch of IDs that were just served to the user.
- * Resets the TTL window.
+ * Updates the in-memory cache synchronously; persists to DB in the background.
  */
 export function markAsSeen(userId: string, ids: string[]): void {
   if (ids.length === 0) return;
@@ -70,6 +144,9 @@ export function markAsSeen(userId: string, ids: string[]): void {
 
   entry.expiresAt = Date.now() + SEEN_TTL_MS;
   cache.set(userId, entry);
+
+  // Persist asynchronously — never block the request path
+  void persistSeenIds(userId, entry);
 }
 
 /**
@@ -78,9 +155,10 @@ export function markAsSeen(userId: string, ids: string[]): void {
  */
 export function clearSeen(userId: string): void {
   cache.delete(userId);
+  void clearSeenFromDb(userId);
 }
 
-/** Test helper — wipe the entire cache between test cases. */
+/** Test helper — wipe the entire in-memory cache between test cases. */
 export function _clearAllSeen(): void {
   cache.clear();
 }
