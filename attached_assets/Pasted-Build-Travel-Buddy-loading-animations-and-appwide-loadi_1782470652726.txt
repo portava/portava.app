@@ -1,0 +1,305 @@
+Build Travel Buddy loading animations and appwide loading-state system.
+
+Scope:
+Create polished Travel Buddy loading animations that match the app’s travel/social identity and use them consistently across screens, feature loads, GPS/location actions, trip planning, messaging, and empty/loading transitions.
+
+Core rule:
+Check first, then build or update accordingly. Before creating new loaders, inspect the existing app for loading components, skeleton loaders, spinners, splash screen logic, animation libraries, theme tokens, navigation transitions, and reusable UI components. Reuse or extend existing systems wherever possible. Do not create duplicate animation/loading systems.
+
+1. Check existing implementation first
+Before editing, inspect the codebase for:
+- existing loading components
+- splash screen logic
+- app startup screen
+- skeleton loaders
+- spinner components
+- theme/colors
+- animation libraries already installed
+- Lottie support if present
+- Reanimated/Moti/Animated usage
+- navigation loading states
+- GPS/location loading states
+- Discovery loading states
+- Trip loading states
+- Telegraph loading states
+- Passport/Profile loading states
+- Safe Return loading states
+- Rent a Buddy loading states
+- existing design tokens and brand assets
+
+Classify current state:
+- already implemented
+- partially implemented
+- inconsistent loaders
+- missing reusable loading system
+- missing animation support
+- blocked by missing package/assets
+
+2. Create a shared Travel Buddy loading system
+Build or update one shared loading system that can be reused appwide.
+
+Suggested components:
+- TravelBuddyLoader
+- PassportStampLoader
+- CompassLoader
+- PulsePinLoader
+- RoutePathLoader
+- ScreenSkeleton
+- LoadingStateCard
+
+Do not create one-off loaders inside individual screens if a reusable component can handle it.
+
+3. Main app loading animation: Passport Stamp Journey
+Create the primary Travel Buddy loader called “Passport Stamp Journey.”
+
+Animation concept:
+- A small passport opens.
+- A dotted travel route draws across a mini-map/passport page.
+- A location pin or buddy marker pops onto the route.
+- A stamp lands on the passport with a soft bounce.
+- Text updates underneath while loading.
+- Screen fades into the destination screen after load completes.
+
+Suggested visual elements:
+- passport book/card
+- dotted travel path
+- small location pins
+- compass/buddy icon
+- stamp mark
+- soft bounce
+- subtle glow/pulse
+- brand colors from existing Travel Buddy theme
+
+Suggested loading text rotation:
+- “Finding your next adventure…”
+- “Checking the local vibe…”
+- “Mapping your trip flow…”
+- “Loading nearby plans…”
+- “Syncing your Passport…”
+- “Getting your crew ready…”
+- “Finding safe nearby options…”
+- “Preparing your trip flow…”
+
+Use this loader for:
+- app startup
+- large screen loads
+- first-time Discovery load
+- Trips load
+- Passport/Profile load
+- heavy recommendation/Compass operations
+
+4. GPS/location loader: Pulse Pin
+Create a smaller location-specific loader called “Pulse Pin.”
+
+Animation concept:
+- A location pin sits in the center.
+- Soft rings pulse outward like radar.
+- A small GPS dot locks onto the pin.
+- Text explains the current location action.
+
+Use this loader for:
+- getting current location
+- GPS permission check
+- nearby recommendations
+- geofence checks
+- delayed-post location checks
+- Layover Mode airport/location lookup
+- Trip Flow checkpoint detection
+- map centering
+
+Suggested copy:
+- “Finding your location…”
+- “Checking nearby plans…”
+- “Finding safe nearby options…”
+- “Looking around this area…”
+- “Checking your checkpoint…”
+
+5. Compass/AI loader: Compass Lock
+Create a Compass loader for AI/recommendation thinking states.
+
+Animation concept:
+- Compass needle rotates briefly.
+- Needle locks onto a direction.
+- Dotted path or small sparkle appears.
+- Text says Compass is planning or ranking options.
+
+Use this loader for:
+- Compass AI recommendations
+- Discovery ranking
+- Trip Flow optimization
+- Layover recommendations
+- Hidden Gems suggestions
+- personalized feed refresh
+
+Suggested copy:
+- “Compass is finding the best fit…”
+- “Ranking nearby options…”
+- “Building your route…”
+- “Checking your travel vibe…”
+- “Finding the best flow…”
+
+6. Route planning loader: Route Path
+Create a route-specific loader for Trip Flow and walking-path generation.
+
+Animation concept:
+- Three or more numbered checkpoints appear.
+- A dotted path draws between them.
+- A small walking marker moves from checkpoint 1 to 2.
+- Text explains that Travel Buddy is optimizing the route.
+
+Use this loader for:
+- creating walking path
+- optimizing activity order
+- rerouting after skipped stop
+- loading directions
+- calculating checkpoint progress
+
+Suggested copy:
+- “Optimizing your night flow…”
+- “Finding the best walking path…”
+- “Ordering your stops…”
+- “Checking route safety…”
+- “Building your checkpoint map…”
+
+7. Telegraph/chat loader
+Create or standardize a lightweight Telegraph loader.
+
+Animation concept:
+- Chat bubble dots animate.
+- Tiny paper-plane or message icon moves.
+- Keep it subtle and fast.
+
+Use this loader for:
+- opening conversations
+- loading group chat
+- sending messages
+- translating messages
+- fetching saved/replied messages
+
+Suggested copy:
+- “Opening Telegraph…”
+- “Syncing messages…”
+- “Translating message…”
+- “Sending…”
+
+8. Skeleton loaders
+For screens with lists/cards, use skeleton loading instead of full-screen animation when appropriate.
+
+Add consistent skeleton states for:
+- Discovery cards
+- City Pulse feed
+- Trips list
+- Trip detail itinerary
+- Passport posts/stamps
+- Rent a Buddy listings
+- Saved places
+- Telegraph inbox
+- Notifications/activity center
+
+Skeleton rules:
+- Use existing theme colors.
+- Keep layout similar to final content.
+- Avoid layout shift after data loads.
+- Use animation only if performance is safe.
+
+9. Loading state rules
+Use the right loader based on context:
+- Full-screen app/screen load → Passport Stamp Journey
+- GPS/location lookup → Pulse Pin
+- Compass/recommendation work → Compass Lock
+- Route generation/checkpoints → Route Path
+- Chat/message work → Telegraph loader
+- Card/list fetching → skeleton loaders
+
+Avoid showing large full-screen loaders for small inline actions. Use inline loading states for buttons and cards.
+
+10. Performance and accessibility
+- Keep animations lightweight.
+- Respect reduced-motion/accessibility settings.
+- If reduced motion is enabled, show a static icon with loading text instead of motion.
+- Do not block app navigation longer than needed.
+- Avoid battery-heavy GPS animations.
+- Make loading text readable on mobile.
+- Ensure dark/light theme compatibility if supported.
+- Add proper accessibility labels like “Loading nearby plans.”
+
+11. Error and empty-state pairing
+Every loading state must have a matching:
+- success state
+- empty state
+- error state
+- retry action when possible
+
+Examples:
+- GPS denied → show location permission explanation and allow selected-location fallback.
+- No nearby plans → show “No plans found here yet” and suggest creating one.
+- Compass failed → show human-readable retry message.
+- Chat load failed → show retry/open later message.
+- Trip route failed → explain missing coordinates or unavailable directions provider.
+
+12. Screens to update
+Apply the shared loading system to key Travel Buddy screens:
+- app startup/splash transition
+- Discovery
+- City Pulse
+- Trips
+- Trip Detail
+- Passport/Profile
+- Telegraph inbox/chat
+- Rent a Buddy
+- Layover Mode
+- Trip Flow / walking route planner
+- Saved
+- Notifications/Activity Center
+- Safe Return
+- map/location screens
+- Compass AI recommendation panels
+
+Check for any old inconsistent spinners and replace them where safe.
+
+13. Brand/design details
+Use Travel Buddy’s visual language:
+- passport
+- stamps
+- dotted routes
+- compass
+- location pins
+- postcard/travel card feel
+- soft rounded shapes
+- friendly motion
+- warm travel/social tone
+
+Do not make it feel like a generic finance/loading spinner. It should clearly belong to Travel Buddy.
+
+14. Tests
+Add or update tests proving:
+- shared loader renders with default copy
+- Passport Stamp loader renders for large screen loads
+- Pulse Pin loader renders for GPS/location loading
+- Compass loader renders for recommendation loading
+- Route Path loader renders for route generation
+- reduced-motion mode falls back to non-animated/static loader
+- skeleton loaders render for at least Discovery, Trips, and Telegraph lists
+- screens do not crash when loading data is empty or fails
+- old loader imports are not duplicated where shared loader should be used
+
+15. Verification
+Run:
+- affected frontend tests
+- component tests for loaders
+- app typecheck
+- lint/guards if available
+- screenshot/manual smoke check if supported
+
+Report:
+- what loading components already existed
+- what was reused
+- what was newly added
+- screens updated
+- files changed
+- tests run
+- exact pass/fail counts
+- any screens still using old loaders and why
+
+Acceptance:
+Travel Buddy has a polished shared loading-state system. The main app uses a Passport Stamp Journey animation, GPS/location actions use a Pulse Pin loader, Compass uses a Compass Lock loader, Trip Flow uses a Route Path loader, and list-heavy screens use consistent skeleton loaders. Loading states are branded, accessible, performant, reusable, and paired with honest error/empty states.

@@ -64,6 +64,7 @@ externalPort = 3003
 
 [nix]
 channel = "stable-25_05"
+packages = ["zip"]
 
 [userenv]
 
