@@ -74,7 +74,6 @@ function PostTabButton() {
       accessibilityLabel="Create a post"
     >
       <Plus size={22} color={color.signal} />
-      <Text style={[styles.label, styles.postTabLabel]}>Post</Text>
     </Pressable>
   );
 }
@@ -114,7 +113,7 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarShowLabel: !isDesktop,
+        tabBarShowLabel: false,
         tabBarActiveTintColor: color.ink,
         tabBarInactiveTintColor: color.faint,
         tabBarStyle: isDesktop
