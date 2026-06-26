@@ -255,6 +255,93 @@ router.get("/users/search", async (req, res) => {
     (myFollowsRes.data ?? []).map((e: any) => e.following_id as string),
   );
 
+  // Shared trip destinations: "Both going to <city>" — same logic as /users/suggestions.
+  const sharedDestinations: Record<string, string> = {};
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [callerMemberRes, callerOwnedRes] = await Promise.all([
+      sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
+      sc.from("trips").select("id").eq("owner_id", user.id).gte("end_date", today),
+    ]);
+
+    const callerTripIdSet = new Set<string>([
+      ...((callerMemberRes.data ?? []).map((r: any) => r.trip_id as string)),
+      ...((callerOwnedRes.data ?? []).map((r: any) => r.id as string)),
+    ]);
+
+    if (callerTripIdSet.size > 0) {
+      const { data: callerTrips } = await sc
+        .from("trips")
+        .select("destination_city, destination_country")
+        .in("id", Array.from(callerTripIdSet))
+        .gte("end_date", today);
+
+      const callerCityKeys = new Set<string>();
+      const callerCountryKeys = new Set<string>();
+      const cityDisplayMap = new Map<string, string>();
+
+      for (const t of (callerTrips ?? [])) {
+        const city = ((t as any).destination_city as string | null)?.trim();
+        const country = ((t as any).destination_country as string | null)?.trim();
+        if (city) {
+          const key = city.toLowerCase();
+          callerCityKeys.add(key);
+          cityDisplayMap.set(key, city);
+        }
+        if (country) callerCountryKeys.add(country.toLowerCase());
+      }
+
+      if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
+        const [candMemberRes, candOwnedRes] = await Promise.all([
+          sc.from("trip_members").select("trip_id, user_id").in("user_id", ids).in("role", ["owner", "member"]),
+          sc.from("trips").select("id, owner_id").in("owner_id", ids).gte("end_date", today),
+        ]);
+
+        const tripToUsers = new Map<string, string[]>();
+        for (const r of (candMemberRes.data ?? [])) {
+          const tid = (r as any).trip_id as string;
+          const uid = (r as any).user_id as string;
+          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+          tripToUsers.get(tid)!.push(uid);
+        }
+        for (const r of (candOwnedRes.data ?? [])) {
+          const tid = (r as any).id as string;
+          const uid = (r as any).owner_id as string;
+          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+          if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
+        }
+
+        if (tripToUsers.size > 0) {
+          const { data: candTrips } = await sc
+            .from("trips")
+            .select("id, destination_city, destination_country")
+            .in("id", Array.from(tripToUsers.keys()))
+            .gte("end_date", today);
+
+          for (const trip of (candTrips ?? [])) {
+            const city = ((trip as any).destination_city as string | null)?.trim();
+            const country = ((trip as any).destination_country as string | null)?.trim();
+            const tid = (trip as any).id as string;
+
+            let label: string | null = null;
+            if (city && callerCityKeys.has(city.toLowerCase())) {
+              label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+            } else if (country && callerCountryKeys.has(country.toLowerCase())) {
+              label = `Both going to ${country}`;
+            }
+
+            if (label) {
+              for (const uid of (tripToUsers.get(tid) ?? [])) {
+                if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch { /* fail-safe: skip shared destinations */ }
+
   const users = rows
     .filter((p: any) => !blockedSet.has(p.id as string))
     .map((p: any) => ({
@@ -265,6 +352,7 @@ router.get("/users/search", async (req, res) => {
       followerCount: followerCounts[p.id as string] ?? 0,
       isFollowing: followingSet.has(p.id as string),
       isPrivate: (p.is_private as boolean) ?? false,
+      reason: sharedDestinations[p.id as string] ?? null,
     }));
 
   res.status(200).json({ users });
