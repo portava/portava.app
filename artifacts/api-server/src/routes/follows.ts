@@ -593,21 +593,46 @@ router.get("/users/suggestions", async (req, res) => {
     return s;
   }
 
-  // Map id → score before sorting (reused later for reason label).
+  // Map id → interest score before sorting (reused later for reason label).
   const interestScores = new Map<string, number>(
     safeIds.map((id) => [id, interestScore(poolProfileMap.get(id) ?? {})])
   );
 
-  // Stable sort: higher score first; equal-score candidates keep their
+  // 7. Mutual connections: people the caller follows who also follow each candidate.
+  //    Computed over the full pool (before the 10-item slice) so that high-mutual
+  //    candidates deeper in the shuffle can still surface in the final list.
+  const mutualCounts: Record<string, number> = {};
+  const myFollowingList = Array.from(alreadyFollowingSet);
+  const validSafeIds = safeIds.filter((id) => poolProfileMap.has(id));
+  if (myFollowingList.length > 0) {
+    try {
+      const { data: mutualRows } = await sc
+        .from("user_follows")
+        .select("following_id, follower_id")
+        .in("following_id", validSafeIds)
+        .in("follower_id", myFollowingList);
+      for (const r of (mutualRows ?? [])) {
+        const cid = (r as any).following_id as string;
+        mutualCounts[cid] = (mutualCounts[cid] ?? 0) + 1;
+      }
+    } catch { /* fail-safe: proceed with zero mutual counts */ }
+  }
+
+  // Combined score: mutual connections are a stronger trust signal than style
+  // overlap, so they carry 3× weight.  Equal combined scores preserve the
   // seeded-shuffle order (Array.prototype.sort is stable in V8).
-  safeIds = safeIds
-    .filter((id) => poolProfileMap.has(id))
-    .sort((a, b) => (interestScores.get(b) ?? 0) - (interestScores.get(a) ?? 0))
+  const MUTUAL_WEIGHT = 3;
+  safeIds = validSafeIds
+    .sort((a, b) => {
+      const scoreB = (mutualCounts[b] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(b) ?? 0);
+      const scoreA = (mutualCounts[a] ?? 0) * MUTUAL_WEIGHT + (interestScores.get(a) ?? 0);
+      return scoreB - scoreA;
+    })
     .slice(0, 10);
 
   const profiles = safeIds.map((id) => poolProfileMap.get(id)!);
 
-  // 7. Follower counts for the candidate profiles
+  // 8. Follower counts for the candidate profiles
   const { data: countRows } = await sc
     .from("user_follows")
     .select("following_id")
@@ -617,23 +642,6 @@ router.get("/users/suggestions", async (req, res) => {
   for (const r of (countRows ?? [])) {
     const fid = (r as any).following_id as string;
     followerCounts[fid] = (followerCounts[fid] ?? 0) + 1;
-  }
-
-  // 8. Mutual connections: people the caller follows who also follow each candidate
-  const mutualCounts: Record<string, number> = {};
-  const myFollowingList = Array.from(alreadyFollowingSet);
-  if (myFollowingList.length > 0) {
-    try {
-      const { data: mutualRows } = await sc
-        .from("user_follows")
-        .select("following_id, follower_id")
-        .in("following_id", safeIds)
-        .in("follower_id", myFollowingList);
-      for (const r of (mutualRows ?? [])) {
-        const cid = (r as any).following_id as string;
-        mutualCounts[cid] = (mutualCounts[cid] ?? 0) + 1;
-      }
-    } catch { /* fail-safe: proceed with zero mutual counts */ }
   }
 
   // 9. Shared trip destinations: "Both going to <city>" when caller and candidate

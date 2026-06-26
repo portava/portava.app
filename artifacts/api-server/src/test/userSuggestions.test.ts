@@ -712,6 +712,87 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(ids.includes(B), "B (not blocked, score 0) must still appear");
   });
 
+  it("ranking: high mutual-connection count beats high interest-only score", async () => {
+    // Both A and B follow ME — both are primary follow-back candidates.
+    // ME follows D_MUT and E_MUT, who both follow A.
+    //   → A has 2 mutual connections with ME, 0 style matches.
+    //   → B has 0 mutual connections, 1 style match with ME.
+    // Combined scores: A = 2×3 + 0 = 6; B = 0×3 + 1 = 1.
+    // A must rank above B even though B has a direct interest match.
+    const D_MUT = "user-d-mut";
+    const E_MUT = "user-e-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },    // A follows ME → candidate
+        { follower_id: B,     following_id: ME },    // B follows ME → candidate
+        { follower_id: ME,    following_id: D_MUT }, // ME follows D (mutual source)
+        { follower_id: ME,    following_id: E_MUT }, // ME follows E (mutual source)
+        { follower_id: D_MUT, following_id: A },    // D follows A → 1st mutual for A
+        { follower_id: E_MUT, following_id: A },    // E follows A → 2nd mutual for A
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure"] },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false,
+          travel_styles: [] },                        // 0 style matches, 2 mutual connections
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure"] },              // 1 style match, 0 mutual connections
+        { id: D_MUT, handle: "dmut", name: "Dave",  avatar_url: null, is_private: false },
+        { id: E_MUT, handle: "emut", name: "Eve",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (2 mutual connections) should appear in suggestions");
+    assert.ok(posB !== -1, "B (1 interest match) should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (mutualCount=2, combined=6) must rank above B (mutualCount=0, combined=1); got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: candidate with both mutual connections and interest overlap scores highest", async () => {
+    // A has 1 mutual connection + 1 style match → combined = 1×3 + 1 = 4
+    // B has 0 mutual connections + 2 style matches → combined = 0×3 + 2 = 2
+    // A must rank above B.
+    const F_MUT = "user-f-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: F_MUT },
+        { follower_id: F_MUT, following_id: A },   // A has 1 mutual connection
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false,
+          travel_styles: ["adventure"] },           // 1 style match + 1 mutual
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "luxury"] }, // 2 style matches, 0 mutual
+        { id: F_MUT, handle: "fmut", name: "Faye",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (mutual=1, interest=1, combined=4) must rank above B (mutual=0, interest=2, combined=2); got ${ids.join(", ")}`
+    );
+  });
+
   // ── new profile fields: travel_group_style / looking_for / comfort_level / planning_style ──
 
   it("ranking: overlapping travel_group_style ranks a candidate above one without", async () => {
