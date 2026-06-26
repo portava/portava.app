@@ -189,22 +189,32 @@ async function detectMutualReviewRings(
       reviewedBy.get(r.reviewer_id)!.add(r.reviewee_id);
     }
 
+    // Find the largest fully-connected clique (all members have reviewed each other
+    // with 5★). A pair-based shortcut (checking only against the pivot user) is
+    // insufficient — every pair in the ring must be mutually verified.
+    function areMutual(a: string, b: string): boolean {
+      return Boolean(reviewedBy.get(a)?.has(b) && reviewedBy.get(b)?.has(a));
+    }
+
     const users = [...reviewedBy.keys()];
     for (let i = 0; i < users.length; i++) {
-      const ring = new Set<string>([users[i]!]);
+      // Start with just the pivot user and try to grow a clique
+      const clique: string[] = [users[i]!];
+
       for (let j = i + 1; j < users.length; j++) {
-        const a = users[i]!;
-        const b = users[j]!;
-        if (reviewedBy.get(a)?.has(b) && reviewedBy.get(b)?.has(a)) {
-          ring.add(b);
+        const candidate = users[j]!;
+        // The candidate can join only if it mutually reviewed ALL existing members
+        if (clique.every((member) => areMutual(candidate, member))) {
+          clique.push(candidate);
         }
       }
-      if (ring.size >= RING_MIN_USERS) {
+
+      if (clique.length >= RING_MIN_USERS) {
         flags.push({
           patternType:   "mutual_review_ring",
-          involvedUsers: [...ring],
-          severity:      ring.size >= 5 ? "severe" : "high",
-          evidence:      { ring_size: ring.size, window_days: RING_WINDOW_DAYS },
+          involvedUsers: clique,
+          severity:      clique.length >= 5 ? "severe" : "high",
+          evidence:      { ring_size: clique.length, window_days: RING_WINDOW_DAYS },
         });
         break; // one flag per scan — admin reviews then re-runs
       }

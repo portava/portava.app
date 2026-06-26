@@ -642,7 +642,10 @@ describe("CompassNotificationEngine", () => {
     assert.equal(decision.outcome, "suppressed_category_muted");
   });
 
-  it("evaluateNotification: booking_update (level 4) NOT suppressed by category mute", async () => {
+  it("evaluateNotification: booking_update (level 4) NOT suppressed when category is not muted", async () => {
+    // Category mutes apply to ALL non-safety levels (3+).
+    // booking_update is NOT suppressed here because its category ("booking")
+    // is not in the user's muted list — only "nightlife" is muted.
     const tableData: Record<string, Record<string, unknown>[]> = {
       compass_user_preferences: [
         { user_id: "u7", muted_topics: [], exclude_budget_styles: ["nightlife"], compass_enabled: true },
@@ -651,10 +654,25 @@ describe("CompassNotificationEngine", () => {
       feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-    const p: NotificationPayload = { type: "booking_update", title: "T", body: "B", category: "nightlife" };
+    const p: NotificationPayload = { type: "booking_update", title: "T", body: "B", category: "booking" };
     const decision = await evaluateNotification(db, "u7", p, { nowMinutes: 14 * 60 });
-    // Level 4 < category-mute threshold (8+) → sent
     assert.equal(decision.outcome, "sent");
+  });
+
+  it("evaluateNotification: booking_update (level 4) IS suppressed when its category IS muted", async () => {
+    // Confirms that category mutes apply to level 4 (not just levels 8–10).
+    // A user who has muted "nightlife" should not receive a nightlife booking push.
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u7b", muted_topics: [], exclude_budget_styles: ["nightlife"], compass_enabled: true },
+      ],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const p: NotificationPayload = { type: "booking_update", title: "T", body: "B", category: "nightlife" };
+    const decision = await evaluateNotification(db, "u7b", p, { nowMinutes: 14 * 60 });
+    assert.equal(decision.outcome, "suppressed_category_muted");
   });
 
   it("evaluateNotification: nightlife suppressed for no_clubs user", async () => {

@@ -58,8 +58,14 @@ export const PRIORITY_LEVELS: Record<NotificationType, number> = {
 /** Levels ≤ this threshold are never suppressed (safety override). */
 const SAFETY_OVERRIDE_THRESHOLD = 2;
 
-/** Levels ≥ this are subject to category-mute suppression. */
-const CATEGORY_MUTE_THRESHOLD = 8;
+/**
+ * Levels ≥ this are subject to category-mute suppression.
+ * Value 3 means: levels 3–10 are suppressed when the notification's category
+ * is muted by the user. Levels 1–2 (safety) always bypass suppression.
+ * This aligns with the requirement that ignored categories should not be pushed
+ * regardless of priority level, except for safety-override notifications.
+ */
+const CATEGORY_MUTE_THRESHOLD = 3;
 
 export interface NotificationPayload {
   type:      NotificationType;

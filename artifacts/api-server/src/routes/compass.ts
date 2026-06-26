@@ -55,46 +55,52 @@ import type {
 
 const router = Router();
 
-// ── Feed recommendation pre-registration helper ───────────────────────────────
-// Called fire-and-forget after every successful feed build.
-// Generates HMAC-signed tokens for each FeedItem and writes them to
-// compass_recommendation_scores so the /why endpoint can perform an
-// authoritative DB lookup (recommendation_id + user_id).
+// ── Feed recommendation enrichment ────────────────────────────────────────────
+// Generates HMAC-signed recommendationId tokens for each feed item, adds them
+// to the response payload (so the client can call /why), and returns DB rows
+// ready for pre-registration in compass_recommendation_scores.
+//
+// Tokens are generated exactly once per item — same token used for both the
+// response and the DB write (no double-generation).
 
-async function preRegisterFeedRecommendations(
-  sc:     SupabaseClient,
+interface RecommendationRow {
+  user_id:           string;
+  recommendation_id: string;
+  explanation_key:   string;
+  item_id:           string;
+  item_type:         string;
+  section_name:      string;
+}
+
+function enrichFeedWithRecommendationIds(
   userId: string,
   feed:   FeedPage,
-): Promise<void> {
-  try {
-    const rows = feed.sections.flatMap((section) =>
-      section.items.map((item) => {
-        const token = encodeRecommendationToken({
-          userId,
-          itemId:         String(item.item.id ?? ""),
-          itemType:       String(item.item.type ?? ""),
-          sectionName:    item.section,
-          explanationKey: item.explanationKey,
-        });
-        return {
-          user_id:           userId,
-          recommendation_id: token,
-          explanation_key:   item.explanationKey,
-          item_id:           String(item.item.id ?? ""),
-          item_type:         String(item.item.type ?? ""),
-          section_name:      item.section,
-          served_at:         new Date().toISOString(),
-        };
-      }),
-    );
+): { enrichedFeed: object; registrationRows: RecommendationRow[] } {
+  const registrationRows: RecommendationRow[] = [];
 
-    if (rows.length === 0) return;
+  const enrichedSections = feed.sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      const token = encodeRecommendationToken({
+        userId,
+        itemId:         String(item.item.id ?? ""),
+        itemType:       String(item.item.type ?? ""),
+        sectionName:    item.section,
+        explanationKey: item.explanationKey,
+      });
+      registrationRows.push({
+        user_id:           userId,
+        recommendation_id: token,
+        explanation_key:   item.explanationKey,
+        item_id:           String(item.item.id ?? ""),
+        item_type:         String(item.item.type ?? ""),
+        section_name:      item.section,
+      });
+      return { ...item, recommendationId: token };
+    }),
+  }));
 
-    // Batch upsert; ignore conflicts (re-serving same item is fine)
-    await sc
-      .from("compass_recommendation_scores")
-      .upsert(rows, { onConflict: "recommendation_id" });
-  } catch { /* fire-and-forget — never surfaces to caller */ }
+  return { enrichedFeed: { ...feed, sections: enrichedSections }, registrationRows };
 }
 
 router.get("/compass/me/context", async (req, res) => {
@@ -228,16 +234,22 @@ router.get("/compass/feed", async (req, res) => {
     const signals  = defaultSignals(profile);
     const context  = buildCompassContext(profile, signals);
     const items    = await hydrateCompassItems(sc, profile);
-    const feed     = await buildFeed(items, profile, context, sc, cursor ?? null);
+    const feed = await buildFeed(items, profile, context, sc, cursor ?? null);
 
-    // Pre-register recommendation tokens for /why endpoint (fire-and-forget)
-    // Writes signed tokens + explanation_key to compass_recommendation_scores so
-    // the /why endpoint can perform an authoritative DB lookup.
-    void preRegisterFeedRecommendations(sc, user.id, feed);
+    // Enrich feed with signed recommendationId tokens per item.
+    // The client uses these tokens to call GET /api/compass/why/:recommendationId.
+    // Tokens are pre-registered in compass_recommendation_scores (fire-and-forget)
+    // so the /why endpoint can do an authoritative DB lookup.
+    const { enrichedFeed, registrationRows } = enrichFeedWithRecommendationIds(user.id, feed);
+    if (registrationRows.length > 0) {
+      sc.from("compass_recommendation_scores")
+        .upsert(registrationRows, { onConflict: "recommendation_id" })
+        .then(() => {}, () => {});
+    }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
-    void setCachedFeed(sc, user.id, cacheKey, "feed", feed);
-    res.json(feed);
+    void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
+    res.json(enrichedFeed);
   } catch (err) {
     req.log.error({ err }, "compass/feed: build failed");
     res.json({ sections: [], nextCursor: null, fallback: true });
