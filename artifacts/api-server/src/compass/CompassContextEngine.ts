@@ -4,17 +4,17 @@
  * Takes a CompassProfile + server-side signals and returns a typed CompassContext.
  *
  * contextState determination (priority order — first match wins):
- *   1. safety_mode      → safeReturnActive
- *   2. active_booking_mode → hasActiveBooking
- *   3. arrival_mode     → upcomingTripWithin48h
- *   4. active_trip_mode → hasActiveTrip (and not within 48h arrival window)
- *   5. night_mode       → hourUtc in [22, 23, 0, 1, 2, 3, 4]
- *   6. private_mode     → visibilityPreference = 'private'
- *   7. creator_mode     → hasPendingDelayedPosts
- *   8. budget_mode      → budgetStyle = 'backpacker'
- *   9. planning_ahead   → hasActiveTrip = false AND no upcoming trip
- *  10. exploring_now    → currentCity set, no active trip
- *  11. normal           → fallback
+ *   1. safety_mode        → safeReturnActive (signal or profile)
+ *   2. active_booking_mode → activeBooking (signal or profile)
+ *   3. arrival_mode       → upcomingTripWithin48h (signal or profile)
+ *   4. active_trip_mode   → activeTripNow (signal or profile.hasActiveTrip)
+ *   5. night_mode         → hourUtc in [22, 23, 0, 1, 2, 3, 4]
+ *   6. private_mode       → visibilityPreference = 'private'
+ *   7. creator_mode       → hasPendingDelayedPosts
+ *   8. budget_mode        → budgetStyle = 'backpacker'
+ *   9. planning_ahead     → hasFutureTripScheduled (trip beyond 48h window)
+ *  10. exploring_now      → currentCity set, no active trip
+ *  11. normal             → fallback
  */
 import type { CompassProfile, CompassContext, CompassContextState, CompassSignals } from "./types.js";
 
@@ -44,6 +44,10 @@ function deriveState(profile: CompassProfile, signals: CompassSignals): CompassC
   }
   if (profile.budgetStyle === "backpacker") {
     return "budget_mode";
+  }
+  // planning_ahead: user has a future trip scheduled (beyond 48h) but isn't on one yet
+  if (signals.hasFutureTripScheduled || profile.hasFutureTripScheduled) {
+    return "planning_ahead";
   }
   if (profile.currentCity) {
     return "exploring_now";
@@ -82,5 +86,6 @@ export function defaultSignals(profile: CompassProfile): CompassSignals {
     upcomingTripWithin48h:   profile.upcomingTripWithin48h,
     activeTripNow:           profile.hasActiveTrip,
     hasPendingDelayedPosts:  false,
+    hasFutureTripScheduled:  profile.hasFutureTripScheduled,
   };
 }

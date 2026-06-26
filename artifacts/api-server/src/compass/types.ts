@@ -53,6 +53,11 @@ export interface CompassSignals {
   activeTripNow: boolean;
   /** Whether the user has any pending delayed posts (post_status = pending_exit/pending_delay). */
   hasPendingDelayedPosts: boolean;
+  /**
+   * Whether the user has any trips scheduled in the future but beyond the 48h arrival window.
+   * Triggers the planning_ahead context state.
+   */
+  hasFutureTripScheduled: boolean;
 }
 
 /** The resolved situational context for a user at a given moment. */
@@ -74,9 +79,19 @@ export interface CompassProfile {
   socialStyle: string | null;
   safetyPreference: 'standard' | 'cautious' | 'relaxed';
   visibilityPreference: 'public' | 'semi_private' | 'private';
-  /** Number of accounts this user has blocked. */
+  /**
+   * IDs of users this user has blocked.
+   * Used by downstream Compass phases to exclude these users from scoring/results.
+   */
+  blockedUserIds: string[];
+  /**
+   * IDs of users who have blocked this user.
+   * Used by downstream Compass phases to exclude this user from their results.
+   */
+  blockerUserIds: string[];
+  /** Total count of accounts this user has blocked (derived from blockedUserIds.length). */
   blockCount: number;
-  /** Number of accounts that have blocked this user. */
+  /** Total count of accounts that have blocked this user (derived from blockerUserIds.length). */
   blockerCount: number;
   trustScore: number | null;
   trustLevel: string | null;
@@ -84,13 +99,15 @@ export interface CompassProfile {
   hasActiveTrip: boolean;
   hasActiveBooking: boolean;
   upcomingTripWithin48h: boolean;
+  /** Has a trip scheduled in the future, beyond the 48h arrival window. */
+  hasFutureTripScheduled: boolean;
   currentCity: string | null;
   currentCountry: string | null;
   safeReturnActive: boolean;
   computedAt: string;
 }
 
-/** Safe public subset of a CompassProfile (no block counts, no raw scores). */
+/** Safe public subset of a CompassProfile (no block arrays, no raw scores). */
 export interface CompassProfilePublic {
   userId: string;
   budgetStyle: string | null;
