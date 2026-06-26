@@ -18,8 +18,44 @@ import { NotificationPreferenceService } from "./NotificationPreferenceService.j
 import { TEMPLATES } from "./NotificationTemplateService.js";
 import type { NotificationRow } from "./NotificationService.js";
 import type { NotificationPriority, NotificationChannel } from "./NotificationTemplateService.js";
+import {
+  evaluateNotification,
+  type NotificationType,
+  type NotificationPayload,
+} from "../../compass/CompassNotificationEngine.js";
 
 const logger = rootLogger.child({ service: "NotificationRouter" });
+
+/**
+ * Map a NotificationRow's category/eventType to a CompassNotificationType
+ * priority level. Safety-related events are always treated as highest priority
+ * so they bypass quiet hours and other suppression rules.
+ */
+function mapToCompassNotificationType(n: NotificationRow): NotificationType {
+  const cat = (n.category ?? "").toLowerCase();
+  const evt = (n.eventType ?? "").toLowerCase();
+
+  if (cat === "safety" || evt.includes("sos") || evt.includes("safe_return") || evt.includes("danger")) {
+    return "emergency_safety";
+  }
+  if (cat === "moderation" || evt.includes("block") || evt.includes("suspend") || evt.includes("report_confirmed")) {
+    return "safety_alert";
+  }
+  if (cat === "trip" && (evt.includes("cancel") || evt.includes("critical") || evt.includes("flight"))) {
+    return "trip_critical";
+  }
+  if (cat === "booking" || evt.includes("booking")) return "booking_update";
+  if (evt.includes("urgent") && (cat === "message" || evt.includes("message"))) return "message_urgent";
+  if (cat === "message" || evt.includes("message") || evt.includes("chat")) return "message_normal";
+  if (cat === "social" || evt.includes("follow") || evt.includes("like") || evt.includes("meetup") || evt.includes("circle")) {
+    return "activity_social";
+  }
+  if (cat === "compass" || evt.includes("recommend") || evt.includes("suggestion")) return "recommendation";
+  if (cat === "discovery" || evt.includes("discover") || evt.includes("nearby") || evt.includes("event")) {
+    return "discovery";
+  }
+  return "general";
+}
 
 export class NotificationRouter {
   private readonly prefService: NotificationPreferenceService;
@@ -73,6 +109,38 @@ export class NotificationRouter {
 
   private async sendPush(notification: NotificationRow, userId: string): Promise<void> {
     try {
+      // ── Compass intelligence gate ──────────────────────────────────────────
+      // Evaluate priority, quiet hours, category mute, safety filter, and
+      // private-location redaction before dispatching the push.
+      const compassPayload: NotificationPayload = {
+        type:     mapToCompassNotificationType(notification),
+        title:    notification.title,
+        body:     notification.body,
+        category: notification.category ?? undefined,
+        data:     {
+          notificationId: notification.id,
+          category:       notification.category,
+          eventType:      notification.eventType,
+          actionUrl:      notification.actionUrl ?? undefined,
+          ...(notification.metadata ?? {}),
+        },
+      };
+
+      const decision = await evaluateNotification(this.db, userId, compassPayload);
+
+      if (decision.outcome !== "sent") {
+        logger.debug(
+          { notificationId: notification.id, outcome: decision.outcome },
+          "NotificationRouter: push suppressed by Compass intelligence",
+        );
+        await this.logAttempt(
+          notification.id, userId, "push", "suppressed",
+          decision.suppressionReason ?? decision.outcome,
+        );
+        return;
+      }
+      // ── End Compass gate ───────────────────────────────────────────────────
+
       // Gather all push tokens registered for this user
       const { data: devices } = await this.db
         .from('notification_devices')
@@ -96,16 +164,12 @@ export class NotificationRouter {
         return;
       }
 
+      // Use the stripped payload (private location redacted from body/data)
+      const { strippedPayload } = decision;
       await sendPushNotification(tokens, {
-        title: notification.title,
-        body:  notification.body,
-        data:  {
-          notificationId: notification.id,
-          category:       notification.category,
-          eventType:      notification.eventType,
-          actionUrl:      notification.actionUrl ?? undefined,
-          ...(notification.metadata ?? {}),
-        },
+        title: strippedPayload.title,
+        body:  strippedPayload.body,
+        data:  strippedPayload.data ?? {},
       });
 
       await this.logAttempt(notification.id, userId, 'push', 'sent', undefined, {

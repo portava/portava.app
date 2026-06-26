@@ -26,7 +26,8 @@ import { isCompassEnabled } from "../compass/flags.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
-import { buildFeed, buildSection, SECTION_NAMES, type SectionName } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
 import {
   buildFrontLoadPayload,
@@ -39,6 +40,7 @@ import { getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
 import {
   resolveExplanation,
   decodeRecommendationToken,
+  encodeRecommendationToken,
 } from "../compass/CompassExplanationEngine.js";
 import {
   processFeedback,
@@ -52,6 +54,48 @@ import type {
 } from "../compass/types.js";
 
 const router = Router();
+
+// ── Feed recommendation pre-registration helper ───────────────────────────────
+// Called fire-and-forget after every successful feed build.
+// Generates HMAC-signed tokens for each FeedItem and writes them to
+// compass_recommendation_scores so the /why endpoint can perform an
+// authoritative DB lookup (recommendation_id + user_id).
+
+async function preRegisterFeedRecommendations(
+  sc:     SupabaseClient,
+  userId: string,
+  feed:   FeedPage,
+): Promise<void> {
+  try {
+    const rows = feed.sections.flatMap((section) =>
+      section.items.map((item) => {
+        const token = encodeRecommendationToken({
+          userId,
+          itemId:         String(item.item.id ?? ""),
+          itemType:       String(item.item.type ?? ""),
+          sectionName:    item.section,
+          explanationKey: item.explanationKey,
+        });
+        return {
+          user_id:           userId,
+          recommendation_id: token,
+          explanation_key:   item.explanationKey,
+          item_id:           String(item.item.id ?? ""),
+          item_type:         String(item.item.type ?? ""),
+          section_name:      item.section,
+          served_at:         new Date().toISOString(),
+        };
+      }),
+    );
+
+    if (rows.length === 0) return;
+
+    // Batch upsert; ignore conflicts (re-serving same item is fine)
+    await sc
+      .from("compass_recommendation_scores")
+      .upsert(rows, { onConflict: "recommendation_id" });
+  } catch { /* fire-and-forget — never surfaces to caller */ }
+}
 
 router.get("/compass/me/context", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -185,6 +229,11 @@ router.get("/compass/feed", async (req, res) => {
     const context  = buildCompassContext(profile, signals);
     const items    = await hydrateCompassItems(sc, profile);
     const feed     = await buildFeed(items, profile, context, sc, cursor ?? null);
+
+    // Pre-register recommendation tokens for /why endpoint (fire-and-forget)
+    // Writes signed tokens + explanation_key to compass_recommendation_scores so
+    // the /why endpoint can perform an authoritative DB lookup.
+    void preRegisterFeedRecommendations(sc, user.id, feed);
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
     void setCachedFeed(sc, user.id, cacheKey, "feed", feed);
@@ -427,49 +476,52 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     return;
   }
 
-  // Decode token
+  // Step 1: Verify HMAC signature — proves token was issued by this server.
+  // Forged or tampered tokens return null before any DB access.
   const token = decodeRecommendationToken(recommendationId);
-
-  // Validate caller is the original recipient
   if (!token || token.userId !== user.id) {
     res.json({ explanation: "Recommendation not found or not available for your account." });
     return;
   }
 
   const sc = getServiceClient();
-
-  // Log the lookup to compass_recommendation_scores (fire-and-forget)
-  if (sc) {
-    sc.from("compass_recommendation_scores")
-      .upsert(
-        {
-          user_id:                  user.id,
-          recommendation_id:        recommendationId,
-          explanation_key:          token.explanationKey,
-          item_id:                  token.itemId,
-          item_type:                token.itemType,
-          section_name:             token.sectionName,
-          explanation_looked_up_at: new Date().toISOString(),
-        },
-        { onConflict: "recommendation_id" },
-      )
-      .then(() => {}, () => {});
+  if (!sc) {
+    // Service client unavailable — return generic rather than accepting client data
+    res.json({ explanation: "Based on your travel preferences and recent activity." });
+    return;
   }
 
   try {
-    // Load city from profile (best-effort)
-    let city: string | null = null;
-    if (sc) {
-      const profile = await getCompassProfile(sc, user.id).catch(() => null);
-      city = profile?.currentCity ?? null;
+    // Step 2: Authoritative DB lookup — recommendation must have been served via the feed.
+    // The feed route pre-registers all served recommendations in compass_recommendation_scores.
+    // If the row doesn't exist, the recommendation was never served to this user.
+    const { data: row } = await sc
+      .from("compass_recommendation_scores")
+      .select("explanation_key")
+      .eq("recommendation_id", recommendationId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!row) {
+      res.json({ explanation: "Recommendation not found or not available for your account." });
+      return;
     }
 
-    const explanation = await resolveExplanation(
-      token.explanationKey,
-      sc ?? null,
-      city,
-    );
+    // Step 3: Record the lookup timestamp (non-blocking)
+    sc.from("compass_recommendation_scores")
+      .upsert(
+        { recommendation_id: recommendationId, user_id: user.id, explanation_looked_up_at: new Date().toISOString() },
+        { onConflict: "recommendation_id" },
+      )
+      .then(() => {}, () => {});
 
+    // Step 4: Resolve explanation from the *stored* key (not from client-provided token)
+    const explanationKey = (row as any).explanation_key as string;
+
+    const profile = await getCompassProfile(sc, user.id).catch(() => null);
+    const city = profile?.currentCity ?? null;
+
+    const explanation = await resolveExplanation(explanationKey, sc, city);
     res.json({ explanation });
   } catch (err) {
     req.log.error({ err }, "compass/why: resolution failed");

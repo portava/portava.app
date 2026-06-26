@@ -377,7 +377,7 @@ async function detectCommentPods(
   return flags;
 }
 
-/** 5. Hashtag spam — >20 identical hashtag uses from one account in 24 h */
+/** 5. Hashtag spam — >20 uses of the same hashtag from one account in 24 h */
 async function detectHashtagSpam(
   db:     SupabaseClient,
   userId: string | null,
@@ -385,25 +385,56 @@ async function detectHashtagSpam(
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
-    const q = db
+
+    // Get recent hashtag_usage rows; if userId scoped, filter by source posts
+    const { data: usageRows } = await db
       .from("hashtag_usage")
-      .select("hashtag_id, source_id, created_at")
+      .select("hashtag_id, source_id, source_type, created_at")
       .gte("created_at", since);
 
-    const { data } = await q;
-    const rows = (data as any[]) ?? [];
+    const rows = (usageRows as any[]) ?? [];
+    if (rows.length === 0) return flags;
 
-    // Count uses per hashtag (globally in scheduled mode, per source in on-demand)
-    const hashtagCounts = new Map<string, number>();
-    for (const r of rows) {
-      hashtagCounts.set(r.hashtag_id, (hashtagCounts.get(r.hashtag_id) ?? 0) + 1);
+    // Resolve source_id → user_id via the posts table (most usage is post-sourced)
+    const postSourceIds = [
+      ...new Set(
+        rows
+          .filter((r: any) => !r.source_type || r.source_type === "post")
+          .map((r: any) => r.source_id as string),
+      ),
+    ].slice(0, 200);
+
+    const postAuthorMap = new Map<string, string>(); // source_id → user_id
+    if (postSourceIds.length > 0) {
+      const { data: posts } = await db
+        .from("posts")
+        .select("id, user_id")
+        .in("id", postSourceIds);
+
+      for (const p of (posts as any[] ?? [])) {
+        postAuthorMap.set(p.id as string, p.user_id as string);
+      }
     }
 
-    for (const [hashtagId, count] of hashtagCounts) {
+    // Count (user_id, hashtag_id) pairs
+    const userHashtagCount = new Map<string, number>(); // `${userId}:${hashtagId}` → count
+    const userHashtagId    = new Map<string, string>();  // key → hashtagId
+
+    for (const r of rows) {
+      const uid = userId ?? postAuthorMap.get(r.source_id);
+      if (!uid) continue; // skip rows we can't attribute to a user
+      const key = `${uid}:${r.hashtag_id}`;
+      userHashtagCount.set(key, (userHashtagCount.get(key) ?? 0) + 1);
+      userHashtagId.set(key, r.hashtag_id as string);
+    }
+
+    for (const [key, count] of userHashtagCount) {
       if (count > HASHTAG_SPAM_MIN) {
+        const uid = key.split(":")[0]!;
+        const hashtagId = userHashtagId.get(key)!;
         flags.push({
           patternType:   "hashtag_spam",
-          involvedUsers: userId ? [userId] : [],
+          involvedUsers: [uid],
           severity:      count > 50 ? "severe" : count > 30 ? "high" : "medium",
           evidence:      { hashtag_id: hashtagId, usage_count: count, window_hours: 24 },
         });
