@@ -95,6 +95,29 @@ async function applyReachReduction(
   } catch { /* non-fatal */ }
 }
 
+// ── Suspension-request trigger for severe patterns ────────────────────────────
+
+/**
+ * Emit a suspension request for a user confirmed to have committed a severe
+ * abuse pattern. Inserts a pending-review row into compass_suspension_requests
+ * so that the moderation team can act on it — the system never auto-suspends;
+ * it only queues the request. Fire-and-forget: errors are swallowed.
+ */
+async function requestSuspension(
+  db:     SupabaseClient,
+  userId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await db.from("compass_suspension_requests").insert({
+      user_id:    userId,
+      reason:     `severe_abuse:${reason}`,
+      status:     "pending_review",
+      created_at: new Date().toISOString(),
+    });
+  } catch { /* non-fatal */ }
+}
+
 // ── Reward zeroing for severe patterns ────────────────────────────────────────
 
 /**
@@ -150,14 +173,16 @@ async function handleFlag(
 ): Promise<void> {
   await writeFlag(db, flag);
 
-  const applyReach  = flag.severity !== "low";
-  const applyReward = flag.severity === "severe";
+  const applyReach       = flag.severity !== "low";
+  const applyReward      = flag.severity === "severe";
+  const applySuspension  = flag.severity === "severe";
 
   await Promise.allSettled(
     flag.involvedUsers.flatMap((uid) => {
       const ops: Promise<void>[] = [];
-      if (applyReach)  ops.push(applyReachReduction(db, uid, flag.severity));
-      if (applyReward) ops.push(zeroActiveUserReward(db, uid));
+      if (applyReach)      ops.push(applyReachReduction(db, uid, flag.severity));
+      if (applyReward)     ops.push(zeroActiveUserReward(db, uid));
+      if (applySuspension) ops.push(requestSuspension(db, uid, flag.patternType));
       return ops;
     }),
   );
@@ -297,13 +322,22 @@ async function detectReferralFarms(
     for (const [referrerId, referredIds] of referralCounts) {
       if (referredIds.length <= REFERRAL_FARM_MIN) continue;
 
-      // Check how many have made any bookings
-      const { data: bookings } = await db
-        .from("rent_buddy_bookings")
-        .select("traveler_id")
-        .in("traveler_id", referredIds.slice(0, 50));
-
-      const activeIds = new Set((bookings as any[] ?? []).map((b: any) => b.traveler_id));
+      // Check how many of ALL referred users have made any bookings.
+      // Paginate in batches of 50 (PostgREST .in() limit) to avoid
+      // under-counting active users in large referral networks, which would
+      // artificially inflate inactiveCount and trigger punitive flags.
+      const BATCH_SIZE   = 50;
+      const activeIds    = new Set<string>();
+      for (let batchStart = 0; batchStart < referredIds.length; batchStart += BATCH_SIZE) {
+        const batch = referredIds.slice(batchStart, batchStart + BATCH_SIZE);
+        const { data: batchBookings } = await db
+          .from("rent_buddy_bookings")
+          .select("traveler_id")
+          .in("traveler_id", batch);
+        for (const b of (batchBookings as any[] ?? [])) {
+          activeIds.add(b.traveler_id as string);
+        }
+      }
       const inactiveCount = referredIds.length - activeIds.size;
 
       if (inactiveCount >= REFERRAL_FARM_MIN) {

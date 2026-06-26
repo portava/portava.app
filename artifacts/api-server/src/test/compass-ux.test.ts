@@ -956,6 +956,76 @@ describe("CompassAbuseDefenseEngine", () => {
     const result = await runScan(db, null);
     assert.equal(result.flagsWritten, 0);
   });
+
+  // ── Referral farm >50 referred users ─────────────────────────────────────────
+  // Regression: the old code sliced referredIds to 50 before querying bookings.
+  // This under-counted active users in large referral networks, inflating
+  // inactiveCount and triggering punitive flags incorrectly. The fix paginates
+  // across all referred IDs in batches.
+
+  it("runScan: referral farm with 55 referred users all inactive → severe referral_farm flag", async () => {
+    const referredUsers: Record<string, unknown>[] = [];
+    for (let i = 0; i < 55; i++) {
+      referredUsers.push({ id: `ref-user-${i}`, referred_by: "referrer-X" });
+    }
+    // No bookings — all 55 are inactive
+    const tableData = emptyTables({ profiles: referredUsers });
+    const { db } = makeFakeDb(tableData);
+
+    await runScan(db, null);
+
+    const flags = tableData["compass_abuse_flags"] ?? [];
+    const farmFlag = flags.find((f) => f["pattern_type"] === "referral_farm");
+    assert.ok(farmFlag, "Expected referral_farm flag for 55 inactive referred users");
+    assert.equal(farmFlag!["severity"], "severe", "55 inactive > 20 threshold → severe");
+    assert.equal((farmFlag!["evidence"] as any)["referral_count"], 55);
+  });
+
+  it("runScan: referral farm with 55 referred users all having bookings → no flag", async () => {
+    const referredUsers: Record<string, unknown>[] = [];
+    const bookings: Record<string, unknown>[] = [];
+    for (let i = 0; i < 55; i++) {
+      referredUsers.push({ id: `active-ref-${i}`, referred_by: "referrer-Y" });
+      bookings.push({ traveler_id: `active-ref-${i}`, status: "completed" });
+    }
+    // All 55 referred users have bookings → inactiveCount = 0 → no flag
+    const tableData = emptyTables({
+      profiles:            referredUsers,
+      rent_buddy_bookings: bookings,
+    });
+    const { db } = makeFakeDb(tableData);
+
+    await runScan(db, null);
+
+    const flags = tableData["compass_abuse_flags"] ?? [];
+    const farmFlag = flags.find((f) => f["pattern_type"] === "referral_farm");
+    assert.ok(!farmFlag, "No referral_farm flag when all referred users are active");
+  });
+
+  it("runScan: severe flag emits suspension request for each involved user", async () => {
+    const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
+    // 5-user ring → severe (clique.length >= 5)
+    const users = ["su1", "su2", "su3", "su4", "su5"];
+    const reviews: Record<string, unknown>[] = [];
+    for (const a of users) for (const b of users) {
+      if (a !== b) reviews.push({ reviewer_id: a, reviewee_id: b, rating: 5, created_at: since });
+    }
+    const tableData = emptyTables({ reviews });
+    const { db } = makeFakeDb(tableData);
+
+    await runScan(db, null);
+
+    const suspensions = tableData["compass_suspension_requests"] ?? [];
+    assert.ok(
+      suspensions.length >= users.length,
+      `Expected ≥${users.length} suspension request rows for ${users.length}-user severe ring; got ${suspensions.length}`,
+    );
+    for (const uid of users) {
+      const req = suspensions.find((r) => r["user_id"] === uid);
+      assert.ok(req, `Expected suspension request for ${uid}`);
+      assert.equal(req!["status"], "pending_review");
+    }
+  });
 });
 
 // ── Test helpers ───────────────────────────────────────────────────────────────
@@ -980,6 +1050,7 @@ function emptyTables(
     posts:                        [],
     posts_comments:               [],
     feature_flags:                [],
+    compass_suspension_requests:  [],
     ...overrides,
   };
 }
