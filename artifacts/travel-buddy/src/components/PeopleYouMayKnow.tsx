@@ -11,11 +11,12 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { UserPlus, UserCheck, X, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
+import { UserPlus, UserCheck, X, User, Users, PlaneTakeoff, Sparkles, RefreshCw } from 'lucide-react-native';
 import {
   getSuggestedTravelers,
   getFollowStatus,
   followUser,
+  clearSuggestionsSeen,
   type TravelerSearchResult,
 } from '../services/follows';
 import { useSession } from '../context/SessionContext';
@@ -253,6 +254,7 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [followingCount, setFollowingCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [dismissed, setDismissed] = useState<Map<string, number>>(new Map());
 
   // Undo state — ref holds live pending data to avoid stale closures in timer
@@ -282,6 +284,14 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   }, [userId, isAuthed]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
+
+  const handleRefresh = useCallback(async () => {
+    if (refreshing || loading) return;
+    setRefreshing(true);
+    await clearSuggestionsSeen();
+    await load();
+    setRefreshing(false);
+  }, [refreshing, loading, load]);
 
   // Commit a pending dismissal to AsyncStorage + dismissed state
   const commitPending = useCallback((user: TravelerSearchResult) => {
@@ -371,9 +381,23 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>People you may know</Text>
-        <Pressable onPress={() => router.push('/(tabs)/discovery' as any)}>
-          <Text style={styles.seeAll}>See all</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            onPress={handleRefresh}
+            hitSlop={8}
+            disabled={refreshing || loading}
+            style={styles.refreshBtn}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={color.signal} />
+            ) : (
+              <RefreshCw size={15} color={color.signal} />
+            )}
+          </Pressable>
+          <Pressable onPress={() => router.push('/(tabs)/discovery' as any)}>
+            <Text style={styles.seeAll}>See all</Text>
+          </Pressable>
+        </View>
       </View>
       <ScrollView
         horizontal
@@ -404,6 +428,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: space.lg,
     marginBottom: space.md,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  refreshBtn: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     ...t.title,

@@ -401,6 +401,20 @@ router.get("/users/search", async (req, res) => {
 });
 
 /* ===========================================================================
+ * DELETE /users/suggestions/seen  — reset the seen-suggestions cache
+ * ===========================================================================
+ * Clears both the in-memory L1 cache and the DB L2 row for the calling user
+ * so the next GET /users/suggestions returns a fully fresh pool.
+ */
+router.delete("/users/suggestions/seen", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  clearSeen(user.id);
+  res.status(200).json({ cleared: true });
+});
+
+/* ===========================================================================
  * GET /users/suggestions  — "people you may know" when search is empty
  * ===========================================================================
  * Primary: followers the caller hasn't followed back yet, excluding blocked.

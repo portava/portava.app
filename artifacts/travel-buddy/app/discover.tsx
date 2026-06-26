@@ -4,11 +4,11 @@ import {
   Pressable, StyleSheet, KeyboardAvoidingView, Platform, LayoutAnimation,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Search, X } from 'lucide-react-native';
+import { Search, X, RefreshCw } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { TravelerRow } from '../src/components/TravelerRow';
 import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
-import { searchUsers, getSuggestedTravelers, type TravelerSearchResult } from '../src/services/follows';
+import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 export default function DiscoverScreen() {
@@ -18,20 +18,29 @@ export default function DiscoverScreen() {
   const [searched, setSearched] = useState(false);
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [refreshingSuggestions, setRefreshingSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
+  const loadSuggestions = useCallback(async () => {
+    setLoadingSuggestions(true);
+    const res = await getSuggestedTravelers(10);
+    setSuggestions(res.data ?? []);
+    setLoadingSuggestions(false);
+  }, []);
+
   // Load follow-back suggestions once on mount
   useEffect(() => {
-    let alive = true;
-    setLoadingSuggestions(true);
-    getSuggestedTravelers(10).then((res) => {
-      if (!alive) return;
-      setSuggestions(res.data ?? []);
-      setLoadingSuggestions(false);
-    });
-    return () => { alive = false; };
-  }, []);
+    loadSuggestions();
+  }, [loadSuggestions]);
+
+  const handleRefreshSuggestions = useCallback(async () => {
+    if (refreshingSuggestions || loadingSuggestions) return;
+    setRefreshingSuggestions(true);
+    await clearSuggestionsSeen();
+    await loadSuggestions();
+    setRefreshingSuggestions(false);
+  }, [refreshingSuggestions, loadingSuggestions, loadSuggestions]);
 
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
@@ -125,7 +134,21 @@ export default function DiscoverScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               ListHeaderComponent={
-                <Text style={styles.sectionHeader}>People you may know</Text>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionHeader}>People you may know</Text>
+                  <Pressable
+                    onPress={handleRefreshSuggestions}
+                    hitSlop={8}
+                    disabled={refreshingSuggestions || loadingSuggestions}
+                    style={styles.sectionRefreshBtn}
+                  >
+                    {refreshingSuggestions ? (
+                      <ActivityIndicator size="small" color={color.signal} />
+                    ) : (
+                      <RefreshCw size={14} color={color.signal} />
+                    )}
+                  </Pressable>
+                </View>
               }
               ListFooterComponent={
                 loadingSuggestions ? (
@@ -213,12 +236,23 @@ const styles = StyleSheet.create({
     padding: space.lg,
     gap: space.sm,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: space.sm,
+  },
   sectionHeader: {
     ...t.small,
     color: color.mute,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    marginBottom: space.sm,
+  },
+  sectionRefreshBtn: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   center: {
     flex: 1,

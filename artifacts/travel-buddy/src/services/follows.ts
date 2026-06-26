@@ -184,6 +184,27 @@ export async function searchUsers(query: string, limit = 20): Promise<FollowResu
 
 /* ---------- Suggested travelers (follow-back candidates) ---------- */
 
+export async function clearSuggestionsSeen(): Promise<FollowResult<{ cleared: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/users/suggestions/seen`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error' };
+    }
+    return { ok: true, data: { cleared: true } };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error' };
+  }
+}
+
 export async function getSuggestedTravelers(limit = 10): Promise<FollowResult<TravelerSearchResult[]>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
