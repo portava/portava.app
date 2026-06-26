@@ -24,7 +24,8 @@ const NIGHTLIFE_TAGS = new Set([
   "cocktails", "drinks", "party", "rave",
 ]);
 
-const MAX_CONSECUTIVE = 2;
+const MAX_CONSECUTIVE     = 2;
+const MAX_SAME_AUTHOR_RUN = 3;  // max consecutive items from the same author
 const PAID_NIGHTLIFE_CAP_RATIO = 0.25;
 const EXPLORATION_WINDOW = 10;
 const MAX_EXPLORATION_INSERTS = 3;
@@ -109,6 +110,75 @@ function breakConsecutiveRuns(items: PipelineResult[]): { out: PipelineResult[];
       // (approximate: just count non-first-positions)
       for (const [, bkt] of byType) {
         if (bkt[0] && (originalPos.get(bkt[0].item.id) ?? 0) < pickedOrigIdx) {
+          reorderedCount++;
+          break;
+        }
+      }
+    }
+
+    out.push(picked);
+  }
+
+  return { out, reorderedCount };
+}
+
+/**
+ * Reorder items so no single author appears more than MAX_SAME_AUTHOR_RUN
+ * times consecutively.  Items with no authorId are treated as individually
+ * distinct so they never block each other.
+ *
+ * Uses the same "highest remaining count wins" scheduler as breakConsecutiveRuns.
+ */
+function breakAuthorRuns(items: PipelineResult[]): { out: PipelineResult[]; reorderedCount: number } {
+  if (items.length === 0) return { out: [], reorderedCount: 0 };
+
+  // Group by authorId; items without one get a unique synthetic key
+  const byAuthor = new Map<string, PipelineResult[]>();
+  for (const r of items) {
+    const key = r.item.authorId ?? `__anon_${r.item.id}`;
+    const bucket = byAuthor.get(key) ?? [];
+    bucket.push(r);
+    byAuthor.set(key, bucket);
+  }
+
+  const originalPos = new Map(items.map((r, i) => [r.item.id, i]));
+  const out: PipelineResult[] = [];
+  let reorderedCount = 0;
+
+  while (byAuthor.size > 0) {
+    // Determine blocked author: last MAX_SAME_AUTHOR_RUN items all from same author
+    let blockedAuthor: string | null = null;
+    if (out.length >= MAX_SAME_AUTHOR_RUN) {
+      const tailKey = out[out.length - 1]!.item.authorId ?? `__anon_${out[out.length - 1]!.item.id}`;
+      let allSame = true;
+      for (let i = out.length - 2; i >= out.length - MAX_SAME_AUTHOR_RUN; i--) {
+        const k = out[i]!.item.authorId ?? `__anon_${out[i]!.item.id}`;
+        if (k !== tailKey) { allSame = false; break; }
+      }
+      if (allSame) blockedAuthor = tailKey;
+    }
+
+    // Pick author-bucket with the most remaining items that is not blocked
+    let bestKey: string | null = null;
+    let bestCount = -1;
+    for (const [key, bucket] of byAuthor) {
+      if (key === blockedAuthor) continue;
+      if (bucket.length > bestCount) {
+        bestCount = bucket.length;
+        bestKey   = key;
+      }
+    }
+    // Forced accept: only blocked author left
+    if (bestKey === null) bestKey = blockedAuthor!;
+
+    const bucket = byAuthor.get(bestKey)!;
+    const picked = bucket.shift()!;
+    if (bucket.length === 0) byAuthor.delete(bestKey);
+
+    if (out.length > 0) {
+      const pickedOrigIdx = originalPos.get(picked.item.id) ?? 0;
+      for (const [, bkt] of byAuthor) {
+        if (bkt[0] && (originalPos.get(bkt[0]!.item.id) ?? 0) < pickedOrigIdx) {
           reorderedCount++;
           break;
         }
@@ -250,12 +320,15 @@ export function applyDiversity(
   const capped = applyNightlifePaidCap(items);
 
   // Step 2: Break consecutive same-type runs
-  const { out: broken, reorderedCount } = breakConsecutiveRuns(capped);
+  const { out: broken, reorderedCount: typeReorder } = breakConsecutiveRuns(capped);
 
-  // Step 3: Insert exploration cards
-  const { out: diversified, explorationCount } = insertExplorationCards(broken, profile);
+  // Step 3: Break consecutive same-author runs (≤ MAX_SAME_AUTHOR_RUN in a row)
+  const { out: authorBroken, reorderedCount: authorReorder } = breakAuthorRuns(broken);
 
-  return { items: diversified, explorationCount, reorderedCount };
+  // Step 4: Insert exploration cards
+  const { out: diversified, explorationCount } = insertExplorationCards(authorBroken, profile);
+
+  return { items: diversified, explorationCount, reorderedCount: typeReorder + authorReorder };
 }
 
 /**

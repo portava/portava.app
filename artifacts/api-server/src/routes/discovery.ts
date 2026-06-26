@@ -27,7 +27,7 @@ import { calculateUserAge } from "../lib/ageEligibility";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
-import { buildFeed } from "../compass/CompassFeedBuilder";
+import { runPipeline } from "../compass/CompassPipeline";
 import { isEnabled } from "../compass/flags";
 
 const router = Router();
@@ -590,15 +590,19 @@ router.get("/discovery", async (req, res) => {
             const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
             const compassItems   = places.map(discoveryPlaceToCompassItem);
 
-            // Use buildFeed (full pipeline + diversity + fair exposure) and
-            // extract the for_you section so ranking is identical to the feed.
-            const feedPage     = await buildFeed(compassItems, compassProfile, compassContext, compassSc);
-            const forYouSec    = feedPage.sections.find((s) => s.name === "for_you");
-            const feedItems    = forYouSec?.items ?? [];
+            // Run the full pipeline on ALL candidate items and sort by finalScore.
+            // We use runPipeline directly (not buildFeed) so no page-size cap
+            // is applied — the full ranked list is available for discovery's
+            // own pagination logic.
+            const { results } = await runPipeline(
+              compassItems, compassProfile, compassContext, compassSc,
+            );
+            // Sort descending by Compass score
+            const scored = results.slice().sort((a, b) => b.finalScore - a.finalScore);
 
             // Build lookup so we can restore all original DiscoveryPlace fields
             const placeById = new Map(places.map((p) => [p.id, p]));
-            const compassRanked: DiscoveryPlace[] = feedItems.map((r) => {
+            const compassRanked: DiscoveryPlace[] = scored.map((r) => {
               const originalId = r.item.id.replace(/^discovery:/, "");
               return placeById.get(originalId) ?? {
                 id: originalId, name: String(r.item.contentBody ?? ""),
@@ -612,6 +616,7 @@ router.get("/discovery", async (req, res) => {
             // Items blocked/rejected by Compass pipeline fall to the back
             const passedIds = new Set(compassRanked.map((p) => p.id));
             const unranked  = places.filter((p) => !passedIds.has(p.id));
+            // Full ranked list — discovery does its own pagination below
             const merged    = [...compassRanked, ...unranked];
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
