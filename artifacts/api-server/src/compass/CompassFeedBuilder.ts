@@ -547,6 +547,26 @@ export async function buildSection(
     filteredItems, profile, context, db, _overrides,
   );
 
+  // ── Category-weight post-adjustment (mirrors buildFeed) ───────────────────
+  if (Object.keys(profile.categoryWeights).length > 0) {
+    for (const [name, sectionItems] of sectionMap) {
+      const adjusted = sectionItems.map((r) => {
+        const typeWeight = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        const tagWeight  = (r.item.interestTags ?? []).reduce(
+          (acc: number, tag: string) => acc + (profile.categoryWeights[tag] ?? 0),
+          0,
+        );
+        const delta = typeWeight + tagWeight;
+        if (delta === 0) return r;
+        return { ...r, finalScore: Math.max(0, r.finalScore + delta * 10) };
+      });
+      if (adjusted.some((r, i) => r.finalScore !== sectionItems[i]!.finalScore)) {
+        adjusted.sort((a, b) => b.finalScore - a.finalScore);
+        sectionMap.set(name, adjusted);
+      }
+    }
+  }
+
   const allItems     = sectionMap.get(sectionName) ?? [];
   const parsedCursor = cursor ? decodeCursor(cursor) : null;
 

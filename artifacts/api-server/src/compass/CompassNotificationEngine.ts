@@ -26,6 +26,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { CompassItem, CompassProfile } from "./types.js";
+import { runSafetyFilter } from "./CompassSafetyFilter.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -361,55 +363,98 @@ export async function evaluateNotification(
     } catch { /* fail-open: a DB error should not block safety checking elsewhere */ }
   }
 
-  // ── Safety filter step 1b: suspended-sender check ────────────────────────────
-  // Mirror CompassSafetyFilter's "author_or_item_suspended" hard-block. If the
-  // sender's trust profile marks them as suspended they must not reach the
-  // recipient via push, regardless of level, quiet hours, or category.
-  if (db && senderId) {
-    try {
-      const { data: senderTrust } = await db
-        .from("trust_profiles")
-        .select("public_level")
-        .eq("user_id", senderId)
-        .maybeSingle();
-      if (senderTrust?.public_level === "suspended") {
-        return decide("suppressed_safety_filter", `sender_suspended:${senderId}`);
-      }
-    } catch { /* fail-open */ }
-  }
-
-  // ── Safety filter step 1c: item-level content risk signals ───────────────────
-  // Mirror the hard-block conditions in CompassSafetyFilter that apply to the
-  // content itself, not the author relationship. When the push payload carries
-  // these signals in `data`, suppress the notification so an unsafe/flagged item
-  // never reaches the recipient via push — regardless of level or category.
-  // Signals are optional: absence means "safe" (fail-open for missing fields).
+  // ── Safety filter step 2: canonical CompassSafetyFilter on synthetic item ─────
+  // Build a synthetic CompassItem from the notification payload's data fields and
+  // run it through the SAME runSafetyFilter used by the feed pipeline. This gives
+  // full parity with all 16 hard-block conditions (suspended, adult-service flag,
+  // unsafe intent, hidden/expired/cancelled, age gate, delayed post, report count,
+  // etc.) without maintaining a separate hand-rolled subset.
+  //
+  // Block-relationship checks (conditions 1–2) are intentionally omitted from the
+  // minimal profile (empty block arrays) because they are already covered by the
+  // dedicated step 1 above, which returns the notification-specific
+  // "suppressed_blocked_sender" outcome.
   {
-    const d = payload.data ?? {};
-    const contentSuspended      = d["isSuspended"]          === true;
-    const adultService          = d["hasAdultServiceFlag"]   === true;
-    const unsafeIntent          = d["hasUnsafeIntentSignal"] === true;
-    const offAppPayment         = d["hasOffAppPaymentSignal"] === true;
-    const reportCount           = typeof d["reportCount"] === "number" ? d["reportCount"] : 0;
-    const HIGH_REPORT_THRESHOLD = 5;
+    // Resolve whether the sender is suspended via trust_profiles when the payload
+    // doesn't already carry an explicit isSuspended flag.
+    const dataFields = payload.data ?? {};
+    let senderSuspended = dataFields["isSuspended"] === true;
+    if (db && senderId && !senderSuspended) {
+      try {
+        const { data: senderTrust } = await db
+          .from("trust_profiles")
+          .select("public_level")
+          .eq("user_id", senderId)
+          .maybeSingle();
+        if ((senderTrust as any)?.public_level === "suspended") senderSuspended = true;
+      } catch { /* fail-open */ }
+    }
 
-    if (contentSuspended) {
-      return decide("suppressed_safety_filter", "content_suspended");
-    }
-    if (adultService || unsafeIntent || offAppPayment) {
-      return decide(
-        "suppressed_safety_filter",
-        adultService   ? "adult_service_flag"
-        : unsafeIntent ? "unsafe_intent_signal"
-        :                "off_app_payment_signal",
-      );
-    }
-    if (reportCount >= HIGH_REPORT_THRESHOLD) {
-      return decide("suppressed_safety_filter", `high_report_count:${reportCount}`);
+    const VALID_ITEM_TYPES = new Set([
+      "event", "post", "user", "buddy", "trip", "stamp", "notification", "suggestion",
+    ]);
+    const rawType   = String(dataFields["itemType"] ?? "");
+    const itemType  = (VALID_ITEM_TYPES.has(rawType) ? rawType : "notification") as CompassItem["type"];
+
+    const syntheticItem: CompassItem = {
+      id:                     String(dataFields["itemId"] ?? `notif:${payload.type}`),
+      type:                   itemType,
+      authorId:               senderId ?? undefined,
+      isSuspended:            senderSuspended,
+      isReportedByViewer:     dataFields["isReportedByViewer"]   === true,
+      reportCount:            typeof dataFields["reportCount"]   === "number" ? (dataFields["reportCount"] as number) : 0,
+      hasAdultServiceFlag:    dataFields["hasAdultServiceFlag"]  === true,
+      hasOffAppPaymentSignal: dataFields["hasOffAppPaymentSignal"] === true,
+      hasUnsafeIntentSignal:  dataFields["hasUnsafeIntentSignal"] === true,
+      isHidden:               dataFields["isHidden"]             === true,
+      isExpired:              dataFields["isExpired"]            === true,
+      isCancelled:            dataFields["isCancelled"]          === true,
+      isDelayedPost:          dataFields["isDelayedPost"]        === true,
+      publishEligibleAt:      dataFields["publishEligibleAt"]    != null ? String(dataFields["publishEligibleAt"]) : undefined,
+      requiresVerification:   dataFields["requiresVerification"] === true,
+      isVerified:             dataFields["isVerified"]           === true,
+      minAgeRequired:         typeof dataFields["minAgeRequired"] === "number" ? (dataFields["minAgeRequired"] as number) : 0,
+      country:                dataFields["country"]              != null ? String(dataFields["country"]) : undefined,
+    };
+
+    // Minimal profile — block arrays empty (handled by step 1); all other
+    // fields are safe defaults that do not influence safety-filter outcomes.
+    const minimalProfile: CompassProfile = {
+      userId,
+      preferredCities:        [],
+      preferredLanguages:     [],
+      budgetStyle:            null,
+      travelStyles:           [],
+      socialStyle:            null,
+      safetyPreference:       "standard",
+      visibilityPreference:   "semi_private",
+      blockedUserIds:         [],
+      blockerUserIds:         [],
+      blockCount:             0,
+      blockerCount:           0,
+      trustScore:             null,
+      trustLevel:             null,
+      activeUserScore:        null,
+      hasActiveTrip:          false,
+      hasActiveBooking:       false,
+      upcomingTripWithin48h:  false,
+      hasFutureTripScheduled: false,
+      currentCity:            null,
+      currentCountry:         null,
+      safeReturnActive:       false,
+      categoryWeights:        {},
+      ignoredItemIds:         [],
+      mutedHashtags:          [],
+      computedAt:             new Date().toISOString(),
+    };
+
+    const filterResult = runSafetyFilter(syntheticItem, minimalProfile, null);
+    if (!filterResult.allowed) {
+      return decide("suppressed_safety_filter", filterResult.reason ?? "safety_filter_blocked");
     }
   }
 
-  // ── Safety filter step 2: category-level feature flag check ──────────────────
+  // ── Safety filter step 3: category-level feature flag check ──────────────────
   if (payload.category) {
     const blocked = await isCategoryBlocked(db, payload.category);
     if (blocked) {
