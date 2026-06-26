@@ -12,3 +12,9 @@ id = "Q5749pHWuJLt4sekJbJ0U"
 uri = "file://migrations/0011_telegraph_chat.txt"
 type = "text"
 title = "0011_telegraph_chat.sql"
+
+[[outputs]]
+id = "4HVIf95Z2Him9gPXjTI6g"
+uri = "file://travel-buddy-src.zip"
+type = "unspecified"
+title = "travel-buddy-src.zip"
