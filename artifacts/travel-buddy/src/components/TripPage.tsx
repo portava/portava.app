@@ -488,7 +488,7 @@ export function TripPostsSection({ posts }: { posts: { id: string; city: string;
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={tp.strip}>
           {posts.map((post) => (
-            <Pressable key={post.id} style={tp.tile} onPress={() => router.push('/(tabs)/passport')}>
+            <Pressable key={post.id} style={tp.tile} onPress={() => router.push(`/post/${post.id}`)}>
               <View style={tp.media} />
               <Text style={tp.caption} numberOfLines={2}>{post.caption}</Text>
             </Pressable>
