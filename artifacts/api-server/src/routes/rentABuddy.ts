@@ -22,6 +22,7 @@ import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
+import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 
 const router = Router();
 
@@ -376,6 +377,7 @@ function mapBooking(row: any) {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     telegraphThreadId: row.telegraph_thread_id,
+    isTest: !!row.is_test_booking,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -594,6 +596,34 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  const rolloutAccess = await checkRentBuddyAccess({
+    sc: serviceClient, userId: user.id,
+    city: req.body?.city, category: req.body?.category,
+    action: "book",
+    groupSize: req.body?.groupSize,
+    paymentMode: req.body?.paymentMode ?? "full_in_app",
+    meetupType: req.body?.meetupLocation?.type,
+  });
+  if (!rolloutAccess.allowed) {
+    return res.status(rolloutAccess.httpStatus).json({ error: rolloutAccess.code, message: rolloutAccess.message });
+  }
+
+  // Test booking guard — only admins can create test bookings
+  if (req.body?.is_test_booking) {
+    const { data: callerProfile } = await serviceClient
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const callerRole = (callerProfile as any)?.role ?? "";
+    if (callerRole !== "admin" && callerRole !== "owner") {
+      return res.status(403).json({
+        error: "forbidden",
+        message: "Only admins can create test bookings.",
+      });
+    }
+  }
+
   const limits = await getUserLimits(serviceClient, user.id);
   if (limits?.rent_buddy_disabled || limits?.traveler_booking_disabled) {
     return res.status(403).json({
@@ -799,6 +829,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       total_usd: totalUsd,
       deposit_usd: depositUsd,
       cash_balance_usd: cashBalanceUsd,
+      is_test_booking: !!(req.body?.is_test_booking),
       status: "pending",
       safety_status: "normal",
       route_plan: [],
@@ -1985,6 +2016,13 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  const applyRollout = await checkRentBuddyAccess({
+    sc: serviceClient, userId: auth.user.id, city: req.body?.city, action: "apply",
+  });
+  if (!applyRollout.allowed) {
+    return res.status(applyRollout.httpStatus).json({ error: applyRollout.code, message: applyRollout.message });
+  }
+
   const { city, country, categories = [], languages = [], motivation, socialLinks = {} } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
@@ -2047,6 +2085,9 @@ router.patch("/api/rent-a-buddy/me/profile", async (req, res) => {
   if (!auth) return;
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const meProfileRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
+  if (!meProfileRollout.allowed) return res.status(meProfileRollout.httpStatus).json({ error: meProfileRollout.code, message: meProfileRollout.message });
 
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -2180,6 +2221,14 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  const waitlistRollout = await checkRentBuddyAccess({
+    sc: serviceClient, userId: auth.user.id,
+    city: req.body?.city, category: req.body?.category, action: "waitlist",
+  });
+  if (!waitlistRollout.allowed) {
+    return res.status(waitlistRollout.httpStatus).json({ error: waitlistRollout.code, message: waitlistRollout.message });
+  }
+
   const { city, category } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
@@ -2267,6 +2316,9 @@ router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  const offerRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
+  if (!offerRollout.allowed) return res.status(offerRollout.httpStatus).json({ error: offerRollout.code, message: offerRollout.message });
+
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (body.displayName !== undefined)  patch.display_name   = body.displayName;
@@ -2312,6 +2364,9 @@ router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
 
+  const availRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
+  if (!availRollout.allowed) return res.status(availRollout.httpStatus).json({ error: availRollout.code, message: availRollout.message });
+
   const { entries = [] } = req.body ?? {};
   for (const e of entries as any[]) {
     await serviceClient.from("rent_buddy_availability").upsert(
@@ -2344,6 +2399,9 @@ router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
 
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
   if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
+  const pkgCreateRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
+  if (!pkgCreateRollout.allowed) return res.status(pkgCreateRollout.httpStatus).json({ error: pkgCreateRollout.code, message: pkgCreateRollout.message });
 
   const { title, description, category, durationH, priceUsd, maxGroup = 1 } = req.body ?? {};
   if (!title || !category || !durationH || !priceUsd) {

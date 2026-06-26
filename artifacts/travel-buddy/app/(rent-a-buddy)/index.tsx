@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import {
   Search, MapPin, Zap, Users, Shield, ChevronRight,
   ChevronDown, ChevronUp, Star, Plane, ShoppingBag,
-  Globe, Camera, Music, BookOpen, HelpCircle,
+  Globe, Camera, Music, BookOpen, HelpCircle, AlertCircle, Bell,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import {
@@ -14,7 +15,7 @@ import {
 } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
-import { searchBuddies, type BuddyProfile } from '../../src/services/rentABuddy';
+import { searchBuddies, getLaunchStatus, type BuddyProfile } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES = [
@@ -90,6 +91,102 @@ function SafetyAccordion() {
   );
 }
 
+// ── City availability banner ──────────────────────────────────────────────────
+
+type LaunchInfo = {
+  status: string;
+  message: string;
+  available: boolean;
+  betaAvailable: boolean;
+  waitlistOpen: boolean;
+};
+
+function CityAvailabilityBanner({ city }: { city: string }) {
+  const [info, setInfo] = useState<LaunchInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (city.trim().length <= 2) { setInfo(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      const r = await getLaunchStatus(city.trim());
+      if (cancelled) return;
+      setLoading(false);
+      if (r.ok) setInfo(r.data as LaunchInfo);
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [city]);
+
+  if (city.trim().length <= 2) return null;
+  if (loading) return (
+    <View style={bannerStyles.loading}>
+      <ActivityIndicator size="small" color={color.signal} />
+      <Text style={bannerStyles.loadingText}>Checking availability…</Text>
+    </View>
+  );
+  if (!info) return null;
+
+  const isLive      = info.status === 'public_mvp';
+  const isBeta      = info.status === 'beta_testing';
+  const isPaused    = info.status === 'paused' || info.status === 'suspended';
+  const isWaitlist  = info.status === 'waitlist_only' || info.status === 'buddy_applications_open' || info.status === 'internal_testing';
+  const isDisabled  = info.status === 'disabled';
+
+  const bannerColor = isLive   ? '#10B98115'
+    : isBeta   ? '#EC489915'
+    : isPaused ? '#EF444415'
+    : isWaitlist ? '#F59E0B15'
+    : '#99999915';
+
+  const borderColor = isLive   ? '#10B981'
+    : isBeta   ? '#EC4899'
+    : isPaused ? '#EF4444'
+    : isWaitlist ? '#F59E0B'
+    : '#999999';
+
+  const textColor = isLive   ? '#059669'
+    : isBeta   ? '#BE185D'
+    : isPaused ? '#DC2626'
+    : isWaitlist ? '#D97706'
+    : '#6B7280';
+
+  return (
+    <View style={[bannerStyles.banner, { backgroundColor: bannerColor, borderColor }]}>
+      <AlertCircle size={15} color={textColor} />
+      <Text style={[bannerStyles.message, { color: textColor }]}>{info.message}</Text>
+      {info.waitlistOpen && !isLive && !isBeta && (
+        <Pressable
+          style={[bannerStyles.pill, { borderColor }]}
+          onPress={() => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } })}
+        >
+          <Bell size={10} color={textColor} />
+          <Text style={[bannerStyles.pillText, { color: textColor }]}>Join waitlist</Text>
+        </Pressable>
+      )}
+      {isBeta && (
+        <Pressable
+          style={[bannerStyles.pill, { borderColor }]}
+          onPress={() => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } })}
+        >
+          <Text style={[bannerStyles.pillText, { color: textColor }]}>Request beta access</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const bannerStyles = StyleSheet.create({
+  loading: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.sm },
+  loadingText: { ...t.small, color: color.mute },
+  banner: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, marginHorizontal: space.lg, marginTop: space.sm, padding: space.md, borderRadius: radius.md, borderWidth: 1, flexWrap: 'wrap' },
+  message: { ...t.small, flex: 1, lineHeight: 18 },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, backgroundColor: '#ffffff20', marginTop: 4 },
+  pillText: { fontSize: 10, fontWeight: '700' },
+});
+
+// ── Main landing screen ───────────────────────────────────────────────────────
+
 export default function RentABuddyLanding() {
   const insets = useSafeAreaInsets();
   const [city, setCity] = useState('');
@@ -151,6 +248,9 @@ export default function RentABuddyLanding() {
           )}
         </View>
       </View>
+
+      {/* City availability banner — shown when city is typed */}
+      <CityAvailabilityBanner city={city} />
 
       {/* Available Now */}
       <TravelSectionHeader

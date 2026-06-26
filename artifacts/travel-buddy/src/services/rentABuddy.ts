@@ -1059,7 +1059,7 @@ export interface LaunchStatus {
   categories: Record<string, { enabled: boolean; waitlistOnly: boolean; minAge: number }>;
 }
 
-export async function getLaunchStatus(): Promise<ApiResult<LaunchStatus>> {
+export async function getRentABuddyFeatureStatus(): Promise<ApiResult<LaunchStatus>> {
   return apiFetch('/api/rent-a-buddy/launch-status');
 }
 
@@ -1187,4 +1187,210 @@ export interface EarningsBreakdownSummary {
 
 export async function getEarningsBreakdownSummary(): Promise<ApiResult<EarningsBreakdownSummary>> {
   return apiFetch('/api/rent-a-buddy/dashboard/earnings/summary');
+}
+
+// ── Rollout & launch status ───────────────────────────────────────────────────
+
+export type CityRolloutStatus =
+  | 'disabled'
+  | 'waitlist_only'
+  | 'buddy_applications_open'
+  | 'internal_testing'
+  | 'beta_testing'
+  | 'public_mvp'
+  | 'paused'
+  | 'suspended';
+
+export interface LaunchStatusResponse {
+  city: string;
+  status: CityRolloutStatus;
+  message: string;
+  available: boolean;
+  betaAvailable: boolean;
+  waitlistOpen: boolean;
+  applicationsOpen: boolean;
+  targetLaunchDate: string | null;
+}
+
+export interface CityLaunchItem {
+  city: string;
+  country: string | null;
+  status: CityRolloutStatus;
+  targetLaunchDate: string | null;
+  message: string;
+}
+
+/** GET /api/rent-buddy/launch-status?city=<city> */
+export async function getLaunchStatus(city: string): Promise<ApiResult<LaunchStatusResponse>> {
+  const q = encodeURIComponent(city);
+  return apiFetch(`/api/rent-buddy/launch-status?city=${q}`);
+}
+
+/** GET /api/rent-buddy/launch-status — all cities */
+export async function getAllLaunchStatuses(): Promise<ApiResult<{ cities: CityLaunchItem[] }>> {
+  return apiFetch('/api/rent-buddy/launch-status');
+}
+
+export interface BetaAccessEntry {
+  id: string;
+  city: string;
+  accessType: string;
+  status: 'active' | 'revoked';
+  createdAt: string;
+}
+
+/** GET /api/rent-buddy/me/beta-status */
+export async function getMyBetaStatus(city?: string): Promise<ApiResult<{ hasBetaAccess: boolean; access: BetaAccessEntry[] }>> {
+  const q = city ? `?city=${encodeURIComponent(city)}` : '';
+  return apiFetch(`/api/rent-buddy/me/beta-status${q}`);
+}
+
+// ── Admin rollout endpoints ───────────────────────────────────────────────────
+
+export interface AdminCityRollout {
+  id: string;
+  city: string;
+  country: string | null;
+  status: CityRolloutStatus;
+  statusChangedAt: string | null;
+  statusChangedBy: string | null;
+  targetLaunchDate: string | null;
+  buddyCap: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function adminGetCities(): Promise<ApiResult<{ cities: AdminCityRollout[] }>> {
+  return apiFetch('/api/admin/rent-buddy/rollout/cities');
+}
+
+export async function adminCreateCity(payload: {
+  city: string;
+  country?: string;
+  status?: CityRolloutStatus;
+  targetLaunchDate?: string;
+  buddyCap?: number;
+  notes?: string;
+}): Promise<ApiResult<{ city: AdminCityRollout }>> {
+  return apiFetch('/api/admin/rent-buddy/rollout/cities', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function adminAdvanceCityStatus(cityId: string, overrideReason?: string): Promise<ApiResult<{ ok: boolean; fromStatus: CityRolloutStatus; toStatus: CityRolloutStatus }>> {
+  return apiFetch(`/api/admin/rent-buddy/rollout/cities/${cityId}/advance-status`, {
+    method: 'POST',
+    body: JSON.stringify(overrideReason ? { overrideReason } : {}),
+  });
+}
+
+export async function adminPauseCity(cityId: string, reason?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/admin/rent-buddy/rollout/cities/${cityId}/pause`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export async function adminResumeCity(cityId: string, resumeStatus?: CityRolloutStatus): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/admin/rent-buddy/rollout/cities/${cityId}/resume`, { method: 'POST', body: JSON.stringify({ resumeStatus }) });
+}
+
+export async function adminGetCityMetrics(cityId: string): Promise<ApiResult<any>> {
+  return apiFetch(`/api/admin/rent-buddy/rollout/cities/${cityId}/metrics`);
+}
+
+export interface BetaAccessRecord {
+  id: string;
+  userId: string;
+  city: string;
+  accessType: string;
+  status: 'active' | 'revoked';
+  invitedBy: string | null;
+  notes: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export async function adminGetBetaAccess(filters?: { city?: string; status?: string }): Promise<ApiResult<{ betaAccess: BetaAccessRecord[] }>> {
+  const q = new URLSearchParams();
+  if (filters?.city)   q.set('city', filters.city);
+  if (filters?.status) q.set('status', filters.status);
+  const qs = q.toString();
+  return apiFetch(`/api/admin/rent-buddy/beta-access${qs ? `?${qs}` : ''}`);
+}
+
+export async function adminGrantBetaAccess(payload: {
+  userId: string;
+  city: string;
+  accessType?: string;
+  notes?: string;
+}): Promise<ApiResult<{ betaAccess: BetaAccessRecord }>> {
+  return apiFetch('/api/admin/rent-buddy/beta-access', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function adminRevokeBetaAccess(betaId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/admin/rent-buddy/beta-access/${betaId}/revoke`, { method: 'POST', body: '{}' });
+}
+
+export interface LaunchChecklist {
+  id: string;
+  cityRolloutId: string;
+  checklistStatus: 'pending' | 'in_progress' | 'passed' | 'failed';
+  policyScanPassed: boolean;
+  safetyFlowPassed: boolean;
+  bookingFlowPassed: boolean;
+  telegraphPassed: boolean;
+  trustScorePassed: boolean;
+  paymentFlowPassed: boolean;
+  moderationPassed: boolean;
+  waitlistFlowPassed: boolean;
+  buddyApplicationPassed: boolean;
+  testedByAdminId: string | null;
+  testedAt: string | null;
+  notes: string | null;
+}
+
+export async function adminGetQAChecklists(cityRolloutId?: string): Promise<ApiResult<{ checklists: LaunchChecklist[] }>> {
+  const q = cityRolloutId ? `?cityRolloutId=${cityRolloutId}` : '';
+  return apiFetch(`/api/admin/rent-buddy/qa/checklists${q}`);
+}
+
+export async function adminMarkChecklistPassed(checklistId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/admin/rent-buddy/qa/checklists/${checklistId}/mark-passed`, { method: 'POST', body: '{}' });
+}
+
+export async function adminMarkChecklistFailed(checklistId: string, reason?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/admin/rent-buddy/qa/checklists/${checklistId}/mark-failed`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export interface GlobalControls {
+  id: 1;
+  all_bookings_paused: boolean;
+  applications_paused: boolean;
+  cash_balance_paused: boolean;
+  nightlife_paused: boolean;
+  force_full_in_app: boolean;
+  force_public_meetup: boolean;
+  force_delayed_posting: boolean;
+}
+
+export async function adminGetGlobalControls(): Promise<ApiResult<{ controls: GlobalControls }>> {
+  return apiFetch('/api/admin/rent-buddy/global-controls');
+}
+
+export async function adminUpdateGlobalControls(patch: Partial<Omit<GlobalControls, 'id'>>): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch('/api/admin/rent-buddy/global-controls', { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export async function adminGetAuditLog(filters?: {
+  cityRolloutId?: string;
+  adminId?: string;
+  action?: string;
+  page?: number;
+  perPage?: number;
+}): Promise<ApiResult<{ logs: any[]; total: number; page: number; perPage: number }>> {
+  const q = new URLSearchParams();
+  if (filters?.cityRolloutId) q.set('cityRolloutId', filters.cityRolloutId);
+  if (filters?.adminId)       q.set('adminId', filters.adminId);
+  if (filters?.action)        q.set('action', filters.action);
+  if (filters?.page)          q.set('page', String(filters.page));
+  if (filters?.perPage)       q.set('perPage', String(filters.perPage));
+  const qs = q.toString();
+  return apiFetch(`/api/admin/rent-buddy/audit-log${qs ? `?${qs}` : ''}`);
 }

@@ -42,6 +42,7 @@ import hashtagsRouter from "./hashtags";
 import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
 import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace";
+import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import compassRouter from "./compass";
 import adminCompassRouter from "./adminCompass";
 
@@ -90,6 +91,7 @@ router.use(hashtagsRouter);
 router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddyMarketplaceRouter);
+router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(adminCompassRouter);
 

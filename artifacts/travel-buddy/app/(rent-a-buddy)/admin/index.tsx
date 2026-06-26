@@ -6,11 +6,18 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList } from 'lucide-react-native';
+import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
 const SECTIONS = [
+  {
+    icon: Globe,
+    label: 'Rollout Dashboard',
+    sub: 'City rollout stages, QA gate, beta access, global kill switches',
+    route: '/(rent-a-buddy)/admin/rollout',
+    accent: '#6366F1',
+  },
   {
     icon: ClipboardList,
     label: 'Applications Queue',
