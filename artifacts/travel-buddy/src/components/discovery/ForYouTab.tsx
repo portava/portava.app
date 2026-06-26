@@ -103,7 +103,7 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
   const [showMoreIds, setShowMoreIds] = useState<Set<string>>(new Set());
 
   // Compass feed — runs in background alongside OSM/Telegraph
-  const compass = useCompassFeed({ section: 'for-you', city: destination, enabled: isAuthed });
+  const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed });
 
   const handleWhyPress = (id: string) => {
     setWhyId(id);
