@@ -13,7 +13,7 @@
  *  - Manual fallback if GPS is denied
  *  - Group member progress (trip-linked routes)
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, StyleSheet,
   ActivityIndicator, Alert, Linking,
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
+import { useRouteCheckpointMonitor } from '../../src/hooks/useRouteCheckpointMonitor';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
@@ -33,7 +34,6 @@ import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ARRIVAL_RADIUS_M          = 80;
 const FINAL_STOP_WARN_THRESHOLD = 1_500; // metres
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -241,48 +241,48 @@ export default function ActiveRouteScreen() {
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
 
-  // Track stops we've already auto-checked to avoid duplicate PATCH calls.
-  const notifiedStops = useRef(new Set<string>());
-
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
 
-  // Auto-checkpoint: react to coordinate changes from the existing location system.
-  useEffect(() => {
-    if (!routeStarted || !fullPlan) return;
-    if (userLat == null || userLng == null) return;
+  // Background geofence + foreground fallback checkpoint monitor.
+  // Fires CHECKPOINT_ARRIVAL_TASK on enter, drains queue on foreground resume.
+  // Flatten structuredLocation → lat/lng to satisfy CheckpointStopInput.
+  const checkpointStops = React.useMemo(
+    () =>
+      (fullPlan?.stops ?? [])
+        .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
+        .map((s) => ({
+          id:  s.id,
+          lat: s.structuredLocation!.lat as number,
+          lng: s.structuredLocation!.lng as number,
+        })),
+    [fullPlan?.stops],
+  );
 
-    for (const stop of fullPlan.stops) {
-      if (stop.checkpointStatus !== 'pending') continue;
-      if (notifiedStops.current.has(stop.id)) continue;
-      const loc = stop.structuredLocation;
-      if (!loc?.lat || !loc?.lng) continue;
+  useRouteCheckpointMonitor({
+    stops:     checkpointStops,
+    enabled:   routeStarted,
+    onArrived: markArrived,
+  });
 
-      const dist = haversineMeters(userLat, userLng, loc.lat, loc.lng);
-      if (dist <= ARRIVAL_RADIUS_M) {
-        notifiedStops.current.add(stop.id);
-        markArrived(stop.id).catch(() => {
-          notifiedStops.current.delete(stop.id);
-        });
-      }
-    }
-  }, [routeStarted, fullPlan, userLat, userLng, markArrived]);
-
-  // Final-stop distance-to-end-location warning
-  const lastStopDistanceToEnd = React.useMemo(() => {
+  // Final-stop distance warning: prefer trip accommodation (hotel/stay) over
+  // plain endLocation so the warning reflects where the user is actually sleeping.
+  const lastStopDistanceToHome = React.useMemo(() => {
     if (!fullPlan) return null;
-    const endLoc = fullPlan.plan.endLocation;
-    if (!endLoc?.lat || !endLoc?.lng) return null;
+    const homeLoc =
+      fullPlan.plan.tripAccommodationLocation ??
+      fullPlan.plan.endLocation;
+    if (!homeLoc?.lat || !homeLoc?.lng) return null;
     const lastStop = fullPlan.stops[fullPlan.stops.length - 1];
     if (!lastStop?.structuredLocation?.lat || !lastStop?.structuredLocation?.lng) return null;
     return haversineMeters(
       lastStop.structuredLocation.lat, lastStop.structuredLocation.lng,
-      endLoc.lat, endLoc.lng,
+      homeLoc.lat, homeLoc.lng,
     );
   }, [fullPlan]);
 
-  const showFinalStopWarning = lastStopDistanceToEnd != null
-    && lastStopDistanceToEnd > FINAL_STOP_WARN_THRESHOLD;
+  const showFinalStopWarning = lastStopDistanceToHome != null
+    && lastStopDistanceToHome > FINAL_STOP_WARN_THRESHOLD;
 
   const handleStartRoute = useCallback(async () => {
     if (locationState.permissionStatus !== 'denied') {
@@ -367,8 +367,8 @@ export default function ActiveRouteScreen() {
               <AlertTriangle size={13} color="#C62828" />
               <Text style={styles.finalStopWarningText}>
                 Your last stop is{' '}
-                <Text style={{ fontWeight: '700' }}>{formatDistance(Math.round(lastStopDistanceToEnd!))}</Text>
-                {' '}from your set end point — consider arranging a rideshare back.
+                <Text style={{ fontWeight: '700' }}>{formatDistance(Math.round(lastStopDistanceToHome!))}</Text>
+                {' '}from your accommodation — consider arranging a rideshare back.
               </Text>
             </View>
           )}

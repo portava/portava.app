@@ -75,6 +75,8 @@ export interface RoutePlan {
   title: string;
   startLocation: StopLocation | null;
   endLocation: StopLocation | null;
+  /** Hotel/stay location from trip_plan_items (accommodation), populated by GET when trip_id is set */
+  tripAccommodationLocation?: { lat: number; lng: number; label?: string } | null;
   routeStyle: RouteStyle;
   status: RoutePlanStatus;
   compassExplanation: string | null;
@@ -191,4 +193,24 @@ export async function fetchRoutePlanMembers(planId: string): Promise<RoutePlanMe
     throw new Error((err as any).message ?? `fetchRoutePlanMembers ${res.status}`);
   }
   return res.json();
+}
+
+export async function joinRoutePlan(planId: string): Promise<void> {
+  const res = await authedFetch(`${apiBase()}/api/route-plans/${planId}/members`, {
+    method: 'POST',
+  });
+  if (!res.ok && res.status !== 201) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `joinRoutePlan ${res.status}`);
+  }
+}
+
+export async function leaveRoutePlan(planId: string): Promise<void> {
+  const res = await authedFetch(`${apiBase()}/api/route-plans/${planId}/members`, {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 204) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `leaveRoutePlan ${res.status}`);
+  }
 }

@@ -66,6 +66,8 @@ export interface OptimizeOptions {
   startLocation?: { lat: number; lng: number; label?: string } | null;
   endLocation?: { lat: number; lng: number; label?: string } | null;
   timeWindowStart?: Date | null;
+  /** Compass intent mode derived by CompassIntentModeEngine (e.g. 'night_mode', 'explore_now') */
+  intentMode?: string | null;
 }
 
 const WALK_SPEED_MS           = 1.25;   // m/s ≈ 4.5 km/h
@@ -326,6 +328,18 @@ function buildCompassExplanation(
 
   if (opts.timeWindowStart) {
     parts.push(`Timed for a start around ${opts.timeWindowStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
+  }
+
+  if (opts.intentMode) {
+    const intentLabels: Record<string, string> = {
+      night_mode:   'night-out explore',
+      explore_now:  'explore-now',
+      plan_ahead:   'plan-ahead',
+      social_mode:  'social',
+      arrival_mode: 'arrival',
+    };
+    const label = intentLabels[opts.intentMode] ?? opts.intentMode;
+    parts.push(`Compass mode: ${label}.`);
   }
 
   if (warnings.length > 0) {

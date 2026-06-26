@@ -10,6 +10,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
+import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
+import type { CompassContext } from "../compass/types.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -92,10 +94,25 @@ router.post("/route-plans", async (req, res) => {
     category: s.category ?? null,
   }));
 
+  // Derive Compass intent mode from current UTC hour + route style.
+  // This feeds through to compassExplanation so the AI rationale reflects the
+  // user's current situational mode (night_mode vs explore_now, etc.).
+  const hourUtc = new Date().getUTCHours();
+  const contextState = routeStyle === "nightlife"
+    ? "night_mode"
+    : routeStyle === "scenic"
+    ? "exploring_now"
+    : "normal";
+  const compassIntentMode = deriveIntentMode({
+    contextState,
+    signals: { hourUtc, safeReturnActive: false },
+  } as CompassContext);
+
   const optimized = optimizeRoute(candidates, {
     style: routeStyle as RouteStyle,
     startLocation: startLocation ?? null,
     endLocation: endLocation ?? null,
+    intentMode: compassIntentMode.primary,
   });
 
   const { data: plan, error: planErr } = await client
@@ -167,6 +184,28 @@ router.post("/route-plans", async (req, res) => {
   if (legInserts.length > 0) {
     const { error: legsErr } = await client.from("route_legs").insert(legInserts);
     if (legsErr) req.log.warn({ err: legsErr }, "insert route_legs partial failure");
+  }
+
+  // Link trip_plan_items.route_stop_id for stops whose sourceType is 'plan_item'.
+  // This enables bidirectional navigation between itinerary items and route stops.
+  const planItemLinks = stopInserts
+    .map((si, idx) => ({
+      sourceType: si.source_type,
+      sourceId:   si.source_id,
+      stopId:     stopIdByIndex.get(idx),
+    }))
+    .filter((x) => x.sourceType === "plan_item" && x.sourceId && x.stopId);
+
+  if (planItemLinks.length > 0) {
+    for (const link of planItemLinks) {
+      const { error: linkErr } = await (client as any)
+        .from("trip_plan_items")
+        .update({ route_stop_id: link.stopId })
+        .eq("id", link.sourceId);
+      if (linkErr) {
+        req.log.warn({ err: linkErr, sourceId: link.sourceId }, "link trip_plan_item route_stop_id");
+      }
+    }
   }
 
   const fullPlan = await fetchFullPlan(client, planId);
@@ -270,8 +309,7 @@ router.patch("/route-plans/:id/stops/:stopId", async (req, res) => {
 });
 
 // ── GET /api/route-plans/:id/members ─────────────────────────────────────────
-// Returns trip member list enriched with their checkpoint progress on this plan.
-// Only available for trip-linked plans.
+// Returns route_plan_members (who has explicitly joined) + shared checkpoint progress.
 
 router.get("/route-plans/:id/members", async (req, res) => {
   const ctx = await requireUser(req, res);
@@ -289,51 +327,107 @@ router.get("/route-plans/:id/members", async (req, res) => {
 
   if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
 
-  const tripId = (plan as any).trip_id as string | null;
-  if (!tripId) {
-    sendError(res, "invalid_payload", "This plan is not linked to a trip");
-    return;
-  }
-
-  // Verify caller is the owner or a trip member
   const isOwner = (plan as any).owner_user_id === user.id;
+  const tripId  = (plan as any).trip_id as string | null;
+
   if (!isOwner) {
-    const isMember = await isAcceptedTripMember(client, tripId, user.id);
-    if (!isMember) { sendError(res, "forbidden", "Not a trip member"); return; }
+    if (tripId) {
+      const isMember = await isAcceptedTripMember(client, tripId, user.id);
+      if (!isMember) { sendError(res, "forbidden", "Not a trip member"); return; }
+    } else {
+      sendError(res, "forbidden", "Not the route owner"); return;
+    }
   }
 
-  // Fetch accepted trip members + their profiles
+  // Fetch joined members from route_plan_members + their profiles
   const { data: members } = await (client as any)
-    .from("trip_members")
-    .select("user_id, role, profiles(id, display_name, avatar_url)")
-    .eq("trip_id", tripId)
-    .in("role", ["owner", "member"]);
+    .from("route_plan_members")
+    .select("user_id, joined_at, profiles(id, display_name, avatar_url)")
+    .eq("route_plan_id", id);
 
-  // Fetch all stops for this plan (to compute per-member progress later)
+  // Shared checkpoint progress
   const { data: stops } = await (client as any)
     .from("route_stops")
     .select("id, checkpoint_status")
     .eq("route_plan_id", id);
 
-  const totalStops = (stops ?? []).length;
-  const arrivedCount = (stops ?? []).filter(
+  const totalStops    = (stops ?? []).length;
+  const arrivedCount  = (stops ?? []).filter(
     (s: Record<string, unknown>) => s.checkpoint_status === "arrived",
   ).length;
 
-  // Since checkpoint_status is shared (not per-user), we return member list +
-  // shared progress for display purposes.
   const result = (members ?? []).map((m: any) => ({
-    userId: m.user_id,
+    userId:      m.user_id,
     displayName: m.profiles?.display_name ?? "Traveler",
-    avatarUrl: m.profiles?.avatar_url ?? null,
-    role: m.role,
-    isOwner: m.user_id === (plan as any).owner_user_id,
-    // Shared progress — route checkpoints are tracked per-plan not per-member
+    avatarUrl:   m.profiles?.avatar_url ?? null,
+    isOwner:     m.user_id === (plan as any).owner_user_id,
+    joinedAt:    m.joined_at,
     arrivedCount,
-    totalCount: totalStops,
+    totalCount:  totalStops,
   }));
 
   res.json({ members: result, totalStops, arrivedCount });
+});
+
+// ── POST /api/route-plans/:id/members — join ──────────────────────────────────
+
+router.post("/route-plans/:id/members", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
+
+  const { data: plan } = await client
+    .from("route_plans")
+    .select("id, trip_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
+
+  // For trip-linked plans, only trip members may join
+  const tripId = (plan as any).trip_id as string | null;
+  if (tripId) {
+    const isMember = await isAcceptedTripMember(client, tripId, user.id);
+    if (!isMember) { sendError(res, "forbidden", "Only trip members can join this route"); return; }
+  }
+
+  const { error } = await (client as any)
+    .from("route_plan_members")
+    .upsert({ route_plan_id: id, user_id: user.id }, { onConflict: "route_plan_id,user_id" });
+
+  if (error) {
+    req.log.error({ err: error }, "join route_plan_members");
+    sendError(res, "db_error", error.message); return;
+  }
+
+  res.status(201).json({ joined: true });
+});
+
+// ── DELETE /api/route-plans/:id/members — leave ───────────────────────────────
+
+router.delete("/route-plans/:id/members", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
+
+  const { error } = await (client as any)
+    .from("route_plan_members")
+    .delete()
+    .eq("route_plan_id", id)
+    .eq("user_id", user.id);
+
+  if (error) {
+    req.log.error({ err: error }, "leave route_plan_members");
+    sendError(res, "db_error", error.message); return;
+  }
+
+  res.status(204).send();
 });
 
 // ── DELETE /api/route-plans/:id ───────────────────────────────────────────────
@@ -374,22 +468,53 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
 
   if (!plan) return null;
 
-  const { data: stops } = await (client as any)
-    .from("route_stops")
-    .select("*")
-    .eq("route_plan_id", id)
-    .order("order_index", { ascending: true });
+  const [stopsResult, legsResult] = await Promise.all([
+    (client as any)
+      .from("route_stops")
+      .select("*")
+      .eq("route_plan_id", id)
+      .order("order_index", { ascending: true }),
+    (client as any)
+      .from("route_legs")
+      .select("*")
+      .eq("route_plan_id", id)
+      .order("created_at", { ascending: true }),
+  ]);
 
-  const { data: legs } = await (client as any)
-    .from("route_legs")
-    .select("*")
-    .eq("route_plan_id", id)
-    .order("created_at", { ascending: true });
+  // For trip-linked plans, include the primary accommodation location from
+  // trip_plan_items so the mobile screen can warn if the last stop is far
+  // from where the user is staying.
+  let tripAccommodationLocation: { lat: number; lng: number; label?: string } | null = null;
+  const tripId = (plan as Record<string, unknown>).trip_id as string | null;
+  if (tripId) {
+    const { data: accommodationItem } = await (client as any)
+      .from("trip_plan_items")
+      .select("title, structured_location")
+      .eq("trip_id", tripId)
+      .eq("item_type", "accommodation")
+      .order("planned_start_date", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (accommodationItem?.structured_location) {
+      const sl = accommodationItem.structured_location as Record<string, unknown>;
+      if (sl.lat != null && sl.lng != null) {
+        tripAccommodationLocation = {
+          lat:   sl.lat as number,
+          lng:   sl.lng as number,
+          label: (accommodationItem.title ?? sl.label ?? "Accommodation") as string,
+        };
+      }
+    }
+  }
 
   return {
-    plan: toCamel(plan as Record<string, unknown>),
-    stops: (stops ?? []).map((s: Record<string, unknown>) => toCamel(s)),
-    legs: (legs ?? []).map((l: Record<string, unknown>) => toCamel(l)),
+    plan: {
+      ...toCamel(plan as Record<string, unknown>),
+      tripAccommodationLocation,
+    },
+    stops: (stopsResult.data ?? []).map((s: Record<string, unknown>) => toCamel(s)),
+    legs: (legsResult.data ?? []).map((l: Record<string, unknown>) => toCamel(l)),
   };
 }
 

@@ -13,6 +13,8 @@ export interface BookmarkedPlace {
   type: string | null;
   address: string | null;
   savedAt: number;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 async function readAll(): Promise<BookmarkedPlace[]> {

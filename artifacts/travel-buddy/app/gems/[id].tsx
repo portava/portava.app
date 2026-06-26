@@ -6,6 +6,7 @@
  * add to trip plan, and report.
  */
 import React, { useState, useCallback } from 'react';
+import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, FlatList,
@@ -220,10 +221,11 @@ export default function GemDetailScreen() {
 
   const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
 
-  const [showCheckin, setShowCheckin] = useState(false);
-  const [showReport,  setShowReport]  = useState(false);
-  const [addingPlan,  setAddingPlan]  = useState(false);
-  const [sharing,     setSharing]     = useState(false);
+  const [showCheckin,     setShowCheckin]     = useState(false);
+  const [showReport,      setShowReport]      = useState(false);
+  const [addingPlan,      setAddingPlan]      = useState(false);
+  const [sharing,         setSharing]         = useState(false);
+  const [builderVisible,  setBuilderVisible]  = useState(false);
 
   const handleAddToPlan = useCallback(async () => {
     Alert.prompt(
@@ -433,6 +435,10 @@ export default function GemDetailScreen() {
             <Ionicons name="calendar-outline" size={20} color="#4CAF7D" />
             <Text style={[styles.actionBtnText, { color: '#4CAF7D' }]}>Add to Plan</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setBuilderVisible(true)}>
+            <Ionicons name="navigate-outline" size={20} color="#60A5FA" />
+            <Text style={[styles.actionBtnText, { color: '#60A5FA' }]}>Add to Route</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={handleShare} disabled={sharing}>
             <Ionicons name="paper-plane-outline" size={20} color="#A78BFA" />
             <Text style={[styles.actionBtnText, { color: '#A78BFA' }]}>Share</Text>
@@ -455,6 +461,22 @@ export default function GemDetailScreen() {
         visible={showReport}
         gemId={gem.id}
         onClose={() => setShowReport(false)}
+      />
+
+      {/* Route builder — pre-seeds this gem as the first stop */}
+      <RouteBuilderSheet
+        visible={builderVisible}
+        onClose={() => setBuilderVisible(false)}
+        onRouteCreated={() => setBuilderVisible(false)}
+        initialStops={gem ? [{
+          id:         gem.id,
+          title:      gem.name,
+          lat:        (gem as any).lat ?? null,
+          lng:        (gem as any).lng ?? null,
+          sourceType: 'hidden_gem',
+          sourceId:   gem.id,
+          category:   (gem as any).category ?? undefined,
+        }] : undefined}
       />
     </SafeAreaView>
   );

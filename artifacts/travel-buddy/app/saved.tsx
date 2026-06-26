@@ -5,11 +5,17 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip } from '../src/components/ui';
 import { color, space } from '../src/theme/tokens';
 import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
-import { MapPin, Bookmark } from 'lucide-react-native';
+import { MapPin, Bookmark, Route } from 'lucide-react-native';
+import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
 
-function PlaceCard({ place }: { place: BookmarkedPlace }) {
+interface PlaceCardProps {
+  place: BookmarkedPlace;
+  onAddToRoute: (place: BookmarkedPlace) => void;
+}
+
+function PlaceCard({ place, onAddToRoute }: PlaceCardProps) {
   return (
     <View style={s.card}>
       <View style={s.cardIcon}>
@@ -24,6 +30,9 @@ function PlaceCard({ place }: { place: BookmarkedPlace }) {
           <Text style={s.cardAddress} numberOfLines={1}>{place.address}</Text>
         ) : null}
       </View>
+      <Pressable style={s.routeBtn} onPress={() => onAddToRoute(place)} hitSlop={8}>
+        <Route size={15} color={color.signal} />
+      </Pressable>
     </View>
   );
 }
@@ -32,6 +41,7 @@ export default function Saved() {
   const [tab, setTab] = useState('Places');
   const [places, setPlaces] = useState<BookmarkedPlace[]>([]);
   const [loading, setLoading] = useState(true);
+  const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,6 +60,23 @@ export default function Saved() {
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const showPlaces = tab === 'Places';
+
+  const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
+    setBuilderPlace(place);
+  }, []);
+
+  // Build initial stop draft from the bookmarked place
+  const initialStop = builderPlace
+    ? [{
+        id:         builderPlace.id,
+        title:      builderPlace.name,
+        lat:        builderPlace.lat ?? null,
+        lng:        builderPlace.lng ?? null,
+        sourceType: 'saved_place',
+        sourceId:   builderPlace.id,
+        category:   builderPlace.category ?? undefined,
+      }]
+    : undefined;
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -80,7 +107,9 @@ export default function Saved() {
               </Text>
             </View>
           ) : (
-            places.map((p) => <PlaceCard key={p.id} place={p} />)
+            places.map((p) => (
+              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} />
+            ))
           )
         ) : (
           <View style={s.empty}>
@@ -90,6 +119,13 @@ export default function Saved() {
           </View>
         )}
       </ScrollView>
+
+      <RouteBuilderSheet
+        visible={builderPlace != null}
+        onClose={() => setBuilderPlace(null)}
+        onRouteCreated={() => setBuilderPlace(null)}
+        initialStops={initialStop}
+      />
     </View>
   );
 }
@@ -130,6 +166,14 @@ const s = StyleSheet.create({
   cardAddress: {
     fontSize: 12,
     color: color.faint,
+  },
+  routeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: `${color.signal}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   center: {
     paddingVertical: space.xxxl,
