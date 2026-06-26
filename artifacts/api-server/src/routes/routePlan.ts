@@ -139,12 +139,21 @@ router.post("/route-plans", async (req, res) => {
 
   const planId = (plan as any).id as string;
 
+  // Allowed values for route_stops.source_type DB enum.
+  const VALID_SOURCE_TYPES = new Set(["manual", "place", "meetup", "hidden_gem", "discovery", "plan_item"]);
+  /** Map client-side aliases to a canonical DB enum value. */
+  const canonicalizeSourceType = (t: string | undefined): string => {
+    if (!t || !VALID_SOURCE_TYPES.has(t)) return "manual";
+    return t;
+  };
+
   const stopInserts = optimized.stops.map((os, i) => {
     const src = stops[os.index - (startLocation ? 1 : 0)];
+    const canonicalType = canonicalizeSourceType(src?.sourceType);
     return {
       route_plan_id: planId,
-      source_type: src?.sourceType ?? "manual",
-      source_id: src?.sourceType !== "manual" ? (src as any)?.sourceId ?? null : null,
+      source_type: canonicalType,
+      source_id: canonicalType !== "manual" ? (src as any)?.sourceId ?? null : null,
       title: os.stop.title,
       structured_location: {
         label: os.stop.title,

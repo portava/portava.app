@@ -72,7 +72,7 @@ export default function Saved() {
         title:      builderPlace.name,
         lat:        builderPlace.lat ?? null,
         lng:        builderPlace.lng ?? null,
-        sourceType: 'saved_place',
+        sourceType: 'discovery',
         sourceId:   builderPlace.id,
         category:   builderPlace.category ?? undefined,
       }]
