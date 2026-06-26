@@ -102,15 +102,17 @@ router.get("/users/:userId/follow-status", async (req, res) => {
   const target = req.params.userId;
   if (!isUuid(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
 
-  const [mine, followers, following] = await Promise.all([
+  const [mine, followers, following, theyFollow] = await Promise.all([
     client.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", target).maybeSingle(),
     client.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
     client.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
+    client.from("user_follows").select("follower_id").eq("follower_id", target).eq("following_id", user.id).maybeSingle(),
   ]);
 
   res.status(200).json({
     userId: target,
     isFollowing: Boolean(mine.data),
+    followsYou: Boolean(theyFollow.data),
     followersCount: followers.count ?? 0,
     followingCount: following.count ?? 0,
   });

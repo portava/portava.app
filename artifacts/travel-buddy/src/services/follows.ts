@@ -34,6 +34,7 @@ export interface FollowResult<T> {
 export interface FollowStatus {
   userId: string;
   isFollowing: boolean;
+  followsYou: boolean;
   followersCount: number;
   followingCount: number;
 }

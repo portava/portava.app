@@ -427,6 +427,16 @@ export default function PublicPassportScreen() {
     const countries = new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
     const cities = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
 
+    const followContext = !isOwn && !follow.loading
+      ? (follow.isFollowing && follow.followsYou)
+        ? 'Mutual'
+        : follow.followsYou
+        ? 'Follows you'
+        : follow.isFollowing
+        ? 'You follow'
+        : undefined
+      : undefined;
+
     return (
       <ScrollView
         style={{ flex: 1, backgroundColor: color.paper }}
@@ -438,6 +448,7 @@ export default function PublicPassportScreen() {
           isOwner={isOwn}
           isFollowing={follow.isFollowing}
           followLoading={follow.loading || follow.toggling}
+          followContext={followContext}
           onFollowPress={!isOwn ? follow.toggle : undefined}
           hasHighlights={ringState?.hasActive}
           allHighlightsViewed={(ringState?.allViewed ?? false) || sessionAllViewed}

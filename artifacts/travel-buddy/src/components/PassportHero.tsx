@@ -39,6 +39,7 @@ export function PassportHero({
   onAvatarPress,
   isFollowing,
   followLoading,
+  followContext,
   onFollowPress,
   hasHighlights,
   allHighlightsViewed,
@@ -51,6 +52,7 @@ export function PassportHero({
   onAvatarPress?: () => void;
   isFollowing?: boolean;
   followLoading?: boolean;
+  followContext?: string;
   onFollowPress?: () => void;
   hasHighlights?: boolean;
   allHighlightsViewed?: boolean;
@@ -88,16 +90,21 @@ export function PassportHero({
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
         ) : !isOwner && onFollowPress !== undefined ? (
-          <Pressable
-            onPress={onFollowPress}
-            hitSlop={8}
-            disabled={followLoading}
-            style={[styles.followBtn, isFollowing && styles.followBtnActive]}
-          >
-            <Text style={[styles.followText, isFollowing && styles.followTextActive]}>
-              {followLoading ? '…' : isFollowing ? 'Following' : '+ Follow'}
-            </Text>
-          </Pressable>
+          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+            <Pressable
+              onPress={onFollowPress}
+              hitSlop={8}
+              disabled={followLoading}
+              style={[styles.followBtn, isFollowing && styles.followBtnActive]}
+            >
+              <Text style={[styles.followText, isFollowing && styles.followTextActive]}>
+                {followLoading ? '…' : isFollowing ? 'Following' : '+ Follow'}
+              </Text>
+            </Pressable>
+            {followContext ? (
+              <Text style={styles.followContextLabel}>{followContext}</Text>
+            ) : null}
+          </View>
         ) : null}
       </View>
       <View style={styles.topDivider} />
@@ -213,6 +220,7 @@ const styles = StyleSheet.create({
   followBtnActive: { backgroundColor: color.ink },
   followText: { ...t.small, color: color.ink, fontWeight: '700' },
   followTextActive: { color: color.onInk },
+  followContextLabel: { fontSize: 11, color: color.signal, fontWeight: '600' },
 
   identityRow: { flexDirection: 'row', gap: space.md },
 

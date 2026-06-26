@@ -8,6 +8,7 @@ import { followUser, unfollowUser, getFollowStatus } from '../services/follows';
 
 export interface FollowState {
   isFollowing: boolean;
+  followsYou: boolean;
   followersCount: number;
   followingCount: number;
   loading: boolean;
@@ -17,6 +18,7 @@ export interface FollowState {
 
 const IDLE: Omit<FollowState, 'toggle'> = {
   isFollowing: false,
+  followsYou: false,
   followersCount: 0,
   followingCount: 0,
   loading: false,
@@ -44,6 +46,7 @@ export function useFollow(userId: string | null): FollowState {
       if (res.ok && res.data) {
         setState({
           isFollowing: res.data.isFollowing,
+          followsYou: res.data.followsYou ?? false,
           followersCount: res.data.followersCount,
           followingCount: res.data.followingCount,
           loading: false,
