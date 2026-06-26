@@ -85,7 +85,11 @@ function SuggestionCard({ user, onFollowed }: CardProps) {
   );
 }
 
-export function PeopleYouMayKnow() {
+interface PeopleYouMayKnowProps {
+  refreshKey?: number;
+}
+
+export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const { userId, isAuthed } = useSession();
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [followingCount, setFollowingCount] = useState<number | null>(null);
@@ -107,7 +111,7 @@ export function PeopleYouMayKnow() {
     setLoading(false);
   }, [userId, isAuthed]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const handleFollowed = useCallback((uid: string) => {
     setSuggestions((prev) => prev.filter((u) => u.id !== uid));

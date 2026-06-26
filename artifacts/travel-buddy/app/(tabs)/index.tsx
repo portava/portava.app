@@ -78,6 +78,7 @@ export default function Pulse() {
   const [createOpen, setCreateOpen] = useState(false);
   const [layoverSheetOpen, setLayoverSheetOpen] = useState(false);
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
+  const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   const { locationState, openCityPicker } = useLocationContext();
@@ -111,6 +112,12 @@ export default function Pulse() {
     setFeedMode(mode);
     if (mode === 'following') followingFeed.reload();
   }, [followingFeed.reload]);
+
+  const handleRefresh = useCallback(() => {
+    setPeopleRefreshKey((k) => k + 1);
+    if (feedMode === 'following') followingFeed.reload();
+    else realFeed.reload();
+  }, [feedMode, followingFeed.reload, realFeed.reload]);
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
@@ -249,7 +256,7 @@ export default function Pulse() {
       )}
 
       {/* People you may know — shown in For You mode only */}
-      {feedMode === 'forYou' && <PeopleYouMayKnow />}
+      {feedMode === 'forYou' && <PeopleYouMayKnow refreshKey={peopleRefreshKey} />}
 
       {/* Pulse Wall — feed mode toggle + quick filters */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
@@ -358,7 +365,7 @@ export default function Pulse() {
         refreshControl={
           <RefreshControl
             refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
-            onRefresh={feedMode === 'following' ? followingFeed.reload : realFeed.reload}
+            onRefresh={handleRefresh}
             tintColor={color.signal}
           />
         }
