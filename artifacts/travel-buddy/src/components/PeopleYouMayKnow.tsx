@@ -262,6 +262,14 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
 
+  // Track whether we have ever displayed suggestions — determines whether the
+  // empty state shows "See new faces" (user ran through the list) vs. hiding
+  // (server returned 0 suggestions on initial load with no interaction).
+  const [hasHadSuggestions, setHasHadSuggestions] = useState(false);
+  useEffect(() => {
+    if (suggestions.length > 0) setHasHadSuggestions(true);
+  }, [suggestions.length]);
+
   const load = useCallback(async () => {
     if (!isAuthed || !userId) { setLoading(false); return; }
     setLoading(true);
@@ -371,11 +379,12 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
     };
   }, [commitPending]);
 
-  // Hide: not authed, still loading with no data, following >= threshold, or no suggestions
+  // Hide: not authed, still loading with no data, following >= threshold
   if (!isAuthed) return null;
   if (loading && suggestions.length === 0) return null;
   if (followingCount !== null && followingCount >= FOLLOWING_THRESHOLD) return null;
-  if (suggestions.length === 0 && !toastVisible) return null;
+  // Hide only if server returned 0 suggestions on first load with no prior interaction
+  if (suggestions.length === 0 && !toastVisible && !hasHadSuggestions) return null;
 
   return (
     <View style={styles.container}>
@@ -399,20 +408,40 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
           </Pressable>
         </View>
       </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.strip}
-      >
-        {suggestions.map((user) => (
-          <SuggestionCard
-            key={user.id}
-            user={user}
-            onFollowed={handleFollowed}
-            onDismiss={handleDismiss}
-          />
-        ))}
-      </ScrollView>
+      {suggestions.length === 0 && !toastVisible ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>You've seen everyone for now</Text>
+          <Pressable
+            style={[styles.newFacesBtn, (refreshing || loading) && styles.newFacesBtnDisabled]}
+            onPress={handleRefresh}
+            disabled={refreshing || loading}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={color.onInk} />
+            ) : (
+              <>
+                <Sparkles size={13} color={color.onInk} />
+                <Text style={styles.newFacesBtnText}>See new faces</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.strip}
+        >
+          {suggestions.map((user) => (
+            <SuggestionCard
+              key={user.id}
+              user={user}
+              onFollowed={handleFollowed}
+              onDismiss={handleDismiss}
+            />
+          ))}
+        </ScrollView>
+      )}
       <UndoToast visible={toastVisible} onUndo={handleUndo} />
     </View>
   );
@@ -550,6 +579,40 @@ const styles = StyleSheet.create({
     ...t.bodyStrong,
     color: color.mute,
     fontSize: 11,
+  },
+  emptyState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: space.lg,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    gap: space.md,
+  },
+  emptyText: {
+    ...t.body,
+    color: color.mute,
+    fontSize: 13,
+    flex: 1,
+  },
+  newFacesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: color.signal,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
+  newFacesBtnDisabled: {
+    opacity: 0.5,
+  },
+  newFacesBtnText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+    fontSize: 13,
   },
   toast: {
     flexDirection: 'row',

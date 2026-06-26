@@ -4,7 +4,7 @@ import {
   Pressable, StyleSheet, KeyboardAvoidingView, Platform, LayoutAnimation,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Search, X, RefreshCw } from 'lucide-react-native';
+import { Search, X, RefreshCw, Sparkles } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { TravelerRow } from '../src/components/TravelerRow';
 import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
@@ -19,13 +19,18 @@ export default function DiscoverScreen() {
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [refreshingSuggestions, setRefreshingSuggestions] = useState(false);
+  // Track whether suggestions were ever non-empty so we can distinguish
+  // "user ran through the list" from "server returned nothing on first load".
+  const [hasHadSuggestions, setHasHadSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
   const loadSuggestions = useCallback(async () => {
     setLoadingSuggestions(true);
     const res = await getSuggestedTravelers(10);
-    setSuggestions(res.data ?? []);
+    const data = res.data ?? [];
+    setSuggestions(data);
+    if (data.length > 0) setHasHadSuggestions(true);
     setLoadingSuggestions(false);
   }, []);
 
@@ -171,6 +176,26 @@ export default function DiscoverScreen() {
                 <TravelerRowSkeleton />
               </View>
             </View>
+          ) : hasHadSuggestions ? (
+            <View style={styles.center}>
+              <Text style={styles.idleIcon}>👥</Text>
+              <Text style={styles.idleTitle}>You've seen everyone for now</Text>
+              <Text style={styles.idleSub}>Refresh to discover new travelers</Text>
+              <Pressable
+                style={[styles.newFacesBtn, refreshingSuggestions && styles.newFacesBtnDisabled]}
+                onPress={handleRefreshSuggestions}
+                disabled={refreshingSuggestions}
+              >
+                {refreshingSuggestions ? (
+                  <ActivityIndicator size="small" color={color.onInk} />
+                ) : (
+                  <>
+                    <Sparkles size={14} color={color.onInk} />
+                    <Text style={styles.newFacesBtnText}>See new faces</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.center}>
               <Text style={styles.idleIcon}>🌍</Text>
@@ -276,5 +301,25 @@ const styles = StyleSheet.create({
     color: color.mute,
     textAlign: 'center',
     lineHeight: 18,
+  },
+  newFacesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: color.signal,
+    paddingHorizontal: space.lg,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    marginTop: space.sm,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
+  newFacesBtnDisabled: {
+    opacity: 0.5,
+  },
+  newFacesBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: color.onInk,
   },
 });
