@@ -1,4 +1,4 @@
--- Migration 0050: Compass Foundation
+-- Migration 0051: Compass Foundation
 -- Creates compass_user_profiles, compass_user_preferences,
 -- compass_user_context_snapshots, compass_intent_modes tables,
 -- and seeds all 9 Compass feature flags.

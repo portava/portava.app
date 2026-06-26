@@ -112,7 +112,7 @@ async function buildProfile(
     db.from("rent_buddy_bookings")
       .select("id")
       .eq("traveler_id", userId)
-      .eq("status", "active")
+      .in("status", ["confirmed", "in_progress"])
       .limit(1),
   ]);
 

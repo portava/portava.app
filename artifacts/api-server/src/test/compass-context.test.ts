@@ -594,4 +594,66 @@ describe("CompassProfile — blocked user exclusion arrays", () => {
       assert.ok(!("blockerCount"    in pub), "blockerCount must not be exposed");
     } finally { server.close(); }
   });
+
+  it("hasActiveBooking is true for a booking with status 'in_progress'", async () => {
+    const { getCompassProfile } = await import("../compass/CompassProfileService.js");
+    clearCompassProfileCache();
+    const state = makeState({
+      rent_buddy_bookings: [{
+        id: "bk1",
+        traveler_id: ALICE_ID,
+        status: "in_progress",
+      }],
+    });
+    const client = makeFakeClient(state) as any;
+    const profile = await getCompassProfile(client, ALICE_ID, true);
+    assert.equal(profile.hasActiveBooking, true);
+  });
+
+  it("hasActiveBooking is true for a booking with status 'confirmed'", async () => {
+    const { getCompassProfile } = await import("../compass/CompassProfileService.js");
+    clearCompassProfileCache();
+    const state = makeState({
+      rent_buddy_bookings: [{
+        id: "bk2",
+        traveler_id: ALICE_ID,
+        status: "confirmed",
+      }],
+    });
+    const client = makeFakeClient(state) as any;
+    const profile = await getCompassProfile(client, ALICE_ID, true);
+    assert.equal(profile.hasActiveBooking, true);
+  });
+
+  it("hasActiveBooking is false for a booking with status 'pending'", async () => {
+    const { getCompassProfile } = await import("../compass/CompassProfileService.js");
+    clearCompassProfileCache();
+    const state = makeState({
+      rent_buddy_bookings: [{
+        id: "bk3",
+        traveler_id: ALICE_ID,
+        status: "pending",
+      }],
+    });
+    const client = makeFakeClient(state) as any;
+    const profile = await getCompassProfile(client, ALICE_ID, true);
+    assert.equal(profile.hasActiveBooking, false);
+  });
+
+  it("active_booking_mode context when profile.hasActiveBooking is true (confirmed booking)", async () => {
+    const state = makeState({
+      rent_buddy_bookings: [{
+        id: "bk4",
+        traveler_id: ALICE_ID,
+        status: "in_progress",
+      }],
+    });
+    const { server, port } = await startApp(makeFakeClient(state));
+    try {
+      const res = await get(port, "/compass/me/context");
+      const body = await res.json() as any;
+      assert.equal(body.contextState, "active_booking_mode");
+      assert.equal(body.intentMode.primary, "social_mode");
+    } finally { server.close(); }
+  });
 });
