@@ -26,9 +26,24 @@ const C  = "user-c";   // blocked by me
 
 const ME_TOK = "tok-me";
 
+type ProfileEntry = {
+  id: string;
+  handle: string;
+  name: string;
+  avatar_url: string | null;
+  is_private: boolean;
+  travel_styles?: string[] | null;
+  travel_pace?: string | null;
+  budget_style?: string | null;
+  travel_group_style?: string[] | null;
+  looking_for?: string[] | null;
+  comfort_level?: string | null;
+  planning_style?: string | null;
+};
+
 function makeFakeClient(state: {
   follows:       { follower_id: string; following_id: string }[];
-  profiles:      { id: string; handle: string; name: string; avatar_url: string | null; is_private: boolean }[];
+  profiles:      ProfileEntry[];
   blocks:        { blocker_id: string; blocked_id: string }[];
   trips?:        { id: string; owner_id: string; end_date: string; destination_city?: string | null; destination_country?: string | null }[];
   trip_members?: { trip_id: string; user_id: string; role: string }[];
@@ -558,6 +573,143 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(r2.status, 200);
     const body2 = await r2.json() as any;
     assert.ok(body2.users.length > 0, "second call should reset and return results instead of empty list");
+  });
+
+  // ── interest-scoring / ranking ────────────────────────────────────────────────
+
+  it("ranking: overlapping travel_styles rank a candidate above one without", async () => {
+    // ME has travel_styles ["adventure", "backpacking"].
+    // A shares one style (score 1). B shares none (score 0).
+    // With primary follow-back path: both A and B follow ME.
+    // After scoring, A (score 1) must appear before B (score 0).
+    setup({
+      follows: [
+        { follower_id: A, following_id: ME },
+        { follower_id: B, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me", name: "Me", avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "backpacking"] },
+        { id: A,  handle: "aaa", name: "Alice", avatar_url: null, is_private: false,
+          travel_styles: ["adventure"] },
+        { id: B,  handle: "bbb", name: "Bob",   avatar_url: null, is_private: false,
+          travel_styles: [] },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A should appear in suggestions");
+    assert.ok(posB !== -1, "B should appear in suggestions");
+    assert.ok(
+      posA < posB,
+      `A (1 style match) should rank before B (0 matches), got order ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: travel_pace and budget_style each contribute independently to the score", async () => {
+    // ME has travel_pace "slow" and budget_style "budget".
+    // A matches travel_pace only  → score 1
+    // B matches budget_style only → score 1
+    // C matches both              → score 2
+    // Expected order: C first, then A and B (in any order), none absent.
+    const D_LOCAL = "user-d-local";
+    setup({
+      follows: [
+        { follower_id: A,       following_id: ME },
+        { follower_id: B,       following_id: ME },
+        { follower_id: C,       following_id: ME },
+        { follower_id: D_LOCAL, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me", name: "Me", avatar_url: null, is_private: false,
+          travel_pace: "slow", budget_style: "budget" },
+        { id: A,       handle: "aaa", name: "Alice",  avatar_url: null, is_private: false,
+          travel_pace: "slow" },
+        { id: B,       handle: "bbb", name: "Bob",    avatar_url: null, is_private: false,
+          budget_style: "budget" },
+        { id: C,       handle: "ccc", name: "Carol",  avatar_url: null, is_private: false,
+          travel_pace: "slow", budget_style: "budget" },
+        { id: D_LOCAL, handle: "ddd", name: "Dave",   avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posC = ids.indexOf(C);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posC !== -1, "C (both matches, score 2) should appear");
+    assert.ok(posA !== -1, "A (pace match, score 1) should appear");
+    assert.ok(posB !== -1, "B (budget match, score 1) should appear");
+    assert.ok(
+      posC < posA && posC < posB,
+      `C (score 2) must rank above A and B (score 1 each); got ${ids.join(", ")}`
+    );
+  });
+
+  it("ranking: caller with empty profile gets all scores 0 — seeded-shuffle order is stable", async () => {
+    // ME has no interest profile. All candidates score 0, so the seeded-shuffle
+    // order must be used unchanged. Multiple calls within the same day must
+    // return the same ordering (same stability guarantee as seeded-shuffle alone).
+    const followers = Array.from({ length: 10 }, (_, i) => ({
+      id: `rank-user-${i}`,
+      handle: `rank${i}`,
+      name: `Rank ${i}`,
+      avatar_url: null as null,
+      is_private: false,
+    }));
+    const follows = followers.map((f) => ({ follower_id: f.id, following_id: ME }));
+    // ME has no profile row (maybeSingle returns null → all caller interest fields empty)
+    setup({ follows, profiles: followers, blocks: [] });
+
+    const orderings = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        req("/users/suggestions")
+          .then((r) => r.json())
+          .then((body: any) => (body.users as any[]).map((u) => u.id).join(","))
+      )
+    );
+    const unique = new Set(orderings);
+    assert.equal(
+      unique.size,
+      1,
+      `Empty caller profile: expected stable seeded order across all calls, got ${unique.size} distinct orderings`
+    );
+  });
+
+  it("ranking: blocked users are never returned regardless of interest score", async () => {
+    // ME has travel_styles ["adventure"].
+    // C is blocked by ME and has a very high style overlap (score 3).
+    // B has no overlap (score 0) but is not blocked.
+    // C must never appear; B must appear.
+    setup({
+      follows: [
+        { follower_id: B, following_id: ME },
+        { follower_id: C, following_id: ME },
+      ],
+      profiles: [
+        { id: ME, handle: "me",  name: "Me",   avatar_url: null, is_private: false,
+          travel_styles: ["adventure"] },
+        { id: B,  handle: "bbb", name: "Bob",  avatar_url: null, is_private: false,
+          travel_styles: [] },
+        { id: C,  handle: "ccc", name: "Carl", avatar_url: null, is_private: false,
+          travel_styles: ["adventure", "backpacking", "luxury"] },
+      ],
+      blocks: [{ blocker_id: ME, blocked_id: C }],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    assert.ok(!ids.includes(C), "C (blocked, high score) must never appear");
+    assert.ok(ids.includes(B), "B (not blocked, score 0) must still appear");
   });
 
   it("seen-cache is per-user and does not bleed between users", async () => {
