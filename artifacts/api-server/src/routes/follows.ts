@@ -425,6 +425,102 @@ router.get("/users/suggestions", async (req, res) => {
     } catch { /* fail-safe: proceed with zero mutual counts */ }
   }
 
+  // 9. Shared trip destinations: "Both going to <city>" when caller and candidate
+  //    share an upcoming or active trip destination (same city, or same country
+  //    as fallback). This takes priority over all other reason labels.
+  const sharedDestinations: Record<string, string> = {};
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Fetch caller's upcoming trip IDs — both owned and joined as member.
+    const [callerMemberRes, callerOwnedRes] = await Promise.all([
+      sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
+      sc.from("trips").select("id").eq("owner_id", user.id).gte("end_date", today),
+    ]);
+
+    const callerTripIdSet = new Set<string>([
+      ...((callerMemberRes.data ?? []).map((r: any) => r.trip_id as string)),
+      ...((callerOwnedRes.data ?? []).map((r: any) => r.id as string)),
+    ]);
+
+    if (callerTripIdSet.size > 0) {
+      const { data: callerTrips } = await sc
+        .from("trips")
+        .select("destination_city, destination_country")
+        .in("id", Array.from(callerTripIdSet))
+        .gte("end_date", today);
+
+      // Build lookup sets from caller's destinations.
+      const callerCityKeys = new Set<string>();
+      const callerCountryKeys = new Set<string>();
+      const cityDisplayMap = new Map<string, string>(); // lowercase key → display label
+
+      for (const t of (callerTrips ?? [])) {
+        const city = ((t as any).destination_city as string | null)?.trim();
+        const country = ((t as any).destination_country as string | null)?.trim();
+        if (city) {
+          const key = city.toLowerCase();
+          callerCityKeys.add(key);
+          cityDisplayMap.set(key, city);
+        }
+        if (country) {
+          callerCountryKeys.add(country.toLowerCase());
+        }
+      }
+
+      if (callerCityKeys.size > 0 || callerCountryKeys.size > 0) {
+        // Fetch candidate trips — both owned and joined as member.
+        const [candMemberRes, candOwnedRes] = await Promise.all([
+          sc.from("trip_members").select("trip_id, user_id").in("user_id", safeIds).in("role", ["owner", "member"]),
+          sc.from("trips").select("id, owner_id").in("owner_id", safeIds).gte("end_date", today),
+        ]);
+
+        // Build tripId → [userId] map so one trip can credit multiple candidates.
+        const tripToUsers = new Map<string, string[]>();
+        for (const r of (candMemberRes.data ?? [])) {
+          const tid = (r as any).trip_id as string;
+          const uid = (r as any).user_id as string;
+          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+          tripToUsers.get(tid)!.push(uid);
+        }
+        for (const r of (candOwnedRes.data ?? [])) {
+          const tid = (r as any).id as string;
+          const uid = (r as any).owner_id as string;
+          if (!tripToUsers.has(tid)) tripToUsers.set(tid, []);
+          if (!tripToUsers.get(tid)!.includes(uid)) tripToUsers.get(tid)!.push(uid);
+        }
+
+        if (tripToUsers.size > 0) {
+          const { data: candTrips } = await sc
+            .from("trips")
+            .select("id, destination_city, destination_country")
+            .in("id", Array.from(tripToUsers.keys()))
+            .gte("end_date", today);
+
+          for (const trip of (candTrips ?? [])) {
+            const city = ((trip as any).destination_city as string | null)?.trim();
+            const country = ((trip as any).destination_country as string | null)?.trim();
+            const tid = (trip as any).id as string;
+
+            let label: string | null = null;
+            if (city && callerCityKeys.has(city.toLowerCase())) {
+              label = `Both going to ${cityDisplayMap.get(city.toLowerCase()) ?? city}`;
+            } else if (country && callerCountryKeys.has(country.toLowerCase())) {
+              label = `Both going to ${country}`;
+            }
+
+            if (label) {
+              for (const uid of (tripToUsers.get(tid) ?? [])) {
+                // First match wins — keeps one label per candidate.
+                if (!sharedDestinations[uid]) sharedDestinations[uid] = label;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch { /* fail-safe: skip shared destinations, fall through to other reasons */ }
+
   // Which candidates follow the caller back (primary path)
   const followerSet = new Set(followerIds);
 
@@ -435,8 +531,11 @@ router.get("/users/suggestions", async (req, res) => {
     .filter(Boolean)
     .map((p: any) => {
       const mc = mutualCounts[p.id as string] ?? 0;
+      const sharedDest = sharedDestinations[p.id as string] ?? null;
       let reason: string | null = null;
-      if (followerSet.has(p.id as string)) {
+      if (sharedDest) {
+        reason = sharedDest; // highest priority signal
+      } else if (followerSet.has(p.id as string)) {
         reason = "Follows you";
       } else if (mc > 0) {
         reason = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
