@@ -16,7 +16,11 @@
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Location from 'expo-location';
-import { CHECKPOINT_ARRIVAL_TASK } from '../tasks/checkpointArrivalTask';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  CHECKPOINT_ARRIVAL_TASK,
+  PENDING_ARRIVALS_STORE_KEY,
+} from '../tasks/checkpointArrivalTask';
 
 const GPS_POLL_MS      = 30_000;  // foreground fallback: GPS check interval
 const DEFAULT_RADIUS_M = 80;      // metres — matches plan_geofences default
@@ -161,6 +165,40 @@ export function useRouteCheckpointMonitor({
       );
     }
 
+    /**
+     * Drain the AsyncStorage queue written by CHECKPOINT_ARRIVAL_TASK during
+     * background geofencing.  Called on mount and on every foreground resume
+     * so that background arrivals are processed even if the foreground poll
+     * hadn't fired yet.
+     */
+    async function drainPendingArrivals() {
+      try {
+        const raw = await AsyncStorage.getItem(PENDING_ARRIVALS_STORE_KEY);
+        if (!raw) return;
+        const pending: string[] = JSON.parse(raw) as string[];
+        if (pending.length === 0) return;
+
+        const toProcess = pending.filter((id) => !notifiedStops.has(id));
+        if (toProcess.length === 0) {
+          await AsyncStorage.removeItem(PENDING_ARRIVALS_STORE_KEY);
+          return;
+        }
+
+        // Process each queued stop ID and clear the store on success.
+        await Promise.all(
+          toProcess.map(async (stopId) => {
+            notifiedStops.add(stopId);
+            await onArrivedRef.current(stopId).catch(() => {
+              notifiedStops.delete(stopId); // allow retry next drain
+            });
+          }),
+        );
+        await AsyncStorage.removeItem(PENDING_ARRIVALS_STORE_KEY);
+      } catch {
+        /* non-fatal */
+      }
+    }
+
     async function applyStops() {
       const bgOk = await tryStartBackgroundGeofencing(stopsRef.current);
       usingBgRef.current = bgOk;
@@ -175,10 +213,12 @@ export function useRouteCheckpointMonitor({
     }
 
     void applyStops();
+    void drainPendingArrivals(); // drain any arrivals queued while app was backgrounded
 
     const sub = AppState.addEventListener('change', (next) => {
       appStateRef.current = next;
       if (next === 'active') {
+        void drainPendingArrivals(); // pick up background geofence events on resume
         if (!usingBgRef.current) startForegroundPoll();
       } else {
         if (!usingBgRef.current) stopForegroundPoll();

@@ -85,11 +85,14 @@ router.post("/route-plans", async (req, res) => {
     if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip plan"); return; }
   }
 
+  // sourceId is carried on CandidateStop so the optimizer preserves it through
+  // reordering; stopInserts reads from os.stop directly (not stops[os.index]).
   const candidates: CandidateStop[] = stops.map((s) => ({
     title: s.title,
     lat: s.lat,
     lng: s.lng,
     sourceType: s.sourceType,
+    sourceId: s.sourceId ?? null,
     openingHoursNote: s.openingHoursNote ?? null,
     category: s.category ?? null,
   }));
@@ -147,13 +150,15 @@ router.post("/route-plans", async (req, res) => {
     return t;
   };
 
+  // os.stop is the original CandidateStop object (passed by reference through the
+  // optimizer). Read sourceType/sourceId from it directly — never use os.index to
+  // re-index into the original stops[] array, which breaks after NN + 2-opt reorder.
   const stopInserts = optimized.stops.map((os, i) => {
-    const src = stops[os.index - (startLocation ? 1 : 0)];
-    const canonicalType = canonicalizeSourceType(src?.sourceType);
+    const canonicalType = canonicalizeSourceType(os.stop.sourceType);
     return {
       route_plan_id: planId,
       source_type: canonicalType,
-      source_id: canonicalType !== "manual" ? (src as any)?.sourceId ?? null : null,
+      source_id: canonicalType !== "manual" ? (os.stop.sourceId ?? null) : null,
       title: os.stop.title,
       structured_location: {
         label: os.stop.title,

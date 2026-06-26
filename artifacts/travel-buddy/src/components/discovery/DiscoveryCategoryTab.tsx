@@ -202,6 +202,7 @@ interface DiscoveryCategoryTabProps {
   destination: string;
   onSelectPlace: (place: DiscoveryPlace) => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
+  onAddToRoute?: (draft: import('../RouteBuilderSheet').RouteStopDraft) => void;
   onPickDestination?: (city: string) => void;
   contextMode?: DiscoveryContextMode | null;
   viewMode?: 'list' | 'map';
@@ -217,6 +218,7 @@ export function DiscoveryCategoryTab({
   destination,
   onSelectPlace,
   onAddToPlan,
+  onAddToRoute,
   onPickDestination,
   contextMode,
   viewMode = 'list',
@@ -333,6 +335,7 @@ export function DiscoveryCategoryTab({
               place={item}
               onPress={() => onSelectPlace(item)}
               onAddToPlan={() => onAddToPlan(item)}
+              onAddToRoute={onAddToRoute}
             />
           )}
           contentContainerStyle={styles.list}

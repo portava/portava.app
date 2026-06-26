@@ -405,6 +405,7 @@ export default function DiscoveryHub() {
             destination={destination}
             onSelectPlace={handleSelectPlace}
             onAddToPlan={handleAddToPlanFromPlace}
+            onAddToRoute={handleAddToRoute}
             onPickDestination={handlePickDestination}
             contextMode={contextMode}
             viewMode={viewMode}

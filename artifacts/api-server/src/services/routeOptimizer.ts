@@ -27,6 +27,9 @@ export interface CandidateStop {
   lat: number;
   lng: number;
   sourceType?: string;
+  /** Original source record ID — carried through the optimizer so stop inserts
+   *  can reference it directly from os.stop rather than re-indexing stops[]. */
+  sourceId?: string | null;
   openingHoursNote?: string | null;
   category?: string | null;
 }

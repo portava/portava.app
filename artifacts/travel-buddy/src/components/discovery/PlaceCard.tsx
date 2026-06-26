@@ -1,18 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
 import { usePlanPicker } from '../PlanPickerController';
+import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 
 interface PlaceCardProps {
   place: DiscoveryPlace;
   onPress: () => void;
   onAddToPlan: () => void;
+  onAddToRoute?: (draft: RouteStopDraft) => void;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCardProps) {
   const [saved, setSaved] = useState(false);
   const accent = categoryColor(place.category);
   const { isAdded } = usePlanPicker();
@@ -112,6 +114,25 @@ export function PlaceCard({ place, onPress, onAddToPlan }: PlaceCardProps) {
               {alreadyAdded ? 'Added ✓' : 'Plan'}
             </Text>
           </Pressable>
+
+          {onAddToRoute && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
+              onPress={() => onAddToRoute({
+                id:         `place-${place.id}`,
+                title:      place.name,
+                lat:        place.lat ?? null,
+                lng:        place.lng ?? null,
+                sourceType: 'discovery',
+                sourceId:   place.id,
+                category:   place.category ?? null,
+              })}
+              hitSlop={6}
+            >
+              <Route size={14} color={color.deep} />
+              <Text style={[styles.actionText, { color: color.deep }]}>Route</Text>
+            </Pressable>
+          )}
 
           {(place.lat != null || place.name) && (
             <Pressable
