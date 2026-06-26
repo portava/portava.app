@@ -1,0 +1,284 @@
+Build Trip Flow: walking path, optimized activity order, and checkpoint mini-map.
+
+Scope:
+When a user selects multiple activities, places, hidden gems, events, restaurants, bars, clubs, landmarks, or saved ideas for the same night/day, Travel Buddy should create the best walking route order, show directions, and display a mini-map with checkpoints. As the user moves, the plan should update checkpoint progress using GPS.
+
+Core rule:
+Check first, then build or update accordingly. Reuse existing GPS, location library, Discovery, saved places, trip plan, map, Safe Return, and Compass systems. Do not create duplicate map, route, GPS, or location systems.
+
+1. Check existing systems first
+Before building, inspect the codebase for:
+- trip plan / itinerary models
+- saved places / wishlist
+- Discovery places
+- Hidden Gems
+- event/circle location data
+- shared location library/autocomplete
+- GPS/location services
+- map utilities
+- route/directions helpers
+- Safe Return check-in system
+- Compass recommendation logic
+- delayed geotag/geofence helpers
+- existing mini-map components
+- existing mock/fixture route data
+
+Classify current state:
+- already implemented
+- partially implemented
+- mocked/fixture only
+- migration/flag blocked
+- missing
+
+2. User flow
+Allow a user to select multiple activities and create a route plan.
+
+Examples:
+- dinner → rooftop bar → nightclub → late-night food
+- hotel → landmark → cafe → hidden gem → market
+- airport → quick food → nearby attraction → return to airport
+- group trip activities for one night
+
+User should be able to:
+- select multiple saved places/activities
+- choose start point:
+  - current GPS location
+  - hotel/stay location
+  - selected meeting point
+  - first activity
+- choose end point:
+  - last activity
+  - return to hotel
+  - return to airport
+  - custom location
+- choose route style:
+  - shortest walking route
+  - safest route
+  - nightlife flow
+  - scenic/photo route
+  - low walking / rideshare-friendly
+  - accessibility-friendly if supported
+- generate a suggested activity order
+- manually reorder activities after the system suggests a route
+
+3. Route optimization
+Create an ordering engine that ranks the best flow based on:
+- walking distance
+- travel time
+- opening/closing hours where available
+- event start/end time
+- user selected time window
+- neighborhood clustering
+- safety score / comfort level
+- popularity/crowd level where available
+- whether the user wants food, nightlife, sightseeing, or mixed flow
+- whether the user wants to end near hotel/airport
+- weather if available
+- user availability window
+- group member availability if this is a group plan
+
+Do not blindly sort by distance only. The route should feel natural for a night out.
+
+4. Directions
+For each leg, show:
+- from location
+- to location
+- estimated walking time
+- estimated distance
+- recommended mode:
+  - walk
+  - taxi/rideshare
+  - public transport if supported
+- short direction summary
+- safety note if needed
+- fallback link/open-in-maps option if native directions are not yet integrated
+
+If a real directions provider is unavailable, use straight-line distance only as a temporary fallback and clearly label it in developer output. Do not pretend straight-line distance is a real walking route.
+
+5. Mini-map
+Add a mini-map to the plan screen showing:
+- numbered checkpoints
+- route line between stops
+- current user location if GPS permission is granted
+- completed checkpoints
+- next checkpoint highlighted
+- estimated time to next stop
+- full route overview
+- button to expand to full map
+
+Checkpoint labels:
+1. Start
+2. Stop 1
+3. Stop 2
+4. Stop 3
+5. End / Return point
+
+6. Checkpoint progress
+Use GPS to track progress:
+- mark checkpoint as arrived when user enters a configurable radius/geofence
+- show “Arrived” state
+- show “Next stop” state
+- show progress percentage
+- allow manual check-off if GPS is inaccurate
+- allow undo/checkpoint correction
+- allow “skip this stop” and reroute remaining stops
+- allow “I’m done for tonight” to end the route
+
+If GPS permission is denied:
+- keep the route usable
+- allow manual checkpoint completion
+- show directions based on selected start point
+
+7. Safety integration
+Tie into Safe Return and privacy systems:
+- optional Safe Return check-in for night routes
+- show estimated return time
+- warn if route ends far from hotel/stay
+- warn if route includes long isolated walking legs late at night
+- allow share route with Trip Crew or trusted contact
+- do not expose real-time location publicly
+- if location sharing is enabled, share only with approved Trip Crew/trusted contacts
+- delayed posting/geotag rules must still protect real-time location
+
+8. Compass AI integration
+Compass should explain why the route order was chosen.
+
+Example:
+“Start with dinner near Shibuya Station, then move to the rooftop bar 8 minutes away, then finish at the club because it opens later and keeps you near late-night food options.”
+
+Compass should be able to:
+- suggest better order
+- remove unsafe stop
+- add nearby food/rest stop
+- recommend rideshare for long legs
+- adjust route if user skips a stop
+- adjust route if a place is closed
+- adjust route if weather changes
+
+9. Group plan behavior
+For group trips/circles:
+- show shared route plan
+- allow host/plan editor to update route
+- allow members to mark joined/not joined
+- show group checkpoint progress if allowed
+- respect privacy settings
+- do not expose every member’s live location unless permission is granted
+
+10. Data model/API
+Use existing trip plan/activity tables if possible.
+
+If missing, add the smallest safe model needed for:
+- route plan
+- route stops
+- optimized order
+- route legs
+- checkpoint status
+- route owner/group
+- route visibility/privacy
+- generated route metadata
+- source activity/place IDs
+
+Suggested route plan fields:
+- id
+- ownerUserId
+- tripId optional
+- circleId optional
+- title
+- startLocation
+- endLocation
+- routeStyle
+- status: draft / active / completed / cancelled
+- createdAt
+- updatedAt
+
+Suggested route stop fields:
+- id
+- routePlanId
+- sourceType: saved_place / discovery_place / event / custom_location / airport / hotel
+- sourceId optional
+- structuredLocation
+- orderIndex
+- plannedArrivalTime optional
+- plannedDepartureTime optional
+- checkpointStatus: pending / arrived / skipped / manually_completed
+- arrivedAt optional
+
+Suggested route leg fields:
+- id
+- routePlanId
+- fromStopId
+- toStopId
+- distanceMeters
+- durationSeconds
+- mode
+- provider
+- polyline optional
+- safetyNotes optional
+
+Do not duplicate existing trip itinerary or saved-place systems if they can be extended safely.
+
+11. UI locations
+Wire Trip Flow into:
+- Trips page
+- Trip Detail page
+- Saved Ideas / Saved Places
+- Discovery place cards
+- Hidden Gems
+- Layover Mode
+- Event plan screen
+- Circle plan screen
+- Compass recommendations
+
+Add actions:
+- “Add to Night Route”
+- “Create walking flow”
+- “Optimize route”
+- “Open mini-map”
+- “Start route”
+- “Skip stop”
+- “Reroute remaining”
+
+12. Data honesty
+- Do not invent walking directions.
+- Do not pretend straight-line distance is route distance.
+- If provider data is missing, label the limitation.
+- If coordinates are missing for a selected activity, require the user to choose a valid location from the shared location library.
+- If a place has no hours, do not claim it is open.
+- If live GPS is denied, show manual mode.
+- If route optimization is approximate, label it as estimated.
+
+13. Tests
+Add or update tests proving:
+- user can select multiple activities and create a route plan
+- route engine returns an optimized order
+- route uses structured location coordinates
+- route refuses stops missing coordinates
+- mini-map renders numbered checkpoints
+- GPS denied still allows manual checkpoint mode
+- entering checkpoint radius marks stop as arrived
+- skipping a stop reroutes remaining stops
+- route can be shared with Trip Crew only when privacy allows
+- Compass explanation matches selected route order
+- no duplicate GPS/map/location systems are created
+
+14. Verification
+Run:
+- route planner helper tests
+- location/GPS helper tests
+- affected frontend tests
+- route/API tests if backend endpoints are added
+- typecheck
+- lint/guards if available
+
+Report:
+- what existing systems were found
+- what was reused
+- what was newly added
+- files changed
+- tests run
+- exact pass/fail counts
+- limitations
+- follow-up tasks
+
+Acceptance:
+A user can select multiple activities for one night/day, generate the best flow order, view walking directions, see a mini-map with numbered checkpoints, start the route, and track checkpoint progress as they go. The feature must reuse the shared location library/GPS/map systems, provide honest route data, and protect user location privacy.
