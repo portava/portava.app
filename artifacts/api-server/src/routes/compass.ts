@@ -341,9 +341,48 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       cursor ?? null,
     );
 
+    // Enrich items with signed recommendation tokens (same pattern as full feed).
+    // Wrap in `sections[]` format so clients share one response envelope.
+    const registrationRows: RecommendationRow[] = [];
+    const enrichedItems = (result.section?.items ?? []).map((item: any) => {
+      const token = encodeRecommendationToken({
+        userId:         user.id,
+        itemId:         String(item.item?.id ?? item.id ?? ""),
+        itemType:       String(item.item?.type ?? item.type ?? ""),
+        sectionName:    sectionParam,
+        explanationKey: item.explanationKey,
+      });
+      registrationRows.push({
+        user_id:           user.id,
+        recommendation_id: token,
+        explanation_key:   item.explanationKey,
+        item_id:           String(item.item?.id ?? item.id ?? ""),
+        item_type:         String(item.item?.type ?? item.type ?? ""),
+        section_name:      sectionParam,
+      });
+      return { ...item, recommendationId: token };
+    });
+
+    // Pre-register tokens (fire-and-forget — /why route does authoritative lookup)
+    if (registrationRows.length > 0) {
+      void sc.from("compass_served_recommendations")
+        .upsert(registrationRows, { onConflict: "recommendation_id" });
+    }
+
+    const sectionPayload = result.section
+      ? { ...result.section, items: enrichedItems }
+      : null;
+
+    const response = {
+      sections:   sectionPayload ? [sectionPayload] : [],
+      nextCursor: result.nextCursor,
+      fallback:   false,
+      compassEnabled: true,
+    };
+
     // Write-through: cache the result (fire-and-forget)
-    void setCachedFeed(sc, user.id, cacheKey, "section", result);
-    res.json(result);
+    void setCachedFeed(sc, user.id, cacheKey, "section", response);
+    res.json(response);
   } catch (err) {
     // On unhandled error, return section-schema fields + safe fallback content.
     // `section: null` is the consistent fallback signal; `safeItems` carries

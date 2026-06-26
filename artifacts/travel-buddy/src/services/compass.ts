@@ -84,6 +84,63 @@ export async function fetchCompassFeed(
   }
 }
 
+/**
+ * Normalize a raw section API response to the CompassFeedResponse envelope.
+ * Handles two historical shapes:
+ *  - Old: { section: FeedSection, nextCursor, fallback }  (singular)
+ *  - New: { sections: FeedSection[], nextCursor, fallback } (plural, matches full feed)
+ * In either case, FeedItem shape is also normalized to flat CompassFeedItem.
+ */
+function normalizeSectionResponse(raw: any): CompassFeedResponse {
+  // Determine the sections array regardless of response shape
+  let rawSections: any[] = [];
+  if (Array.isArray(raw.sections)) {
+    rawSections = raw.sections;
+  } else if (raw.section && typeof raw.section === 'object') {
+    rawSections = [raw.section];
+  }
+
+  // Normalize items from FeedItem (nested .item) → CompassFeedItem (flat)
+  const sections: CompassFeedSection[] = rawSections.map((sec: any) => ({
+    name:  sec.name ?? '',
+    total: sec.total ?? 0,
+    items: (sec.items ?? []).map((fi: any): CompassFeedItem => {
+      // FeedItem has nested fi.item (CompassItem), flat fields on fi
+      const inner = fi.item ?? fi;
+      return {
+        id:                 String(inner.id ?? fi.id ?? ''),
+        type:               String(inner.type ?? fi.type ?? ''),
+        category:           String(inner.category ?? fi.category ?? ''),
+        title:              inner.title ?? fi.title ?? undefined,
+        score:              fi.finalScore ?? undefined,
+        recommendationToken: fi.recommendationId ?? fi.recommendationToken ?? undefined,
+        explanationKey:     fi.explanationKey ?? undefined,
+        data:               inner.data ?? undefined,
+      };
+    }),
+  }));
+
+  return {
+    sections,
+    nextCursor:    raw.nextCursor ?? null,
+    fallback:      raw.fallback ?? false,
+    fallbackReason: raw.fallbackReason ?? undefined,
+    compassEnabled: raw.compassEnabled ?? !raw.fallback,
+    safeItems:     (raw.safeItems ?? []).map((fi: any): CompassFeedItem => {
+      const inner = fi.item ?? fi;
+      return {
+        id:       String(inner.id ?? fi.id ?? ''),
+        type:     String(inner.type ?? fi.type ?? ''),
+        category: String(inner.category ?? fi.category ?? ''),
+        title:    inner.title ?? fi.title ?? undefined,
+        data:     inner.data ?? undefined,
+        recommendationToken: fi.recommendationId ?? fi.recommendationToken ?? undefined,
+        explanationKey:      fi.explanationKey ?? undefined,
+      };
+    }),
+  };
+}
+
 export async function fetchCompassSection(
   section: string,
   params: { city?: string; cursor?: string } = {},
@@ -95,7 +152,7 @@ export async function fetchCompassSection(
     if (params.cursor) qs.set('cursor', params.cursor);
     const r = await authedFetch(`/api/compass/feed/section/${encodeURIComponent(section)}?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    return { ok: true, data: await r.json() };
+    return { ok: true, data: normalizeSectionResponse(await r.json()) };
   } catch {
     return { ok: false, error: 'network_error' };
   }

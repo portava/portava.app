@@ -32,7 +32,7 @@ interface UseCompassFeedResult {
  * - Falls back gracefully when `compassEnabled` is false in the response.
  */
 export function useCompassFeed({
-  section = 'for-you',
+  section = 'for_you',
   city,
   enabled = true,
 }: UseCompassFeedOptions = {}): UseCompassFeedResult {

@@ -248,11 +248,13 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
           return (
             <View key={item.place.id} style={isShowMore ? styles.showMoreHighlight : undefined}>
               {/* Reason banner — Compass items or Telegraph cards */}
-              {item.kind === 'compass' && item.item.explanationKey ? (
+              {item.kind === 'compass' ? (
                 <View style={styles.reasonBanner}>
                   <Info size={11} color={color.signal} />
                   <Text style={styles.reasonText} numberOfLines={2}>
-                    Recommended based on your preferences
+                    {item.item.explanationKey
+                      ? 'Recommended based on your preferences'
+                      : 'Personalised pick for you'}
                   </Text>
                   <CompassFeedbackMenu
                     recommendationId={item.item.recommendationToken ?? item.item.id}
