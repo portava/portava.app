@@ -8,8 +8,9 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { UserPlus, UserCheck } from 'lucide-react-native';
+import { UserPlus, UserCheck, X } from 'lucide-react-native';
 import {
   getSuggestedTravelers,
   getFollowStatus,
@@ -21,13 +22,34 @@ import { color, space, radius, type as t } from '../theme/tokens';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
+const DISMISSED_KEY = 'people_you_may_know_dismissed';
+
+async function loadDismissed(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(DISMISSED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+
+async function saveDismissed(ids: Set<string>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids]));
+  } catch {
+    // silently ignore storage errors
+  }
+}
 
 interface CardProps {
   user: TravelerSearchResult;
   onFollowed: (userId: string) => void;
+  onDismiss: (userId: string) => void;
 }
 
-function SuggestionCard({ user, onFollowed }: CardProps) {
+function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
   const [following, setFollowing] = useState(user.isFollowing);
   const [toggling, setToggling] = useState(false);
 
@@ -54,6 +76,13 @@ function SuggestionCard({ user, onFollowed }: CardProps) {
 
   return (
     <Pressable style={styles.card} onPress={handlePress}>
+      <Pressable
+        style={styles.dismissBtn}
+        onPress={() => onDismiss(user.id)}
+        hitSlop={8}
+      >
+        <X size={11} color={color.mute} />
+      </Pressable>
       {user.avatarUrl ? (
         <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
       ) : (
@@ -96,19 +125,25 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [followingCount, setFollowingCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     if (!isAuthed || !userId) { setLoading(false); return; }
     setLoading(true);
-    const [statusRes, suggestRes] = await Promise.all([
+    const [statusRes, suggestRes, dismissedIds] = await Promise.all([
       getFollowStatus(userId),
       getSuggestedTravelers(STRIP_LIMIT),
+      loadDismissed(),
     ]);
+    setDismissed(dismissedIds);
     if (statusRes.ok && statusRes.data) {
       setFollowingCount(statusRes.data.followingCount);
     }
     if (suggestRes.ok && suggestRes.data) {
-      setSuggestions(suggestRes.data.slice(0, STRIP_LIMIT));
+      const filtered = suggestRes.data
+        .filter((u) => !dismissedIds.has(u.id))
+        .slice(0, STRIP_LIMIT);
+      setSuggestions(filtered);
     }
     setLoading(false);
   }, [userId, isAuthed]);
@@ -118,6 +153,16 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const handleFollowed = useCallback((uid: string) => {
     setSuggestions((prev) => prev.filter((u) => u.id !== uid));
     setFollowingCount((c) => (c !== null ? c + 1 : c));
+  }, []);
+
+  const handleDismiss = useCallback((uid: string) => {
+    setSuggestions((prev) => prev.filter((u) => u.id !== uid));
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(uid);
+      saveDismissed(next);
+      return next;
+    });
   }, []);
 
   // Hide: not authed, still loading with no data, following >= threshold, or no suggestions
@@ -140,7 +185,12 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
         contentContainerStyle={styles.strip}
       >
         {suggestions.map((user) => (
-          <SuggestionCard key={user.id} user={user} onFollowed={handleFollowed} />
+          <SuggestionCard
+            key={user.id}
+            user={user}
+            onFollowed={handleFollowed}
+            onDismiss={handleDismiss}
+          />
         ))}
       </ScrollView>
     </View>
@@ -182,6 +232,16 @@ const styles = StyleSheet.create({
     padding: space.md,
     alignItems: 'center',
     gap: 5,
+  },
+  dismissBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
   },
   avatar: {
     width: 52,
