@@ -269,6 +269,34 @@ describe("GET /api/users/suggestions", () => {
     );
   });
 
+  it("primary follow-back candidates are shuffled so different orderings are possible", async () => {
+    // 10 users all follow ME — these become primary candidates (not fallback)
+    const followers = Array.from({ length: 10 }, (_, i) => ({
+      id: `follower-${i}`,
+      handle: `follower${i}`,
+      name: `Follower ${i}`,
+      avatar_url: null,
+      is_private: false,
+    }));
+    const follows = followers.map((f) => ({ follower_id: f.id, following_id: ME }));
+    setup({ follows, profiles: followers, blocks: [] });
+
+    // Hit the endpoint 20 times and collect the orderings
+    const orderings = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        req("/users/suggestions")
+          .then((r) => r.json())
+          .then((body: any) => body.users.map((u: any) => u.id).join(","))
+      )
+    );
+
+    const unique = new Set(orderings);
+    assert.ok(
+      unique.size > 1,
+      `Expected multiple distinct orderings for primary candidates across 20 requests, got ${unique.size}`
+    );
+  });
+
   it("returns correct TravelerSearchResult shape", async () => {
     setup({
       follows: [{ follower_id: B, following_id: ME }],

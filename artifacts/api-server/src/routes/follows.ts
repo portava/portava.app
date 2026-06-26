@@ -326,10 +326,16 @@ router.get("/users/suggestions", async (req, res) => {
     (myFollowRows ?? []).map((r: any) => r.following_id as string),
   );
 
-  // 4. Follow-back candidates: my followers I haven't followed back, not blocked
-  const candidateIds = followerIds
-    .filter((id) => !alreadyFollowingSet.has(id) && !blockedSet.has(id))
-    .slice(0, 10);
+  // 4. Follow-back candidates: my followers I haven't followed back, not blocked.
+  // Shuffle before slicing so a different mix surfaces on every visit.
+  const filtered = followerIds.filter(
+    (id) => !alreadyFollowingSet.has(id) && !blockedSet.has(id),
+  );
+  for (let i = filtered.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
+  }
+  const candidateIds = filtered.slice(0, 10);
 
   // 5. If no follow-back candidates, fall back to a sample of popular/recent profiles
   let safeIds: string[];
