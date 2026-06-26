@@ -1932,6 +1932,9 @@ router.post('/threads/:threadId/report', async (req, res) => {
     req.log.warn({ err: error }, 'thread report insert failed (table may not exist yet)');
   }
 
+  // Compass: reporter's cache should no longer surface content from this thread
+  await invalidateCompassCache(sc, user.id, "thread_report");
+
   res.status(201).json({ ok: true });
 });
 
@@ -1962,6 +1965,9 @@ router.post('/messages/:messageId/report', async (req, res) => {
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed (table may not exist yet)');
   }
+
+  // Compass: reporter's cache should no longer surface content from this message author
+  await invalidateCompassCache(sc, user.id, "message_report");
 
   res.status(201).json({ ok: true });
 });

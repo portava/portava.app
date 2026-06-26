@@ -278,7 +278,15 @@ router.get("/compass/frontload", async (req, res) => {
     return;
   }
 
-  const parsed = frontloadQuerySchema.safeParse(req.query);
+  // Hints may arrive as query params (preferred) or request headers (e.g. from
+  // native clients that set headers before the URL is fully constructed).
+  const networkFromHeader = req.headers['x-network-hint'];
+  const batteryFromHeader = req.headers['x-battery-hint'];
+
+  const parsed = frontloadQuerySchema.safeParse({
+    network: req.query.network ?? (typeof networkFromHeader === 'string' ? networkFromHeader : undefined),
+    battery: req.query.battery ?? (typeof batteryFromHeader === 'string' ? batteryFromHeader : undefined),
+  });
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
     return;

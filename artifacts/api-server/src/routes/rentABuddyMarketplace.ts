@@ -76,6 +76,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -1970,6 +1971,16 @@ router.post("/api/rent-a-buddy/admin/packages/:id/approve", async (req, res) => 
   await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "package", target_id: req.params.id, action: "package_approve", notes: req.body?.reason ?? null,
   });
+
+  // Compass: buddy's approved package changes their feed ranking — invalidate their cache
+  const { data: pkg } = await svc
+    .from("rent_buddy_packages")
+    .select("buddy_id")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (pkg?.buddy_id) {
+    await invalidateCompassCache(svc, pkg.buddy_id as string, "package_approved");
+  }
 
   res.json({ ok: true });
 });

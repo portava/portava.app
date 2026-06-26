@@ -658,8 +658,9 @@ describe("Cache-backed tier 1–3 assembly", () => {
     };
     const { db } = makeFakeDb(tableData);
 
-    // Seed the L1 in-process cache (setCachedFeed stores in L1 synchronously)
-    await setCachedFeed(db, USER_A, 'frontload:tier1', 'frontload', cachedPayload);
+    // Seed the L1 in-process cache (setCachedFeed stores in L1 synchronously).
+    // Key includes ':wifi' because buildFrontLoadPayload is called with networkHint='wifi'.
+    await setCachedFeed(db, USER_A, 'frontload:tier1:wifi', 'frontload', cachedPayload);
 
     // buildFrontLoadPayload should detect the L1 hit and return the cached tier1
     const profile = baseProfile({ currentCity: 'Rome' });
@@ -685,8 +686,9 @@ describe("Cache-backed tier 1–3 assembly", () => {
     };
     const { db } = makeFakeDb(tableData);
 
-    // Verify L1 is empty before the call
-    const before = await getCachedFeed(db, USER_A, 'frontload:tier1', 'frontload');
+    // Verify L1 is empty before the call.
+    // Key includes ':wifi' — must match the key used inside buildFrontLoadPayload.
+    const before = await getCachedFeed(db, USER_A, 'frontload:tier1:wifi', 'frontload');
     assert.strictEqual(before, null, "L1 must be empty before buildFrontLoadPayload on cache miss");
 
     const profile = baseProfile({ currentCity: 'Berlin' });
@@ -694,7 +696,7 @@ describe("Cache-backed tier 1–3 assembly", () => {
 
     // After a cache miss, setCachedFeed sets L1 synchronously inside buildFrontLoadPayload.
     // The fire-and-forget DB upsert may still be in-flight, but L1 is available immediately.
-    const after = await getCachedFeed(db, USER_A, 'frontload:tier1', 'frontload');
+    const after = await getCachedFeed(db, USER_A, 'frontload:tier1:wifi', 'frontload');
     assert.ok(after !== null,
       "cache miss must back-fill L1 so the next call is a cache hit");
     assert.ok(Array.isArray(after),

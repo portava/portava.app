@@ -514,9 +514,12 @@ export async function buildFrontLoadPayload(
   // Cache keys are per-user so they are invalidated atomically when the user's
   // compass cache entry is evicted (e.g. on block, booking change, etc.).
   // Safety/auth items live in Tier 0 and are deliberately excluded from this path.
-  const t1Key = `frontload:tier1`;
-  const t2Key = `frontload:tier2`;
-  const t3Key = `frontload:tier3`;
+  //
+  // The network hint is included in the cache key to prevent cellular payloads
+  // (which strip video) from being served to wifi clients and vice-versa.
+  const t1Key = `frontload:tier1:${networkHint}`;
+  const t2Key = `frontload:tier2:${networkHint}`;
+  const t3Key = `frontload:tier3:${networkHint}`;
 
   let tier1: FrontLoadItem[] = [];
   if (maxTier >= 1) {

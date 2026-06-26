@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS compass_feed_cache (
   user_id     UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   cache_key   TEXT        NOT NULL,
   entry_type  TEXT        NOT NULL
-                CHECK (entry_type IN ('feed','section','city_guide','booking')),
+                CHECK (entry_type IN ('feed','section','city_guide','booking','frontload','safety')),
   payload     JSONB       NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at  TIMESTAMPTZ NOT NULL,

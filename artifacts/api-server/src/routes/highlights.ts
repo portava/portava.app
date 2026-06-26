@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
 import { canMessage } from "../lib/messagingPermissions";
 import { z } from "zod";
@@ -808,6 +809,13 @@ router.post("/highlights/:id/report", async (req, res) => {
   import("../compass/CompassFairExposureEngine.js").then(({ endFairExposure }) => {
     endFairExposure(sc, authorId, "report");
   }, () => {});
+
+  // Invalidate compass cache for the reporter (their feed should not continue to
+  // surface content they reported) and the reported author (exposure adjusted).
+  await Promise.allSettled([
+    invalidateCompassCache(sc, user.id,   "highlight_report_submitted"),
+    invalidateCompassCache(sc, authorId,  "highlight_report_received"),
+  ]);
 
   res.status(204).send();
 });
