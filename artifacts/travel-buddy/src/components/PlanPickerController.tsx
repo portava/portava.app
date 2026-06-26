@@ -49,11 +49,16 @@ const PlanPickerContext = createContext<PlanPickerContextValue | null>(null);
 
 // ── Category mapping ──────────────────────────────────────────────────────────
 
-function sourceToCategory(type: string): TripPlanCategory {
-  if (type === 'meetup')        return 'meeting_point';
-  if (type === 'dining')        return 'dining';
-  if (type === 'transport')     return 'transport';
-  if (type === 'accommodation') return 'accommodation';
+function sourceToCategory(type: string, category?: string): TripPlanCategory {
+  if (type === 'meetup' || type === 'plan') return 'meeting_point';
+  if (type === 'dining')                    return 'dining';
+  if (type === 'transport')                 return 'transport';
+  if (type === 'accommodation')             return 'accommodation';
+  // honour an explicit category hint from the source descriptor
+  if (category === 'meeting_point')         return 'meeting_point';
+  if (category === 'dining')                return 'dining';
+  if (category === 'transport')             return 'transport';
+  if (category === 'accommodation')         return 'accommodation';
   return 'activity';
 }
 
@@ -172,7 +177,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
           if (msg.includes('404') || msg.includes('not found') || msg.includes('no place')) {
             await createPlanItem(selectedTrip.id, {
               title:        source.title,
-              category:     sourceToCategory(source.type),
+              category:     sourceToCategory(source.type, source.category),
               sourceType:   'place',
               sourceId:     source.id,
               locationName: source.locationName ?? source.city,

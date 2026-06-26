@@ -214,7 +214,7 @@ function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         <View style={{ flex: 1 }} />
         <Pressable
           style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
-          onPress={() => planPicker.open({ id: item.id, type: 'meetup', title: item.title ?? 'Meetup', city: item.city })}
+          onPress={() => planPicker.open({ id: item.id, type: 'plan', title: item.title ?? 'Meetup', city: item.city, category: 'meeting_point' })}
         >
           <Text style={s.outlineText}>Add to Plan</Text>
         </Pressable>
