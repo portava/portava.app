@@ -160,18 +160,29 @@ function applySafetyAndPrivacy(
   if (items.length === 0) return [];
   const compassItems    = items.map(toCompassItem);
   const { passed }      = runSafetyFilterBatch(compassItems, profile, db);
-  const passedIds       = new Set(passed.map((i) => i.id));
 
-  // Also run sanitizeItem to enforce privacy guard; if sanitize throws, exclude.
-  const privacyPassed   = new Set<string>();
+  // Run sanitizeItem and APPLY the sanitized output so privacy transformations
+  // (e.g. authorId masking) are reflected in the returned FallbackItems rather
+  // than discarded. Items that throw are excluded.
+  const sanitizedMap = new Map<string, CompassItem>();
   for (const ci of passed) {
     try {
-      sanitizeItem(ci, profile, db);
-      privacyPassed.add(ci.id);
+      const sanitized = sanitizeItem(ci, profile, db);
+      sanitizedMap.set(ci.id, sanitized);
     } catch { /* exclude */ }
   }
 
-  return items.filter((item) => passedIds.has(item.id) && privacyPassed.has(item.id));
+  return items
+    .filter((item) => sanitizedMap.has(item.id))
+    .map((item) => {
+      const sanitized = sanitizedMap.get(item.id)!;
+      // Propagate any privacy masking applied by sanitizeItem back onto the
+      // FallbackItem so the caller sees the privacy-correct authorId.
+      if (sanitized.authorId !== item.authorId) {
+        return { ...item, authorId: sanitized.authorId };
+      }
+      return item;
+    });
 }
 
 // ── Block list loader ─────────────────────────────────────────────────────────
@@ -234,12 +245,12 @@ async function fetchActiveTrips(
     // then deduplicate so a user's own trip isn't shown twice.
     const [ownedRes, memberRes] = await Promise.allSettled([
       db.from("trips")
-        .select("id, destination, start_date, end_date, status, created_by")
-        .eq("status", "active")
-        .eq("created_by", userId)
+        .select("id, destination_city, start_date, end_date, status, owner_id")
+        .in("status", ["in_progress", "upcoming"])
+        .eq("owner_id", userId)
         .limit(5),
       db.from("trip_members")
-        .select("trip_id, trips(id, destination, start_date, end_date, status, created_by)")
+        .select("trip_id, trips(id, destination_city, start_date, end_date, status, owner_id)")
         .eq("user_id", userId)
         .limit(5),
     ]);
@@ -263,14 +274,14 @@ async function fetchActiveTrips(
     }
 
     return allTrips
-      .filter((r: any) => !blockedIds.has(r.created_by as string))
+      .filter((r: any) => !blockedIds.has(r.owner_id as string))
       .slice(0, 5)
       .map((r: any): FallbackItem => ({
         id:       r.id as string,
         type:     "trip",
         category: "active_trip",
-        title:    (r.destination as string) ?? "Active Trip",
-        authorId: r.created_by as string,
+        title:    (r.destination_city as string) ?? "Active Trip",
+        authorId: r.owner_id as string,
         data:     { startDate: r.start_date, endDate: r.end_date, status: r.status },
       }));
   } catch { return []; }
@@ -285,20 +296,20 @@ async function fetchSavedTrips(
     const today = new Date().toISOString().slice(0, 10);
     const { data } = await db
       .from("trip_members")
-      .select("trip_id, trips(id, destination, start_date, status, created_by)")
+      .select("trip_id, trips(id, destination_city, start_date, status, owner_id)")
       .eq("user_id", userId)
       .limit(5);
     return ((data as any[]) ?? [])
       .map((r: any) => r.trips)
       .filter(Boolean)
       .filter((t: any) => t.status !== "cancelled" && (t.start_date ?? "") >= today)
-      .filter((t: any) => !blockedIds.has(t.created_by as string))
+      .filter((t: any) => !blockedIds.has(t.owner_id as string))
       .map((t: any): FallbackItem => ({
         id:       t.id as string,
         type:     "trip",
         category: "saved_trip",
-        title:    (t.destination as string) ?? "Upcoming Trip",
-        authorId: t.created_by as string,
+        title:    (t.destination_city as string) ?? "Upcoming Trip",
+        authorId: t.owner_id as string,
         data:     { startDate: t.start_date, status: t.status },
       }));
   } catch { return []; }
@@ -311,9 +322,9 @@ async function fetchActiveBookings(
   try {
     const { data } = await db
       .from("rent_buddy_bookings")
-      .select("id, buddy_id, status, start_date, end_date")
+      .select("id, buddy_id, status, booking_date, start_time")
       .eq("traveler_id", userId)
-      .in("status", ["confirmed", "active"])
+      .in("status", ["confirmed", "completed"])
       .limit(3);
     return ((data as any[]) ?? []).map((r: any): FallbackItem => ({
       id:       r.id as string,
@@ -321,7 +332,7 @@ async function fetchActiveBookings(
       category: "booking",
       title:    "Active Booking",
       authorId: r.buddy_id as string,
-      data:     { buddyId: r.buddy_id, status: r.status, startDate: r.start_date },
+      data:     { buddyId: r.buddy_id, status: r.status, bookingDate: r.booking_date, startTime: r.start_time },
     }));
   } catch { return []; }
 }
@@ -388,25 +399,25 @@ async function fetchVerifiedEvents(
   if (!city) return [];
   try {
     const now = new Date().toISOString();
-    // City filter is applied at the DB level so only events in the user's
-    // city are returned. `event_city` is the canonical city column on posts.
+    // City filter is applied at the DB level via `location_city` so only
+    // events in the user's city are returned.
     const { data } = await db
       .from("posts")
-      .select("id, user_id, content, created_at, event_city")
+      .select("id, author_id, content, created_at, location_city")
       .eq("post_type", "event")
       .eq("is_verified", true)
-      .eq("event_city", city)
+      .eq("location_city", city)
       .not("post_status", "eq", "delayed_post")
       .gt("event_starts_at", now)
       .limit(5);
     return ((data as any[]) ?? [])
-      .filter((r: any) => !blockedIds.has(r.user_id as string))
+      .filter((r: any) => !blockedIds.has(r.author_id as string))
       .map((r: any): FallbackItem => ({
         id:       r.id as string,
         type:     "event",
         category: "verified_event",
         title:    String(r.content ?? "Verified Event").slice(0, 100),
-        authorId: r.user_id as string,
+        authorId: r.author_id as string,
         data:     { city, createdAt: r.created_at },
       }));
   } catch { return []; }
@@ -446,23 +457,22 @@ async function fetchPopularPosts(
     const now = new Date().toISOString();
     const { data } = await db
       .from("posts")
-      .select("id, user_id, content, like_count, comment_count, post_status, publish_eligible_at")
+      .select("id, author_id, content, like_count, comment_count, post_status, publish_eligible_at")
       .eq("visibility", "public")
-      .is("is_hidden",   false)
-      .is("is_deleted",  false)
+      .eq("status", "active")
       // Exclude delayed posts that are not yet eligible
       .not("post_status", "eq", "delayed_post")
       .or(`publish_eligible_at.is.null,publish_eligible_at.lte.${now}`)
       .order("like_count", { ascending: false })
       .limit(8);
     return ((data as any[]) ?? [])
-      .filter((r: any) => !blockedIds.has(r.user_id as string))
+      .filter((r: any) => !blockedIds.has(r.author_id as string))
       .map((r: any): FallbackItem => ({
         id:          r.id as string,
         type:        "post",
         category:    "public_content",
         title:       String(r.content ?? "").slice(0, 100),
-        authorId:    r.user_id as string,
+        authorId:    r.author_id as string,
         data:        {
           likeCount:    r.like_count,
           commentCount: r.comment_count,
