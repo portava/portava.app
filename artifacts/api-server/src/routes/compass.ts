@@ -35,6 +35,7 @@ import {
   type NetworkHint,
   type BatteryHint,
 } from "../compass/CompassFrontLoadEngine.js";
+import { getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
 import type {
   CompassContextResponse,
   CompassFallbackResponse,
@@ -164,15 +165,20 @@ router.get("/compass/feed", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
+    const cacheKey = `feed:${cursor ?? "first_page"}`;
+
+    // Read-through: return cached payload if still fresh
+    const cached = await getCachedFeed(sc, user.id, cacheKey, "feed");
+    if (cached) { res.json(cached); return; }
+
     const profile  = await getCompassProfile(sc, user.id);
     const signals  = defaultSignals(profile);
     const context  = buildCompassContext(profile, signals);
+    const items    = await hydrateCompassItems(sc, profile);
+    const feed     = await buildFeed(items, profile, context, sc, cursor ?? null);
 
-    // Hydrate real candidate items from the DB.
-    // Phase 4 (Front Load Engine) will replace this with a pre-computed cache.
-    const items = await hydrateCompassItems(sc, profile);
-
-    const feed = await buildFeed(items, profile, context, sc, cursor ?? null);
+    // Write-through: cache the result (fire-and-forget — never blocks response)
+    void setCachedFeed(sc, user.id, cacheKey, "feed", feed);
     res.json(feed);
   } catch (err) {
     req.log.error({ err }, "compass/feed: build failed");
@@ -213,12 +219,16 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
+    const cacheKey = `section:${sectionParam}:${cursor ?? "first_page"}`;
+
+    // Read-through: return cached payload if still fresh
+    const cached = await getCachedFeed(sc, user.id, cacheKey, "section");
+    if (cached) { res.json(cached); return; }
+
     const profile  = await getCompassProfile(sc, user.id);
     const signals  = defaultSignals(profile);
     const context  = buildCompassContext(profile, signals);
-
-    // Hydrate real candidate items; Phase 4 will replace with pre-computed cache.
-    const items = await hydrateCompassItems(sc, profile);
+    const items    = await hydrateCompassItems(sc, profile);
 
     const result = await buildSection(
       sectionParam as SectionName,
@@ -228,6 +238,9 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       sc,
       cursor ?? null,
     );
+
+    // Write-through: cache the result (fire-and-forget)
+    void setCachedFeed(sc, user.id, cacheKey, "section", result);
     res.json(result);
   } catch (err) {
     req.log.error({ err }, "compass/feed/section: build failed");

@@ -31,6 +31,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
+import { buildFeed } from "./CompassFeedBuilder.js";
+import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
+import { hydrateCompassItems } from "./CompassItemHydrator.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -183,22 +186,39 @@ async function loadTier1(
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
 
-  // 1. City pulse preview — last 5 posts from current city
+  // 1. First feed page — built from the full Compass pipeline (cached 5 min)
+  let firstFeedPage: unknown = null;
+  if (db) {
+    try {
+      const signals = defaultSignals(profile);
+      const context = buildCompassContext(profile, signals);
+      const items_  = await hydrateCompassItems(db, profile);
+      firstFeedPage  = await buildFeed(items_, profile, context, db, null);
+    } catch { /* non-fatal — client falls back to direct feed request */ }
+  }
+  items.push({ type: 'first_feed_page', tier: 1, cachedAt: now, data: firstFeedPage });
+
+  // 2. City pulse preview — last 5 published posts from current city
   let pulsePreview: unknown[] = [];
   if (db && profile.currentCity) {
     try {
-      const { data } = await db
+      const { data: raw } = await db
         .from("posts")
-        .select("id, body, created_at, user_id")
+        .select("id, body, created_at, user_id, post_status, status")
         .eq("city", profile.currentCity)
+        .eq("status", "active")
         .order("created_at", { ascending: false })
-        .limit(5);
-      pulsePreview = (data as any[]) ?? [];
+        .limit(10);
+      // Exclude posts pending delayed-publish (only show fully published content)
+      pulsePreview = ((raw as any[]) ?? [])
+        .filter((p: any) => !p.post_status || p.post_status === "published")
+        .slice(0, 5)
+        .map(({ post_status: _ps, status: _s, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'city_pulse_preview', tier: 1, cachedAt: now, data: pulsePreview });
 
-  // 2. Unread notification count
+  // 3. Unread notification count
   let notifCount = 0;
   let topNotifs: unknown[] = [];
   if (db) {
@@ -402,9 +422,19 @@ export async function recordNavigationEvent(
       occurred_at: occurredAt.toISOString(),
     });
 
-    // 2. Update aggregated pattern (upsert: increment transition_count)
-    // We use a generic "app" as the from_screen since the client only sends
-    // the destination screen. Phase 5 can enrich this with transition pairs.
+    // 2. Update aggregated pattern — read-then-increment because PostgREST
+    // does not support `col = col + 1` in upserts. A race between two
+    // simultaneous events may lose one count, which is acceptable for ranking.
+    const { data: existing } = await db
+      .from("compass_user_navigation_patterns")
+      .select("transition_count")
+      .eq("user_id", userId)
+      .eq("from_screen", "app")
+      .eq("to_screen", screenName)
+      .maybeSingle();
+
+    const newCount = ((existing as any)?.transition_count ?? 0) + 1;
+
     await db
       .from("compass_user_navigation_patterns")
       .upsert(
@@ -412,13 +442,13 @@ export async function recordNavigationEvent(
           user_id:          userId,
           from_screen:      "app",
           to_screen:        screenName,
-          transition_count: 1,
+          transition_count: newCount,
           last_seen_at:     occurredAt.toISOString(),
           updated_at:       new Date().toISOString(),
         },
         {
-          onConflict:         "user_id,from_screen,to_screen",
-          ignoreDuplicates:   false,
+          onConflict:       "user_id,from_screen,to_screen",
+          ignoreDuplicates: false,
         },
       );
   } catch { /* non-fatal */ }

@@ -21,6 +21,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
+import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 
 const router = Router();
 
@@ -853,6 +854,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
 
+  // Invalidate compass cache: active_booking state changed for traveler
+  void invalidateCompassCache(getServiceClient(), auth.user.id, "booking_cancel");
+
   return res.json({ ok: true });
 });
 
@@ -928,6 +932,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_accepted", "Buddy accepted — your booking is confirmed!");
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
+
+  // Invalidate compass cache: active_booking state changed for both buddy and traveler
+  const sc_ = getServiceClient();
+  void invalidateCompassCache(sc_, auth.user.id, "booking_accept");
+  void invalidateCompassCache(sc_, (booking as any).traveler_id as string, "booking_accept");
 
   return res.json({ ok: true });
 });

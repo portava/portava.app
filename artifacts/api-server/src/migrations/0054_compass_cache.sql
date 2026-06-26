@@ -34,10 +34,11 @@ CREATE TABLE IF NOT EXISTS compass_feed_cache (
 );
 
 ALTER TABLE compass_feed_cache ENABLE ROW LEVEL SECURITY;
+-- Authenticated users may read only their own cached rows.
+-- All writes (upsert, delete) go through the API server using the service role,
+-- which bypasses RLS automatically — no service_all policy needed.
 CREATE POLICY compass_feed_cache_select ON compass_feed_cache
   FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY compass_feed_cache_service_all ON compass_feed_cache
-  FOR ALL USING (true) WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS compass_feed_cache_user_key_idx
   ON compass_feed_cache (user_id, cache_key);
@@ -59,8 +60,7 @@ CREATE TABLE IF NOT EXISTS compass_preload_queue (
 );
 
 ALTER TABLE compass_preload_queue ENABLE ROW LEVEL SECURITY;
-CREATE POLICY compass_preload_queue_service_all ON compass_preload_queue
-  FOR ALL USING (true) WITH CHECK (true);
+-- Service role only — no direct auth-role access needed for this internal queue.
 
 CREATE INDEX IF NOT EXISTS compass_preload_queue_user_pending_idx
   ON compass_preload_queue (user_id, tier) WHERE completed_at IS NULL;
@@ -77,10 +77,10 @@ CREATE TABLE IF NOT EXISTS compass_preload_events (
 );
 
 ALTER TABLE compass_preload_events ENABLE ROW LEVEL SECURITY;
+-- Users may only insert their own navigation events.
+-- All reads and deletes (cleanup jobs) go through the service role.
 CREATE POLICY compass_preload_events_insert ON compass_preload_events
   FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY compass_preload_events_service_all ON compass_preload_events
-  FOR ALL USING (true) WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS compass_preload_events_user_idx
   ON compass_preload_events (user_id, occurred_at DESC);
@@ -96,8 +96,7 @@ CREATE TABLE IF NOT EXISTS compass_cache_invalidations (
 );
 
 ALTER TABLE compass_cache_invalidations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY compass_cache_invalidations_service_all ON compass_cache_invalidations
-  FOR ALL USING (true) WITH CHECK (true);
+-- Append-only audit log — service role writes only; no direct auth-role access.
 
 CREATE INDEX IF NOT EXISTS compass_cache_invalidations_user_idx
   ON compass_cache_invalidations (user_id, invalidated_at DESC);
@@ -116,8 +115,7 @@ CREATE TABLE IF NOT EXISTS compass_user_navigation_patterns (
 );
 
 ALTER TABLE compass_user_navigation_patterns ENABLE ROW LEVEL SECURITY;
-CREATE POLICY compass_user_navigation_patterns_service_all ON compass_user_navigation_patterns
-  FOR ALL USING (true) WITH CHECK (true);
+-- Service role only — pattern aggregation is internal to the API server.
 
 CREATE INDEX IF NOT EXISTS compass_user_navigation_patterns_user_count_idx
   ON compass_user_navigation_patterns (user_id, transition_count DESC);
@@ -133,8 +131,7 @@ CREATE TABLE IF NOT EXISTS compass_content_freshness (
 );
 
 ALTER TABLE compass_content_freshness ENABLE ROW LEVEL SECURITY;
-CREATE POLICY compass_content_freshness_service_all ON compass_content_freshness
-  FOR ALL USING (true) WITH CHECK (true);
+-- Service role only — staleness tracking is internal; no client reads needed.
 
 -- ── compass_media_preload_manifest ────────────────────────────────────────────
 -- Media URLs (images, video thumbnails) the client should prefetch.
@@ -151,10 +148,10 @@ CREATE TABLE IF NOT EXISTS compass_media_preload_manifest (
 );
 
 ALTER TABLE compass_media_preload_manifest ENABLE ROW LEVEL SECURITY;
+-- Users may read only their own preload manifest entries.
+-- All writes go through the service role.
 CREATE POLICY compass_media_preload_manifest_select ON compass_media_preload_manifest
   FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY compass_media_preload_manifest_service_all ON compass_media_preload_manifest
-  FOR ALL USING (true) WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS compass_media_preload_manifest_user_tier_idx
   ON compass_media_preload_manifest (user_id, tier, priority DESC)
@@ -172,8 +169,10 @@ CREATE TABLE IF NOT EXISTS compass_frontload_rules (
 );
 
 ALTER TABLE compass_frontload_rules ENABLE ROW LEVEL SECURITY;
-CREATE POLICY compass_frontload_rules_service_all ON compass_frontload_rules
-  FOR ALL USING (true) WITH CHECK (true);
+-- Authenticated users may read operator-configured tier rules (public config).
+-- Only the service role may write rules.
+CREATE POLICY compass_frontload_rules_select ON compass_frontload_rules
+  FOR SELECT USING (true);
 
 -- Seed default tier rules
 INSERT INTO compass_frontload_rules (rule_name, tier, conditions) VALUES

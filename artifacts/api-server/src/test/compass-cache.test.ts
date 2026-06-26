@@ -24,6 +24,7 @@ import {
 import {
   buildFrontLoadPayload,
   buildPreloadManifest,
+  recordNavigationEvent,
   resolveMaxTier,
   type NetworkHint,
   type BatteryHint,
@@ -317,6 +318,17 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
     assert.ok(types.includes("blocked_users"), "tier0 must include blocked_users");
   });
 
+  it("tier1 contains a first_feed_page item when network allows Tier 1 (cellular+)", async () => {
+    const { db } = makeFakeDb({});
+    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+      networkHint: "cellular",
+    });
+    assert.ok(payload.maxTier >= 1, "cellular network must allow at least Tier 1");
+    const ffp = payload.tier1.find((i) => i.type === "first_feed_page");
+    assert.ok(ffp, "tier1 must include a first_feed_page item");
+    assert.strictEqual(ffp!.tier, 1, "first_feed_page must be tagged as tier 1");
+  });
+
   it("unpublished delayed post data (publishEligibleAt in future) is excluded", () => {
     // Test via the isPermitted logic: items with isDelayedPost=true and future
     // publishEligibleAt are forbidden. We verify by constructing such a payload
@@ -343,6 +355,35 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
         }
       }
     });
+  });
+});
+
+// ── recordNavigationEvent — nav count increment ───────────────────────────────
+
+describe("recordNavigationEvent — nav count increment", () => {
+  it("calling twice increments transition_count to 2 on second upsert", async () => {
+    const tableData: Record<string, FakeDbRow[]> = {
+      compass_preload_events:          [],
+      compass_user_navigation_patterns: [],
+    };
+    const { db, calls } = makeFakeDb(tableData);
+    const now = new Date();
+
+    // First event — pattern row does not exist yet → newCount = 1
+    await recordNavigationEvent(db, USER_A, "tonight", now);
+
+    const upsert1 = calls.filter((c) => c.method === "upsert");
+    assert.ok(upsert1.length >= 1, "first upsert must be called");
+    const row1 = (upsert1[upsert1.length - 1]!.args as Record<string, unknown>);
+    assert.strictEqual(row1["transition_count"], 1, "first call must write count=1");
+
+    // Second event — fake DB now has the row with transition_count=1 → newCount = 2
+    await recordNavigationEvent(db, USER_A, "tonight", now);
+
+    const upsert2 = calls.filter((c) => c.method === "upsert");
+    const row2 = (upsert2[upsert2.length - 1]!.args as Record<string, unknown>);
+    assert.strictEqual(row2["transition_count"], 2,
+      "second call must read existing count (1) and increment to 2");
   });
 });
 
