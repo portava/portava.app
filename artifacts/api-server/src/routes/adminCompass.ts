@@ -39,6 +39,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { clearL1Cache, invalidate } from "../compass/CompassCacheEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { runSandbox, type TestUserType } from "../compass/CompassTestingSandbox.js";
+import { SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
 
 const router = Router();
 
@@ -146,6 +147,9 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       totalPostsRes,
       boostOverexposedRes,
       newUsersRes,
+      buddyProfilesRes,
+      completedEventsRes,
+      upcomingEventsRes,
     ] = await Promise.allSettled([
       // Abuse flags (last 30 days)
       sc.from("compass_abuse_flags")
@@ -221,6 +225,26 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .lte("active_user_score", 5)
         .order("active_user_score", { ascending: true })
         .limit(20),
+
+      // Active buddy profiles (rent_a_buddy section supply)
+      sc.from("rent_buddy_profiles")
+        .select("user_id", { count: "exact", head: true })
+        .eq("is_active", true),
+
+      // Verified events that have already started in the last 30 days (completed)
+      sc.from("posts")
+        .select("id", { count: "exact", head: true })
+        .eq("post_type", "event")
+        .eq("is_verified", true)
+        .lte("event_starts_at", now)
+        .gte("event_starts_at", thirtyDaysAgo),
+
+      // Verified upcoming events (not yet started)
+      sc.from("posts")
+        .select("id", { count: "exact", head: true })
+        .eq("post_type", "event")
+        .eq("is_verified", true)
+        .gt("event_starts_at", now),
     ]);
 
     // ── Abuse flags ──────────────────────────────────────────────────────────
@@ -325,12 +349,62 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     const newUserRows: any[] = newUsersRes.status === "fulfilled"
       ? ((newUsersRes.value as any).data as any[] ?? []) : [];
 
+    // ── Buddy exposure (rent_a_buddy section supply) ─────────────────────────
+    const activeBuddyCount = buddyProfilesRes.status === "fulfilled"
+      ? ((buddyProfilesRes.value as any).count ?? 0) : 0;
+
+    // ── Event completion ─────────────────────────────────────────────────────
+    const completedEventCount = completedEventsRes.status === "fulfilled"
+      ? ((completedEventsRes.value as any).count ?? 0) : 0;
+    const upcomingEventCount  = upcomingEventsRes.status === "fulfilled"
+      ? ((upcomingEventsRes.value as any).count ?? 0) : 0;
+    const totalEventsInScope  = completedEventCount + upcomingEventCount;
+    const eventCompletionRatePct = totalEventsInScope > 0
+      ? Math.round((completedEventCount / totalEventsInScope) * 1_000) / 10 : 0;
+
+    // ── Preload hit rate (valid frontload entries / all valid cache entries) ─
+    // "Hit" = frontload entry is still valid when a user arrives (proxy metric;
+    // true request-level hit/miss requires client-side instrumentation).
+    const preloadValidCount = cacheByType["frontload"] ?? 0;
+    const preloadHitRatePct = validCacheCount > 0
+      ? Math.round((preloadValidCount / validCacheCount) * 1_000) / 10 : 0;
+
+    // ── Click rate proxy (any positive engagement / total feedback events) ───
+    // "Click" encompasses save, join, book, and show_more actions — the
+    // positive-signal set. Hides/reports are negative signals tracked separately.
+    const positiveEngagementCount =
+      (feedbackByAction["save"]         ?? 0) +
+      (feedbackByAction["joined"]       ?? 0) +
+      (feedbackByAction["booked"]       ?? 0) +
+      (feedbackByAction["show_more"]    ?? 0) +
+      (feedbackByAction["profile_view"] ?? 0);
+    const clickRatePct = feedbackTotal > 0
+      ? Math.round((positiveEngagementCount / feedbackTotal) * 1_000) / 10 : 0;
+
     res.json({
       generatedAt:    new Date().toISOString(),
       windowDays:     30,
 
       // Algorithm
       activeVersion,
+
+      // Feed categories — all sections currently served by the Compass pipeline
+      categoriesShown: {
+        total:    SECTION_NAMES.length,
+        sections: SECTION_NAMES,
+      },
+
+      // Feed performance
+      feedPerformance: {
+        // Feed load time is measured client-side (Expo perf marks). The server
+        // does not record per-request build durations in this schema version.
+        feedLoadTimeMsNote: "client_measured_not_tracked_server_side",
+        preloadHitRatePct,
+        preloadValidEntries: preloadValidCount,
+        // clickRatePct proxies positive engagement (save + join + book +
+        // show_more + profile_view) as a share of all feedback events.
+        clickRatePct,
+      },
 
       // Cache health
       cache: {
@@ -398,14 +472,27 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         users: newUserRows.map((r) => ({ userId: r.user_id, score: r.active_user_score })),
       },
 
+      // Buddy exposure — number of active rent_buddy_profiles available as
+      // candidates for the rent_a_buddy section
+      buddyExposure: {
+        activeBuddyCount,
+      },
+
+      // Event completion — verified events that started vs upcoming (last 30d)
+      eventCompletion: {
+        completedCount:      completedEventCount,
+        upcomingCount:       upcomingEventCount,
+        completionRatePct:   eventCompletionRatePct,
+      },
+
       // City supply / demand
       citySupplyDemand: topCities,
 
       // Delayed posts
       delayedPosts: {
-        pendingCount:   delayedCount,
+        pendingCount:       delayedCount,
         totalPostsInWindow: totalPosts,
-        delayedRatePct: delayedPublishRate,
+        delayedRatePct:     delayedPublishRate,
       },
     });
   } catch (err) {

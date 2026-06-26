@@ -313,6 +313,7 @@ describe("admin compass routes", () => {
       compass_feedback_events:         { data: [] },
       user_location_state:             { data: [] },
       posts:                           { data: [], count: 0 },
+      rent_buddy_profiles:             { data: [], count: 0 },
     });
     const { status, body } = await req("GET", "/admin/compass/dashboard");
     assert.equal(status, 200);
@@ -328,6 +329,15 @@ describe("admin compass routes", () => {
     assert.ok("delayedPosts"        in body, "should have delayedPosts");
     assert.ok("overexposedUsers"    in body, "should have overexposedUsers");
     assert.ok("newUserExposure"     in body, "should have newUserExposure");
+    assert.ok("categoriesShown"     in body, "should have categoriesShown");
+    assert.ok("feedPerformance"     in body, "should have feedPerformance");
+    assert.ok("buddyExposure"       in body, "should have buddyExposure");
+    assert.ok("eventCompletion"     in body, "should have eventCompletion");
+    assert.ok(Array.isArray(body.categoriesShown?.sections), "categoriesShown.sections should be array");
+    assert.ok(body.categoriesShown.total > 0, "categoriesShown.total should be > 0");
+    assert.ok("preloadHitRatePct"   in body.feedPerformance, "should have preloadHitRatePct");
+    assert.ok("clickRatePct"        in body.feedPerformance, "should have clickRatePct");
+    assert.ok("feedLoadTimeMsNote"  in body.feedPerformance, "should have feedLoadTimeMsNote");
   });
 
   test("11. POST /admin/compass/weights — 201 with weightSet", async () => {
