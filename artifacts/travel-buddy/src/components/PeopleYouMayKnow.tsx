@@ -24,21 +24,71 @@ import { color, space, radius, type as t } from '../theme/tokens';
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
 const DISMISSED_KEY = 'people_you_may_know_dismissed';
+const DISMISSED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-async function loadDismissed(): Promise<Set<string>> {
+interface DismissedEntry {
+  id: string;
+  dismissedAt: number;
+}
+
+async function loadDismissed(): Promise<Map<string, number>> {
   try {
     const raw = await AsyncStorage.getItem(DISMISSED_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(arr);
+    if (!raw) return new Map();
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Corrupt JSON — clear and start fresh
+      await AsyncStorage.removeItem(DISMISSED_KEY);
+      return new Map();
+    }
+
+    if (!Array.isArray(parsed)) {
+      // Unexpected shape — clear and start fresh
+      await AsyncStorage.removeItem(DISMISSED_KEY);
+      return new Map();
+    }
+
+    const now = Date.now();
+    let migrated = false;
+
+    // Normalize each element: support legacy plain string[] and new DismissedEntry[]
+    const entries: DismissedEntry[] = parsed.map((item) => {
+      if (typeof item === 'string') {
+        migrated = true;
+        return { id: item, dismissedAt: now };
+      }
+      if (item && typeof item === 'object' && typeof (item as DismissedEntry).id === 'string' && typeof (item as DismissedEntry).dismissedAt === 'number') {
+        return item as DismissedEntry;
+      }
+      // Malformed element — treat as fresh dismissal so it eventually expires
+      migrated = true;
+      return { id: String((item as { id?: unknown })?.id ?? ''), dismissedAt: now };
+    }).filter((e) => e.id.length > 0);
+
+    // Prune entries older than TTL
+    const active = entries.filter((e) => now - e.dismissedAt < DISMISSED_TTL_MS);
+
+    // Persist if: legacy format was migrated OR entries were pruned
+    if (migrated || active.length < entries.length) {
+      await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify(active));
+    }
+
+    return new Map(active.map((e) => [e.id, e.dismissedAt]));
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
-async function saveDismissed(ids: Set<string>): Promise<void> {
+async function saveDismissed(map: Map<string, number>): Promise<void> {
   try {
-    await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids]));
+    const entries: DismissedEntry[] = [...map.entries()].map(([id, dismissedAt]) => ({
+      id,
+      dismissedAt,
+    }));
+    await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify(entries));
   } catch {
     // silently ignore storage errors
   }
@@ -148,23 +198,23 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const [suggestions, setSuggestions] = useState<TravelerSearchResult[]>([]);
   const [followingCount, setFollowingCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState<Map<string, number>>(new Map());
 
   const load = useCallback(async () => {
     if (!isAuthed || !userId) { setLoading(false); return; }
     setLoading(true);
-    const [statusRes, suggestRes, dismissedIds] = await Promise.all([
+    const [statusRes, suggestRes, dismissedMap] = await Promise.all([
       getFollowStatus(userId),
       getSuggestedTravelers(STRIP_LIMIT),
       loadDismissed(),
     ]);
-    setDismissed(dismissedIds);
+    setDismissed(dismissedMap);
     if (statusRes.ok && statusRes.data) {
       setFollowingCount(statusRes.data.followingCount);
     }
     if (suggestRes.ok && suggestRes.data) {
       const filtered = suggestRes.data
-        .filter((u) => !dismissedIds.has(u.id))
+        .filter((u) => !dismissedMap.has(u.id))
         .slice(0, STRIP_LIMIT);
       setSuggestions(filtered);
     }
@@ -181,8 +231,8 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const handleDismiss = useCallback((uid: string) => {
     setSuggestions((prev) => prev.filter((u) => u.id !== uid));
     setDismissed((prev) => {
-      const next = new Set(prev);
-      next.add(uid);
+      const next = new Map(prev);
+      next.set(uid, Date.now());
       saveDismissed(next);
       return next;
     });
