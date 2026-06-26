@@ -1,0 +1,295 @@
+Run Travel Buddy core-tab button/function/page wiring audit — evidence-first, no rebuild.
+
+Scope:
+Audit and repair the core Travel Buddy tab flows only. Make sure visible buttons, card actions, menu actions, form submits, modal actions, and navigation CTAs in the main user-facing app are wired to the correct page, service, API call, or state update.
+
+Do not build the loading animation system yet. Code and wiring first, animations second.
+
+Core rule:
+Check first, reuse existing work, and do not duplicate systems. Do not classify anything as working unless the full path is traced and verified.
+
+1. Scope for this pass
+
+This pass covers only the core tab flows and primary detail routes.
+
+Included exact files:
+- app/(tabs)/index.tsx
+- app/(tabs)/discovery.tsx
+- app/(tabs)/trips.tsx
+- app/(tabs)/messages.tsx
+- app/(tabs)/passport.tsx
+- app/(tabs)/ai.tsx
+- app/(tabs)/create-tab.tsx
+- app/trip/[id].tsx
+- app/messages/[id].tsx
+- app/post/[id].tsx
+- app/passport/[username].tsx
+
+Out of scope for this pass:
+- app/create.tsx
+- Rent a Buddy
+- Safe Return
+- Layover Mode
+- admin routes
+- background geofencing
+- full loading animation system
+- full mock-to-real-data conversion
+
+Do not audit or modify out-of-scope systems in this pass. List them as deferred to pass 2.
+
+2. Correct existing loader/skeleton references
+
+Before touching any loading states, inspect existing skeleton components and reuse them later.
+
+Known existing files:
+- src/components/discovery/PlaceSkeleton.tsx
+  - exports PlaceCardSkeleton
+  - exports PlaceSkeletonList
+- src/components/TravelerRowSkeleton.tsx
+
+Do not reference a nonexistent src/components/discovery/TravelerRowSkeleton.tsx.
+
+Do not create duplicate skeleton systems.
+
+3. Evidence rule
+
+Do not mark an action as "wired and working" just because an onPress, href, or handler exists.
+
+To classify an action as working, trace the full path:
+
+For navigation actions:
+- button/card exists
+- handler or link exists
+- route path is correct
+- destination route file exists
+- required params are passed correctly
+
+For service/API actions:
+- button/form exists
+- handler exists
+- service or hook exists
+- function is called with correct args
+- API endpoint exists if backend call is required
+- response/error/loading states are handled
+
+If any link is not verified, classify it as:
+- unverified — needs manual check
+
+Never overstate coverage.
+
+For every audited action, report the trace:
+- UI element
+- source file
+- handler/link
+- destination route or service
+- verdict: working / broken / unverified / deferred
+
+4. Mock/fixture data rule
+
+Do not replace fixture/mock data with live services in this pass.
+
+The app has intentional fixture/data layers. Do not rip out:
+- src/__fixtures__
+- src/data
+
+Only record where a screen uses mock/fixture data and whether a matching real service already exists.
+
+Mock-to-real wiring is a separate reviewed task.
+
+Forbidden in this pass:
+- silently removing fixtures
+- fabricating real data flows
+- replacing fixture imports unless the real service already exists and the change is specifically approved
+- changing screen behavior just to eliminate mocks
+
+5. Check existing app structure first
+
+Inspect:
+- expo-router app directory
+- tab layout
+- route files
+- shared components
+- services
+- hooks
+- context providers
+- navigation helpers
+- theme tokens
+- existing skeleton loaders
+- existing loading/error/empty states
+
+Report:
+- route structure
+- main tabs/screens
+- existing services/hooks
+- screens with obvious stub handlers
+- screens with buttons but no action
+- screens with wrong navigation targets
+- screens using mock/fixture data
+- screens already traceably wired
+
+6. Audit button-to-function wiring
+
+For each included screen, check every visible interactive element:
+- buttons
+- cards
+- chips
+- list rows
+- icons
+- floating action buttons
+- modal actions
+- form submit buttons
+- search bars
+- filters
+- save/bookmark buttons
+- message buttons
+- invite buttons
+- map/location buttons
+- Compass/AI buttons
+
+Classify each action:
+- working — full path traced
+- broken — traced and confirmed incorrect
+- unverified — partial trace only
+- deferred — out of scope for this pass
+- mock-only — uses fixture/mock data intentionally
+- missing — UI exists but no handler/service/route exists
+
+7. Priority screens and likely flows
+
+Discovery:
+- destination search
+- place cards
+- save/wishlist buttons
+- map/open-location actions
+- Compass recommendation buttons
+- Hidden Gems cards
+- suggested travelers
+- location filters
+
+Trips:
+- create trip
+- open trip detail
+- trip invite accept/decline
+- saved ideas
+- add activity to trip
+- trip chat button
+- trip plan/card actions
+
+Telegraph/messages:
+- inbox row open
+- DM open
+- group chat open
+- send message
+- reply/save buttons if visible
+- translation action if visible
+- command bar chips if visible
+
+Passport/Profile:
+- edit profile
+- home city/country
+- profile action buttons
+- stamps
+- posts/postcards
+- trust score display/action links
+
+Create tab:
+- create event/trip/post action paths
+- form submit actions
+- media/location buttons if visible
+
+8. Repair rules
+
+Only fix narrow, confirmed wiring issues in scope.
+
+Allowed fixes:
+- missing onPress
+- wrong route path
+- incorrect params
+- broken import
+- dead button
+- handler exists but not connected
+- service function exists but not called
+- API response not mapped to UI
+- obvious crash caused by bad route/import
+
+Not allowed:
+- building new major systems
+- replacing fixture systems with live systems
+- adding a new testing framework
+- rebuilding screens
+- redesigning UI
+- touching Rent a Buddy, Safe Return, Layover, admin routes, or app/create.tsx in this pass
+- creating duplicate GPS/chat/trip/saved/discovery/profile systems
+
+9. Testing constraints
+
+No React Native component test framework is currently configured for this app. Do not add Jest, React Native Testing Library, Detox, or a new test harness in this pass.
+
+For repaired wiring:
+- add pure-function tests only where logic is extractable and existing test setup supports it
+- otherwise provide a manual verification checklist
+
+Run available checks:
+- app typecheck
+- existing node tests if relevant
+- targeted service/helper tests if already supported
+- lint/guards if available
+
+Do not claim component interaction tests passed unless a real configured runner executed them.
+
+10. Loading animation notes only
+
+While auditing, record where loaders should attach later:
+- full screen load
+- GPS/location lookup
+- Compass recommendation loading
+- route planning loading
+- Telegraph send/load
+- list skeleton loading
+
+Do not build new loaders in this task unless a missing loading state blocks functionality.
+
+Use existing skeleton references for later:
+- PlaceCardSkeleton
+- PlaceSkeletonList
+- TravelerRowSkeleton
+
+11. Honesty and reporting rules
+
+Report only what was verified by reading actual files.
+
+Do not fabricate completion.
+
+Do not say "fixed" unless a code change was actually made.
+
+For every fixed item, include:
+- before behavior
+- after behavior
+- exact files changed
+- specific route/service/handler changed
+- why the fix is safe
+
+For every unverified item, say what evidence is missing.
+
+For every deferred item, say why it is out of scope.
+
+If project rules require mirroring changed deliverables to /mnt/user-data/outputs/, do so.
+
+12. Final report
+
+Report:
+- screens audited
+- number of actions checked
+- actions working with full trace
+- actions broken and fixed
+- actions broken but deferred
+- actions unverified
+- mock/fixture usage found
+- files changed
+- tests/checks run
+- exact pass/fail counts
+- manual verification checklist
+- recommended pass 2 scope
+
+Acceptance:
+The core Travel Buddy tab flows have an honest, evidence-backed wiring audit. Confirmed broken button/function/page connections are repaired narrowly using existing routes, services, hooks, and APIs. Nothing is marked working without a full trace. No duplicate systems are created, mock data is not replaced in this pass, and out-of-scope systems are clearly deferred.

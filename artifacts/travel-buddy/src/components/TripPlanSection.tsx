@@ -3,8 +3,8 @@ import {
   View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle, Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
-import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2, RefreshCw } from 'lucide-react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2, RefreshCw, Route } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models';
 import { fetchTripPlan, fetchTripPlanMap, type TripPlanResult } from '../services/tripPlan';
 import { usePlanSync } from '../hooks/usePlanSync';
@@ -18,6 +18,7 @@ import { SafeReturnSetupSheet } from './safeReturn/SafeReturnSetupSheet';
 import { ActiveSafeReturnCard } from './safeReturn/ActiveSafeReturnCard';
 import { MissedCheckinPrompt } from './safeReturn/MissedCheckinPrompt';
 import { getSuggestion, getActiveSession } from '../services/safeReturn';
+import { RouteBuilderSheet, type RouteStopDraft } from './RouteBuilderSheet';
 
 // ── Category filter data ───────────────────────────────────────────────────────
 
@@ -263,6 +264,8 @@ export function TripPlanSection({
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
+  const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
+  const router = useRouter();
 
   // Persist view mode per-trip
   useEffect(() => {
@@ -489,6 +492,12 @@ export function TripPlanSection({
                 <Settings2 size={15} color={color.mute} />
               </Pressable>
             )}
+            {hasContent && (
+              <Pressable style={ps.routeBtn} onPress={() => setRouteBuilderOpen(true)} hitSlop={8}>
+                <Route size={14} color={color.deep} />
+                <Text style={ps.routeBtnText}>Route</Text>
+              </Pressable>
+            )}
             {canEdit && (
               <Pressable style={ps.addBtn} onPress={() => setAddSheetOpen(true)}>
                 <Plus size={15} color={color.onInk} />
@@ -686,6 +695,28 @@ export function TripPlanSection({
         onClose={() => setSettingsOpen(false)}
         onSaved={load}
       />
+
+      {/* Route builder — converts plan items with coordinates into a walking route */}
+      <RouteBuilderSheet
+        visible={routeBuilderOpen}
+        onClose={() => setRouteBuilderOpen(false)}
+        tripId={tripId}
+        initialStops={items
+          .filter((i) => i.lat != null && i.lng != null && i.status !== 'cancelled')
+          .map<RouteStopDraft>((i) => ({
+            id: i.id,
+            title: i.title,
+            lat: i.lat as number,
+            lng: i.lng as number,
+            sourceType: i.sourceType ?? 'manual',
+            sourceId: i.sourceId ?? undefined,
+            category: i.category ?? null,
+          }))}
+        onRouteCreated={(route) => {
+          setRouteBuilderOpen(false);
+          router.push(`/route/${route.plan.id}` as any);
+        }}
+      />
     </View>
   );
 }
@@ -698,6 +729,8 @@ const ps = StyleSheet.create({
   title:          { ...t.title, color: color.ink, fontSize: 20 },
   refreshBtn:     { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
   settingsBtn:    { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
+  routeBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: color.deep, borderRadius: radius.md, paddingHorizontal: 8, paddingVertical: 5 },
+  routeBtnText:   { ...t.small, color: color.deep, fontWeight: '600' },
   addBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
   addBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
   readOnlyBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.haze, borderRadius: radius.md },

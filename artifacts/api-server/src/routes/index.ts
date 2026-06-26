@@ -45,6 +45,7 @@ import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace";
 import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import compassRouter from "./compass";
 import adminCompassRouter from "./adminCompass";
+import routePlanRouter from "./routePlan";
 
 const router: IRouter = Router();
 
@@ -94,5 +95,6 @@ router.use(rentABuddyMarketplaceRouter);
 router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(adminCompassRouter);
+router.use(routePlanRouter);
 
 export default router;
