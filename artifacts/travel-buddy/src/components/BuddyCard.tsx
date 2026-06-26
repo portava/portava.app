@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Star, Shield, CheckCircle, Globe, Zap, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { Stamp } from './ui';
 import type { BuddyProfile } from '../services/rentABuddy';
+import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
 
 function deriveLevel(reviewCount: number, verified: boolean): { label: string; color: string } {
   if (!verified || reviewCount < 5) return { label: 'New Buddy', color: color.mute };
@@ -29,11 +30,14 @@ interface BuddyCardProps {
   availableNow?: boolean;
   onBook?: () => void;
   onPress?: () => void;
+  onDismiss?: () => void;
 }
 
 export function BuddyCard({
-  buddy, compatibilityScore, whyMatched, compact, availableNow, onBook, onPress,
+  buddy, compatibilityScore, whyMatched, compact, availableNow, onBook, onPress, onDismiss,
 }: BuddyCardProps) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   const rating = buddy.averageRating ?? 0;
   const stars = rating > 0 ? rating.toFixed(1) : '—';
   const level = deriveLevel(buddy.reviewCount, buddy.verified);
@@ -149,6 +153,16 @@ export function BuddyCard({
             <Text style={styles.bookBtnText}>Book Now</Text>
           </Pressable>
         )}
+
+        {/* Compass feedback menu — not-interested / show-more */}
+        <View style={styles.feedbackRow}>
+          <CompassFeedbackMenu
+            recommendationId={buddy.id}
+            itemType="buddy"
+            category="rent_a_buddy"
+            onDismiss={() => { setDismissed(true); onDismiss?.(); }}
+          />
+        </View>
       </View>
     </Pressable>
   );
@@ -237,4 +251,5 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm, alignItems: 'center', marginTop: space.sm,
   },
   bookBtnText: { ...t.bodyStrong, color: color.onInk },
+  feedbackRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: space.xs },
 });

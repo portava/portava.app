@@ -674,9 +674,10 @@ const patchPreferencesSchema = z.object({
   exclude_budget_styles:  z.array(z.string().max(60)).max(10).optional(),
   category_weights:       z.record(z.string(), z.number().min(0).max(10)).optional(),
   notification_preferences: z.record(z.string(), z.boolean()).optional(),
-  boost_visibility_enabled: z.boolean().optional(),
-  location_privacy_mode:  z.string().max(40).optional(),
-  delayed_post_default:   z.boolean().optional(),
+  boost_visibility_enabled:   z.boolean().optional(),
+  location_privacy_mode:     z.string().max(40).optional(),
+  delayed_post_default:      z.boolean().optional(),
+  visibility_sub_controls:   z.record(z.string(), z.boolean()).optional(),
 });
 
 router.patch("/compass/me/preferences", async (req, res) => {

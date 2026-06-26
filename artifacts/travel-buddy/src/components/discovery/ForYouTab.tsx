@@ -5,10 +5,11 @@
  * tap to open PlaceDetailSheet). Shows a "Why this?" reason banner above each card.
  * Falls back to OSM attraction mix when Telegraph is unavailable or user is not signed in.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Sparkles, Info, Share2 } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
@@ -26,6 +27,7 @@ import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
 import { CompassWhySheet } from '../compass/CompassWhySheet';
+import { postCompassFrontloadEvent } from '../../services/compass';
 
 // ── Convert a Telegraph recommendation to DiscoveryPlace shape ────────────────
 
@@ -107,6 +109,19 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
     setWhyId(id);
     setWhySheetOpen(true);
   };
+
+  // Post a navigation learning event when this tab comes into focus, and
+  // silently background-refresh the Compass feed so data stays fresh.
+  useFocusEffect(
+    useCallback(() => {
+      postCompassFrontloadEvent({
+        eventType: 'navigation',
+        screen: 'discovery_for_you',
+        city: destination ?? undefined,
+      }).catch(() => {});
+      compass.refresh?.();
+    }, [destination, compass.refresh]),
+  );
 
   const community = useCommunityDiscovery(destination ?? null);
 

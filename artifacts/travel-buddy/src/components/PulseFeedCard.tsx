@@ -9,7 +9,7 @@ import type { PulseFeedItem } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePlanPicker } from './PlanPickerController';
 import { RichText } from './RichText';
-import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
+import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
 import { PostEngagementBar } from './PostEngagementBar';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
@@ -176,6 +176,8 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
 /* ── Open Plan ── */
 function PlanCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} />
@@ -194,7 +196,12 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
           <Text style={s.outlineText}>Add to Plan</Text>
         </Pressable>
         <Pressable style={s.solidBtn} onPress={() => router.push('/(tabs)/trips')}><Text style={s.solidText}>Join Plan</Text></Pressable>
-        <TelegraphFeedbackMenu recommendationId={item.id} category={item.type} />
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
       </View>
     </View>
   );
@@ -204,6 +211,8 @@ function PlanCard({ item }: { item: PulseFeedItem }) {
 function GemCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} />
@@ -214,7 +223,12 @@ function GemCard({ item }: { item: PulseFeedItem }) {
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving recommendations is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
-        <TelegraphFeedbackMenu recommendationId={item.id} category={item.type} />
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
       </View>
     </View>
   );

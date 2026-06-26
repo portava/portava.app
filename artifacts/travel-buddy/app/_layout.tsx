@@ -15,6 +15,7 @@ import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceCon
 import { usePushToken } from '../src/hooks/usePushToken';
 import { useNotificationStream } from '../src/hooks/useNotifications';
 import { useCompassFrontload } from '../src/hooks/compass/useCompassFrontload';
+import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 
@@ -61,6 +62,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <SessionProvider>
+          <CompassProvider>
           <LanguagePreferenceProvider>
           <LocationProvider>
             <AvailabilityProvider>
@@ -91,6 +93,7 @@ export default function RootLayout() {
             </AvailabilityProvider>
           </LocationProvider>
           </LanguagePreferenceProvider>
+          </CompassProvider>
         </SessionProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

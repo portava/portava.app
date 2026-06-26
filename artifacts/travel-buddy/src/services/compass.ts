@@ -164,6 +164,7 @@ export interface CompassPreferences {
   boost_visibility_enabled?: boolean;
   location_privacy_mode?: string;
   delayed_post_default?: boolean;
+  visibility_sub_controls?: Record<string, boolean>;
 }
 
 export async function fetchCompassPreferences(): Promise<{ ok: boolean; data?: CompassPreferences; error?: string }> {
