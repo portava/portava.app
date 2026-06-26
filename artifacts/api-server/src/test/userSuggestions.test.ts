@@ -27,9 +27,11 @@ const C  = "user-c";   // blocked by me
 const ME_TOK = "tok-me";
 
 function makeFakeClient(state: {
-  follows:  { follower_id: string; following_id: string }[];
-  profiles: { id: string; handle: string; name: string; avatar_url: string | null; is_private: boolean }[];
-  blocks:   { blocker_id: string; blocked_id: string }[];
+  follows:       { follower_id: string; following_id: string }[];
+  profiles:      { id: string; handle: string; name: string; avatar_url: string | null; is_private: boolean }[];
+  blocks:        { blocker_id: string; blocked_id: string }[];
+  trips?:        { id: string; owner_id: string; end_date: string; destination_city?: string | null; destination_country?: string | null }[];
+  trip_members?: { trip_id: string; user_id: string; role: string }[];
 }) {
   return {
     auth: {
@@ -39,13 +41,12 @@ function makeFakeClient(state: {
     },
     from: (table: string) => {
       const filters: Array<(r: any) => boolean> = [];
-      let eqCol: string | null = null;
-      let eqVal: any = null;
 
       const builder: any = {
         select()  { return builder; },
-        eq(col: string, val: any)   { filters.push((r) => r[col] === val); return builder; },
-        neq(col: string, val: any)  { filters.push((r) => r[col] !== val); return builder; },
+        eq(col: string, val: any)    { filters.push((r) => r[col] === val); return builder; },
+        neq(col: string, val: any)   { filters.push((r) => r[col] !== val); return builder; },
+        gte(col: string, val: any)   { filters.push((r) => r[col] >= val); return builder; },
         in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
         not(col: string, op: string, val: any) {
           if (op === "in") {
@@ -72,6 +73,8 @@ function makeFakeClient(state: {
         if (table === "user_follows")  return state.follows;
         if (table === "profiles")      return state.profiles;
         if (table === "user_blocks")   return state.blocks;
+        if (table === "trips")         return state.trips ?? [];
+        if (table === "trip_members")  return state.trip_members ?? [];
         return [];
       }
 
@@ -399,6 +402,54 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(bUser, "B should appear in fallback suggestions");
     assert.equal(bUser.mutualCount, 0);
     assert.equal(bUser.reason, null);
+  });
+
+  it("combined reason when candidate both follows caller and shares a trip destination", async () => {
+    // B follows ME (primary follow-back candidate) AND both have a trip to Bali.
+    const futureDate = "2099-12-31";
+    setup({
+      follows:  [{ follower_id: B, following_id: ME }],
+      profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
+      blocks:   [],
+      trips: [
+        { id: "trip-me", owner_id: ME, end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-b",  owner_id: B,  end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+      ],
+      trip_members: [
+        { trip_id: "trip-me", user_id: ME, role: "owner" },
+        { trip_id: "trip-b",  user_id: B,  role: "owner" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const u = body.users.find((x: any) => x.id === B);
+    assert.ok(u, "B should appear in suggestions");
+    assert.equal(u.reason, "Follows you · Both going to Bali");
+  });
+
+  it("destination-only reason when candidate shares a destination but does not follow caller", async () => {
+    // B does NOT follow ME, but they share a trip to Bali — reason should be "Both going to Bali" only.
+    const futureDate = "2099-12-31";
+    setup({
+      follows:  [],
+      profiles: [{ id: B, handle: "bbb", name: "Bob", avatar_url: null, is_private: false }],
+      blocks:   [],
+      trips: [
+        { id: "trip-me", owner_id: ME, end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+        { id: "trip-b",  owner_id: B,  end_date: futureDate, destination_city: "Bali", destination_country: "Indonesia" },
+      ],
+      trip_members: [
+        { trip_id: "trip-me", user_id: ME, role: "owner" },
+        { trip_id: "trip-b",  user_id: B,  role: "owner" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const u = body.users.find((x: any) => x.id === B);
+    assert.ok(u, "B should appear in suggestions");
+    assert.equal(u.reason, "Both going to Bali");
   });
 
   // ── seen-cache exclusion — primary (follow-back) path ────────────────────────

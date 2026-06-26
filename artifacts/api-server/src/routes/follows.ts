@@ -544,9 +544,12 @@ router.get("/users/suggestions", async (req, res) => {
       const mc = mutualCounts[p.id as string] ?? 0;
       const sharedDest = sharedDestinations[p.id as string] ?? null;
       let reason: string | null = null;
-      if (sharedDest) {
-        reason = sharedDest; // highest priority signal
-      } else if (followerSet.has(p.id as string)) {
+      const follows = followerSet.has(p.id as string);
+      if (sharedDest && follows) {
+        reason = `Follows you · ${sharedDest}`; // both signals: combined label
+      } else if (sharedDest) {
+        reason = sharedDest;
+      } else if (follows) {
         reason = "Follows you";
       } else if (mc > 0) {
         reason = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
