@@ -4,43 +4,387 @@
  * Runs AFTER Safety + Eligibility + Privacy gates. Only items that have
  * cleared all three gates reach scoring.
  *
- * Score formula (0–100 scale):
+ * Each content type has its own weight profile so different signals dominate
+ * for different surfaces (e.g. freshness dominates notifications, city match
+ * dominates stamps, trust dominates buddy profiles).
  *
- *   finalScore = Σ(positiveComponents) − Σ(penalties)
- *   clamped to [0, 100]
+ * Positive components (max contribution per type defined in TYPE_WEIGHTS):
+ *   interestMatch       — overlap between item tags and viewer's travel styles
+ *   cityMatch           — item city vs viewer's current or preferred city
+ *   freshness           — time decay; half-life varies by type
+ *   trustBoost          — author's trust score normalised to component max
+ *   languageMatch       — item language vs viewer's languages
+ *   qualitySignal       — base quality score carried on item (0–10 scale)
+ *   contextBoost        — bonus when item type fits the current context state
+ *   socialCompatibility — item's group type matches viewer's social style
+ *   safetyCompatibility — item's safety level matches viewer's safety preference
+ *   diversityBoost      — bonus for underrepresented item types
+ *   fairExposureBoost   — bonus for authors who haven't appeared recently
  *
- * Positive components (weights sum to 100):
- *   interestMatch     0–30  — overlap between item tags and viewer's travel styles
- *   cityMatch         0–20  — item city matches viewer's current or preferred city
- *   freshness         0–15  — time decay: score halves every 7 days
- *   trustBoost        0–10  — author's trust score normalised to 0–10
- *   languageMatch     0–10  — item language matches viewer's languages
- *   qualitySignal     0–10  — base quality score on the item (0–10)
- *   contextBoost      0–5   — bonus when item type fits the current context state
+ * Penalties (subtracted, final score never below 0):
+ *   reportPenalty       — scaled by report count (up to 15)
+ *   repetitionPenalty   — scaled by repeatCount (up to 10)
+ *   spamPenalty         — flat 10 when isSpam is true
+ *   expiredSoonPenalty  — for events expiring within 12h (up to 5)
+ *   riskPenalty         — for items with unresolved risk signals (up to 10)
  *
- * Penalties (subtracted, never below 0):
- *   reportPenalty     up to 15 — scaled by report count
- *   repetitionPenalty up to 10 — non-zero when repeatCount > 0
- *   spamPenalty       up to 10 — set by isSpam flag
- *
- * Each content type may override component weights via type-specific logic.
  * Top-5 score components are logged to compass_recommendation_scores (fire-and-forget).
  * This function NEVER throws.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 
+// ── Per-type weight profiles ──────────────────────────────────────────────────
+// Each key is the max contribution of that component for the given content type.
+// All maxWeights within a type should sum to 100 (the ceiling before penalties).
+
+interface TypeWeights {
+  freshnessHalfLifeDays:  number;
+  interestMatch:          number;
+  cityMatch:              number;
+  freshness:              number;
+  trustBoost:             number;
+  languageMatch:          number;
+  qualitySignal:          number;
+  contextBoost:           number;
+  socialCompatibility:    number;
+  safetyCompatibility:    number;
+  diversityBoost:         number;
+  fairExposureBoost:      number;
+}
+
+const TYPE_WEIGHTS: Record<string, TypeWeights> = {
+  event: {
+    freshnessHalfLifeDays: 3,
+    interestMatch:         25,
+    cityMatch:             20,
+    freshness:             15,
+    trustBoost:             8,
+    languageMatch:          7,
+    qualitySignal:         10,
+    contextBoost:           5,
+    socialCompatibility:    4,
+    safetyCompatibility:    3,
+    diversityBoost:         2,
+    fairExposureBoost:      1,
+  },
+  post: {
+    freshnessHalfLifeDays: 7,
+    interestMatch:         20,
+    cityMatch:              8,
+    freshness:             20,
+    trustBoost:             8,
+    languageMatch:          8,
+    qualitySignal:         20,
+    contextBoost:           5,
+    socialCompatibility:    3,
+    safetyCompatibility:    3,
+    diversityBoost:         2,
+    fairExposureBoost:      3,
+  },
+  user: {
+    freshnessHalfLifeDays: 90,
+    interestMatch:         25,
+    cityMatch:             15,
+    freshness:              5,
+    trustBoost:            20,
+    languageMatch:         15,
+    qualitySignal:          5,
+    contextBoost:           5,
+    socialCompatibility:    5,
+    safetyCompatibility:    5,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+  },
+  buddy: {
+    freshnessHalfLifeDays: 90,
+    interestMatch:         10,
+    cityMatch:             25,
+    freshness:              5,
+    trustBoost:            25,
+    languageMatch:         10,
+    qualitySignal:         15,
+    contextBoost:           5,
+    socialCompatibility:    3,
+    safetyCompatibility:    2,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+  },
+  trip: {
+    freshnessHalfLifeDays: 14,
+    interestMatch:         20,
+    cityMatch:             25,
+    freshness:             10,
+    trustBoost:            15,
+    languageMatch:         10,
+    qualitySignal:         10,
+    contextBoost:           8,
+    socialCompatibility:    0,
+    safetyCompatibility:    2,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+  },
+  stamp: {
+    freshnessHalfLifeDays: 30,
+    interestMatch:         15,
+    cityMatch:             35,
+    freshness:              5,
+    trustBoost:             5,
+    languageMatch:          5,
+    qualitySignal:         20,
+    contextBoost:          13,
+    socialCompatibility:    0,
+    safetyCompatibility:    0,
+    diversityBoost:         2,
+    fairExposureBoost:      0,
+  },
+  notification: {
+    freshnessHalfLifeDays: 1,
+    interestMatch:          5,
+    cityMatch:              5,
+    freshness:             45,
+    trustBoost:             5,
+    languageMatch:         10,
+    qualitySignal:         20,
+    contextBoost:          10,
+    socialCompatibility:    0,
+    safetyCompatibility:    0,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+  },
+  suggestion: {
+    freshnessHalfLifeDays: 14,
+    interestMatch:         30,
+    cityMatch:             10,
+    freshness:             20,
+    trustBoost:             5,
+    languageMatch:         15,
+    qualitySignal:         15,
+    contextBoost:           5,
+    socialCompatibility:    0,
+    safetyCompatibility:    0,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+  },
+};
+
+/** Default weights when type is unknown. */
+const DEFAULT_WEIGHTS: TypeWeights = {
+  freshnessHalfLifeDays: 7,
+  interestMatch:         20,
+  cityMatch:             15,
+  freshness:             15,
+  trustBoost:            10,
+  languageMatch:         10,
+  qualitySignal:         15,
+  contextBoost:           5,
+  socialCompatibility:    5,
+  safetyCompatibility:    3,
+  diversityBoost:         1,
+  fairExposureBoost:      1,
+};
+
+// ── Component calculation functions ──────────────────────────────────────────
+
+/** Time-decay freshness (0–max). Score halves every half_life days. */
+function calcFreshness(createdAt: string | undefined, halfLifeDays: number, max: number): number {
+  if (!createdAt) return max * 0.5; // neutral default
+  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86_400_000;
+  return Math.max(0, max * Math.pow(2, -ageDays / halfLifeDays));
+}
+
+/** Jaccard-like tag/style overlap score (0–max). */
+function calcInterestMatch(
+  itemTags: string[] | undefined,
+  viewerStyles: string[],
+  max: number,
+): number {
+  if (max === 0) return 0;
+  if (!itemTags || itemTags.length === 0 || viewerStyles.length === 0) return 0;
+  const itemSet = new Set(itemTags.map((t) => t.toLowerCase()));
+  const viewerSet = new Set(viewerStyles.map((s) => s.toLowerCase()));
+  let overlap = 0;
+  for (const s of viewerSet) if (itemSet.has(s)) overlap++;
+  const union = new Set([...itemSet, ...viewerSet]).size;
+  return union > 0 ? Math.min(max, (overlap / union) * max * 2) : 0;
+}
+
+/** City match score (0–max). Exact current city > preferred city. */
+function calcCityMatch(
+  itemCity: string | undefined,
+  currentCity: string | null,
+  preferredCities: string[],
+  max: number,
+): number {
+  if (max === 0 || !itemCity) return 0;
+  const lower = itemCity.toLowerCase();
+  if (currentCity && currentCity.toLowerCase() === lower) return max;
+  if (preferredCities.some((c) => c.toLowerCase() === lower)) return max * 0.5;
+  return 0;
+}
+
+/** Language match score (0–max). Exact match = max, no match = 0, unknown = half. */
+function calcLanguageMatch(
+  itemLang: string | undefined,
+  viewerLangs: string[],
+  max: number,
+): number {
+  if (max === 0) return 0;
+  if (!itemLang || viewerLangs.length === 0) return max * 0.5;
+  return viewerLangs.map((l) => l.toLowerCase()).includes(itemLang.toLowerCase())
+    ? max
+    : 0;
+}
+
+/** Trust boost (0–max). Normalised from author trust score 0–100. */
+function calcTrustBoost(authorTrust: number | undefined | null, max: number): number {
+  if (max === 0) return 0;
+  if (authorTrust == null) return max * 0.3; // neutral for unknown
+  return Math.min(max, (authorTrust / 100) * max);
+}
+
+/** Quality signal (0–max). Item-level qualityScore is 0–10. */
+function calcQualitySignal(quality: number | undefined | null, max: number): number {
+  if (max === 0) return 0;
+  if (quality == null) return max * 0.5;
+  return Math.min(max, Math.max(0, (quality / 10) * max));
+}
+
+/** Context boost (0–max). Bonus when item type fits context state. */
+const CONTEXT_AFFINITY: Record<string, string[]> = {
+  arrival_mode:        ["event", "user", "stamp"],
+  exploring_now:       ["event", "post"],
+  planning_ahead:      ["trip", "event", "buddy"],
+  active_trip_mode:    ["event", "post", "user"],
+  night_mode:          ["event", "buddy"],
+  safety_mode:         ["notification"],
+  active_booking_mode: ["buddy", "notification"],
+  budget_mode:         ["event", "stamp"],
+  creator_mode:        ["suggestion", "post"],
+};
+function calcContextBoost(itemType: string, contextState: string, max: number): number {
+  if (max === 0) return 0;
+  const affinity = CONTEXT_AFFINITY[contextState] ?? [];
+  return affinity.includes(itemType) ? max : 0;
+}
+
+/**
+ * Social compatibility (0–max).
+ * Match viewer's socialStyle (solo/group/couple/family) against item's groupType.
+ */
+function calcSocialCompatibility(
+  itemGroupType: string | undefined,
+  viewerSocialStyle: string | null,
+  max: number,
+): number {
+  if (max === 0 || !itemGroupType || !viewerSocialStyle) return max * 0.5;
+  return itemGroupType.toLowerCase() === viewerSocialStyle.toLowerCase() ? max : 0;
+}
+
+/**
+ * Safety compatibility (0–max).
+ * Higher score when item's safety tier matches viewer's safety preference.
+ *
+ * safetyTier on item: "standard" | "cautious" | "relaxed" | undefined
+ * safetyPreference on profile: "standard" | "cautious" | "relaxed"
+ */
+function calcSafetyCompatibility(
+  itemSafetyTier: string | undefined,
+  viewerSafetyPref: string,
+  max: number,
+): number {
+  if (max === 0) return max;
+  if (!itemSafetyTier) return max * 0.5;
+  if (itemSafetyTier === viewerSafetyPref) return max;
+  // cautious viewer seeing relaxed item or vice versa → 0
+  if (viewerSafetyPref === "cautious" && itemSafetyTier === "relaxed") return 0;
+  // relaxed viewer seeing cautious item → still fine but not optimum
+  if (viewerSafetyPref === "relaxed" && itemSafetyTier === "cautious") return max * 0.4;
+  return max * 0.6;
+}
+
+/**
+ * Diversity boost (0–max).
+ * Bonus when this item type is underrepresented in the viewer's recent feed.
+ * Passed in via item.diversityScore (pre-computed by feed builder in Phase 3).
+ */
+function calcDiversityBoost(diversityScore: number | undefined, max: number): number {
+  if (max === 0) return 0;
+  if (diversityScore == null) return 0;
+  return Math.min(max, Math.max(0, diversityScore) * max);
+}
+
+/**
+ * Fair-exposure boost (0–max).
+ * Bonus for authors who haven't appeared in the viewer's recent feed.
+ * Passed in via item.fairExposureScore (pre-computed by feed builder in Phase 3).
+ */
+function calcFairExposureBoost(fairExposureScore: number | undefined, max: number): number {
+  if (max === 0) return 0;
+  if (fairExposureScore == null) return 0;
+  return Math.min(max, Math.max(0, fairExposureScore) * max);
+}
+
+// ── Penalty calculation functions ─────────────────────────────────────────────
+
+/** Report penalty (0–15). Scaled by report count. */
+function calcReportPenalty(reportCount: number | undefined): number {
+  if (!reportCount || reportCount <= 0) return 0;
+  return Math.min(15, reportCount * 3);
+}
+
+/** Repetition penalty (0–10). Applied when item has been shown before. */
+function calcRepetitionPenalty(repeatCount: number | undefined): number {
+  if (!repeatCount || repeatCount <= 0) return 0;
+  return Math.min(10, repeatCount * 2);
+}
+
+/** Spam penalty (0–10). */
+function calcSpamPenalty(isSpam: boolean | undefined): number {
+  return isSpam ? 10 : 0;
+}
+
+/**
+ * Expired-soon penalty (0–5). For events expiring within 12 hours.
+ * Uses item.expiresAt (ISO string).
+ */
+function calcExpiredSoonPenalty(expiresAt: string | undefined, itemType: string): number {
+  if (itemType !== "event" || !expiresAt) return 0;
+  const msUntilExpiry = new Date(expiresAt).getTime() - Date.now();
+  if (msUntilExpiry < 0) return 5; // already expired (safety should have caught this)
+  const hoursUntilExpiry = msUntilExpiry / 3_600_000;
+  if (hoursUntilExpiry < 12) return Math.round((1 - hoursUntilExpiry / 12) * 5);
+  return 0;
+}
+
+/**
+ * Risk penalty (0–10). Applied when item has risk signals set.
+ * riskScore on item: 0.0–1.0 (higher = more risky)
+ */
+function calcRiskPenalty(riskScore: number | undefined): number {
+  if (riskScore == null || riskScore <= 0) return 0;
+  return Math.min(10, Math.round(riskScore * 10));
+}
+
+// ── Public interfaces ─────────────────────────────────────────────────────────
+
 export interface ScoreComponents {
-  interestMatch:     number;
-  cityMatch:         number;
-  freshness:         number;
-  trustBoost:        number;
-  languageMatch:     number;
-  qualitySignal:     number;
-  contextBoost:      number;
-  reportPenalty:     number;
-  repetitionPenalty: number;
-  spamPenalty:       number;
+  interestMatch:        number;
+  cityMatch:            number;
+  freshness:            number;
+  trustBoost:           number;
+  languageMatch:        number;
+  qualitySignal:        number;
+  contextBoost:         number;
+  socialCompatibility:  number;
+  safetyCompatibility:  number;
+  diversityBoost:       number;
+  fairExposureBoost:    number;
+  reportPenalty:        number;
+  repetitionPenalty:    number;
+  spamPenalty:          number;
+  expiredSoonPenalty:   number;
+  riskPenalty:          number;
 }
 
 export interface ScoreResult {
@@ -48,141 +392,46 @@ export interface ScoreResult {
   components:  ScoreComponents;
 }
 
-const FRESHNESS_HALF_LIFE_DAYS: Record<string, number> = {
-  event:        3,
-  post:         7,
-  notification: 1,
-  suggestion:   14,
-  stamp:        30,
-  user:         90,
-  buddy:        90,
-  trip:         14,
-};
-
-/** Time-decay freshness score (0–15). Halves every half_life days. */
-function freshnessScore(createdAt: string | undefined, halfLifeDays: number): number {
-  if (!createdAt) return 7; // neutral default
-  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86_400_000;
-  return Math.max(0, 15 * Math.pow(2, -ageDays / halfLifeDays));
-}
-
-/** Tag/style overlap score (0–30). Jaccard-like intersection ratio. */
-function interestMatchScore(itemTags: string[] | undefined, viewerStyles: string[]): number {
-  if (!itemTags || itemTags.length === 0 || viewerStyles.length === 0) return 0;
-  const itemSet = new Set(itemTags.map((t) => t.toLowerCase()));
-  const viewerSet = new Set(viewerStyles.map((s) => s.toLowerCase()));
-  let overlap = 0;
-  for (const s of viewerSet) if (itemSet.has(s)) overlap++;
-  const union = new Set([...itemSet, ...viewerSet]).size;
-  return union > 0 ? Math.min(30, (overlap / union) * 60) : 0;
-}
-
-/** City match score (0–20). Checks current city and preferred cities. */
-function cityMatchScore(
-  itemCity: string | undefined,
-  currentCity: string | null,
-  preferredCities: string[],
-): number {
-  if (!itemCity) return 0;
-  const itemCityLower = itemCity.toLowerCase();
-  if (currentCity && currentCity.toLowerCase() === itemCityLower) return 20;
-  if (preferredCities.some((c) => c.toLowerCase() === itemCityLower)) return 10;
-  return 0;
-}
-
-/** Language match score (0–10). */
-function languageMatchScore(
-  itemLang: string | undefined,
-  viewerLangs: string[],
-): number {
-  if (!itemLang || viewerLangs.length === 0) return 5; // neutral
-  return viewerLangs.map((l) => l.toLowerCase()).includes(itemLang.toLowerCase()) ? 10 : 0;
-}
-
-/** Trust boost (0–10). Author trust score normalised from 0–100 to 0–10. */
-function trustBoostScore(authorTrustScore: number | undefined | null): number {
-  if (authorTrustScore == null) return 3; // neutral for unknown
-  return Math.min(10, (authorTrustScore / 100) * 10);
-}
-
-/** Quality signal (0–10). Item-level quality rating passed as 0–10. */
-function qualitySignalScore(quality: number | undefined | null): number {
-  if (quality == null) return 5;
-  return Math.min(10, Math.max(0, quality));
-}
-
-/** Context boost (0–5). Bonus when item type is specially relevant to context. */
-function contextBoostScore(
-  itemType: string,
-  contextState: string,
-): number {
-  const boosts: Record<string, string[]> = {
-    arrival_mode:       ["event", "user", "stamp"],
-    exploring_now:      ["event", "post", "stamp"],
-    planning_ahead:     ["trip", "event", "buddy"],
-    active_trip_mode:   ["event", "post", "user"],
-    night_mode:         ["event", "buddy"],
-    safety_mode:        ["notification"],
-    active_booking_mode:["buddy", "notification"],
-    budget_mode:        ["event", "stamp"],
-    creator_mode:       ["suggestion", "post"],
-  };
-  const relevant = boosts[contextState] ?? [];
-  return relevant.includes(itemType) ? 5 : 0;
-}
-
-/** Report penalty (0–15). Scaled by report count. */
-function reportPenalty(reportCount: number | undefined): number {
-  if (!reportCount || reportCount <= 0) return 0;
-  return Math.min(15, reportCount * 3);
-}
-
-/** Repetition penalty (0–10). Applied when an item has been seen before. */
-function repetitionPenalty(repeatCount: number | undefined): number {
-  if (!repeatCount || repeatCount <= 0) return 0;
-  return Math.min(10, repeatCount * 2);
-}
-
-/** Spam penalty (0–10). */
-function spamPenalty(isSpam: boolean | undefined): number {
-  return isSpam ? 10 : 0;
-}
+// ── Main scoring function ─────────────────────────────────────────────────────
 
 function computeComponents(
   item: CompassItem,
   profile: CompassProfile,
   context: CompassContext,
 ): ScoreComponents {
-  const halfLife = FRESHNESS_HALF_LIFE_DAYS[item.type] ?? 7;
+  const w = TYPE_WEIGHTS[item.type] ?? DEFAULT_WEIGHTS;
+  const viewerStyles = [...profile.travelStyles, ...(profile.preferredLanguages ?? [])];
+
   return {
-    interestMatch:     interestMatchScore(item.interestTags, [
-      ...profile.travelStyles,
-      ...(profile.preferredLanguages ?? []),
-    ]),
-    cityMatch:         cityMatchScore(item.city, profile.currentCity, profile.preferredCities),
-    freshness:         freshnessScore(item.createdAt, halfLife),
-    trustBoost:        trustBoostScore(item.authorTrustScore),
-    languageMatch:     languageMatchScore(item.languageCode, profile.preferredLanguages),
-    qualitySignal:     qualitySignalScore(item.qualityScore),
-    contextBoost:      contextBoostScore(item.type, context.contextState),
-    reportPenalty:     reportPenalty(item.reportCount),
-    repetitionPenalty: repetitionPenalty(item.repeatCount),
-    spamPenalty:       spamPenalty(item.isSpam),
+    // Positive components
+    interestMatch:       calcInterestMatch(item.interestTags, viewerStyles, w.interestMatch),
+    cityMatch:           calcCityMatch(item.city, profile.currentCity, profile.preferredCities, w.cityMatch),
+    freshness:           calcFreshness(item.createdAt, w.freshnessHalfLifeDays, w.freshness),
+    trustBoost:          calcTrustBoost(item.authorTrustScore, w.trustBoost),
+    languageMatch:       calcLanguageMatch(item.languageCode, profile.preferredLanguages, w.languageMatch),
+    qualitySignal:       calcQualitySignal(item.qualityScore, w.qualitySignal),
+    contextBoost:        calcContextBoost(item.type, context.contextState, w.contextBoost),
+    socialCompatibility: calcSocialCompatibility(item.groupType as string | undefined, profile.socialStyle, w.socialCompatibility),
+    safetyCompatibility: calcSafetyCompatibility(item.safetyTier as string | undefined, profile.safetyPreference, w.safetyCompatibility),
+    diversityBoost:      calcDiversityBoost(item.diversityScore as number | undefined, w.diversityBoost),
+    fairExposureBoost:   calcFairExposureBoost(item.fairExposureScore as number | undefined, w.fairExposureBoost),
+    // Penalties
+    reportPenalty:       calcReportPenalty(item.reportCount),
+    repetitionPenalty:   calcRepetitionPenalty(item.repeatCount),
+    spamPenalty:         calcSpamPenalty(item.isSpam),
+    expiredSoonPenalty:  calcExpiredSoonPenalty(item.expiresAt as string | undefined, item.type),
+    riskPenalty:         calcRiskPenalty(item.riskScore as number | undefined),
   };
 }
 
 function finalizeScore(c: ScoreComponents): number {
   const raw =
-    c.interestMatch +
-    c.cityMatch +
-    c.freshness +
-    c.trustBoost +
-    c.languageMatch +
-    c.qualitySignal +
-    c.contextBoost -
-    c.reportPenalty -
-    c.repetitionPenalty -
-    c.spamPenalty;
+    c.interestMatch + c.cityMatch + c.freshness + c.trustBoost +
+    c.languageMatch + c.qualitySignal + c.contextBoost +
+    c.socialCompatibility + c.safetyCompatibility +
+    c.diversityBoost + c.fairExposureBoost -
+    c.reportPenalty - c.repetitionPenalty - c.spamPenalty -
+    c.expiredSoonPenalty - c.riskPenalty;
   return Math.min(100, Math.max(0, raw));
 }
 
@@ -195,9 +444,9 @@ function logScore(
   contextState: string,
 ): void {
   if (!db) return;
-  // Log top-5 component breakdown as JSONB
   const top5 = Object.entries(result.components)
-    .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
+    .filter(([k]) => !k.includes("Penalty") && !k.includes("penalty"))
+    .sort(([, a], [, b]) => b - a)
     .slice(0, 5)
     .reduce((acc, [k, v]) => ({ ...acc, [k]: Math.round(v * 100) / 100 }), {});
 
@@ -235,24 +484,35 @@ export function scoreItem(
     logScore(db, profile.userId, item, result, context.contextState);
     return result;
   } catch {
-    return { finalScore: 0, components: emptyComponents() };
+    return {
+      finalScore: 0,
+      components: {
+        interestMatch: 0, cityMatch: 0, freshness: 0, trustBoost: 0,
+        languageMatch: 0, qualitySignal: 0, contextBoost: 0,
+        socialCompatibility: 0, safetyCompatibility: 0,
+        diversityBoost: 0, fairExposureBoost: 0,
+        reportPenalty: 0, repetitionPenalty: 0, spamPenalty: 0,
+        expiredSoonPenalty: 0, riskPenalty: 0,
+      },
+    };
   }
 }
 
-function emptyComponents(): ScoreComponents {
-  return {
-    interestMatch: 0, cityMatch: 0, freshness: 0, trustBoost: 0,
-    languageMatch: 0, qualitySignal: 0, contextBoost: 0,
-    reportPenalty: 0, repetitionPenalty: 0, spamPenalty: 0,
-  };
-}
+// ── Type-specific named exports (distinct weight profiles loaded above) ────────
 
-/** Convenience type-specific scorers (all delegate to scoreItem). */
-export const scoreEvent       = scoreItem;
-export const scorePost        = scoreItem;
-export const scoreUser        = scoreItem;
-export const scoreBuddy       = scoreItem;
-export const scoreTrip        = scoreItem;
-export const scoreStamp       = scoreItem;
-export const scoreNotification = scoreItem;
-export const scoreSuggestion  = scoreItem;
+export const scoreEvent        = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "event" },        p, c, db ?? null);
+export const scorePost         = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "post" },         p, c, db ?? null);
+export const scoreUser         = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "user" },         p, c, db ?? null);
+export const scoreBuddy        = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "buddy" },        p, c, db ?? null);
+export const scoreTrip         = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "trip" },         p, c, db ?? null);
+export const scoreStamp        = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "stamp" },        p, c, db ?? null);
+export const scoreNotification = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "notification" }, p, c, db ?? null);
+export const scoreSuggestion   = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
+  scoreItem({ ...item, type: "suggestion" },   p, c, db ?? null);

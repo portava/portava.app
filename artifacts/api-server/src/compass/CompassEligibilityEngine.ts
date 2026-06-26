@@ -5,17 +5,21 @@
  * Items that fail eligibility are removed from the pipeline entirely.
  *
  * Eligibility checks (any fail → ineligible):
- *   1. Minimum Trust Score floor (item author's trustScore vs. system floor)
- *   2. Verification level required for content type
- *   3. City/country launch gate: item country/city must be in an enabled launch region
- *   4. Event capacity: event is full → not eligible
- *   5. Circle-only content: viewer must be in the item's circle
- *   6. Trip-only content: viewer must be a trip member
- *   7. Booking eligibility (buddy): buddy must have active status and accepted bookings
- *   8. Feature flag gate: item type must be enabled via COMPASS_<TYPE>_ENABLED flag
+ *   1.  Per-type feature flag: COMPASS_<TYPE>_ENABLED must be true
+ *   2.  Minimum Trust Score floor (DEFAULT_TRUST_FLOOR = 20)
+ *   3.  City/country launch gate: if COMPASS_CITY_LAUNCH_REQUIRED is true,
+ *       the item's city must match COMPASS_CITY_<CITY>_ENABLED flag
+ *   4.  Verification: item requires verification but is unverified
+ *   5.  Event capacity: event is full → not eligible
+ *   6.  Circle-only content: viewer must be in the item's circle
+ *   7.  Trip-only content: viewer must be a trip member
+ *   8.  Buddy booking eligibility: buddy must have active status
+ *   9.  Private items not owned by viewer
  *
  * Ineligible items are logged to compass_eligibility_logs (fire-and-forget).
- * This function NEVER throws — always returns an EligibilityResult.
+ * Exception policy: FAIL-OPEN — bugs here should not hide content from users.
+ *
+ * All flag lookups use pre-loaded flags (passed by pipeline to avoid N DB calls).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
@@ -32,21 +36,39 @@ function checkEligibility(
   item: CompassItem,
   profile: CompassProfile,
   context: CompassContext,
+  preloadedFlags: Record<string, boolean>,
 ): EligibilityResult {
   const ineligible = (reason: string): EligibilityResult => ({ eligible: false, reason });
 
-  // 1. Trust Score floor
+  // 1. Per-type feature flag gate: COMPASS_<TYPE>_ENABLED
+  // If the flag key exists and is false → not eligible.
+  // If the flag is absent → allowed (default: enabled until explicitly disabled).
+  const typeFlag = `COMPASS_${item.type.toUpperCase()}_ENABLED`;
+  if (typeFlag in preloadedFlags && !preloadedFlags[typeFlag]) {
+    return ineligible(`feature_flag_disabled:${item.type}`);
+  }
+
+  // 2. Trust Score floor
   const authorTrust = item.authorTrustScore ?? null;
   if (authorTrust !== null && authorTrust < DEFAULT_TRUST_FLOOR) {
     return ineligible("author_trust_score_below_floor");
   }
 
-  // 2. Verification required (item-level)
+  // 3. City-level launch gate
+  // When COMPASS_CITY_LAUNCH_REQUIRED is true, item city must have its own flag enabled.
+  if (preloadedFlags["COMPASS_CITY_LAUNCH_REQUIRED"] && item.city) {
+    const cityKey = `COMPASS_CITY_${item.city.toUpperCase().replace(/\s+/g, "_")}_ENABLED`;
+    if (cityKey in preloadedFlags && !preloadedFlags[cityKey]) {
+      return ineligible("city_not_in_launch");
+    }
+  }
+
+  // 4. Verification required (item-level, e.g. verified-only buddy events)
   if (item.requiresVerification && !item.isVerified) {
     return ineligible("item_requires_verification");
   }
 
-  // 3. Event capacity: full events are ineligible for new attendees
+  // 5. Event capacity: full events are ineligible for new attendees
   if (item.type === "event") {
     const capacity = item.capacity ?? null;
     const attendees = item.currentAttendees ?? 0;
@@ -55,28 +77,22 @@ function checkEligibility(
     }
   }
 
-  // 4. Circle-only: viewer must be in the circle
-  if (item.visibilityScope === "circle_only") {
-    if (!item.viewerIsInCircle) {
-      return ineligible("viewer_not_in_circle");
-    }
+  // 6. Circle-only: viewer must be in the circle
+  if (item.visibilityScope === "circle_only" && !item.viewerIsInCircle) {
+    return ineligible("viewer_not_in_circle");
   }
 
-  // 5. Trip-only: viewer must be a member of the trip
-  if (item.visibilityScope === "trip_only") {
-    if (!item.viewerIsInTrip) {
-      return ineligible("viewer_not_in_trip");
-    }
+  // 7. Trip-only: viewer must be a member of the trip
+  if (item.visibilityScope === "trip_only" && !item.viewerIsInTrip) {
+    return ineligible("viewer_not_in_trip");
   }
 
-  // 6. Buddy booking eligibility
-  if (item.type === "buddy") {
-    if (item.buddyStatus !== "active") {
-      return ineligible("buddy_not_accepting_bookings");
-    }
+  // 8. Buddy booking eligibility
+  if (item.type === "buddy" && item.buddyStatus !== "active") {
+    return ineligible("buddy_not_accepting_bookings");
   }
 
-  // 7. Private items are never eligible for feed (use direct access instead)
+  // 9. Private items are never eligible for feed (use direct access instead)
   if (item.visibilityScope === "private" && item.authorId !== profile.userId) {
     return ineligible("item_is_private");
   }
@@ -106,25 +122,30 @@ function logRejection(
 /**
  * Run the eligibility engine on a single item.
  *
- * @param item     The content item to check
- * @param profile  The calling user's Compass profile
- * @param context  Current Compass context (contextState + signals)
- * @param db       Optional Supabase client for logging (null in tests)
+ * Exception policy: FAIL-OPEN — if an exception occurs, the item is allowed.
+ * A bug here should not hide content from users.
+ *
+ * @param item            The content item to check
+ * @param profile         The calling user's Compass profile
+ * @param context         Current Compass context
+ * @param db              Optional Supabase client for logging (null in tests)
+ * @param preloadedFlags  Pre-resolved feature flags (from pipeline's single DB load)
  */
 export function runEligibilityCheck(
   item: CompassItem,
   profile: CompassProfile,
   context: CompassContext,
   db: SupabaseClient | null = null,
+  preloadedFlags: Record<string, boolean> = {},
 ): EligibilityResult {
   try {
-    const result = checkEligibility(item, profile, context);
+    const result = checkEligibility(item, profile, context, preloadedFlags);
     if (!result.eligible && result.reason) {
       logRejection(db, profile.userId, item, result.reason);
     }
     return result;
   } catch {
-    // Never propagate — fail open so a bug here doesn't hide content
+    // FAIL-OPEN: on any exception, allow the item so bugs don't hide content
     return { eligible: true };
   }
 }
@@ -138,11 +159,12 @@ export function runEligibilityBatch(
   profile: CompassProfile,
   context: CompassContext,
   db: SupabaseClient | null = null,
+  preloadedFlags: Record<string, boolean> = {},
 ): { passed: CompassItem[]; rejected: Array<{ item: CompassItem; reason: string }> } {
   const passed: CompassItem[] = [];
   const rejected: Array<{ item: CompassItem; reason: string }> = [];
   for (const item of items) {
-    const result = runEligibilityCheck(item, profile, context, db);
+    const result = runEligibilityCheck(item, profile, context, db, preloadedFlags);
     if (result.eligible) {
       passed.push(item);
     } else {

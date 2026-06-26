@@ -50,12 +50,9 @@ export interface CompassSignals {
   upcomingTripWithin48h: boolean;
   /** Whether the user currently has an ongoing trip (start ≤ now ≤ end). */
   activeTripNow: boolean;
-  /** Whether the user has any pending delayed posts (post_status = pending_exit/pending_delay). */
+  /** Whether the user has any pending delayed posts. */
   hasPendingDelayedPosts: boolean;
-  /**
-   * Whether the user has any trips scheduled in the future but beyond the 48h arrival window.
-   * Triggers the planning_ahead context state.
-   */
+  /** Whether the user has trips scheduled in the future beyond the 48h window. */
   hasFutureTripScheduled: boolean;
 }
 
@@ -88,9 +85,9 @@ export interface CompassProfile {
    * Used by downstream Compass phases to exclude this user from their results.
    */
   blockerUserIds: string[];
-  /** Total count of accounts this user has blocked (derived from blockedUserIds.length). */
+  /** Total count of accounts this user has blocked. */
   blockCount: number;
-  /** Total count of accounts that have blocked this user (derived from blockerUserIds.length). */
+  /** Total count of accounts that have blocked this user. */
   blockerCount: number;
   trustScore: number | null;
   trustLevel: string | null;
@@ -98,7 +95,6 @@ export interface CompassProfile {
   hasActiveTrip: boolean;
   hasActiveBooking: boolean;
   upcomingTripWithin48h: boolean;
-  /** Has a trip scheduled in the future, beyond the 48h arrival window. */
   hasFutureTripScheduled: boolean;
   currentCity: string | null;
   currentCountry: string | null;
@@ -139,7 +135,6 @@ export interface CompassFallbackResponse {
 
 /**
  * Content type discriminator. All Compass pipeline stages use this union.
- * Add new types here as new content surfaces are added.
  */
 export type CompassItemType =
   | 'event'
@@ -159,8 +154,8 @@ export type CompassItemType =
  * fields are ignored. Concrete content adapters map domain objects to this shape
  * before calling `runPipeline()`.
  *
- * Index signature `[key: string]: any` allows extra domain-specific data to be
- * carried through the pipeline without type errors.
+ * Index signature `[key: string]: unknown` allows extra domain-specific data to
+ * be carried through the pipeline without type errors.
  */
 export interface CompassItem {
   /** Stable unique identifier for the item (DB UUID or composite key). */
@@ -179,9 +174,9 @@ export interface CompassItem {
   // ── Safety signals ─────────────────────────────────────────────────────────
   /** True if the item or its author has been suspended by an admin. */
   isSuspended?: boolean;
-  /** True if the item has been reported above the hard-block threshold. */
-  isReported?: boolean;
-  /** How many times this item has been reported. */
+  /** True if the viewing user has already reported this specific item. */
+  isReportedByViewer?: boolean;
+  /** How many times this item has been reported in total. */
   reportCount?: number;
   /** True if the item has an adult-service flag (rent-a-buddy safety). */
   hasAdultServiceFlag?: boolean;
@@ -277,6 +272,24 @@ export interface CompassItem {
   isSpam?: boolean;
   /** How many times this item has already been shown to this viewer. */
   repeatCount?: number;
+  /**
+   * Diversity score 0–1: pre-computed by feed builder (Phase 3).
+   * Higher = underrepresented item type in recent feed → gets diversity boost.
+   */
+  diversityScore?: number;
+  /**
+   * Fair-exposure score 0–1: pre-computed by feed builder (Phase 3).
+   * Higher = author hasn't appeared recently → gets fair-exposure boost.
+   */
+  fairExposureScore?: number;
+  /** Risk score 0–1: higher = more risk signals from moderation pipeline. */
+  riskScore?: number;
+  /** Safety tier: "standard" | "cautious" | "relaxed" (from content moderation). */
+  safetyTier?: string;
+  /** Group type: "solo" | "couple" | "group" | "family" (for social compat). */
+  groupType?: string;
+  /** ISO timestamp when the event expires (for expiredSoon penalty). */
+  expiresAt?: string;
 
   // ── Content body (may be stripped for unpublished items) ──────────────────
   contentBody?: string;
@@ -293,26 +306,11 @@ export interface ScoredCompassItem extends CompassItem {
 
 // ── Convenience type aliases for each content subtype ────────────────────────
 
-/** An event item passed through the Compass pipeline. */
-export type CompassEvent = CompassItem & { type: 'event' };
-
-/** A post item passed through the Compass pipeline. */
-export type CompassPost = CompassItem & { type: 'post' };
-
-/** A user/traveler profile item passed through the Compass pipeline. */
-export type CompassUser = CompassItem & { type: 'user' };
-
-/** A rent-a-buddy profile item passed through the Compass pipeline. */
-export type CompassBuddy = CompassItem & { type: 'buddy' };
-
-/** A trip item passed through the Compass pipeline. */
-export type CompassTrip = CompassItem & { type: 'trip' };
-
-/** A passport stamp opportunity item. */
-export type CompassStamp = CompassItem & { type: 'stamp' };
-
-/** An in-app notification item. */
+export type CompassEvent        = CompassItem & { type: 'event' };
+export type CompassPost         = CompassItem & { type: 'post' };
+export type CompassUser         = CompassItem & { type: 'user' };
+export type CompassBuddy        = CompassItem & { type: 'buddy' };
+export type CompassTrip         = CompassItem & { type: 'trip' };
+export type CompassStamp        = CompassItem & { type: 'stamp' };
 export type CompassNotification = CompassItem & { type: 'notification' };
-
-/** A Telegraph/content suggestion item. */
-export type CompassSuggestion = CompassItem & { type: 'suggestion' };
+export type CompassSuggestion   = CompassItem & { type: 'suggestion' };
