@@ -42,6 +42,7 @@ import hashtagsRouter from "./hashtags";
 import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
 import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace";
+import compassRouter from "./compass";
 
 const router: IRouter = Router();
 
@@ -88,5 +89,6 @@ router.use(hashtagsRouter);
 router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddyMarketplaceRouter);
+router.use(compassRouter);
 
 export default router;
