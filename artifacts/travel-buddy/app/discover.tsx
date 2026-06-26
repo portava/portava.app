@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { Search, X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { TravelerRow } from '../src/components/TravelerRow';
+import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
 import { searchUsers, getSuggestedTravelers, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
@@ -127,15 +128,25 @@ export default function DiscoverScreen() {
                 <Text style={styles.sectionHeader}>People you may know</Text>
               }
               ListFooterComponent={
-                loadingSuggestions ? <ActivityIndicator color={color.signal} style={{ marginTop: space.lg }} /> : null
+                loadingSuggestions ? (
+                  <View style={{ gap: space.sm, marginTop: space.sm }}>
+                    <TravelerRowSkeleton />
+                    <TravelerRowSkeleton />
+                  </View>
+                ) : null
               }
               renderItem={({ item }) => (
                 <TravelerRow user={item} onFollowed={handleSuggestionFollowed} />
               )}
             />
           ) : loadingSuggestions ? (
-            <View style={styles.center}>
-              <ActivityIndicator color={color.signal} />
+            <View style={styles.list}>
+              <Text style={styles.sectionHeader}>People you may know</Text>
+              <View style={{ gap: space.sm }}>
+                <TravelerRowSkeleton />
+                <TravelerRowSkeleton />
+                <TravelerRowSkeleton />
+              </View>
             </View>
           ) : (
             <View style={styles.center}>
