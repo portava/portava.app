@@ -29,7 +29,6 @@ import { useSession } from '../../src/context/SessionContext';
 import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
 import { postCompassAsk, type CompassAskRecommendation } from '../../src/services/compass';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
-import { useRouteCheckpointMonitor } from '../../src/hooks/useRouteCheckpointMonitor';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
@@ -143,7 +142,7 @@ function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLat, user
             )}
             {stops.map((stop, idx) => {
               const loc = stop.structuredLocation;
-              if (!loc?.lat || !loc?.lng) return null;
+              if (loc?.lat == null || loc?.lng == null) return null;
               const isNext   = stop.id === nextStopId;
               const isDone   = stop.checkpointStatus === 'arrived';
               const isSkipped = stop.checkpointStatus === 'skipped';
@@ -277,11 +276,23 @@ export default function ActiveRouteScreen() {
     [fullPlan?.stops],
   );
 
-  useRouteCheckpointMonitor({
-    stops:     checkpointStops,
-    enabled:   routeStarted,
-    onArrived: markArrived,
-  });
+  // Checkpoint proximity — reuses the existing useActiveLocation stream rather
+  // than a separate geofence/background monitor.  When the user's GPS coords
+  // update and a pending stop is within 80 m, markArrived is called once (the
+  // notifiedRef prevents duplicate calls for the same stop across re-renders).
+  const checkpointNotifiedRef = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (!routeStarted || userLat == null || userLng == null) return;
+    for (const stop of checkpointStops) {
+      if (checkpointNotifiedRef.current.has(stop.id)) continue;
+      if (stop.lat == null || stop.lng == null) continue;
+      const dist = haversineMeters(userLat, userLng, stop.lat, stop.lng);
+      if (dist <= 80) {
+        checkpointNotifiedRef.current.add(stop.id);
+        markArrived(stop.id).catch(() => checkpointNotifiedRef.current.delete(stop.id));
+      }
+    }
+  }, [userLat, userLng, routeStarted, checkpointStops, markArrived]);
 
   // Final-stop distance warning: prefer trip accommodation (hotel/stay) over
   // plain endLocation so the warning reflects where the user is actually sleeping.
@@ -290,9 +301,9 @@ export default function ActiveRouteScreen() {
     const homeLoc =
       fullPlan.plan.tripAccommodationLocation ??
       fullPlan.plan.endLocation;
-    if (!homeLoc?.lat || !homeLoc?.lng) return null;
+    if (homeLoc?.lat == null || homeLoc?.lng == null) return null;
     const lastStop = fullPlan.stops[fullPlan.stops.length - 1];
-    if (!lastStop?.structuredLocation?.lat || !lastStop?.structuredLocation?.lng) return null;
+    if (lastStop?.structuredLocation?.lat == null || lastStop?.structuredLocation?.lng == null) return null;
     return haversineMeters(
       lastStop.structuredLocation.lat, lastStop.structuredLocation.lng,
       homeLoc.lat, homeLoc.lng,
@@ -509,7 +520,9 @@ export default function ActiveRouteScreen() {
           ) : null}
 
           {/* Group member progress (trip-linked) */}
-          {plan.tripId && memberProgress && memberProgress.members.length > 0 && (() => {
+          {/* Show group card whenever the plan is trip-linked, even with 0 members,
+              so the Join button is always visible to trip members on a fresh route. */}
+          {plan.tripId != null && memberProgress != null && (() => {
             const selfMember = memberProgress.members.find((m) => m.userId === currentUserId);
             const isOwner    = selfMember?.isOwner ?? false;
             const isJoined   = selfMember != null;
@@ -518,7 +531,9 @@ export default function ActiveRouteScreen() {
                 <Pressable style={styles.membersHeader} onPress={() => setMembersExpanded((v) => !v)}>
                   <Users size={14} color={color.deep} />
                   <Text style={styles.membersTitle}>
-                    {memberProgress.members.length} trip member{memberProgress.members.length !== 1 ? 's' : ''}
+                    {memberProgress.members.length > 0
+                      ? `${memberProgress.members.length} trip member${memberProgress.members.length !== 1 ? 's' : ''}`
+                      : 'Trip route'}
                   </Text>
                   {membersExpanded ? <ChevronUp size={13} color={color.mute} /> : <ChevronDown size={13} color={color.mute} />}
                 </Pressable>

@@ -231,6 +231,15 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
                   category: item.place.category,
                   address:  item.place.address,
                 })}
+                onAddToRoute={onAddToRoute ? () => onAddToRoute({
+                  id:         `place-${item.place.id}`,
+                  title:      item.place.name,
+                  lat:        item.place.lat ?? null,
+                  lng:        item.place.lng ?? null,
+                  sourceType: 'discovery',
+                  sourceId:   item.place.id,
+                  category:   item.place.category ?? null,
+                }) : undefined}
               />
 
               {/* Bottom row: Send to Telegraph + non-compass feedback menu */}
