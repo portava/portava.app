@@ -242,6 +242,33 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(!ids.includes(C), "C (blocked) should not appear");
   });
 
+  it("fallback shuffles the pool so different orderings are possible", async () => {
+    // Build a pool of 10 distinct profiles (no followers, so fallback is used)
+    const pool = Array.from({ length: 10 }, (_, i) => ({
+      id: `pool-user-${i}`,
+      handle: `user${i}`,
+      name: `User ${i}`,
+      avatar_url: null,
+      is_private: false,
+    }));
+    setup({ follows: [], profiles: pool, blocks: [] });
+
+    // Hit the endpoint 20 times and collect the orderings
+    const orderings = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        req("/users/suggestions")
+          .then((r) => r.json())
+          .then((body: any) => body.users.map((u: any) => u.id).join(","))
+      )
+    );
+
+    const unique = new Set(orderings);
+    assert.ok(
+      unique.size > 1,
+      `Expected multiple distinct orderings across 20 requests, got ${unique.size}`
+    );
+  });
+
   it("returns correct TravelerSearchResult shape", async () => {
     setup({
       follows: [{ follower_id: B, following_id: ME }],

@@ -349,10 +349,17 @@ router.get("/users/suggestions", async (req, res) => {
       return;
     }
 
-    safeIds = (fallbackRows ?? [])
+    const pool = (fallbackRows ?? [])
       .map((r: any) => r.id as string)
-      .filter((id) => !blockedSet.has(id) && !alreadyFollowingSet.has(id))
-      .slice(0, 10);
+      .filter((id) => !blockedSet.has(id) && !alreadyFollowingSet.has(id));
+
+    // Fisher-Yates shuffle so each new user sees a different sample
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+
+    safeIds = pool.slice(0, 10);
   }
 
   if (safeIds.length === 0) { res.status(200).json({ users: [] }); return; }
@@ -381,15 +388,20 @@ router.get("/users/suggestions", async (req, res) => {
     followerCounts[fid] = (followerCounts[fid] ?? 0) + 1;
   }
 
-  const users = (profiles ?? []).map((p: any) => ({
-    id: p.id,
-    displayName: (p.name as string | null) ?? null,
-    username: (p.handle as string | null) ?? null,
-    avatarUrl: (p.avatar_url as string | null) ?? null,
-    followerCount: followerCounts[p.id as string] ?? 0,
-    isFollowing: false,
-    isPrivate: (p.is_private as boolean) ?? false,
-  }));
+  // Re-order profiles to match the (possibly shuffled) safeIds order
+  const profileById = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
+  const users = safeIds
+    .map((id) => profileById.get(id))
+    .filter(Boolean)
+    .map((p: any) => ({
+      id: p.id,
+      displayName: (p.name as string | null) ?? null,
+      username: (p.handle as string | null) ?? null,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+      followerCount: followerCounts[p.id as string] ?? 0,
+      isFollowing: false,
+      isPrivate: (p.is_private as boolean) ?? false,
+    }));
 
   res.status(200).json({ users });
 });
