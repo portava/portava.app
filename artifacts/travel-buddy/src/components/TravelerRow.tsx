@@ -84,7 +84,7 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
           </Text>
         )}
         {user.reason ? (
-          <Text style={styles.reason} numberOfLines={1}>{user.reason}</Text>
+          <Text style={styles.reason} numberOfLines={2}>{user.reason}</Text>
         ) : null}
       </View>
 
