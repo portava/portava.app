@@ -80,7 +80,7 @@ async function isFlagEnabled(db: any, flag: string): Promise<boolean> {
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", flag)
+      .eq("flag", flag)
       .maybeSingle();
     return !!(data as any)?.enabled;
   } catch {
@@ -602,7 +602,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
       void (async () => {
         try {
           const { data: passportFlag } = await sc
-            .from("feature_flags").select("enabled").eq("key", "hidden_gems_passport_enabled").maybeSingle();
+            .from("feature_flags").select("enabled").eq("flag", "hidden_gems_passport_enabled").maybeSingle();
           if (!(passportFlag as any)?.enabled) return;
 
           const { createStamp } = await import("../services/passport/PassportStampService.js");
@@ -624,7 +624,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
 
           if (stampResult?.isNew) {
             const { data: memFlag } = await sc
-              .from("feature_flags").select("enabled").eq("key", "passport_memories_enabled").maybeSingle();
+              .from("feature_flags").select("enabled").eq("flag", "passport_memories_enabled").maybeSingle();
             if ((memFlag as any)?.enabled) {
               await createSuggestedMemory(sc, {
                 userId: user.id,
@@ -649,7 +649,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
       void (async () => {
         try {
           const { data: pulseFlag } = await sc
-            .from("feature_flags").select("enabled").eq("key", "hidden_gems_pulse_enabled").maybeSingle();
+            .from("feature_flags").select("enabled").eq("flag", "hidden_gems_pulse_enabled").maybeSingle();
           if (!(pulseFlag as any)?.enabled) return;
 
           const gem = await getGem(sc, req.params.id);

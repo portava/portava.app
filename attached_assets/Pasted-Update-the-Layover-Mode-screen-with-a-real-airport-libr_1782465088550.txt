@@ -1,0 +1,193 @@
+Update the Layover Mode screen with a real airport library connected to the GPS/location system.
+
+Scope:
+Make Layover Mode and similar airport/layover screens fully functional by adding or wiring a searchable airport library, airport GPS coordinates, nearby activity discovery, and real navigation/location behavior. Check existing systems first before building anything new.
+
+Core rule:
+Check first, then build or update accordingly. Do not rebuild GPS, airport search, maps, or location services if existing implementations already exist. Reuse and wire existing systems wherever possible.
+
+1. Check existing implementation first
+Before editing, inspect the codebase for:
+- existing GPS/location library
+- geofence/location permission system
+- airport search data
+- airport autocomplete components
+- map/location utilities
+- Discovery/places APIs
+- Hidden Gems / nearby activity services
+- layover screen components
+- trip planner airport fields
+- saved places/wishlist systems
+- offline/cache systems
+- existing airport datasets or fixtures
+- tests around location, map, Discovery, or Layover Mode
+
+Classify the current state:
+- already implemented
+- partially implemented
+- mocked/fixture only
+- hidden behind feature flag
+- missing entirely
+
+2. Airport library
+Add or wire a searchable airport library that supports:
+- airport name
+- IATA code
+- ICAO code if available
+- city
+- country
+- latitude
+- longitude
+- timezone
+- airport type if available: international, domestic, regional
+- aliases/common names where available
+
+Examples:
+- TPE — Taiwan Taoyuan International Airport
+- TSA — Taipei Songshan Airport
+- HND — Tokyo Haneda
+- NRT — Tokyo Narita
+- SIN — Singapore Changi
+- BKK — Bangkok Suvarnabhumi
+- DMK — Bangkok Don Mueang
+- MNL — Manila Ninoy Aquino
+- CEB — Mactan-Cebu
+- DAD — Da Nang
+- HAN — Hanoi Noi Bai
+- SGN — Ho Chi Minh City Tan Son Nhat
+
+Do not hardcode only these examples. Use them as seed coverage if no larger airport dataset exists.
+
+3. Airport search behavior
+Update the Airport input on Layover Mode:
+- Search by IATA code, ICAO code, airport name, city, or country.
+- Show autocomplete results while typing.
+- Prefer exact IATA matches when user types 3 letters.
+- Show result labels like: “TPE — Taiwan Taoyuan International Airport, Taipei, Taiwan.”
+- Selecting an airport fills the airport field and stores airport metadata.
+- If no match is found, show a helpful empty state instead of silently failing.
+
+4. GPS/location integration
+When an airport is selected, link it to the GPS system:
+- Use airport latitude/longitude as the origin point.
+- Calculate nearby activities based on the airport location.
+- Use the existing location/Discovery/map services where possible.
+- Support user current GPS location when permission is granted.
+- If user is physically near the selected airport, show “You are near this airport.”
+- If location permission is denied, still use selected airport coordinates.
+- Do not require live GPS for airport-based recommendations.
+
+5. Layover Mode functionality
+Make the screen fully functional:
+- Airport search works.
+- Time window fields work.
+- Domestic / International selection affects recommendations.
+- Immigration required toggle affects whether leaving airport is safe.
+- Checked bags toggle affects time needed.
+- Lounge access toggle can suggest lounge/airport-only options.
+- Want to leave airport toggle determines whether outside-airport activities are allowed.
+- Comfort level changes recommendation strictness:
+  - Safe only
+  - Balanced
+  - Adventurous
+- Results should update based on airport, layover time, flight type, toggles, and comfort level.
+
+6. Recommendation logic
+Use safe layover timing rules:
+- Calculate total layover hours from arrival/departure window.
+- Estimate minimum buffer time:
+  - domestic airport-only
+  - domestic leaving airport
+  - international airport-only
+  - international leaving airport
+  - immigration required
+  - checked bags
+  - return-to-airport buffer
+- If time is too short, recommend airport-only options.
+- If time is enough, recommend nearby activities within a safe travel radius.
+- Show clear reasons like:
+  - “Airport-only recommended because immigration and checked bags reduce your safe free time.”
+  - “You have enough time for nearby food or a short landmark visit.”
+- Do not recommend leaving the airport when the inputs make it unsafe.
+
+7. Nearby activity integration
+Wire selected airport coordinates into existing Discovery/Hidden Gems/places systems where possible:
+- food
+- coffee
+- lounges
+- shopping
+- quick landmarks
+- nightlife only if time and safety allow
+- photo spots
+- hotels/rest areas
+- transport options
+- airport terminals if available
+
+If real place APIs are not available yet, use existing mock data only as a temporary fallback and clearly label it as fallback/demo data in developer output. Prefer real data if already implemented.
+
+8. Similar screens
+Find other screens with airport/layover fields and wire them consistently:
+- trip planning airport fields
+- arrival support
+- safe return / arrival screens
+- Rent a Buddy arrival support
+- Discovery airport-based suggestions
+- Compass AI layover suggestions
+
+Do not create duplicate airport search components if a shared component can be used.
+
+9. Data model/API
+If no airport data model exists, add the smallest safe implementation:
+- shared airport dataset/service
+- airport lookup endpoint if needed
+- airport search helper
+- airport coordinate helper
+- optional cache/index for fast search
+
+Do not duplicate existing map/place/location tables.
+Do not create a second GPS system.
+Do not break existing trip or Discovery APIs.
+
+10. UI/UX
+- Keep the current Layover Mode design, but make it functional.
+- Search button should run the airport lookup and recommendation generation.
+- Autocomplete should work before pressing Search.
+- Show loading, error, and empty states.
+- Add clear validation:
+  - airport required
+  - arrival/departure time required
+  - departure must be after arrival or handle overnight layovers explicitly
+- Keep mobile controls easy to tap.
+- Fix any visible typo/spacing issues found during the update.
+
+11. Tests
+Add or update tests proving:
+- IATA code search returns the correct airport.
+- Airport name/city search works.
+- Selecting an airport stores coordinates.
+- GPS permission denied still allows airport-coordinate recommendations.
+- Layover recommendations change when “Want to leave airport” is off.
+- International + immigration + checked bags creates stricter recommendations.
+- Time-too-short case shows airport-only recommendation.
+- Similar screens use the shared airport search/helper instead of duplicate logic.
+
+12. Verification
+Run:
+- affected frontend tests
+- airport search/helper tests
+- location/GPS helper tests
+- route/API tests if backend endpoints are added
+- typecheck
+- lint/guards if available
+
+Report:
+- what already existed
+- what was reused
+- what was newly added
+- files changed
+- tests run
+- exact pass/fail counts
+- any limitations or follow-up tasks
+
+Acceptance:
+The Layover Mode screen is fully functional. A user can type an airport code like “TPE,” select the correct airport from a real searchable airport library, and receive layover recommendations based on airport GPS coordinates, time window, flight type, immigration, bags, lounge access, desire to leave the airport, and comfort level. Similar airport-based screens reuse the same airport/GPS system instead of creating duplicate logic.

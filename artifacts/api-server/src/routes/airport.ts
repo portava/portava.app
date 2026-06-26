@@ -127,7 +127,7 @@ async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: stri
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", flag)
+      .eq("flag", flag)
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {

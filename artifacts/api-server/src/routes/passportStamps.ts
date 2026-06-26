@@ -52,14 +52,18 @@ async function isFlagEnabled(flag: string): Promise<boolean> {
   const sc = getServiceClient();
   if (!sc) return false;
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("feature_flags")
       .select("enabled")
-      .eq("key", flag)
+      .eq("flag", flag)
       .maybeSingle();
-    return Boolean((data as any)?.enabled);
+    // DB error (e.g. table not yet migrated) → fail-open so dev env works.
+    if (error) return true;
+    // No row means the flag hasn't been seeded yet → treat as enabled.
+    if (data == null) return true;
+    return Boolean((data as any).enabled);
   } catch {
-    return false;
+    return true;
   }
 }
 

@@ -1,0 +1,262 @@
+Create a shared appwide location library and connect it to the GPS system, recommendation algorithm, and every location-dependent function.
+
+Scope:
+Any Travel Buddy screen, form, feed, recommendation engine, map, safety feature, or booking flow that needs location input must use one shared structured location library/autocomplete system. The selected location must feed the app’s algorithms and downstream functions so reported information is accurate, consistent, and based on real coordinates instead of loose text.
+
+Core rule:
+Check first, then build or update accordingly. Do not create duplicate location, GPS, map, airport, Discovery, or recommendation systems. Reuse existing systems where possible, then wire them correctly.
+
+1. Check existing implementation first
+Before editing, inspect the codebase for:
+- GPS/location services
+- map utilities
+- Discovery place search
+- Compass AI / recommendation algorithms
+- City Pulse location logic
+- delayed geotag logic
+- airport search/library
+- city/country datasets
+- profile home city/country fields
+- trip destination fields
+- event/circle/meetup location fields
+- Rent a Buddy service-area logic
+- Safe Return / arrival support location fields
+- Compass/AI destination prompts
+- nearby activity APIs
+- existing autocomplete components
+- mock/fixture location data
+- backend routes for places or location search
+- any function that accepts raw location strings
+
+Classify current state:
+- already implemented
+- partially implemented
+- mocked/fixture only
+- hidden behind feature flag
+- missing entirely
+
+2. Shared structured location library
+Create or wire one shared location library that supports:
+- cities
+- countries
+- regions/states/provinces
+- islands
+- airports
+- neighborhoods
+- landmarks
+- venues/places when available
+- GPS/current-location option when permission is granted
+
+Each selected location must store structured metadata where available:
+- display name
+- canonical name
+- type: city / country / airport / neighborhood / venue / landmark / region
+- city
+- region/state
+- country
+- latitude
+- longitude
+- timezone
+- IATA/ICAO code for airports
+- provider/source
+- source confidence/ranking score
+- place ID/provider ID if available
+- bounding box or radius if available
+
+Do not store only plain text when a structured selection is required.
+
+3. Shared autocomplete component
+Build or reuse one shared LocationAutocomplete component and use it appwide.
+
+It should support:
+- typing free text
+- debounced search
+- exact airport-code matching
+- city/country matching
+- neighborhood/region matching where supported
+- “near me” option when GPS is allowed
+- recent searches
+- saved/favorite places if available
+- loading state
+- empty state
+- error state
+- offline/cache fallback if available
+
+Result labels should be clear:
+- “Bangkok, Thailand”
+- “TPE — Taiwan Taoyuan International Airport, Taipei, Taiwan”
+- “Da Nang, Vietnam”
+- “Shibuya, Tokyo, Japan”
+- “Changi Airport, Singapore”
+
+4. Tie location library into the algorithm
+The recommendation/feed/discovery algorithm must use selected structured location data, not raw typed strings.
+
+Wire selected location metadata into:
+- Discovery feed ranking
+- City Pulse location filtering
+- Compass AI recommendations
+- Hidden Gems ranking
+- nearby people/travelers suggestions
+- nearby events/plans/circles
+- Rent a Buddy matching and service radius
+- Layover Mode recommendations
+- trip itinerary suggestions
+- map search and map centering
+- safe-radius and travel-time decisions
+- delayed geotag publishing/geofence checks
+- Passport stamps/geotag credit logic
+- availability-aware recommendations
+- notification targeting for nearby activity
+- any “near me,” “in city,” “around,” or “going soon” filter
+
+Every function that needs location must receive:
+- location ID or provider place ID when available
+- latitude/longitude
+- normalized display name
+- location type
+- country/city context
+- timezone when timing matters
+- confidence/source metadata when available
+
+5. Accuracy requirements
+- Recommendations must be based on coordinates and radius/distance calculations, not text matching alone.
+- City/country filters must use normalized canonical names.
+- Airport and layover logic must use airport coordinates and timezone.
+- Distance-based functions must use latitude/longitude.
+- Time-based functions must use the selected location timezone when relevant.
+- Geofence/delayed-post functions must use coordinates and radius.
+- Compass AI should receive structured location context so it does not hallucinate city or airport details.
+- If a location is ambiguous, require the user to select from results before running the algorithm.
+- If the selected location lacks coordinates, mark it incomplete and block location-dependent recommendations until resolved.
+
+6. Appwide replacement
+Find every screen/form/input that accepts location and replace or wire it to the shared location library, including:
+- Discover destination search
+- Layover Mode airport input
+- trip destination/location fields
+- event creation location
+- circle creation location
+- meetup location
+- hidden gems/place search
+- saved places/wishlist
+- profile home city/country
+- Rent a Buddy city/service area
+- Safe Return destination/arrival support
+- delayed geotag/scheduled post location
+- Compass AI destination prompts
+- map search
+- “city, island or region” modal
+- any search/filter that drives location-based results
+
+Do not leave isolated one-off text inputs where real location selection is needed.
+
+7. GPS integration
+Connect selected locations to the existing GPS/map system:
+- selected location coordinates become the origin or target point
+- current GPS can be used when user chooses “near me”
+- if GPS permission is denied, selected library coordinates still work
+- location selection should support distance/radius queries
+- map screens should center on selected location
+- Discovery/Compass recommendations should use selected coordinates
+- nearby results should clearly distinguish selected-location results from current-GPS results
+
+8. Backend/API behavior
+If no shared endpoint exists, add the smallest safe API needed:
+- location search endpoint
+- location details endpoint if needed
+- airport lookup support
+- coordinate normalization helper
+- canonical city/country resolver
+- radius/distance helper
+- timezone resolver
+- optional cache/index for performance
+
+Do not duplicate existing map/place/location tables.
+Do not create a second GPS system.
+Do not break existing Discovery, Trip, Event, Rent a Buddy, Passport, Safe Return, or Profile APIs.
+
+9. Function contract update
+Audit every function that currently accepts location as a string and update it to accept structured location context where needed.
+
+For example, replace loose inputs like:
+- city: "Bangkok"
+- location: "TPE"
+- destination: "Da Nang"
+
+With structured context like:
+- locationId
+- displayName
+- type
+- city
+- country
+- latitude
+- longitude
+- timezone
+- providerPlaceId
+- source
+
+Keep backward compatibility where needed, but prefer structured location as the source of truth.
+
+10. Data honesty
+- Do not invent coordinates.
+- Do not silently accept unknown locations as real places.
+- If a user enters a location that cannot be matched, show “No location found” and allow retry.
+- If the provider is unavailable, show a human-readable error.
+- If mock/fixture fallback is used temporarily, clearly label it in developer output and add a follow-up to replace it.
+- If an algorithm cannot run accurately because coordinates/timezone are missing, block or degrade gracefully with a clear reason.
+
+11. UI/UX rules
+- Users can type naturally and select from results.
+- Selection should store structured metadata, not just text.
+- Show selected location clearly after selection.
+- Allow clearing/changing the selection.
+- Keep mobile touch targets large.
+- Keep styling consistent with Travel Buddy.
+- Modal inputs should autocomplete before pressing Explore/Search.
+- Explore/Search buttons should use the selected structured location, not raw text only.
+
+12. Tests
+Add or update tests proving:
+- city search works
+- country search works
+- airport code search works
+- neighborhood/region search works where supported
+- selecting a location stores coordinates
+- selecting a location stores timezone when available
+- GPS denied still allows selected-library location behavior
+- Discover destination modal uses the shared location component
+- Layover Mode uses the shared location/airport library
+- event/trip creation uses structured location selection
+- Compass/Discovery algorithm receives structured coordinates
+- nearby recommendations change when selected location changes
+- ambiguous location requires selection before algorithm runs
+- unknown location does not produce fake coordinates
+- delayed geotag/geofence logic uses coordinates/radius
+- no duplicate location input components remain for core screens
+- empty/no-result state is shown honestly
+
+13. Verification
+Run:
+- affected frontend tests
+- location helper tests
+- algorithm/recommendation tests
+- route/API tests if backend endpoints are added
+- GPS/geofence helper tests
+- typecheck
+- lint/guards if available
+
+Report:
+- what existing systems were found
+- what was reused
+- what was updated
+- what was newly added
+- which algorithms/functions now consume structured location context
+- screens converted
+- files changed
+- tests run
+- exact pass/fail counts
+- remaining raw location-string inputs, if any, with reasons
+
+Acceptance:
+Every Travel Buddy form, screen, filter, algorithm, and backend function that depends on location uses one shared structured location library as the source of truth. Users can type and select real locations appwide, and selected locations feed GPS, maps, Discovery, Compass AI, Layover Mode, Rent a Buddy, trips, events, Safe Return, delayed geotagging, and recommendations using accurate coordinates, timezone, and normalized place metadata. No duplicate location-input or GPS systems are created.
