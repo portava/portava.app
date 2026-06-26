@@ -291,7 +291,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
 
   const enabled = await isCompassEnabled(sc);
   if (!enabled) {
-    res.json({ section: null, nextCursor: null, fallback: true });
+    res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false });
     return;
   }
 
@@ -309,7 +309,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     req.log.info({ userId: user.id }, "compass/feed/section: COMPASS_FALLBACK_MODE_ENABLED, returning section fallback");
     const profile  = await getCompassProfile(sc, user.id).catch(() => null);
     const fallback = await buildFallbackFeed(sc, user.id, profile, "section_fallback_mode_enabled");
-    res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
+    res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false, safeItems: fallback.safeItems });
     return;
   }
 

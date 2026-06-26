@@ -85,7 +85,10 @@ export function useCompassFeed({
     loading,
     refreshing,
     fallback:       data?.fallback ?? false,
-    compassEnabled: data?.compassEnabled !== false,
+    // Treat missing compassEnabled as disabled when the response is a fallback —
+    // the section route omits the field on disabled/error paths, so this prevents
+    // the client from treating a fallback response as "enabled" and waiting forever.
+    compassEnabled: data?.fallback ? false : (data?.compassEnabled !== false),
     error,
     refresh,
   };

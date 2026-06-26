@@ -324,7 +324,6 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
                     recommendationId={item.place.id}
                     itemType="place"
                     category={item.place.category ?? undefined}
-                    onWhyPress={() => handleWhyPress(item.place.id)}
                     onDismiss={() => setDismissed((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
                     onTagShowMore={() => setShowMoreIds((prev) => { const s = new Set(prev); s.add(item.place.id); return s; })}
                   />

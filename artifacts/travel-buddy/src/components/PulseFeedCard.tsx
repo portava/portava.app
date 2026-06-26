@@ -110,6 +110,8 @@ function PostCard({ item }: { item: PulseFeedItem }) {
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
 
   return (
     <View style={s.card}>
@@ -133,21 +135,33 @@ function PostCard({ item }: { item: PulseFeedItem }) {
           />
         </View>
       )}
-      <PostEngagementBar
-        postId={item.id}
-        likeCount={item.likeCount ?? 0}
-        commentCount={item.commentCount ?? 0}
-        likedByMe={item.likedByMe ?? false}
-        canLike={item.canLike !== false}
-        canComment={item.canComment !== false}
-        canShare={item.canShare !== false}
-      />
+      <View style={s.actions}>
+        <View style={{ flex: 1 }}>
+          <PostEngagementBar
+            postId={item.id}
+            likeCount={item.likeCount ?? 0}
+            commentCount={item.commentCount ?? 0}
+            likedByMe={item.likedByMe ?? false}
+            canLike={item.canLike !== false}
+            canComment={item.canComment !== false}
+            canShare={item.canShare !== false}
+          />
+        </View>
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
+      </View>
     </View>
   );
 }
 
 /* ── Question ── */
 function QuestionCard({ item }: { item: PulseFeedItem }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} />
@@ -157,6 +171,12 @@ function QuestionCard({ item }: { item: PulseFeedItem }) {
         <View style={s.action}><HelpCircle size={15} color={color.mute} /><Text style={s.actionText}>{item.replyCount ?? 0} answers</Text></View>
         <View style={{ flex: 1 }} />
         <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
       </View>
       {item.source === 'user' && (
         <PostEngagementBar
@@ -237,6 +257,8 @@ function GemCard({ item }: { item: PulseFeedItem }) {
 /* ── Itinerary / Plan Idea ── */
 function ItineraryCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
     <View style={s.card}>
       <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} />
@@ -253,6 +275,12 @@ function ItineraryCard({ item }: { item: PulseFeedItem }) {
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving itineraries is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
       </View>
     </View>
   );
@@ -283,6 +311,8 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
 /* ── Compass Suggestion (stub-real: only with explicit reason) ── */
 function CompassCard({ item }: { item: PulseFeedItem }) {
   const planPicker = usePlanPicker();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
     <View style={[s.card, s.compassCard]}>
       <View style={s.compassHead}>
@@ -296,6 +326,12 @@ function CompassCard({ item }: { item: PulseFeedItem }) {
         <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
         <View style={{ flex: 1 }} />
         <Pressable style={s.solidBtn} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: item.title ?? 'Compass pick', city: item.city, category: 'Compass' })}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
+        <CompassFeedbackMenu
+          recommendationId={item.id}
+          itemType={item.type}
+          category={item.type}
+          onDismiss={() => setDismissed(true)}
+        />
       </View>
     </View>
   );
