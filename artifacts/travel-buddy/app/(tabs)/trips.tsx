@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable, Image,
   ActivityIndicator, StyleSheet, Alert,
@@ -155,6 +157,10 @@ export default function Trips() {
   const { data: realTrips, loading, error, reload } = useMyTrips();
   const { meetups: meetupCount } = useUnreadCounts();
   const [layoverOpen, setLayoverOpen] = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
+  }, []));
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
 

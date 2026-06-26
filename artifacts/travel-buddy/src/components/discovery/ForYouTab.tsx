@@ -129,22 +129,15 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
   // load() call can detect they've been superseded and bail out safely.
   const loadIdRef = React.useRef(0);
 
-  // Refs for Compass state — lets load() read current values without listing
-  // them in its dependency array, preventing spurious resets when Compass data
-  // arrives after the initial render.
-  const compassEnabledRef = React.useRef(compass.compassEnabled);
-  const compassDataRef    = React.useRef(compass.data);
-  useEffect(() => { compassEnabledRef.current = compass.compassEnabled; }, [compass.compassEnabled]);
-  useEffect(() => { compassDataRef.current    = compass.data;           }, [compass.data]);
-
-  // When the Compass feed resolves with enabled items, upgrade to Compass source
-  // WITHOUT clearing existing items first (avoids flash of empty state).
+  // When the Compass feed resolves with enabled items, silently upgrade the feed
+  // to Compass source — runs independently of load() so it never wipes existing
+  // OSM/Telegraph content; only upgrades when Compass data is present and enabled.
   useEffect(() => {
-    if (!compass.data) return;
+    if (!compass.data || !compass.compassEnabled) return;
     const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
     const safeItems = compass.data.safeItems ?? [];
     const all = compassItems.length > 0 ? compassItems : safeItems;
-    if (all.length > 0 && compass.compassEnabled) {
+    if (all.length > 0) {
       setItems(all.map((ci) => ({ kind: 'compass' as const, item: ci, place: compassItemToPlace(ci) })));
       setSource('compass');
       setLoading(false);
@@ -152,6 +145,10 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
     }
   }, [compass.data, compass.compassEnabled]);
 
+  // load() always fetches OSM + Telegraph as the reliable baseline.
+  // The Compass useEffect above upgrades items asynchronously when Compass
+  // data resolves — no short-circuiting inside load() based on Compass state,
+  // so OSM fallback always runs regardless of whether Compass is enabled/disabled.
   const load = useCallback(async (isRefresh = false) => {
     if (!destination) return;
     const myId = ++loadIdRef.current;
@@ -159,40 +156,20 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
 
     if (!isRefresh) setLoading(true);
 
-    // Read Compass state from refs — avoids depending on compass.* in useCallback,
-    // which would cause load() to recreate whenever Compass data arrives and
-    // re-trigger the reset effect (clearing Compass items immediately after they load).
-    const compassEnabled = compassEnabledRef.current;
-    const compassData    = compassDataRef.current;
-
-    // When Compass is enabled and already has data, it is the primary source.
-    // The Compass useEffect above populates items; nothing more to do here.
-    if (compassEnabled && compassData) {
-      if (!stale()) { setLoading(false); setRefreshing(false); }
-      return;
-    }
-
-    // When Compass is enabled but data hasn't arrived yet, wait for the
-    // Compass useEffect to fire (it runs independently).  Clear the skeleton
-    // after a grace period so the user doesn't stare at an infinite loader.
-    if (compassEnabled) {
-      setTimeout(() => {
-        if (!stale()) { setLoading(false); setRefreshing(false); }
-      }, 8000);
-      return;
-    }
-
-    // ── Compass disabled — fall back to OSM + Telegraph ───────────────────────
+    // Fire OSM and Telegraph simultaneously as baseline content.
+    // Compass data (if enabled) will upgrade items via its own useEffect.
     const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode);
     const telPromise = isAuthed
       ? getForYouRecommendations({ destination, count: 5 })
       : null;
 
+    // Show OSM content the instant it resolves — clears skeleton immediately.
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
       setRefreshing(false);
       setItems((prev) => {
+        // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
         if (osm.ok && osm.data.places.length > 0) {
           setSource('osm');
@@ -205,6 +182,7 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
+    // Silently upgrade to Telegraph AI picks when (if) the AI call returns.
     if (telPromise) {
       try {
         const tel = await telPromise;
@@ -224,15 +202,16 @@ export function ForYouTab({ destination, onAddToPlan, contextMode }: ForYouTabPr
       }
       if (!stale()) { setLoading(false); setRefreshing(false); }
     }
-  }, [destination, isAuthed]); // No compass.* deps — read via refs above
+  }, [destination, isAuthed]);
 
-  // Reset and reload only when destination or auth changes, NOT when load()
-  // identity changes (which would happen if compass.* were in load's deps).
+  // Reset state and start loading when destination or auth changes.
+  // load() identity only changes with destination/isAuthed, so this effect
+  // fires exactly when the user switches city or logs in/out.
   useEffect(() => {
     setItems([]);
     setSource('none');
     load(false);
-  }, [destination, isAuthed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [destination, isAuthed, load]);
 
   const handleRefresh = () => {
     setRefreshing(true);

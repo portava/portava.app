@@ -1,6 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { Sparkles, Send, Plane } from 'lucide-react-native';
+import { useFocusEffect } from 'expo-router';
+import { postCompassFrontloadEvent } from '../../src/services/compass';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
@@ -31,6 +33,10 @@ export default function AiChat() {
   const [input, setInput] = useState('');
   const [layoverOpen, setLayoverOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
+
+  useFocusEffect(useCallback(() => {
+    postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
+  }, []));
 
   function send() {
     if (!input.trim()) return;
