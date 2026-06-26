@@ -73,6 +73,9 @@ function isFairExposureEligible(
   if (!(isNewAuthor(result) || isNewBuddy(result))) return false;
   // Author must not have any active suspension / safety signal
   if (result.item.isSuspended) return false;
+  // Non-buddy new users must have completed verification (isVerified=true).
+  // Buddy approval (buddyApprovedAt) serves as their verification signal.
+  if (result.item.type !== "buddy" && !result.item.isVerified) return false;
   return true;
 }
 

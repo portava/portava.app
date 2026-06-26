@@ -19,6 +19,8 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
+import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 
 const router = Router();
 
@@ -1060,6 +1062,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
 
+  // Compass activity ingestion — both traveler and buddy get credit
+  recordActivityEvent(serviceClient, auth.user.id, "booking_completed", { category: "buddy_session" });
+  if (buddyUserId) {
+    recordActivityEvent(serviceClient, buddyUserId, "buddy_session_completed", { category: "buddy_session" });
+  }
+
   // Archive the booking thread unless BOTH parties opted to stay connected.
   // Either party may call POST /api/rent-a-buddy/bookings/:bookingId/stay-connected before or after
   // completion to record their preference. We check both here.
@@ -1575,6 +1583,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
     .maybeSingle();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  // Compass activity ingestion — reviewer earns review_posted credit
+  recordActivityEvent(serviceClient, auth.user.id, "review_posted", { category: "buddy_session" });
 
   // Unblind if both sides have submitted
   const { count } = await serviceClient

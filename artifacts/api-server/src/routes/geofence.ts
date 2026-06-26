@@ -19,6 +19,8 @@ import { checkAndRecordSnapshot } from "../services/location/LocationSafetyServi
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
+import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 
 const router = Router();
 
@@ -784,6 +786,13 @@ router.post("/trips/:tripId/geofence/attendance/:userId/override", async (req, r
     actorId:   user.id,
     metadata:  { newStatus: parsed.data.status, note: parsed.data.note ?? null },
   });
+
+  // Compass activity ingestion for no-show: record event + end fair-exposure
+  if (parsed.data.status === "no_show") {
+    const sc = getServiceClient();
+    recordActivityEvent(sc, userId, "no_show");
+    endFairExposure(sc, userId, "no_show");
+  }
 
   res.json({ ok: true, userId, newStatus: parsed.data.status });
 });

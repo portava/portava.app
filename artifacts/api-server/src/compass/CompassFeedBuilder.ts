@@ -28,7 +28,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 import type { PipelineResult, PipelineTestOverrides } from "./CompassPipeline.js";
 import { runPipeline } from "./CompassPipeline.js";
-import { applyDiversity } from "./CompassDiversityEngine.js";
+import { diversifySection } from "./CompassDiversityEngine.js";
 import { applyFairExposure } from "./CompassFairExposureEngine.js";
 import {
   computeActiveUserScore,
@@ -337,22 +337,21 @@ async function runFeedPipeline(
   });
   boosted.sort((a, b) => b.finalScore - a.finalScore);
 
-  // ── Diversity pass ─────────────────────────────────────────────────────────
-  const { items: diversified } = applyDiversity(boosted, profile);
-
   // ── Fair exposure — global cap (≤2 per feed build) ────────────────────────
-  let finalPool = diversified;
-  if (!_overrides.skipFairExposure && diversified.length > 0) {
+  // Applied on the scored+boosted pool BEFORE section assignment so fair-
+  // exposure items appear naturally in the sections they qualify for.
+  let finalPool = boosted;
+  if (!_overrides.skipFairExposure && boosted.length > 0) {
     // Preload in a single call (never twice)
-    const preloaded = await preloadFairExposureData(db, diversified);
+    const preloaded = await preloadFairExposureData(db, boosted);
     const appearanceCounts = _overrides.appearanceCounts ?? preloaded.counts;
     const cooldownSet      = _overrides.cooldownSet      ?? preloaded.cooldowns;
 
     // Call with empty sectionItems to get only the fair-exposure candidates.
     // The engine returns [fairInsert1?, fairInsert2?] (up to 2 items total).
     const { items: fairInserts } = applyFairExposure(
-      [],          // empty → returned array contains ONLY the new inserts
-      diversified,
+      [],      // empty → returned array contains ONLY the new inserts
+      boosted,
       profile,
       db,
       appearanceCounts,
@@ -362,13 +361,23 @@ async function runFeedPipeline(
     if (fairInserts.length > 0) {
       // Prepend the fair-exposure candidates, removing their natural position
       const fairIds = new Set(fairInserts.map((r) => r.item.id));
-      const rest = diversified.filter((r) => !fairIds.has(r.item.id));
+      const rest = boosted.filter((r) => !fairIds.has(r.item.id));
       finalPool = [...fairInserts, ...rest];
     }
   }
 
-  // ── Section assignment ─────────────────────────────────────────────────────
-  const sectionMap = assignSections(finalPool, profile, context);
+  // ── Section assignment (raw — no diversity yet) ────────────────────────────
+  const rawSectionMap = assignSections(finalPool, profile, context);
+
+  // ── Per-section diversity ──────────────────────────────────────────────────
+  // Diversity — including the 25% nightlife/paid cap and exploration cards —
+  // is applied independently to each section. This ensures the consecutive-
+  // type constraint and nightlife cap are respected WITHIN every section, not
+  // just globally.
+  const sectionMap = new Map<SectionName, PipelineResult[]>();
+  for (const [name, sectionItems] of rawSectionMap) {
+    sectionMap.set(name, diversifySection(sectionItems, profile));
+  }
 
   return {
     sectionMap,

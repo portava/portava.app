@@ -27,7 +27,7 @@ import { calculateUserAge } from "../lib/ageEligibility";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
-import { runPipeline } from "../compass/CompassPipeline";
+import { buildFeed } from "../compass/CompassFeedBuilder";
 import { isEnabled } from "../compass/flags";
 
 const router = Router();
@@ -589,23 +589,26 @@ router.get("/discovery", async (req, res) => {
             const compassProfile = await getCompassProfile(compassSc, callerUserId);
             const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
             const compassItems   = places.map(discoveryPlaceToCompassItem);
-            const pipeline       = await runPipeline(compassItems, compassProfile, compassContext, compassSc);
+
+            // Use buildFeed (full pipeline + diversity + fair exposure) and
+            // extract the for_you section so ranking is identical to the feed.
+            const feedPage     = await buildFeed(compassItems, compassProfile, compassContext, compassSc);
+            const forYouSec    = feedPage.sections.find((s) => s.name === "for_you");
+            const feedItems    = forYouSec?.items ?? [];
 
             // Build lookup so we can restore all original DiscoveryPlace fields
             const placeById = new Map(places.map((p) => [p.id, p]));
-            const compassRanked: DiscoveryPlace[] = pipeline.results
-              .sort((a, b) => b.finalScore - a.finalScore)
-              .map((r) => {
-                const originalId = r.item.id.replace(/^discovery:/, "");
-                return placeById.get(originalId) ?? {
-                  id: originalId, name: String(r.item.contentBody ?? ""),
-                  category: (r.item.interestTags ?? [])[0] ?? "places",
-                  type: null, description: null, distanceKm: null,
-                  lat: null, lng: null, tags: [], address: null,
-                  website: null, phone: null, openingHours: null,
-                  rating: null, isOpenNow: null,
-                };
-              });
+            const compassRanked: DiscoveryPlace[] = feedItems.map((r) => {
+              const originalId = r.item.id.replace(/^discovery:/, "");
+              return placeById.get(originalId) ?? {
+                id: originalId, name: String(r.item.contentBody ?? ""),
+                category: (r.item.interestTags ?? [])[0] ?? "places",
+                type: null, description: null, distanceKm: null,
+                lat: null, lng: null, tags: [], address: null,
+                website: null, phone: null, openingHours: null,
+                rating: null, isOpenNow: null,
+              };
+            });
             // Items blocked/rejected by Compass pipeline fall to the back
             const passedIds = new Set(compassRanked.map((p) => p.id));
             const unranked  = places.filter((p) => !passedIds.has(p.id));

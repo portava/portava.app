@@ -122,27 +122,28 @@ function breakConsecutiveRuns(items: PipelineResult[]): { out: PipelineResult[];
 }
 
 /**
- * Cap nightlife + paid items to at most 25% of the list.
- * Excess items are moved to the back of the list (not dropped).
+ * Cap nightlife + paid items so they represent at most 25% of the OUTPUT list.
+ * Items beyond the cap are dropped from this section — they may still appear
+ * in section-specific lists (e.g. `tonight`, `rent_a_buddy`).
+ *
+ * The cap is derived from the number of non-nightlife/paid items (which are
+ * never dropped) so the OUTPUT ratio is guaranteed to be ≤ PAID_NIGHTLIFE_CAP_RATIO:
+ *
+ *   k / (others + k) ≤ R  →  k ≤ others * R / (1 - R)
+ *
+ * e.g. R=0.25, others=8: maxCap = floor(8 * 0.25 / 0.75) = 2 → ratio 2/10 = 20%
  */
 function applyNightlifePaidCap(items: PipelineResult[]): PipelineResult[] {
-  const total   = items.length;
-  const maxCap  = Math.ceil(total * PAID_NIGHTLIFE_CAP_RATIO);
-  let   capCount = 0;
-
-  const front: PipelineResult[] = [];
-  const excess: PipelineResult[] = [];
-
-  for (const item of items) {
-    if (isNightlifeOrPaid(item) && capCount >= maxCap) {
-      excess.push(item);
-    } else {
-      if (isNightlifeOrPaid(item)) capCount++;
-      front.push(item);
-    }
-  }
-
-  return [...front, ...excess];
+  const otherCount = items.filter((i) => !isNightlifeOrPaid(i)).length;
+  const R = PAID_NIGHTLIFE_CAP_RATIO;
+  const maxCap = Math.floor(otherCount * R / (1 - R));
+  let capCount = 0;
+  return items.filter((item) => {
+    if (!isNightlifeOrPaid(item)) return true;
+    if (capCount >= maxCap) return false; // true drop — output ratio stays ≤ 25%
+    capCount++;
+    return true;
+  });
 }
 
 /**

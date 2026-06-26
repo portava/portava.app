@@ -24,6 +24,7 @@ import { upsertCityStamp } from "../lib/stampHelper";
 import { getServiceClient } from "../lib/supabase";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
 import { processTagging } from "../services/tagging/TaggingService.js";
+import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 
@@ -248,6 +249,14 @@ router.post("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
+  // Compass activity ingestion — fire-and-forget
+  recordActivityEvent(
+    getServiceClient(),
+    user.id,
+    "post_published",
+    { city: locationCity ?? undefined },
+  );
 
   // Auto-create a passport postcard when eligible (media + add_to_passport +
   // active). Best-effort: a postcard failure must NOT corrupt the post. The
