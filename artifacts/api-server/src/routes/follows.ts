@@ -301,11 +301,14 @@ router.get("/users/suggestions", async (req, res) => {
     }
   } catch { /* fail safe */ }
 
-  // 2. Who follows me?
+  // 2. Who follows me? Ordered by follower_id for deterministic input to seededShuffle —
+  // without an explicit ORDER BY, Postgres row order is undefined and can vary per request,
+  // which would break same-day stability even with a seeded shuffle.
   const { data: followerRows, error: follErr } = await sc
     .from("user_follows")
     .select("follower_id")
     .eq("following_id", user.id)
+    .order("follower_id", { ascending: true })
     .limit(50);
 
   if (follErr) {
