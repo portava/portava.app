@@ -53,6 +53,10 @@ import type {
   CompassFallbackResponse,
   CompassProfilePublic,
 } from "../compass/types.js";
+import {
+  buildFallbackFeed,
+  isFallbackModeEnabled,
+} from "../compass/CompassFallbackFeedBuilder.js";
 
 const router = Router();
 
@@ -217,6 +221,16 @@ router.get("/compass/feed", async (req, res) => {
     return;
   }
 
+  // Check COMPASS_FALLBACK_MODE_ENABLED — proactively return safe fallback
+  // before even attempting the full pipeline.
+  const fallbackModeOn = await isFallbackModeEnabled(sc);
+  if (fallbackModeOn) {
+    const profile = await getCompassProfile(sc, user.id).catch(() => null);
+    const result  = await buildFallbackFeed(sc, user.id, profile, "fallback_mode_enabled");
+    res.json(result);
+    return;
+  }
+
   const parsed = feedQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
@@ -255,8 +269,10 @@ router.get("/compass/feed", async (req, res) => {
     void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
     res.json(enrichedFeed);
   } catch (err) {
-    req.log.error({ err }, "compass/feed: build failed");
-    res.json({ sections: [], nextCursor: null, fallback: true });
+    req.log.error({ err }, "compass/feed: build failed, using fallback");
+    const profile = await getCompassProfile(sc, user.id).catch(() => null);
+    const result  = await buildFallbackFeed(sc, user.id, profile, "build_error");
+    res.json(result);
   }
 });
 
@@ -317,8 +333,10 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     void setCachedFeed(sc, user.id, cacheKey, "section", result);
     res.json(result);
   } catch (err) {
-    req.log.error({ err }, "compass/feed/section: build failed");
-    res.json({ section: null, nextCursor: null, fallback: true });
+    req.log.error({ err }, "compass/feed/section: build failed, using fallback");
+    const profile = await getCompassProfile(sc, user.id).catch(() => null);
+    const result  = await buildFallbackFeed(sc, user.id, profile, "section_build_error");
+    res.json(result);
   }
 });
 

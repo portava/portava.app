@@ -43,6 +43,7 @@ import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
 import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace";
 import compassRouter from "./compass";
+import adminCompassRouter from "./adminCompass";
 
 const router: IRouter = Router();
 
@@ -90,5 +91,6 @@ router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddyMarketplaceRouter);
 router.use(compassRouter);
+router.use(adminCompassRouter);
 
 export default router;
