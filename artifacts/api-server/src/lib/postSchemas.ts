@@ -136,7 +136,7 @@ export function safeLocationLabel(
   if (mode === "city_only" || sensitivity === "high") {
     return [locationCity, locationCountry].filter(Boolean).join(", ") || null;
   }
-  return locationName ?? [locationCity, locationCountry].filter(Boolean).join(", ") || null;
+  return locationName ?? ([locationCity, locationCountry].filter(Boolean).join(", ") || null);
 }
 
 // ── Create schema ─────────────────────────────────────────────────────────────

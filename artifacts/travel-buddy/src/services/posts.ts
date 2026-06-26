@@ -13,6 +13,26 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 export type PostVisibility = 'public' | 'trip_only' | 'private';
 export type PostStatus = 'active' | 'hidden' | 'reported' | 'deleted';
 
+/** Delayed publish lifecycle status. */
+export type DelayedPostStatus =
+  | 'draft'
+  | 'private'
+  | 'pending_location_exit'
+  | 'pending_delay'
+  | 'pending_safety_review'
+  | 'published'
+  | 'canceled'
+  | 'expired';
+
+/** Location privacy mode for delayed geotag posts. */
+export type LocationPrivacyMode =
+  | 'none'
+  | 'hidden'
+  | 'city_only'
+  | 'delayed_until_exit'
+  | 'delayed_until_time'
+  | 'trusted_circle_only';
+
 export interface PostAuthor {
   id: string;
   handle: string;
@@ -33,6 +53,19 @@ export interface PostRow {
   locationName?: string | null;
   locationCity?: string | null;
   locationCountry?: string | null;
+  // Delayed geotag fields (public-safe — never exposes original_lat/lng)
+  locationPrivacyMode?: LocationPrivacyMode | null;
+  postStatus?: DelayedPostStatus | null;
+  publicLat?: number | null;
+  publicLng?: number | null;
+  publicLocationLabel?: string | null;
+  venueName?: string | null;
+  geofenceRadiusMeters?: number | null;
+  publishAfterExit?: boolean;
+  publishAfterTime?: string | null;
+  publishEligibleAt?: string | null;
+  publishedAt?: string | null;
+  locationSensitivityLevel?: string | null;
   author?: PostAuthor | null;
   likeCount: number;
   commentCount: number;
@@ -98,6 +131,52 @@ function mapPost(r: any): PostRow {
     mediaDurationSeconds: r.media_duration_seconds ?? null,
     tags: r.tags ?? [],
     hashtagUsages: r.hashtagUsages ?? [],
+    // Delayed geotag fields
+    locationPrivacyMode: r.location_privacy_mode ?? null,
+    postStatus: r.post_status ?? null,
+    publicLat: r.public_lat ?? null,
+    publicLng: r.public_lng ?? null,
+    publicLocationLabel: r.public_location_label ?? null,
+    venueName: r.venue_name ?? null,
+    geofenceRadiusMeters: r.geofence_radius_meters ?? null,
+    publishAfterExit: r.publish_after_exit ?? false,
+    publishAfterTime: r.publish_after_time ?? null,
+    publishEligibleAt: r.publish_eligible_at ?? null,
+    publishedAt: r.published_at ?? null,
+    locationSensitivityLevel: r.location_sensitivity_level ?? null,
+  };
+}
+
+/** Subset of PostRow returned by GET /api/posts/pending. */
+export interface PendingPostRow {
+  id: string;
+  content: string;
+  locationName?: string | null;
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
+  postStatus: DelayedPostStatus;
+  locationPrivacyMode: LocationPrivacyMode;
+  publishEligibleAt?: string | null;
+  publishAfterTime?: string | null;
+  geofenceRadiusMeters?: number | null;
+}
+
+function mapPendingPost(r: any): PendingPostRow {
+  return {
+    id: r.id,
+    content: r.content ?? '',
+    locationName: r.location_name ?? null,
+    locationCity: r.location_city ?? null,
+    locationCountry: r.location_country ?? null,
+    locationLat: r.location_lat ?? null,
+    locationLng: r.location_lng ?? null,
+    postStatus: r.post_status,
+    locationPrivacyMode: r.location_privacy_mode ?? 'none',
+    publishEligibleAt: r.publish_eligible_at ?? null,
+    publishAfterTime: r.publish_after_time ?? null,
+    geofenceRadiusMeters: r.geofence_radius_meters ?? null,
   };
 }
 
@@ -157,6 +236,12 @@ interface CreatePostInput {
   filterIntensity?: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  // delayed geotag options
+  locationPrivacyMode?: LocationPrivacyMode;
+  publishAfterTime?: string | null;
+  geofenceRadiusMeters?: number | null;
+  venueName?: string | null;
+  venueId?: string | null;
 }
 
 export async function createPost(input: CreatePostInput): Promise<PostResult<PostRow>> {
@@ -194,6 +279,12 @@ export async function createPost(input: CreatePostInput): Promise<PostResult<Pos
         filterIntensity: input.filterIntensity ?? 100,
         mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
         mediaDurationSeconds: input.mediaDurationSeconds ?? null,
+        // delayed geotag options
+        locationPrivacyMode: input.locationPrivacyMode ?? undefined,
+        publishAfterTime: input.publishAfterTime ?? null,
+        geofenceRadiusMeters: input.geofenceRadiusMeters ?? null,
+        venueName: input.venueName ?? null,
+        venueId: input.venueId ?? null,
       }),
     });
     if (!res.ok) {
@@ -325,6 +416,129 @@ export async function deletePost(postId: string): Promise<PostResult<null>> {
     if (res.status === 204) return { ok: true, data: null };
     const body = await res.json().catch(() => ({}));
     return mapApiError<null>(res.status, body);
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+// ── Delayed geotag API functions ──────────────────────────────────────────────
+
+/** Fetch the caller's pending posts (pending_location_exit / pending_delay / pending_safety_review). */
+export async function getPendingPosts(): Promise<PostResult<PendingPostRow[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/pending`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PendingPostRow[]>(res.status, body);
+    }
+    const body = await res.json();
+    return { ok: true, data: (body.posts ?? []).map(mapPendingPost) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Publish a pending post immediately, stripping all location fields. */
+export async function publishWithoutLocation(postId: string): Promise<PostResult<PostRow>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${postId}/publish-now-without-location`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PostRow>(res.status, body);
+    }
+    return { ok: true, data: mapPost(await res.json()) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Cancel a pending delayed-publish post. */
+export async function cancelDelayedPublish(postId: string): Promise<PostResult<PostRow>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${postId}/cancel-delayed-publish`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PostRow>(res.status, body);
+    }
+    return { ok: true, data: mapPost(await res.json()) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Change the location privacy mode on a pending post. */
+export async function changeLocationPrivacy(
+  postId: string,
+  mode: LocationPrivacyMode,
+  publishAfterTime?: string | null,
+): Promise<PostResult<PostRow>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${postId}/location-privacy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ locationPrivacyMode: mode, publishAfterTime: publishAfterTime ?? null }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PostRow>(res.status, body);
+    }
+    return { ok: true, data: mapPost(await res.json()) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Notify the server that the device has exited a post's geofence. */
+export async function exitGeofence(opts: {
+  postId: string;
+  lat: number;
+  lng: number;
+}): Promise<PostResult<{ eligibleAt: string | null }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/location/exit-geofence`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ postId: opts.postId, lat: opts.lat, lng: opts.lng }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<{ eligibleAt: string | null }>(res.status, body);
+    }
+    const body = await res.json();
+    return { ok: true, data: { eligibleAt: body.publishEligibleAt ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };

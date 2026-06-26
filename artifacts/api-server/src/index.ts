@@ -5,6 +5,7 @@ import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
 import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
+import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 
 const rawPort = process.env["PORT"];
 
@@ -32,6 +33,7 @@ app.listen(port, (err) => {
   initTelegraphBroadcast();
   startSafeReturnScheduler();
   startTripCrewLiveShareScheduler();
+  startDelayedPostPublisher();
 
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across

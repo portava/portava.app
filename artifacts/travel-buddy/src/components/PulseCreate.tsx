@@ -17,7 +17,7 @@ import { PULSE_FILTERS } from '../types/models';
 import type { PulseFilter } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePostActions } from '../hooks/usePosts';
-import type { PostVisibility } from '../services/posts';
+import type { PostVisibility, LocationPrivacyMode } from '../services/posts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media';
 import { useSession } from '../context/SessionContext';
 import { getCurrentGps, reverseGeocode } from '../services/location';
@@ -174,6 +174,17 @@ export function UnifiedPostComposer({
   const [filterEditorPending, setFilterEditorPending] = useState<PickedMedia | null>(null);
   const [filterId, setFilterId] = useState<string>('original');
   const [filterIntensity, setFilterIntensity] = useState<number>(100);
+  const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none');
+
+  // Auto-select delayed_until_exit when the user attaches a GPS location
+  useEffect(() => {
+    if (loc.source === 'none') {
+      setLocationPrivacyMode('none');
+    } else if (locationPrivacyMode === 'none') {
+      setLocationPrivacyMode('delayed_until_exit');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loc.source]);
 
   useEffect(() => {
     if (visible) {
@@ -184,6 +195,7 @@ export function UnifiedPostComposer({
       setVis('public');
       setLoc({ source: 'none' });
       setManualText('');
+      setLocationPrivacyMode('none');
       setAddToPassport(false);
       setError(null);
       setHighlightComposerOpen(false);
@@ -308,6 +320,7 @@ export function UnifiedPostComposer({
       ...locationFields,
       filterId,
       filterIntensity,
+      locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
     });
 
     if (res.ok) {
@@ -516,6 +529,42 @@ export function UnifiedPostComposer({
                   )}
                 </View>
 
+                {/* location privacy — only shown when a location is attached */}
+                {loc.source !== 'none' && (
+                  <View style={uc.field}>
+                    <Text style={uc.fieldLabel}>Share location</Text>
+                    <View style={uc.chipRow}>
+                      {([
+                        { mode: 'delayed_until_exit' as LocationPrivacyMode, label: 'After I leave' },
+                        { mode: 'city_only' as LocationPrivacyMode, label: 'City only' },
+                        { mode: 'none' as LocationPrivacyMode, label: 'Now' },
+                        { mode: 'hidden' as LocationPrivacyMode, label: 'Hidden' },
+                      ] satisfies { mode: LocationPrivacyMode; label: string }[]).map(({ mode, label }) => (
+                        <Pressable
+                          key={mode}
+                          style={[uc.visChip, locationPrivacyMode === mode && uc.visChipOn]}
+                          onPress={() => setLocationPrivacyMode(mode)}
+                        >
+                          <Text style={[uc.visChipText, locationPrivacyMode === mode && uc.visChipTextOn]}>
+                            {label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    {locationPrivacyMode === 'delayed_until_exit' && (
+                      <Text style={uc.privacyHint}>
+                        Location will appear after you've left this spot.
+                      </Text>
+                    )}
+                    {locationPrivacyMode === 'city_only' && (
+                      <Text style={uc.privacyHint}>Only the city name will be shared.</Text>
+                    )}
+                    {locationPrivacyMode === 'hidden' && (
+                      <Text style={uc.privacyHint}>Location stays completely hidden.</Text>
+                    )}
+                  </View>
+                )}
+
                 {/* visibility */}
                 <View style={uc.field}>
                   <Text style={uc.fieldLabel}>Visibility</Text>
@@ -721,6 +770,7 @@ const uc = StyleSheet.create({
   },
   manualInput: { ...t.body, color: color.ink, flex: 1, paddingVertical: 8 },
   locLabel: { ...t.small, color: color.deep, fontWeight: '600', marginTop: 4 },
+  privacyHint: { ...t.small, color: color.mute, marginTop: 4, fontStyle: 'italic' },
 
   /* visibility */
   chipRow: { flexDirection: 'row', gap: 8 },

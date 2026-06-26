@@ -339,6 +339,41 @@ router.post("/posts", async (req, res) => {
     }
   }
 
+  // ── Geotag credit + anti-abuse (fire-and-forget, non-fatal) ────────────────
+  // Credit is awarded at creation time (not publish time) when location is GPS-verified.
+  // Anti-abuse: max 3 credits per user per venue per 24 h window.
+  if (verdict.locationVerified && venueName) {
+    const sc = getServiceClient();
+    if (sc) {
+      const rateLimited = await isGeotagCreditRateLimited(sc, user.id, venueName).catch(() => false);
+      const postId = (data as any).id as string;
+      if (rateLimited) {
+        // Flag for safety review instead of awarding credit
+        await sc.from("posts").update({ post_status: "pending_safety_review" }).eq("id", postId);
+        await logDelayedEvent(sc, postId, user.id, "credit_rate_limited", {
+          metadata: { venue_name: venueName, reason: "rate_limit_exceeded" },
+        });
+      } else {
+        await sc.from("posts").update({ geotag_credit_awarded: true }).eq("id", postId);
+        await logDelayedEvent(sc, postId, user.id, "geotag_credit_awarded", {
+          metadata: { venue_name: venueName, sensitivity: sens },
+        });
+      }
+    }
+  }
+
+  // Log created_pending event for all delayed posts
+  if (delayedStatus !== 'published') {
+    const sc = getServiceClient();
+    if (sc) {
+      await logDelayedEvent(sc, (data as any).id, user.id, "created_pending", {
+        lat: locationLat ?? undefined,
+        lng: locationLng ?? undefined,
+        metadata: { privacy_mode: privacyMode, post_status: delayedStatus },
+      });
+    }
+  }
+
   res.status(201).json({ ...(data as any), postcard });
 
   // Feed Pulse post creation into Trust Engine (fire-and-forget; flag-gated internally)
@@ -450,7 +485,7 @@ router.get("/posts", async (req, res) => {
       return;
     }
 
-    // Step 2: public standalone active posts from followed users only.
+    // Step 2: public standalone active published posts from followed users only.
     let q = sc
       .from("posts")
       .select(FOLLOWING_POST_COLUMNS)
@@ -458,6 +493,7 @@ router.get("/posts", async (req, res) => {
       .is("trip_id", null)
       .eq("visibility", "public")
       .eq("status", "active")
+      .eq("post_status", "published")
       .order("created_at", { ascending: false })
       .limit(limit);
     if (before) q = q.lt("created_at", before);
@@ -539,6 +575,7 @@ router.get("/posts", async (req, res) => {
     .is("trip_id", null)
     .eq("visibility", "public")
     .eq("status", "active")
+    .eq("post_status", "published")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (before) q = q.lt("created_at", before);
@@ -738,6 +775,284 @@ router.get("/trips/:tripId/posts", async (req, res) => {
   });
 
   res.status(200).json({ posts: mergedTrip, isMember: accepted });
+});
+
+/* ===========================================================================
+ * GET /posts/pending  — author's own pending posts
+ * ===========================================================================
+ * Must be registered BEFORE any /posts/:postId route so Express does not
+ * treat the literal "pending" as a :postId parameter.
+ * Returns the caller's posts with status in (pending_location_exit,
+ * pending_delay, pending_safety_review).
+ */
+router.get("/posts/pending", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data, error } = await client
+    .from("posts")
+    .select(POST_COLUMNS)
+    .eq("author_id", user.id)
+    .eq("status", "active")
+    .in("post_status", ["pending_location_exit", "pending_delay", "pending_safety_review"])
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to load pending posts");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  res.status(200).json({ posts: data ?? [] });
+});
+
+/* ===========================================================================
+ * GET /posts/:postId  — single post fetch (author sees own pending; others
+ * only see published posts)
+ * ===========================================================================
+ */
+router.get("/posts/:postId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data, error } = await sc
+    .from("posts")
+    .select(POST_COLUMNS)
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Post not found"); return; }
+
+  const post = data as any;
+  const isAuthor = post.author_id === user.id;
+  const isPublished = !post.post_status || post.post_status === "published";
+
+  if (!isPublished && !isAuthor) {
+    sendError(res, "not_found", "Post not found");
+    return;
+  }
+
+  res.status(200).json(post);
+});
+
+/* ===========================================================================
+ * PATCH /posts/:postId/location-privacy  — change privacy mode
+ * ===========================================================================
+ * Author-only. Validates ownership, changes mode, recomputes post_status and
+ * publish_eligible_at, logs a privacy_changed event.
+ */
+router.patch("/posts/:postId/location-privacy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const parsed = locationPrivacyPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data;
+
+  const { data: existing, error: loadErr } = await client
+    .from("posts")
+    .select("id, author_id, post_status, location_sensitivity_level")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (loadErr) { sendError(res, "db_error", loadErr.message); return; }
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the author can change location privacy");
+    return;
+  }
+
+  // Cannot change privacy on posts that are already published or canceled
+  const currentStatus = (existing as any).post_status as string;
+  if (currentStatus === "published" || currentStatus === "canceled" || currentStatus === "expired") {
+    sendError(res, "invalid_payload", `Cannot change privacy on a ${currentStatus} post`);
+    return;
+  }
+
+  const patch: Record<string, unknown> = { location_privacy_mode: newMode };
+  if (newMode === "delayed_until_exit") {
+    patch.post_status = "pending_location_exit";
+    patch.publish_after_exit = true;
+    patch.publish_eligible_at = null;
+  } else if (newMode === "delayed_until_time" && publishAfterTime) {
+    patch.post_status = "pending_delay";
+    patch.publish_eligible_at = publishAfterTime;
+    patch.publish_after_time = publishAfterTime;
+  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only") {
+    patch.post_status = "published";
+    patch.published_at = new Date().toISOString();
+    patch.publish_eligible_at = null;
+  }
+
+  const { data: updated, error: updateErr } = await client
+    .from("posts")
+    .update(patch)
+    .eq("id", postId)
+    .eq("author_id", user.id)
+    .select(POST_COLUMNS)
+    .single();
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  const sc = getServiceClient();
+  if (sc) {
+    await logDelayedEvent(sc, postId, user.id, "privacy_changed", {
+      metadata: { new_mode: newMode, new_status: patch.post_status },
+    });
+  }
+
+  res.status(200).json(updated);
+});
+
+/* ===========================================================================
+ * POST /posts/:postId/publish-now-without-location  — strip location, publish
+ * ===========================================================================
+ */
+router.post("/posts/:postId/publish-now-without-location", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const { data: existing, error: loadErr } = await client
+    .from("posts")
+    .select("id, author_id, post_status")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (loadErr) { sendError(res, "db_error", loadErr.message); return; }
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the author can publish this post");
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updateErr } = await client
+    .from("posts")
+    .update({
+      post_status: "published",
+      published_at: now,
+      location_privacy_mode: "hidden",
+      // Strip public coordinates — this post publishes without location
+      public_lat: null,
+      public_lng: null,
+      public_location_label: null,
+      venue_name: null,
+    })
+    .eq("id", postId)
+    .eq("author_id", user.id)
+    .select(POST_COLUMNS)
+    .single();
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  const sc = getServiceClient();
+  if (sc) {
+    await logDelayedEvent(sc, postId, user.id, "publish_without_location", {
+      metadata: { published_at: now },
+    });
+  }
+
+  res.status(200).json(updated);
+});
+
+/* ===========================================================================
+ * POST /posts/:postId/cancel-delayed-publish  — cancel a pending post
+ * ===========================================================================
+ */
+router.post("/posts/:postId/cancel-delayed-publish", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const { data: existing, error: loadErr } = await client
+    .from("posts")
+    .select("id, author_id, post_status")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (loadErr) { sendError(res, "db_error", loadErr.message); return; }
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the author can cancel this post");
+    return;
+  }
+
+  const { data: updated, error: updateErr } = await client
+    .from("posts")
+    .update({ post_status: "canceled" })
+    .eq("id", postId)
+    .eq("author_id", user.id)
+    .select(POST_COLUMNS)
+    .single();
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  const sc = getServiceClient();
+  if (sc) {
+    await logDelayedEvent(sc, postId, user.id, "canceled");
+  }
+
+  res.status(200).json(updated);
+});
+
+/* ===========================================================================
+ * POST /posts/:postId/location-event  — generic mobile telemetry append
+ * ===========================================================================
+ */
+router.post("/posts/:postId/location-event", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const { eventType, lat, lng, metadata } = req.body ?? {};
+  const allowedEventTypes = ["created_pending","exit_detected","published","canceled","privacy_changed","publish_without_location","geotag_credit_awarded","credit_rate_limited","worker_skipped"] as const;
+  if (!eventType || !allowedEventTypes.includes(eventType)) {
+    sendError(res, "invalid_payload", "Invalid or missing eventType");
+    return;
+  }
+
+  // Verify ownership — only the author can append location events
+  const { data: existing } = await client
+    .from("posts")
+    .select("id, author_id")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the author can log events for this post");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  await logDelayedEvent(sc, postId, user.id, eventType, {
+    lat: typeof lat === "number" ? lat : undefined,
+    lng: typeof lng === "number" ? lng : undefined,
+    metadata: metadata && typeof metadata === "object" ? metadata : undefined,
+  });
+
+  res.status(201).json({ ok: true });
 });
 
 /* ===========================================================================

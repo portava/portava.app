@@ -335,4 +335,85 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
   res.status(201).json({ ok: true, stamp: { ...stamp, trustLevel } });
 });
 
+// ── POST /api/location/exit-geofence ─────────────────────────────────────────
+/**
+ * Called by the mobile client when GPS confirms the user has exited a post's
+ * geofence and the confirmation window has elapsed.
+ *
+ * Sets exited_geofence_at on the post and computes publish_eligible_at =
+ * now + GEOFENCE_CONFIRMATION_WINDOW_MINUTES (default 8 minutes).
+ * Moves the post to pending_delay status so the background worker picks it
+ * up on its next tick.
+ * Appends an exit_detected event to delayed_post_location_events.
+ */
+const GEOFENCE_CONFIRMATION_MINUTES =
+  parseInt(process.env.GEOFENCE_CONFIRMATION_MINUTES ?? "8", 10) || 8;
+
+router.post("/location/exit-geofence", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { postId, lat, lng } = req.body ?? {};
+  if (!postId || typeof postId !== "string") {
+    sendError(res, "invalid_payload", "postId is required");
+    return;
+  }
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    sendError(res, "invalid_payload", "lat and lng must be numbers");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Load the post and verify ownership
+  const { data: post, error: loadErr } = await sc
+    .from("posts")
+    .select("id, author_id, post_status, geofence_radius_meters")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (loadErr) { sendError(res, "db_error", loadErr.message); return; }
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if ((post as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Not the author");
+    return;
+  }
+  if ((post as any).post_status !== "pending_location_exit") {
+    sendError(res, "invalid_payload", `Post is not pending_location_exit (current: ${(post as any).post_status})`);
+    return;
+  }
+
+  const now = new Date();
+  const eligibleAt = new Date(now.getTime() + GEOFENCE_CONFIRMATION_MINUTES * 60 * 1_000).toISOString();
+  const exitedAt = now.toISOString();
+
+  const { error: updateErr } = await sc
+    .from("posts")
+    .update({
+      exited_geofence_at: exitedAt,
+      publish_eligible_at: eligibleAt,
+      post_status: "pending_delay", // worker picks it up on next tick
+    })
+    .eq("id", postId);
+
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  // Append exit_detected event (non-fatal)
+  void sc
+    .from("delayed_post_location_events")
+    .insert({
+      post_id: postId,
+      user_id: user.id,
+      event_type: "exit_detected",
+      lat,
+      lng,
+      metadata: { confirmation_window_minutes: GEOFENCE_CONFIRMATION_MINUTES },
+    });
+
+  res.status(200).json({ ok: true, publishEligibleAt: eligibleAt });
+});
+
 export default router;
