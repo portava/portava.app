@@ -17,6 +17,7 @@
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
+import { sendPushNotification } from "./push.js";
 
 const logger = rootLogger.child({ job: "DelayedPostPublisher" });
 
@@ -49,6 +50,29 @@ function resolveClient(): any | null {
 // ── Publish counter (for tests) ───────────────────────────────────────────────
 
 export let _publishCallCount = 0;
+
+// ── Push notification helpers ─────────────────────────────────────────────────
+
+async function fetchPushToken(db: any, userId: string): Promise<string | null> {
+  try {
+    const { data } = await db
+      .from("profiles")
+      .select("expo_push_token")
+      .eq("id", userId)
+      .maybeSingle();
+    return (data?.expo_push_token as string | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function buildNotificationBody(post: any): string {
+  const label: string | null =
+    (post.venue_name as string | null) ??
+    (post.public_location_label as string | null) ??
+    null;
+  return label ? `Your post at ${label} is now live` : "Your post is now live";
+}
 
 // ── Core publish logic ────────────────────────────────────────────────────────
 
@@ -139,7 +163,7 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
   // Query posts that are ready to publish
   const { data: posts, error: queryErr } = await db
     .from("posts")
-    .select("id, author_id, location_privacy_mode, original_lat, original_lng, post_status")
+    .select("id, author_id, location_privacy_mode, original_lat, original_lng, post_status, public_location_label, venue_name")
     .in("post_status", ["pending_location_exit", "pending_delay"])
     .lte("publish_eligible_at", now);
 
@@ -175,6 +199,16 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
 
       await publishPost(db, post);
       published++;
+
+      // Send push notification — non-fatal, never blocks publish success
+      fetchPushToken(db, post.author_id).then((token) => {
+        sendPushNotification([token], {
+          title: "Post published",
+          body: buildNotificationBody(post),
+          data: { screen: "post", postId: post.id },
+        }).catch(() => {});
+      }).catch(() => {});
+
     } catch (err) {
       logger.error({ err, postId: post.id }, "delayedPostPublisher: per-post error");
       errors++;
