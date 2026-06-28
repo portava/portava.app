@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { Readable } = require("stream");
 const { pipeline } = require("stream/promises");
 
@@ -509,6 +509,19 @@ async function main() {
   console.log("Building static Expo Go deployment...");
 
   setupSignalHandlers();
+
+  // Replit's cloud-run builder runs `npm install` automatically before executing
+  // artifact build commands, which removes the pnpm-managed workspace packages.
+  // Re-run `pnpm install` here so Metro can find all modules.
+  console.log("Restoring pnpm workspace...");
+  const installResult = spawnSync("pnpm", ["install", "--frozen-lockfile"], {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+  });
+  if (installResult.status !== 0) {
+    exitWithError("pnpm install failed — workspace packages could not be restored");
+  }
+  console.log("pnpm workspace ready");
 
   const domain = getDeploymentDomain();
   const expoPublicReplId = getExpoPublicReplId();
