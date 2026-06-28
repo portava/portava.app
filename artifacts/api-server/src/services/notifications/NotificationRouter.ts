@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { sendPushNotification } from "../../lib/push.js";
+import { PushRetryQueue } from "../../lib/pushRetryQueue.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
 import { TEMPLATES } from "./NotificationTemplateService.js";
 import type { NotificationRow } from "./NotificationService.js";
@@ -166,11 +167,41 @@ export class NotificationRouter {
 
       // Use the stripped payload (private location redacted from body/data)
       const { strippedPayload } = decision;
-      const pushResult = await sendPushNotification(tokens, {
+      const pushPayload = {
         title: strippedPayload.title,
         body:  strippedPayload.body,
         data:  strippedPayload.data ?? {},
-      });
+      };
+
+      const pushResult = await sendPushNotification(tokens, pushPayload);
+
+      // ── Retry queue for transient failures ─────────────────────────────────
+      if (pushResult.retryable) {
+        // Create a 'pending' delivery attempt — the retry queue will update it
+        // to 'sent' or 'failed' once the delivery is resolved.
+        const attemptId = await this.logAttemptReturnId(
+          notification.id, userId, 'push', 'pending',
+          'transient failure — queued for retry',
+          { tokenCount: tokens.length },
+        );
+
+        const retryQueue = new PushRetryQueue(this.db);
+        await retryQueue.enqueue({
+          notificationId:     notification.id,
+          userId,
+          tokens:             tokens as string[],
+          payload:            pushPayload,
+          deliveryAttemptId:  attemptId,
+          lastError:          'transient failure on initial attempt',
+        });
+
+        logger.info(
+          { notificationId: notification.id, userId },
+          'NotificationRouter: push queued for retry after transient failure',
+        );
+        return;
+      }
+      // ── End retry queue ────────────────────────────────────────────────────
 
       // Remove any tokens Expo reports as no longer registered
       const staleTokens = pushResult.errors
@@ -260,17 +291,44 @@ export class NotificationRouter {
     errorMessage?: string,
     metadata: Record<string, unknown> = {},
   ): Promise<void> {
+    await this.logAttemptReturnId(notificationId, userId, channel, status, errorMessage, metadata);
+  }
+
+  /**
+   * Insert a delivery attempt row and return its generated UUID.
+   * Returns null if the insert fails so callers can degrade gracefully.
+   */
+  private async logAttemptReturnId(
+    notificationId: string,
+    userId: string,
+    channel: string,
+    status: 'pending' | 'sent' | 'delivered' | 'failed' | 'suppressed',
+    errorMessage?: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<string | null> {
     try {
-      await this.db.from('notification_delivery_attempts').insert({
-        notification_id: notificationId,
-        user_id:         userId,
-        channel,
-        status,
-        error_message:   errorMessage ?? null,
-        metadata,
-      });
+      const { data, error } = await this.db
+        .from('notification_delivery_attempts')
+        .insert({
+          notification_id: notificationId,
+          user_id:         userId,
+          channel,
+          status,
+          error_message:   errorMessage ?? null,
+          metadata,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        logger.warn({ err: error }, 'NotificationRouter: failed to log delivery attempt');
+        return null;
+      }
+
+      return (data as any)?.id ?? null;
     } catch (err) {
       logger.warn({ err }, 'NotificationRouter: failed to log delivery attempt');
+      return null;
     }
   }
 }

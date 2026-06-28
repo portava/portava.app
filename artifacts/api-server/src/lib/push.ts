@@ -32,6 +32,12 @@ export interface PushTicket {
 export interface PushResult {
   sent: number;
   errors: Array<{ token: string; error: string; message?: string }>;
+  /**
+   * True when the failure was caused by a transient condition (network error
+   * or a 5xx response from Expo) and the caller should retry.
+   * False (or absent) for per-token errors such as DeviceNotRegistered.
+   */
+  retryable?: boolean;
 }
 
 // ── Test slot ─────────────────────────────────────────────────────────────────
@@ -90,7 +96,7 @@ export async function sendPushNotification(
 
     if (!res.ok) {
       logger.warn({ status: res.status }, "expo push: non-2xx response");
-      return { sent: 0, errors: [] };
+      return { sent: 0, errors: [], retryable: res.status >= 500 };
     }
 
     let tickets: PushTicket[] = [];
@@ -127,6 +133,6 @@ export async function sendPushNotification(
     return { sent, errors };
   } catch (err) {
     logger.warn({ err }, "expo push: network error");
-    return { sent: 0, errors: [] };
+    return { sent: 0, errors: [], retryable: true };
   }
 }
