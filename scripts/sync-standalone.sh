@@ -203,7 +203,6 @@ if (totalChanges === 0) {
 }
 
 // Print summary of what will change / was changed
-const verb = shouldApply ? 'Applied' : (isDryRun ? '[dry] would apply' : 'Found');
 for (const section of sections) {
   if (changes[section].length === 0) continue;
   console.log(`\n[${section}]`);
@@ -264,22 +263,6 @@ fi
 echo "  2. If tsconfig.json changed in the monorepo app, apply the same change to"
 echo "     travel-buddy-standalone/tsconfig.json (keep the 'references' array removed)."
 echo "  3. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
-echo ""
-
-# Print the GitHub Actions CI job snippet for wiring into CI.
-cat <<'GHAEOF'
---- GitHub Actions: standalone typecheck gate ---
-  typecheck-standalone:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: '10' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: 'pnpm', cache-dependency-path: 'travel-buddy-standalone/pnpm-lock.yaml' }
-      - run: cd travel-buddy-standalone && pnpm install --frozen-lockfile
-      - run: cd travel-buddy-standalone && pnpm typecheck
-GHAEOF
 echo ""
 
 # Exit with the dependency diff code so CI can detect drift.
