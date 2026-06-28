@@ -7,9 +7,13 @@
  *
  * Token registration logic lives in src/services/pushTokenService.ts so it
  * can be tested in Node.js without native Expo bindings.
+ *
+ * Important: getExpoPushTokenAsync() requires the EAS projectId in SDK 54+.
+ * Without it the call throws on standalone builds (works only in Expo Go).
  */
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { useSession } from '../context/SessionContext';
 import { savePushToken } from '../services/pushTokenService';
@@ -32,7 +36,12 @@ export function usePushToken(): void {
 
       if (cancelled) return;
 
-      const { data: pushToken } = await Notifications.getExpoPushTokenAsync();
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+
+      const { data: pushToken } = await Notifications.getExpoPushTokenAsync(
+        projectId ? { projectId } : undefined,
+      );
       if (!pushToken || cancelled) return;
 
       await savePushToken(pushToken);
