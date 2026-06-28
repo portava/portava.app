@@ -9,7 +9,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/services/sdk54-downgrade-compat.test.ts"
+    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/services/sdk54-downgrade-compat.test.ts src/services/passportShare.test.ts"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",
