@@ -487,8 +487,8 @@ export default function DiscoveryHub() {
             contextMode={contextMode}
             viewMode={viewMode}
             ageFilter={ageFilter}
-            customMinAge={customMinAge}
-            customMaxAge={customMaxAge}
+            customMinAge={debouncedMinAge}
+            customMaxAge={debouncedMaxAge}
             lat={destinationLat}
             lng={destinationLng}
             onFiltersChange={handleFiltersChange}
