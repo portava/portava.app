@@ -142,8 +142,9 @@ export default function DiscoveryHub() {
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
   // Destination, contextMode, ageFilter, and activeFilters remain immediate.
-  // countsLoading is set to true immediately on the first keystroke so tab
-  // dimming is gated for the entire debounce window, not just the fetch time.
+  // countsLoading is only set to true here when ageFilter === 'custom' — the
+  // debounced value is only used in that mode, so there is no reason to show
+  // a loading spinner (or cancel an in-flight count fetch) for other filters.
   const ageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstAgeRender = useRef(true);
   useEffect(() => {
@@ -151,7 +152,9 @@ export default function DiscoveryHub() {
       isFirstAgeRender.current = false;
       return;
     }
-    setCountsLoading(true);
+    if (ageFilter === 'custom') {
+      setCountsLoading(true);
+    }
     if (ageDebounceRef.current) clearTimeout(ageDebounceRef.current);
     ageDebounceRef.current = setTimeout(() => {
       setDebouncedAgeRange(customAgeRange);
