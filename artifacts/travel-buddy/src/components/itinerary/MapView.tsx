@@ -1,13 +1,21 @@
 /**
- * MapView — shows plan items with GPS coordinates on a native map via react-native-maps.
+ * MapView — shows plan items with GPS coordinates on a native map via MapLibre.
  * Items without coordinates are shown in a fallback list below the map.
+ * Metro automatically picks MapView.web.tsx on web (no MapLibre native modules there).
  */
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
-import RNMapView, { Marker } from 'react-native-maps';
+import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../../types/models';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, radius, type as t } from '../../theme/tokens';
+
+// ── Map tile style ─────────────────────────────────────────────────────────────
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
+const MAP_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
 
 // ── Category pin colours ──────────────────────────────────────────────────────
 
@@ -30,9 +38,9 @@ export interface MapViewProps {
   loading?: boolean;
 }
 
-// ── Region helper ─────────────────────────────────────────────────────────────
+// ── Viewport helper → MapLibre center + zoom ──────────────────────────────────
 
-function computeRegion(items: TripPlanItem[]) {
+function computeViewport(items: TripPlanItem[]) {
   if (items.length === 0) return null;
   const lats = items.map((i) => i.lat!);
   const lngs = items.map((i) => i.lng!);
@@ -41,10 +49,11 @@ function computeRegion(items: TripPlanItem[]) {
   const latDelta = Math.max((maxLat - minLat) * 1.5, 0.04);
   const lngDelta = Math.max((maxLng - minLng) * 1.5, 0.04);
   return {
-    latitude:      (minLat + maxLat) / 2,
-    longitude:     (minLng + maxLng) / 2,
-    latitudeDelta: latDelta,
-    longitudeDelta: lngDelta,
+    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
+    zoom: Math.min(
+      Math.log2(360 / lngDelta),
+      Math.log2(180 / latDelta),
+    ) - 0.5,
   };
 }
 
@@ -92,30 +101,40 @@ export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: M
     );
   }
 
-  const region = computeRegion(coordItems);
+  const viewport = computeViewport(coordItems);
 
   return (
     <ScrollView contentContainerStyle={mv.wrap} showsVerticalScrollIndicator={false}>
-      {coordItems.length > 0 && region ? (
+      {coordItems.length > 0 && viewport ? (
         <View style={mv.mapSection}>
           <Text style={mv.sectionLabel}>On the map</Text>
-          <RNMapView
-            style={mv.mapSurface}
-            initialRegion={region}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-          >
-            {coordItems.map((item) => (
-              <Marker
-                key={item.id}
-                coordinate={{ latitude: item.lat!, longitude: item.lng! }}
-                pinColor={CAT_PIN[item.category] ?? '#888'}
-                title={item.title}
-                description={item.locationName ?? undefined}
-                onPress={() => onItemPress(item)}
+          <View style={mv.mapSurface}>
+            <Map
+              style={StyleSheet.absoluteFill}
+              mapStyle={MAP_STYLE}
+              logo={false}
+              attribution={false}
+            >
+              <Camera
+                initialViewState={{
+                  center: viewport.center,
+                  zoom: viewport.zoom,
+                }}
               />
-            ))}
-          </RNMapView>
+              {coordItems.map((item) => (
+                <Marker
+                  key={item.id}
+                  lngLat={[item.lng!, item.lat!]}
+                >
+                  <Pressable onPress={() => onItemPress(item)}>
+                    <View style={[mv.pin, { backgroundColor: CAT_PIN[item.category] ?? '#888' }]}>
+                      <MapPin size={10} color="#fff" />
+                    </View>
+                  </Pressable>
+                </Marker>
+              ))}
+            </Map>
+          </View>
         </View>
       ) : (
         <View style={mv.noMapBanner}>
@@ -148,6 +167,7 @@ const mv = StyleSheet.create({
   emptyBody:   { ...t.body, color: color.faint, textAlign: 'center', maxWidth: 260 },
   mapSection:  { gap: 8 },
   mapSurface:  { height: 300, borderRadius: radius.lg, overflow: 'hidden' },
+  pin:         { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   listSection: { gap: 8 },
   sectionLabel:{ ...t.small, color: color.mute, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
   noMapBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.haze, borderRadius: radius.md, padding: 12 },

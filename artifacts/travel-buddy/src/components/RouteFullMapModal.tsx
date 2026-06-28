@@ -1,14 +1,29 @@
 /**
  * RouteFullMapModal — full-screen native map modal for a route plan.
- * Uses react-native-maps. Metro will pick RouteFullMapModal.web.tsx
- * instead when bundling for web.
+ * Uses MapLibre (replaces react-native-maps).
+ * Metro picks RouteFullMapModal.web.tsx instead when bundling for web.
  */
 import React from 'react';
 import { View, Text, Modal, Pressable, StyleSheet } from 'react-native';
-import RNMapView, { Marker, Polyline, Circle } from 'react-native-maps';
+import {
+  Map,
+  Camera,
+  Marker,
+  GeoJSONSource,
+  Layer,
+} from '@maplibre/maplibre-react-native';
 import { Minimize2 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import type { RouteStop, RouteLeg } from '../services/routePlan';
+
+// ── Map tile style ─────────────────────────────────────────────────────────────
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
+const MAP_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface RouteFullMapModalProps {
   visible: boolean;
@@ -19,7 +34,9 @@ export interface RouteFullMapModalProps {
   userLng?: number | null;
 }
 
-function computeRegion(stops: RouteStop[]) {
+// ── Viewport helper ───────────────────────────────────────────────────────────
+
+function computeViewport(stops: RouteStop[]) {
   const pts = stops
     .map((s) => ({ lat: s.structuredLocation?.lat, lng: s.structuredLocation?.lng }))
     .filter((p): p is { lat: number; lng: number } => p.lat != null && p.lng != null);
@@ -28,43 +45,86 @@ function computeRegion(stops: RouteStop[]) {
   const lngs = pts.map((p) => p.lng);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const latDelta = Math.max((maxLat - minLat) * 1.5, 0.015);
+  const lngDelta = Math.max((maxLng - minLng) * 1.5, 0.015);
   return {
-    latitude: (minLat + maxLat) / 2,
-    longitude: (minLng + maxLng) / 2,
-    latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.015),
-    longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.015),
+    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
+    zoom: Math.min(
+      Math.log2(360 / lngDelta),
+      Math.log2(180 / latDelta),
+    ) - 0.5,
   };
 }
 
-export function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLat, userLng }: RouteFullMapModalProps) {
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export function RouteFullMapModal({
+  visible,
+  onClose,
+  stops,
+  legs: _legs,
+  userLat,
+  userLng,
+}: RouteFullMapModalProps) {
   void _legs;
-  const region = computeRegion(stops);
+
+  const viewport = computeViewport(stops);
   const nextStopId = stops.find((s) => s.checkpointStatus === 'pending')?.id ?? null;
 
-  const polylineCoords = stops
-    .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
-    .map((s) => ({ latitude: s.structuredLocation.lat, longitude: s.structuredLocation.lng }));
+  const routeLineData = {
+    type: 'Feature' as const,
+    geometry: {
+      type: 'LineString' as const,
+      coordinates: stops
+        .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
+        .map((s) => [s.structuredLocation.lng, s.structuredLocation.lat] as [number, number]),
+    },
+    properties: {},
+  };
+
+  const userPointData =
+    userLat != null && userLng != null
+      ? {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [userLng, userLat] as [number, number],
+          },
+          properties: {},
+        }
+      : null;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        {region ? (
-          <RNMapView
+        {viewport ? (
+          <Map
             style={{ flex: 1 }}
-            initialRegion={region}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            showsCompass
-            toolbarEnabled={false}
+            mapStyle={MAP_STYLE}
+            logo={false}
+            attribution={false}
           >
-            {polylineCoords.length >= 2 && (
-              <Polyline
-                coordinates={polylineCoords}
-                strokeColor={color.deep}
-                strokeWidth={3}
-                lineDashPattern={[8, 4]}
-              />
+            <Camera
+              initialViewState={{
+                center: viewport.center,
+                zoom: viewport.zoom,
+              }}
+            />
+
+            {routeLineData.geometry.coordinates.length >= 2 && (
+              <GeoJSONSource id="fm-route-line-src" data={routeLineData}>
+                <Layer
+                  id="fm-route-line-layer"
+                  type="line"
+                  paint={{
+                    'line-color': color.deep,
+                    'line-width': 3,
+                    'line-dasharray': [8, 4],
+                  }}
+                />
+              </GeoJSONSource>
             )}
+
             {stops.map((stop, idx) => {
               const loc = stop.structuredLocation;
               if (loc?.lat == null || loc?.lng == null) return null;
@@ -72,7 +132,10 @@ export function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLa
               const isDone    = stop.checkpointStatus === 'arrived';
               const isSkipped = stop.checkpointStatus === 'skipped';
               return (
-                <Marker key={stop.id} coordinate={{ latitude: loc.lat, longitude: loc.lng }} anchor={{ x: 0.5, y: 0.5 }}>
+                <Marker
+                  key={stop.id}
+                  lngLat={[loc.lng, loc.lat]}
+                >
                   <View style={[
                     fm.pin,
                     isDone    && fm.pinDone,
@@ -84,16 +147,22 @@ export function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLa
                 </Marker>
               );
             })}
-            {userLat != null && userLng != null && (
-              <Circle
-                center={{ latitude: userLat, longitude: userLng }}
-                radius={15}
-                fillColor={color.deep + 'CC'}
-                strokeColor={color.deep}
-                strokeWidth={2}
-              />
+
+            {userPointData && (
+              <GeoJSONSource id="fm-user-loc-src" data={userPointData}>
+                <Layer
+                  id="fm-user-loc-layer"
+                  type="circle"
+                  paint={{
+                    'circle-radius': 10,
+                    'circle-color': color.deep + 'CC',
+                    'circle-stroke-color': color.deep,
+                    'circle-stroke-width': 2,
+                  }}
+                />
+              </GeoJSONSource>
             )}
-          </RNMapView>
+          </Map>
         ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: '#fff' }}>No location data</Text>
@@ -123,6 +192,8 @@ export function RouteFullMapModal({ visible, onClose, stops, legs: _legs, userLa
     </Modal>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const fm = StyleSheet.create({
   pin: {

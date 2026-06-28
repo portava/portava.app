@@ -1,16 +1,30 @@
 /**
  * RouteMinimapView
  *
- * Compact map showing numbered checkpoints, a polyline between them,
- * the user's current location, and a highlighted "next stop" ring.
- * Built on the existing react-native-maps setup (same as MapView.tsx).
+ * Compact map showing numbered checkpoints, a dashed polyline between them,
+ * the user's current location dot, and a highlighted "next stop" ring.
+ * Built on MapLibre (replaces react-native-maps).
+ * Metro picks RouteMinimapView.web.tsx on web.
  */
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import RNMapView, { Marker, Polyline, Circle } from 'react-native-maps';
+import {
+  Map,
+  Camera,
+  Marker,
+  GeoJSONSource,
+  Layer,
+} from '@maplibre/maplibre-react-native';
 import { Maximize2 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import type { FullRoutePlan, RouteStop } from '../services/routePlan';
+
+// ── Map tile style ─────────────────────────────────────────────────────────────
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
+const MAP_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -22,9 +36,9 @@ interface Props {
   height?: number;
 }
 
-// ── Region helper (same algorithm as MapView.tsx) ─────────────────────────────
+// ── Viewport helper ───────────────────────────────────────────────────────────
 
-function computeRegion(stops: RouteStop[]) {
+function computeViewport(stops: RouteStop[]) {
   const points = stops
     .map((s) => ({ lat: s.structuredLocation?.lat, lng: s.structuredLocation?.lng }))
     .filter((p) => p.lat != null && p.lng != null) as { lat: number; lng: number }[];
@@ -39,38 +53,44 @@ function computeRegion(stops: RouteStop[]) {
   const lngDelta = Math.max((maxLng - minLng) * 1.6, 0.02);
 
   return {
-    latitude: (minLat + maxLat) / 2,
-    longitude: (minLng + maxLng) / 2,
-    latitudeDelta: latDelta,
-    longitudeDelta: lngDelta,
+    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
+    zoom: Math.min(
+      Math.log2(360 / lngDelta),
+      Math.log2(180 / latDelta),
+    ) - 0.5,
   };
-}
-
-// ── Pin colour by checkpoint status ──────────────────────────────────────────
-
-function pinColor(status: RouteStop['checkpointStatus'], isNext: boolean): string {
-  if (status === 'arrived') return '#888';
-  if (status === 'skipped') return '#ccc';
-  if (isNext) return color.deep;
-  return '#E76F51';
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height = 220 }: Props) {
-  const { stops, legs } = routePlan;
+  const { stops } = routePlan;
 
-  const region = useMemo(() => computeRegion(stops), [stops]);
+  const viewport = useMemo(() => computeViewport(stops), [stops]);
 
-  const polylineCoords = useMemo(() => {
-    return stops
+  const routeLineData = useMemo(() => {
+    const coords = stops
       .filter((s) => s.structuredLocation?.lat != null && s.structuredLocation?.lng != null)
-      .map((s) => ({ latitude: s.structuredLocation.lat, longitude: s.structuredLocation.lng }));
+      .map((s) => [s.structuredLocation.lng, s.structuredLocation.lat] as [number, number]);
+    return {
+      type: 'Feature' as const,
+      geometry: { type: 'LineString' as const, coordinates: coords },
+      properties: {},
+    };
   }, [stops]);
+
+  const userPointData = useMemo(() => {
+    if (userLat == null || userLng == null) return null;
+    return {
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [userLng, userLat] as [number, number] },
+      properties: {},
+    };
+  }, [userLat, userLng]);
 
   const nextStopId = stops.find((s) => s.checkpointStatus === 'pending')?.id ?? null;
 
-  if (!region) {
+  if (!viewport) {
     return (
       <View style={[styles.placeholder, { height }]}>
         <ActivityIndicator color={color.deep} />
@@ -80,26 +100,35 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
 
   return (
     <View style={[styles.container, { height }]}>
-      <RNMapView
+      <Map
         style={StyleSheet.absoluteFill}
-        initialRegion={region}
-        region={region}
-        scrollEnabled={false}
-        zoomEnabled={false}
-        pitchEnabled={false}
-        rotateEnabled={false}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
-        showsCompass={false}
-        toolbarEnabled={false}
+        mapStyle={MAP_STYLE}
+        logo={false}
+        attribution={false}
+        dragPan={false}
+        touchZoom={false}
+        touchRotate={false}
+        touchPitch={false}
       >
-        {polylineCoords.length >= 2 && (
-          <Polyline
-            coordinates={polylineCoords}
-            strokeColor={color.deep}
-            strokeWidth={2}
-            lineDashPattern={[6, 3]}
-          />
+        <Camera
+          initialViewState={{
+            center: viewport.center,
+            zoom: viewport.zoom,
+          }}
+        />
+
+        {routeLineData.geometry.coordinates.length >= 2 && (
+          <GeoJSONSource id="route-line-src" data={routeLineData}>
+            <Layer
+              id="route-line-layer"
+              type="line"
+              paint={{
+                'line-color': color.deep,
+                'line-width': 2,
+                'line-dasharray': [6, 3],
+              }}
+            />
+          </GeoJSONSource>
         )}
 
         {stops.map((stop, idx) => {
@@ -112,8 +141,7 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
           return (
             <Marker
               key={stop.id}
-              coordinate={{ latitude: loc.lat, longitude: loc.lng }}
-              anchor={{ x: 0.5, y: 0.5 }}
+              lngLat={[loc.lng, loc.lat]}
             >
               <View style={[
                 styles.pin,
@@ -129,16 +157,21 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
           );
         })}
 
-        {userLat != null && userLng != null && (
-          <Circle
-            center={{ latitude: userLat, longitude: userLng }}
-            radius={12}
-            fillColor={color.deep + 'CC'}
-            strokeColor={color.deep}
-            strokeWidth={1.5}
-          />
+        {userPointData && (
+          <GeoJSONSource id="user-loc-src" data={userPointData}>
+            <Layer
+              id="user-loc-layer"
+              type="circle"
+              paint={{
+                'circle-radius': 8,
+                'circle-color': color.deep + 'CC',
+                'circle-stroke-color': color.deep,
+                'circle-stroke-width': 1.5,
+              }}
+            />
+          </GeoJSONSource>
         )}
-      </RNMapView>
+      </Map>
 
       {onExpand && (
         <Pressable style={styles.expandBtn} onPress={onExpand} hitSlop={8}>

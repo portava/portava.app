@@ -1,14 +1,21 @@
 /**
- * DiscoveryMapView — renders Discovery venue pins on a react-native-maps MapView.
+ * DiscoveryMapView — renders Discovery venue pins on a MapLibre Map.
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
  */
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import RNMapView, { Marker } from 'react-native-maps';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
+
+// ── Map tile style ─────────────────────────────────────────────────────────────
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
+const MAP_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,19 +37,22 @@ const CAT_COLOR: Record<string, string> = {
   for_you:     '#4A90D9',
 };
 
-// ── Region helper ─────────────────────────────────────────────────────────────
+// ── Viewport helper ───────────────────────────────────────────────────────────
 
-function computeRegion(places: DiscoveryPlace[]) {
+function computeViewport(places: DiscoveryPlace[]) {
   if (places.length === 0) return null;
   const lats = places.map((p) => p.lat!);
   const lngs = places.map((p) => p.lng!);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const latDelta = Math.max((maxLat - minLat) * 1.5, 0.05);
+  const lngDelta = Math.max((maxLng - minLng) * 1.5, 0.05);
   return {
-    latitude:      (minLat + maxLat) / 2,
-    longitude:     (minLng + maxLng) / 2,
-    latitudeDelta:  Math.max((maxLat - minLat) * 1.5, 0.05),
-    longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.05),
+    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
+    zoom: Math.min(
+      Math.log2(360 / lngDelta),
+      Math.log2(180 / latDelta),
+    ) - 0.5,
   };
 }
 
@@ -53,9 +63,9 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
   );
-  const region = useMemo(() => computeRegion(mappable), [mappable]);
+  const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
-  if (!region) {
+  if (!viewport) {
     return (
       <View style={s.empty}>
         <View style={s.emptyIcon}>
@@ -71,23 +81,31 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
 
   return (
     <View style={s.root}>
-      <RNMapView
-        style={s.map}
-        initialRegion={region}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
+      <Map
+        style={StyleSheet.absoluteFill}
+        mapStyle={MAP_STYLE}
+        logo={false}
+        attribution={false}
       >
+        <Camera
+          initialViewState={{
+            center: viewport.center,
+            zoom: viewport.zoom,
+          }}
+        />
         {mappable.map((place) => (
           <Marker
             key={place.id}
-            coordinate={{ latitude: place.lat!, longitude: place.lng! }}
-            pinColor={CAT_COLOR[place.category] ?? color.signal}
-            title={place.name}
-            description={place.address ?? place.type ?? undefined}
-            onPress={() => onSelectPlace(place)}
-          />
+            lngLat={[place.lng!, place.lat!]}
+          >
+            <Pressable onPress={() => onSelectPlace(place)}>
+              <View style={[s.pin, { backgroundColor: CAT_COLOR[place.category] ?? color.signal }]}>
+                <MapPin size={10} color="#fff" />
+              </View>
+            </Pressable>
+          </Marker>
         ))}
-      </RNMapView>
+      </Map>
       <View style={s.badge}>
         <MapPin size={10} color="#fff" />
         <Text style={s.badgeText}>
@@ -105,8 +123,19 @@ const s = StyleSheet.create({
     flex: 1,
     position: 'relative',
   },
-  map: {
-    flex: 1,
+  pin: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 3,
   },
   empty: {
     flex: 1,
