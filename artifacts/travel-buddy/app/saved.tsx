@@ -1,14 +1,43 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, FlatList, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  View, Text, ScrollView, FlatList, StyleSheet,
+  ActivityIndicator, Pressable, Alert,
+} from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip } from '../src/components/ui';
-import { color, space } from '../src/theme/tokens';
+import { color, space, radius, type as t } from '../src/theme/tokens';
 import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
-import { MapPin, Bookmark, Route } from 'lucide-react-native';
+import { MapPin, Bookmark, Route, List, Map } from 'lucide-react-native';
 import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
+import { DiscoveryMapView } from '../src/components/discovery/DiscoveryMapView';
+import type { DiscoveryPlace } from '../src/services/discovery';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
+
+// ── Adapter ───────────────────────────────────────────────────────────────────
+
+function toDiscoveryPlace(b: BookmarkedPlace): DiscoveryPlace {
+  return {
+    id:           b.id,
+    name:         b.name,
+    category:     b.category ?? 'places',
+    type:         b.type,
+    description:  null,
+    distanceKm:   null,
+    lat:          b.lat ?? null,
+    lng:          b.lng ?? null,
+    tags:         [],
+    address:      b.address,
+    website:      null,
+    phone:        null,
+    openingHours: null,
+    rating:       null,
+    isOpenNow:    null,
+  };
+}
+
+// ── Place list card ───────────────────────────────────────────────────────────
 
 interface PlaceCardProps {
   place: BookmarkedPlace;
@@ -37,10 +66,41 @@ function PlaceCard({ place, onAddToRoute }: PlaceCardProps) {
   );
 }
 
+// ── View mode toggle ──────────────────────────────────────────────────────────
+
+interface ViewToggleProps {
+  mode: 'list' | 'map';
+  onChange: (m: 'list' | 'map') => void;
+}
+
+function ViewToggle({ mode, onChange }: ViewToggleProps) {
+  return (
+    <View style={s.toggleRow}>
+      <Pressable
+        style={[s.toggleBtn, mode === 'list' && s.toggleActive]}
+        onPress={() => onChange('list')}
+      >
+        <List size={14} color={mode === 'list' ? color.signal : color.mute} />
+        <Text style={[s.toggleLabel, mode === 'list' && s.toggleLabelActive]}>List</Text>
+      </Pressable>
+      <Pressable
+        style={[s.toggleBtn, mode === 'map' && s.toggleActive]}
+        onPress={() => onChange('map')}
+      >
+        <Map size={14} color={mode === 'map' ? color.signal : color.mute} />
+        <Text style={[s.toggleLabel, mode === 'map' && s.toggleLabelActive]}>Map</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
 export default function Saved() {
-  const [tab, setTab] = useState('Places');
-  const [places, setPlaces] = useState<BookmarkedPlace[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab]             = useState('Places');
+  const [places, setPlaces]       = useState<BookmarkedPlace[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [viewMode, setViewMode]   = useState<'list' | 'map'>('list');
   const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
 
   const load = useCallback(async () => {
@@ -56,8 +116,12 @@ export default function Saved() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-
   useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  // Reset to list when switching away from Places tab
+  useEffect(() => {
+    if (tab !== 'Places') setViewMode('list');
+  }, [tab]);
 
   const showPlaces = tab === 'Places';
 
@@ -65,14 +129,35 @@ export default function Saved() {
     setBuilderPlace(place);
   }, []);
 
-  // Build initial stop draft from the bookmarked place
+  // DiscoveryPlace list derived from bookmarked places (only those with coords)
+  const mappablePlaces = useMemo(
+    () => places.map(toDiscoveryPlace).filter((p) => p.lat != null && p.lng != null),
+    [places],
+  );
+
+  const handleSelectOnMap = useCallback((dp: DiscoveryPlace) => {
+    const original = places.find((p) => p.id === dp.id);
+    if (!original) return;
+    Alert.alert(
+      dp.name,
+      [dp.address ?? dp.type ?? '', dp.category].filter(Boolean).join(' · ') || undefined,
+      [
+        {
+          text: 'Plan route',
+          onPress: () => handleAddToRoute(original),
+        },
+        { text: 'Dismiss', style: 'cancel' },
+      ],
+    );
+  }, [places, handleAddToRoute]);
+
   const initialStop = builderPlace
     ? [{
         id:         builderPlace.id,
         title:      builderPlace.name,
         lat:        builderPlace.lat ?? null,
         lng:        builderPlace.lng ?? null,
-        sourceType: 'discovery',
+        sourceType: 'discovery' as const,
         sourceId:   builderPlace.id,
         category:   builderPlace.category ?? undefined,
       }]
@@ -81,6 +166,8 @@ export default function Saved() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Saved" back />
+
+      {/* Category tab bar */}
       <FlatList
         data={TABS}
         horizontal
@@ -92,13 +179,20 @@ export default function Saved() {
           <Chip label={item} active={item === tab} onPress={() => setTab(item)} />
         )}
       />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
-        {showPlaces ? (
-          loading ? (
-            <View style={s.center}>
-              <ActivityIndicator color={color.signal} />
-            </View>
-          ) : places.length === 0 ? (
+
+      {/* List / Map toggle — only on the Places tab */}
+      {showPlaces && !loading && places.length > 0 && (
+        <ViewToggle mode={viewMode} onChange={setViewMode} />
+      )}
+
+      {/* Content */}
+      {showPlaces ? (
+        loading ? (
+          <View style={s.center}>
+            <ActivityIndicator color={color.signal} />
+          </View>
+        ) : places.length === 0 ? (
+          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
             <View style={s.empty}>
               <Bookmark size={28} color={color.haze} />
               <Text style={s.emptyTitle}>No saved places yet</Text>
@@ -106,19 +200,39 @@ export default function Saved() {
                 Tap the bookmark icon on any place in Discovery to save it here.
               </Text>
             </View>
-          ) : (
-            places.map((p) => (
-              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} />
-            ))
-          )
+          </ScrollView>
+        ) : viewMode === 'map' ? (
+          <View style={{ flex: 1 }}>
+            <DiscoveryMapView
+              places={mappablePlaces}
+              onSelectPlace={handleSelectOnMap}
+            />
+            {mappablePlaces.length < places.length && (
+              <View style={s.noCoordsBanner}>
+                <Text style={s.noCoordsTxt}>
+                  {places.length - mappablePlaces.length} saved place
+                  {places.length - mappablePlaces.length === 1 ? '' : 's'} without coordinates
+                  {' '}not shown on map
+                </Text>
+              </View>
+            )}
+          </View>
         ) : (
+          <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
+            {places.map((p) => (
+              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} />
+            ))}
+          </ScrollView>
+        )
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
           <View style={s.empty}>
             <Bookmark size={28} color={color.haze} />
             <Text style={s.emptyTitle}>Nothing saved here yet</Text>
             <Text style={s.emptySub}>Items you save will appear here.</Text>
           </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      )}
 
       <RouteBuilderSheet
         visible={builderPlace != null}
@@ -129,6 +243,8 @@ export default function Saved() {
     </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
   card: {
@@ -176,8 +292,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   center: {
-    paddingVertical: space.xxxl,
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   empty: {
     alignItems: 'center',
@@ -194,5 +311,51 @@ const s = StyleSheet.create({
     color: color.mute,
     textAlign: 'center',
     paddingHorizontal: space.xl,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
+  toggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  toggleActive: {
+    borderColor: color.signal,
+    backgroundColor: `${color.signal}12`,
+  },
+  toggleLabel: {
+    ...t.small,
+    fontSize: 12,
+    fontWeight: '600',
+    color: color.mute,
+  },
+  toggleLabelActive: {
+    color: color.signal,
+  },
+  noCoordsBanner: {
+    position: 'absolute',
+    top: 10,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(0,0,0,0.60)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  noCoordsTxt: {
+    color: '#fff',
+    fontSize: 12,
   },
 });
