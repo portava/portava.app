@@ -20,6 +20,10 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery';
 import type { PlaceReportReason } from '../services/discovery';
 
+// Module-level set so saved state survives card unmount/remount during scroll recycling.
+// Session-only — cleared when the app is backgrounded or the module reloads.
+const savedPlaceIds = new Set<string>();
+
 const REPORT_REASONS: { label: string; value: PlaceReportReason }[] = [
   { label: 'Spam',        value: 'spam' },
   { label: 'Offensive',   value: 'offensive' },
@@ -239,7 +243,7 @@ function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; ava
 export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
   const [shareVisible, setShareVisible] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(() => savedPlaceIds.has(gem.id));
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
@@ -264,7 +268,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
               if (saved || saving) return;
               setSaving(true);
               const result = await saveCommunityPlace(gem.id);
-              if (result.ok) { setSaved(true); setDisplayCount(c => c + 1); }
+              if (result.ok) { savedPlaceIds.add(gem.id); setSaved(true); setDisplayCount(c => c + 1); }
               setSaving(false);
             }}
           >
@@ -377,7 +381,7 @@ export function NeighborhoodsSection({ items }: { items: NeighborhoodVibe[] }) {
 /* ── Traveler Picks ── */
 export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(() => savedPlaceIds.has(pick.id));
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(pick.savedCount ?? 0);
@@ -418,7 +422,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
             if (saved || saving) return;
             setSaving(true);
             const result = await saveCommunityPlace(pick.id);
-            if (result.ok) { setSaved(true); setDisplayCount(c => c + 1); }
+            if (result.ok) { savedPlaceIds.add(pick.id); setSaved(true); setDisplayCount(c => c + 1); }
             setSaving(false);
           }}
         >
@@ -660,12 +664,9 @@ const tpk = StyleSheet.create({
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
   routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
   routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
-<<<<<<< HEAD
   reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
-=======
   savedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
   savedNote: { ...t.small, color: color.mute, fontSize: 10 },
->>>>>>> 090e527 (Show saved-by-travelers count on HiddenGemCard and TravelerPickCard)
 });
 
 const sv = StyleSheet.create({
