@@ -109,6 +109,10 @@ export default function DiscoveryHub() {
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   const [customMinAge, setCustomMinAge] = useState<number | null>(null);
   const [customMaxAge, setCustomMaxAge] = useState<number | null>(null);
+  // Debounced copies — used only for the count-badge effect so that typing in
+  // the custom age TextInputs does not fire 7 parallel API requests per keystroke.
+  const [debouncedMinAge, setDebouncedMinAge] = useState<number | null>(null);
+  const [debouncedMaxAge, setDebouncedMaxAge] = useState<number | null>(null);
   const [showCustomInputs, setShowCustomInputs] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -136,20 +140,33 @@ export default function DiscoveryHub() {
     }
   }, [locationState.place.city]);
 
+  // Debounce custom age inputs (500 ms) so typing "25" doesn't fire two batches
+  // of 7 API requests; only the value after the user pauses is forwarded to counts.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedMinAge(customMinAge), 500);
+    return () => clearTimeout(t);
+  }, [customMinAge]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedMaxAge(customMaxAge), 500);
+    return () => clearTimeout(t);
+  }, [customMaxAge]);
+
   // Fetch per-category result counts whenever the destination, filters, context
-  // mode, or age filter changes. countsLoading gates tab dimming so no tab
+  // mode, or age filter changes. Custom age inputs use debounced values to avoid
+  // a count fetch on every keystroke. countsLoading gates tab dimming so no tab
   // flickers to "dimmed" before the full batch resolves.
   useEffect(() => {
     setCategoryCounts({});
     setCountsLoading(true);
     let cancelled = false;
-    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, customMinAge, customMaxAge).then((counts) => {
+    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedMinAge, debouncedMaxAge).then((counts) => {
       if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
     }).catch(() => {
       if (!cancelled) setCountsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [destination, activeFilters, contextMode, ageFilter, customMinAge, customMaxAge]);
+  }, [destination, activeFilters, contextMode, ageFilter, debouncedMinAge, debouncedMaxAge]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
