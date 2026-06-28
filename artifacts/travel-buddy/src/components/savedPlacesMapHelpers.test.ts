@@ -378,6 +378,83 @@ describe('list-map sync: removed place is immediately absent from map pins', () 
   });
 });
 
+// ── stale-category reset ───────────────────────────────────────────────────────
+//
+// These tests verify the logic behind the useEffect in SavedPlacesMapView that
+// resets `activeCategory` to null whenever the category is no longer present in
+// the derived `categories` list.
+//
+// The effect is:
+//   useEffect(() => {
+//     const resolved = resolveStoredCategory(activeCategory, categories);
+//     if (resolved !== activeCategory) setActiveCategory(resolved);
+//   }, [categories, activeCategory]);
+//
+// `resolveStoredCategory` is the pure function under test.
+
+describe('stale-category reset: resolveStoredCategory clears removed categories', () => {
+  it('resets to null when the last place in the active category is removed', () => {
+    // Before removal: 'cafe' chip is active and 'cafe' is in the category list.
+    const categoriesBefore = ['cafe', 'museum'];
+    const activeCategory = 'cafe';
+
+    // After removal: the only cafe place is gone — 'cafe' disappears from categories.
+    const categoriesAfter = ['museum'];
+
+    // Simulates what the useEffect computes on re-render after the prop changes.
+    const resolved = resolveStoredCategory(activeCategory, categoriesAfter);
+    assert.equal(resolved, null, 'should fall back to null (All) when category is gone');
+
+    // Confirm it was valid before the removal.
+    assert.equal(resolveStoredCategory(activeCategory, categoriesBefore), 'cafe');
+  });
+
+  it('resets to null when the last place in a category loses its coordinates', () => {
+    // A place losing lat/lng is equivalent to removal from filterMappable output,
+    // so its category can also disappear from the derived list.
+    const categoriesAfter: string[] = []; // no mappable places left at all
+    const resolved = resolveStoredCategory('museum', categoriesAfter);
+    assert.equal(resolved, null);
+  });
+
+  it('keeps the active category when other places in that category still exist', () => {
+    const categories = ['cafe', 'museum'];
+    // Remove one museum, but another museum still exists → category stays.
+    const resolved = resolveStoredCategory('museum', categories);
+    assert.equal(resolved, 'museum');
+  });
+
+  it('resets to null when the UNCATEGORIZED sentinel category is removed', () => {
+    const categoriesBefore = ['cafe', UNCATEGORIZED];
+    const categoriesAfter  = ['cafe']; // the last coord-less / unnamed place was removed
+    assert.equal(resolveStoredCategory(UNCATEGORIZED, categoriesBefore), UNCATEGORIZED);
+    assert.equal(resolveStoredCategory(UNCATEGORIZED, categoriesAfter), null);
+  });
+
+  it('is a no-op (already null) when no category was active before removal', () => {
+    const categoriesAfter = ['cafe'];
+    assert.equal(resolveStoredCategory(null, categoriesAfter), null);
+  });
+
+  it('full pipeline: removing the last place of a category yields null resolved category', () => {
+    const placeMuseum1 = place({ id: 'm1', category: 'museum', lat: 48.8566, lng: 2.3522 });
+    const placeCafe    = place({ id: 'c1', category: 'cafe',   lat: 51.5074, lng: -0.1278 });
+
+    const beforePlaces = [placeMuseum1, placeCafe];
+    const beforeCats   = uniqueCategories(filterMappable(beforePlaces));
+    assert.deepEqual(beforeCats, ['cafe', 'museum']);
+
+    // User has 'cafe' chip active, then removes the only cafe.
+    const afterPlaces = [placeMuseum1];
+    const afterCats   = uniqueCategories(filterMappable(afterPlaces));
+    assert.deepEqual(afterCats, ['museum']);
+
+    const activeCategory = 'cafe';
+    const resolved = resolveStoredCategory(activeCategory, afterCats);
+    assert.equal(resolved, null, 'activeCategory should reset to null after the last cafe is removed');
+  });
+});
+
 // ── computeBounds ──────────────────────────────────────────────────────────────
 
 describe('computeBounds', () => {
