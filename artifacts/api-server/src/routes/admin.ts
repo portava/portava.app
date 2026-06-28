@@ -450,7 +450,7 @@ const geofenceSettingsSchema = z.object({
   minRadiusM:                z.number().int().min(10).max(1_000).optional(),
   maxRadiusM:                z.number().int().min(100).max(50_000).optional(),
   noShowAffectsReliability:  z.boolean().optional(),
-});
+}).strict();
 
 router.patch("/admin/geofence-settings", async (req, res) => {
   const admin = await requireAdmin(req, res);

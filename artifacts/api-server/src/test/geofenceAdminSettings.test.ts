@@ -295,27 +295,26 @@ describe("PATCH /admin/geofence-settings", () => {
     assert.equal(body.error, "invalid_payload");
   });
 
-  // ── Unknown field handling ────────────────────────────────────────────────────
-  // Zod strips unknown keys by default (no .strict()), so unknown-only bodies
-  // pass validation and only update_at is written — existing settings are untouched.
+  // ── Unknown field rejection ───────────────────────────────────────────────────
+  // Schema uses .strict() so any unrecognised key returns 400 invalid_payload.
 
-  it("ignores unknown fields — known settings are not overwritten", async () => {
-    const existingRow = {
-      default_radius_m: 150,
-      min_radius_m: 50,
-      max_radius_m: 5000,
-      no_show_affects_reliability: false,
-      updated_at: "2026-01-01T00:00:00Z",
-    };
-    setClients({ role: "admin", geofenceSettings: existingRow });
+  it("returns 400 when body contains only unknown fields", async () => {
+    setClients({ role: "admin" });
     const { status, body } = await req("PATCH", "/admin/geofence-settings", {
       unknownRadiusField: 9999,
       anotherUnknown:     true,
     });
-    // Zod strips unknowns → no known fields changed; settings row unchanged
-    assert.equal(status, 200);
-    assert.equal(body.settings.default_radius_m, 150,   "default_radius_m must not change");
-    assert.equal(body.settings.min_radius_m,     50,    "min_radius_m must not change");
-    assert.equal(body.settings.max_radius_m,     5000,  "max_radius_m must not change");
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
+  });
+
+  it("returns 400 when body mixes valid and unknown fields", async () => {
+    setClients({ role: "admin" });
+    const { status, body } = await req("PATCH", "/admin/geofence-settings", {
+      defaultRadiusM:  200,
+      unknownField:    "bad",
+    });
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
   });
 });
