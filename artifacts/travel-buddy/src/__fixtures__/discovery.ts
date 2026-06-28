@@ -115,6 +115,7 @@ export interface TravelerPick {
   source: DiscoverySource;
   status: DiscoveryStatus;
   verified: boolean;
+  savedCount?: number;
 }
 
 export const travelerPicks: TravelerPick[] = [

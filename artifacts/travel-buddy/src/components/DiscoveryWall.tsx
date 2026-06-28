@@ -242,6 +242,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
+  const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
   const sharePayload: DiscoverySharePayload = {
     sourceId: gem.id,
     sourceType: 'hidden_gem',
@@ -263,7 +264,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
               if (saved || saving) return;
               setSaving(true);
               const result = await saveCommunityPlace(gem.id);
-              if (result.ok) setSaved(true);
+              if (result.ok) { setSaved(true); setDisplayCount(c => c + 1); }
               setSaving(false);
             }}
           >
@@ -274,6 +275,12 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
           <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
           <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
           <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
+          {displayCount > 0 && (
+            <View style={g.savedRow}>
+              <Bookmark size={11} color={color.mute} />
+              <Text style={g.savedNote}>Saved by {displayCount} travelers</Text>
+            </View>
+          )}
           {gem.submittedBy ? (
             <View style={g.byRow}>
               <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
@@ -373,6 +380,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
+  const [displayCount, setDisplayCount] = useState(pick.savedCount ?? 0);
   return (
     <View style={tpk.card}>
       <View style={tpk.head}>
@@ -395,6 +403,12 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
         ) : null}
       </View>
       <Text style={tpk.note} numberOfLines={1}>{pick.note}</Text>
+      {displayCount > 0 && (
+        <View style={tpk.savedRow}>
+          <Bookmark size={11} color={color.mute} />
+          <Text style={tpk.savedNote}>Saved by {displayCount} travelers</Text>
+        </View>
+      )}
       <View style={tpk.btnRow}>
         <Pressable
           style={({ pressed }) => [tpk.saveBtn, pressed && { opacity: layout.pressedOpacity }]}
@@ -404,7 +418,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
             if (saved || saving) return;
             setSaving(true);
             const result = await saveCommunityPlace(pick.id);
-            if (result.ok) setSaved(true);
+            if (result.ok) { setSaved(true); setDisplayCount(c => c + 1); }
             setSaving(false);
           }}
         >
@@ -613,6 +627,8 @@ const g = StyleSheet.create({
   routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
   shareBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
   reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+  savedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  savedNote: { ...t.small, color: color.mute, fontSize: 10 },
 });
 
 const nb = StyleSheet.create({
@@ -644,7 +660,12 @@ const tpk = StyleSheet.create({
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
   routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
   routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
+<<<<<<< HEAD
   reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+=======
+  savedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  savedNote: { ...t.small, color: color.mute, fontSize: 10 },
+>>>>>>> 090e527 (Show saved-by-travelers count on HiddenGemCard and TravelerPickCard)
 });
 
 const sv = StyleSheet.create({
