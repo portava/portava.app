@@ -8,6 +8,7 @@ import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
 import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
+import { warmUpDiscoveryCache } from "./lib/discoveryWarmup";
 
 const rawPort = process.env["PORT"];
 
@@ -38,6 +39,9 @@ app.listen(port, (err) => {
   startTripCrewLiveShareScheduler();
   startDelayedPostPublisher();
   startCompassAbuseScanScheduler();
+  warmUpDiscoveryCache(port).catch((e) =>
+    logger.warn({ err: e }, "discovery warm-up: unhandled error"),
+  );
 
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across
