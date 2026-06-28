@@ -13,7 +13,7 @@ import { Sparkles, Info, Share2 } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
 import type { DiscoveryPlace } from '../../services/discovery';
-import { getDiscoveryPlaces } from '../../services/discovery';
+import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery';
 import { PlaceSkeletonList } from './PlaceSkeleton';
 import PlaceCard from './PlaceCard';
 import { PlaceDetailSheet } from './PlaceDetailSheet';
@@ -21,7 +21,7 @@ import { DiscoveryMapView } from './DiscoveryMapView';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
-import { HiddenGemsSection, TravelerPicksSection } from '../DiscoveryWall';
+import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '../DiscoveryWall';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
@@ -83,6 +83,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   // Compass feed — runs in background alongside OSM/Telegraph
   const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed });
+
+  // Pre-populate the module-level savedPlaceIds set so returning users see
+  // filled bookmarks for places they saved in previous sessions.
+  // Fire-and-forget — no UI dependency; runs once when the user is signed in.
+  useEffect(() => {
+    if (!isAuthed) return;
+    getSavedPlaceIds().then(prefillSavedPlaceIds).catch(() => {});
+  }, [isAuthed]);
 
   const handleWhyPress = (id: string) => {
     setWhyId(id);

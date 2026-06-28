@@ -21,8 +21,18 @@ import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery'
 import type { PlaceReportReason } from '../services/discovery';
 
 // Module-level set so saved state survives card unmount/remount during scroll recycling.
-// Session-only — cleared when the app is backgrounded or the module reloads.
+// Pre-populated by prefillSavedPlaceIds() on Discovery load so returning users
+// see filled bookmarks for places they saved in previous sessions.
 const savedPlaceIds = new Set<string>();
+
+/**
+ * Seed the module-level saved set from the API response.
+ * Called once on Discovery mount (when the user is signed in).
+ * Existing entries are not removed — this is additive only.
+ */
+export function prefillSavedPlaceIds(ids: string[]): void {
+  for (const id of ids) savedPlaceIds.add(id);
+}
 
 const REPORT_REASONS: { label: string; value: PlaceReportReason }[] = [
   { label: 'Spam',        value: 'spam' },

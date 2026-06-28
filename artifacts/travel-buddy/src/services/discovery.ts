@@ -177,6 +177,31 @@ export async function saveCommunityPlace(
   }
 }
 
+/**
+ * Returns the list of community place IDs saved by the current user.
+ * Used to pre-populate the filled-bookmark state across app sessions.
+ * Returns an empty array on any error — fail-open so a network hiccup
+ * doesn't break the Discovery screen.
+ */
+export async function getSavedPlaceIds(): Promise<string[]> {
+  const base = apiBase();
+  if (!base) return [];
+
+  const token = await freshToken();
+  if (!token) return [];
+
+  try {
+    const res = await fetch(`${base}/api/discovery/community/saved-ids`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { ids?: string[] };
+    return Array.isArray(data.ids) ? data.ids : [];
+  } catch {
+    return [];
+  }
+}
+
 export type PlaceReportReason = 'spam' | 'offensive' | 'inaccurate' | 'unsafe' | 'duplicate' | 'other';
 
 export async function reportCommunityPlace(

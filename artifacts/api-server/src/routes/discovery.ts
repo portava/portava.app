@@ -943,13 +943,16 @@ router.post("/discovery/community", async (req, res) => {
 });
 
 /**
- * POST /api/discovery/community/:placeId/save  — save a community discovery place (#121).
- * Increments saved_count on discovery_places. Requires migration 0029_discovery_places.sql.
- * Gracefully returns ok:false if the table does not exist yet.
+ * POST /api/discovery/community/:placeId/save  — save a community discovery place.
+ * Increments saved_count on discovery_places and upserts a row in
+ * discovery_place_saves so the user's saved set persists across sessions.
+ * Requires migrations 0029_discovery_places.sql and 0062_discovery_place_saves.sql.
+ * Gracefully returns ok:false if either table does not exist yet.
  */
 router.post("/discovery/community/:placeId/save", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
+  const { user } = auth;
   const { placeId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(placeId)) {
     sendError(res, "invalid_payload", "Invalid place id");
@@ -969,9 +972,38 @@ router.post("/discovery/community/:placeId/save", async (req, res) => {
       .from("discovery_places")
       .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
       .eq("id", placeId);
+    // Record the per-user save so saved-ids endpoint can return it later.
+    await sc
+      .from("discovery_place_saves")
+      .upsert({ user_id: user.id, place_id: placeId }, { onConflict: "user_id,place_id" });
     res.json({ ok: true, placeId });
   } catch {
     res.json({ ok: false, reason: "unavailable" });
+  }
+});
+
+/**
+ * GET /api/discovery/community/saved-ids
+ * Returns the list of community place IDs saved by the current user.
+ * Used by the mobile app to pre-populate the filled-bookmark state across sessions.
+ * Returns { ids: string[] } — empty array on any error (fail-open).
+ * Requires migration 0062_discovery_place_saves.sql.
+ */
+router.get("/discovery/community/saved-ids", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { res.json({ ids: [] }); return; }
+  try {
+    const { data, error } = await sc
+      .from("discovery_place_saves")
+      .select("place_id")
+      .eq("user_id", user.id);
+    if (error) { res.json({ ids: [] }); return; }
+    res.json({ ids: (data ?? []).map((r: { place_id: string }) => r.place_id) });
+  } catch {
+    res.json({ ids: [] });
   }
 });
 
