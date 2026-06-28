@@ -6,11 +6,13 @@ on:
     paths:
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
+      - "scripts/sync-standalone.sh"
   pull_request:
     branches: ["**"]
     paths:
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
+      - "scripts/sync-standalone.sh"
 
 jobs:
   sync-standalone-check:

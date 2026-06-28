@@ -1,0 +1,115 @@
+Two fixes for Travel Buddy (standalone app at ~/workspace/travel-buddy-standalone): (1) maps must always render even with zero places, and (2) add pull-to-refresh to data-backed screens.
+
+Work in the standalone app: ~/workspace/travel-buddy-standalone (NOT artifacts/travel-buddy — that's the backup). All map components use @maplibre/maplibre-react-native v11.
+
+═══════════════════════════════════════════════════════════════════
+PART 1 — Maps must always render (the interactive map should appear whether or not places exist)
+═══════════════════════════════════════════════════════════════════
+
+THE BUG (confirmed in src/components/discovery/DiscoveryMapView.tsx):
+When there are no mappable places, computeViewport() returns null, and the component returns an
+"No pins available" empty-state View INSTEAD of rendering the <Map>. Result: tapping "Map" with no
+places shows text, not a map. This is wrong — the map must always render; only the markers/pins
+should be conditional.
+
+REQUIRED FIX for DiscoveryMapView.tsx:
+- REMOVE the `if (!viewport) { return <empty state> }` early-return block.
+- ALWAYS render the <Map> component.
+- Use a fallback center/zoom when there are no mappable places. Prefer, in order:
+  1. the user's current location if available (lat/lng from the active-location hook), else
+  2. a sensible default (e.g. Fort Lauderdale [-80.1373, 26.1224], zoom 11) — but if a current-location
+     value is readily available in props/context, use it instead of hardcoding.
+- Render <Marker> elements only for mappable places (markers conditional, map unconditional).
+- Keep the existing pin-count badge (it can show "0 places" when empty — that's fine and honest).
+- Do NOT remove the MapTiler style or the demotiles fallback.
+
+AUDIT ALL OTHER MAP COMPONENTS for the same early-return-on-empty bug and apply the same
+always-render-the-map fix where present. Known map components to check:
+- src/components/discovery/DiscoveryMapView.tsx        (confirmed buggy)
+- src/components/discovery/DiscoveryMapLibreView.tsx   (if used)
+- src/components/**/SavedPlacesMapView.tsx
+- src/components/itinerary/MapView.tsx
+- src/components/RouteFullMapModal.tsx
+- src/components/RouteMinimapView.tsx
+- any other component importing from '@maplibre/maplibre-react-native'
+For each: if it short-circuits and skips rendering <Map> when data is empty/undefined, change it so the
+<Map> always renders with a fallback viewport, and only the data-driven overlays (markers/lines) are
+conditional. If a component legitimately has nothing to show without data (e.g. a route minimap with no
+route), use judgment — a blank map is better than missing UI for the main discovery/saved maps, but a
+tiny inline route preview may reasonably render nothing. Note any you intentionally leave as-is and why.
+
+Do NOT fabricate map data or pins. Empty map = fine. Fake pins = not fine.
+
+═══════════════════════════════════════════════════════════════════
+PART 2 — Pull-to-refresh on data-backed screens
+═══════════════════════════════════════════════════════════════════
+
+Add pull-to-refresh (swipe down to reload) to screens that fetch remote data. Use React Native's
+RefreshControl on the existing scroll container (FlatList / ScrollView / SectionList) — do NOT
+introduce a new scroll library.
+
+WHERE to add it (screens that load remote/async data):
+- Discovery (List view — the places/recommendations feed)
+- Pulse / activity feed
+- Trips list + Trip detail
+- Passport / profile (if it loads remote data)
+- Saved places
+- Posts / postcard feeds
+- Notifications / activity center
+- Any other screen with a primary list/scroll of fetched data
+Inspect the screens first; add refresh only to those that actually fetch data and have a scroll
+container. Screens that are purely static forms (e.g. New Trip, settings sheets) do NOT need it.
+
+HOW to implement (pattern, per screen):
+- Add a `refreshing` boolean state (or reuse the existing query's isRefetching if using react-query).
+- Add an `onRefresh` handler that re-runs that screen's existing data fetch (call the same
+  hook/service the screen already uses — do NOT invent a new fetch path).
+- Wire `<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />` into the screen's
+  FlatList/ScrollView/SectionList `refreshControl` prop.
+- If the screen uses @tanstack/react-query, prefer driving refreshing from `isRefetching` and
+  onRefresh => refetch(), so it stays consistent with existing data flow.
+- Match the app's existing tint where a color is needed (theme token color.signal #FF4D2E for the
+  spinner tint is acceptable).
+
+Keep it consistent: ideally a small shared helper/hook (e.g. usePullRefresh(refetch)) so every screen
+uses the same pattern rather than ad-hoc copies — but only if that doesn't require large refactors.
+Reuse existing fetch hooks; do not duplicate data-loading logic.
+
+═══════════════════════════════════════════════════════════════════
+CONSTRAINTS / GUARDRAILS
+═══════════════════════════════════════════════════════════════════
+- Do NOT touch artifacts/travel-buddy (backup). Work only in travel-buddy-standalone.
+- Do NOT apply any production Supabase migration. No DB changes needed for this work.
+- Do NOT remove or weaken privacy/safety/location/geofence logic.
+- Do NOT fabricate data (no fake places, pins, or feed items).
+- Preserve the bottom nav (Pulse, Discover, Create, Trips, Passport — no Messages tab).
+- Reuse existing components/hooks/services; do not duplicate map or fetch logic.
+
+NOTE / SEPARATE ISSUE (do not fix here, just be aware): Discovery currently returns "no places found"
+— the places feed is empty. That is a DATA issue (the /api/discovery endpoint returning empty or the
+venues dataset being empty in production), separate from this map-render bug. This task is ONLY about
+making the map render regardless, plus pull-to-refresh. The empty-data investigation is tracked separately.
+
+═══════════════════════════════════════════════════════════════════
+VALIDATION
+═══════════════════════════════════════════════════════════════════
+Run from ~/workspace/travel-buddy-standalone:
+- typecheck (report pass/fail; if it times out, say so)
+- expo-doctor if quick
+- conflict-marker scan: grep -R "<<<<<<<\|=======\|>>>>>>>" src --exclude-dir=node_modules
+- confirm DiscoveryMapView.web.tsx still does NOT import @maplibre/maplibre-react-native or react-native-maps
+- list every file changed
+
+REPORT:
+- which map components had the empty-render bug and were fixed (and any intentionally left as-is, with reason)
+- which screens got pull-to-refresh (and which were skipped, with reason)
+- whether a shared pull-refresh helper was created
+- typecheck / validation results with exact pass/fail counts
+- any remaining concerns
+
+ACCEPTANCE:
+- Tapping "Map" in Discovery shows an interactive MapLibre map even when there are zero places
+  (map renders with a fallback/current-location viewport; pin count may read 0).
+- All primary map surfaces render the map regardless of data presence.
+- Data-backed list screens support swipe-down pull-to-refresh that re-runs their existing fetch.
+- No production migrations, no fabricated data, backup app untouched, typecheck clean.
