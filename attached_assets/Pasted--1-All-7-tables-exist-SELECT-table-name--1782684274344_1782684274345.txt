@@ -1,0 +1,82 @@
+-- ── 1. All 7 tables exist ─────────────────────────────────────────────────────
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_name IN (
+    'notifications',
+    'notification_devices',
+    'notification_preferences',
+    'notification_category_preferences',
+    'notification_delivery_attempts',
+    'push_retry_queue',
+    'activity_events'
+  )
+ORDER BY table_name;
+
+-- ── 2. push_retry_queue.user_id FK references public.profiles (not auth.users) ─
+SELECT
+  kcu.column_name,
+  ccu.table_schema AS referenced_schema,
+  ccu.table_name   AS referenced_table
+FROM information_schema.table_constraints AS tc
+JOIN information_schema.key_column_usage AS kcu
+  ON tc.constraint_name = kcu.constraint_name
+ AND tc.table_schema    = kcu.table_schema
+JOIN information_schema.constraint_column_usage AS ccu
+  ON ccu.constraint_name = tc.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND tc.table_schema    = 'public'
+  AND tc.table_name      = 'push_retry_queue'
+  AND kcu.column_name    = 'user_id';
+
+-- ── 3. All expected indexes exist ─────────────────────────────────────────────
+SELECT indexname, tablename
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename IN (
+    'notifications',
+    'notification_devices',
+    'notification_delivery_attempts',
+    'push_retry_queue',
+    'activity_events'
+  )
+ORDER BY tablename, indexname;
+
+-- ── 4. RLS enabled on all 7 tables ────────────────────────────────────────────
+SELECT relname AS table_name, relrowsecurity AS rls_enabled
+FROM pg_class
+WHERE relname IN (
+  'notifications',
+  'notification_devices',
+  'notification_preferences',
+  'notification_category_preferences',
+  'notification_delivery_attempts',
+  'push_retry_queue',
+  'activity_events'
+)
+ORDER BY relname;
+
+-- ── 5. All expected policies exist ────────────────────────────────────────────
+SELECT tablename, policyname, cmd AS operation
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename IN (
+    'notifications',
+    'notification_devices',
+    'notification_preferences',
+    'notification_category_preferences',
+    'activity_events'
+  )
+ORDER BY tablename, policyname;
+
+-- ── 6. Feature flags inserted ─────────────────────────────────────────────────
+SELECT flag, enabled
+FROM public.feature_flags
+WHERE flag IN (
+  'notifications_enabled',
+  'push_notifications_enabled',
+  'notification_digests_enabled',
+  'realtime_activity_enabled',
+  'safety_notifications_enabled'
+)
+ORDER BY flag;
