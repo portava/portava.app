@@ -435,6 +435,60 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
   res.json({ events: data ?? [], total: (data ?? []).length });
 });
 
+// ── Feature-flag admin routes ─────────────────────────────────────────────────
+// All flags seeded by migrations 0037, 0041, 0042 start disabled=false.
+// Use these routes to toggle them on as each feature ships.
+
+/**
+ * GET /admin/feature-flags
+ * Returns every row in feature_flags ordered by flag name.
+ */
+router.get("/admin/feature-flags", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { data, error } = await sc
+    .from("feature_flags")
+    .select("flag, enabled, description, updated_at")
+    .order("flag");
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ flags: data ?? [] });
+});
+
+/**
+ * PATCH /admin/feature-flags/:flag
+ * Toggle a single feature flag on or off.
+ * Body: { enabled: boolean }
+ */
+const toggleFlagSchema = z.object({ enabled: z.boolean() });
+
+router.patch("/admin/feature-flags/:flag", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = toggleFlagSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", "Body must have { enabled: boolean }");
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("feature_flags")
+    .update({ enabled: parsed.data.enabled, updated_at: new Date().toISOString() })
+    .eq("flag", req.params.flag)
+    .select("flag, enabled, description, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data)  { sendError(res, "not_found", `Flag '${req.params.flag}' not found`); return; }
+
+  req.log.info({ flag: data.flag, enabled: data.enabled }, "feature-flag toggled");
+  res.json({ flag: data });
+});
+
 // ── Safe Return admin routes ──────────────────────────────────────────────────
 // All gated by safe_return_admin_logs_enabled feature flag + requireAdmin.
 
@@ -443,7 +497,7 @@ async function isSafeReturnAdminEnabled(sc: any): Promise<boolean> {
     const { data } = await sc
       .from("feature_flags")
       .select("enabled")
-      .eq("key", "safe_return_admin_logs_enabled")
+      .eq("flag", "safe_return_admin_logs_enabled")
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch { return false; }
@@ -499,8 +553,8 @@ router.get("/admin/safe-return/config", async (req, res) => {
 
   const { data, error } = await sc
     .from("feature_flags")
-    .select("key, enabled, description, updated_at")
-    .in("key", flags);
+    .select("flag, enabled, description, updated_at")
+    .in("flag", flags);
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ config: data ?? [] });
@@ -550,7 +604,7 @@ router.patch("/admin/safe-return/config", async (req, res) => {
       const { error } = await sc
         .from("feature_flags")
         .update({ enabled, updated_at: new Date().toISOString() })
-        .eq("key", key);
+        .eq("flag", key);
       if (!error) results[key] = enabled;
     }),
   );
