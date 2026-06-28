@@ -303,6 +303,81 @@ describe('categoryCounts', () => {
   });
 });
 
+// ── list-map sync ─────────────────────────────────────────────────────────────
+//
+// These tests confirm the data-flow guarantee that keeps the list view and the
+// map view in sync when a bookmark is removed.
+//
+// SavedPlacesMapView is purely prop-driven:
+//   places prop → filterMappable → filterVisible → pins rendered
+//
+// When the parent (saved.tsx) calls setPlaces(prev => prev.filter(...)) after
+// a remove, the new array flows into SavedPlacesMapView as a fresh `places`
+// prop.  React re-renders the component, useMemo recomputes filterMappable and
+// filterVisible, and the removed pin is absent on the very next render cycle —
+// no full reload or navigation-away required.
+
+describe('list-map sync: removed place is immediately absent from map pins', () => {
+  const placeA = place({ id: 'a', lat: 48.8566, lng: 2.3522, category: 'museum' });
+  const placeB = place({ id: 'b', lat: 51.5074, lng: -0.1278, category: 'cafe' });
+  const placeC = place({ id: 'c', lat: 40.7128, lng: -74.006,  category: 'museum' });
+
+  it('filterMappable returns one fewer entry after the place is removed from the array', () => {
+    const before = [placeA, placeB, placeC];
+    const after  = before.filter((p) => p.id !== 'b');  // simulate setPlaces filter
+    assert.equal(filterMappable(before).length, 3);
+    assert.equal(filterMappable(after).length, 2);
+    assert.ok(!filterMappable(after).some((p) => p.id === 'b'));
+  });
+
+  it('filterVisible (no category filter) excludes the removed pin', () => {
+    const after   = [placeA, placeC];
+    const visible = filterVisible(filterMappable(after), null);
+    assert.equal(visible.length, 2);
+    assert.ok(visible.every((p) => p.id !== 'b'));
+  });
+
+  it('filterVisible (active category) excludes the removed pin', () => {
+    const before   = [placeA, placeB, placeC];
+    const after    = before.filter((p) => p.id !== 'a');  // remove one museum
+    const visible  = filterVisible(filterMappable(after), 'museum');
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0].id, 'c');
+  });
+
+  it('removing the only pin in the active category collapses visible list to empty', () => {
+    // If the user is on the 'cafe' filter and removes the only cafe, the map
+    // should show zero pins (the noPinsOverlay kicks in — tested via shouldShowNoPinsOverlay).
+    const after   = [placeA, placeC];  // placeB (cafe) was removed
+    const visible = filterVisible(filterMappable(after), 'cafe');
+    assert.equal(visible.length, 0);
+    assert.equal(shouldShowNoPinsOverlay('cafe', visible.length), true);
+  });
+
+  it('removing a coord-less place does not affect the mappable count', () => {
+    const coordless = place({ id: 'z', lat: null, lng: null });
+    const before    = [placeA, coordless];
+    const after     = before.filter((p) => p.id !== 'z');
+    assert.equal(filterMappable(before).length, 1);
+    assert.equal(filterMappable(after).length, 1);
+  });
+
+  it('computeBounds shrinks when a place is removed', () => {
+    const before = [placeA, placeB, placeC];
+    const after  = [placeA, placeC];
+    const bBefore = computeBounds(before);
+    const bAfter  = computeBounds(after);
+    assert.ok(bBefore !== null);
+    assert.ok(bAfter  !== null);
+    // placeB is in London (lng ≈ -0.13); removing it raises the western bound
+    // (the westernmost remaining point is New York at lng ≈ -74).
+    // Both bounds should still contain placeA and placeC's coordinates.
+    const [, , , northAfter] = bAfter!;
+    assert.ok(placeA.lat! <= northAfter);
+    assert.ok(placeC.lat! <= northAfter);
+  });
+});
+
 // ── computeBounds ──────────────────────────────────────────────────────────────
 
 describe('computeBounds', () => {

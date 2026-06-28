@@ -8,9 +8,10 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip } from '../src/components/ui';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
-import { MapPin, Bookmark, Route, List, Map } from 'lucide-react-native';
+import { MapPin, Bookmark, Route, List, Map, Trash2 } from 'lucide-react-native';
 import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
 import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
+import { removeSaved } from '../src/services/discoveryBookmarks';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
 
@@ -19,9 +20,10 @@ const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
 interface PlaceCardProps {
   place: BookmarkedPlace;
   onAddToRoute: (place: BookmarkedPlace) => void;
+  onRemove: (id: string) => void;
 }
 
-function PlaceCard({ place, onAddToRoute }: PlaceCardProps) {
+function PlaceCard({ place, onAddToRoute, onRemove }: PlaceCardProps) {
   return (
     <View style={s.card}>
       <View style={s.cardIcon}>
@@ -38,6 +40,9 @@ function PlaceCard({ place, onAddToRoute }: PlaceCardProps) {
       </View>
       <Pressable style={s.routeBtn} onPress={() => onAddToRoute(place)} hitSlop={8}>
         <Route size={15} color={color.signal} />
+      </Pressable>
+      <Pressable style={s.removeBtn} onPress={() => onRemove(place.id)} hitSlop={8}>
+        <Trash2 size={15} color={color.mute} />
       </Pressable>
     </View>
   );
@@ -104,6 +109,16 @@ export default function Saved() {
 
   const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
     setBuilderPlace(place);
+  }, []);
+
+  // Optimistically remove a place from both the list and map views, then
+  // persist to AsyncStorage. The map re-renders immediately because
+  // SavedPlacesMapView is purely prop-driven — it computes visible pins from
+  // the `places` prop via useMemo, so the pin disappears on the next render
+  // cycle without requiring a full reload or navigation away.
+  const handleRemove = useCallback((id: string) => {
+    setPlaces((prev) => prev.filter((p) => p.id !== id));
+    removeSaved(id).catch(() => {});
   }, []);
 
   // Count places that have usable coordinates (for map vs list info)
@@ -181,7 +196,7 @@ export default function Saved() {
         ) : (
           <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
             {places.map((p) => (
-              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} />
+              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} onRemove={handleRemove} />
             ))}
           </ScrollView>
         )
@@ -249,6 +264,14 @@ const s = StyleSheet.create({
     height: 32,
     borderRadius: 8,
     backgroundColor: `${color.signal}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
   },
