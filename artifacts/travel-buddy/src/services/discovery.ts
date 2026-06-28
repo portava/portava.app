@@ -285,3 +285,31 @@ export async function getDiscoveryPlaces(
     return { ok: false, error: 'Network error — check your connection' };
   }
 }
+
+/**
+ * Fetch total result counts for every countable Discovery category in parallel.
+ * Uses broad defaults (radius 25 km, no open-now, no min-rating) so the counts
+ * reflect the full set of available places for the destination.
+ * Skips `for_you` — the personalised feed has no stable total count.
+ * Individual failures are silently dropped; only successful responses contribute
+ * to the returned map.
+ */
+const COUNTABLE_CATEGORIES: DiscoveryCategory[] = [
+  'places', 'food', 'nightlife', 'activities', 'events', 'beaches', 'transport',
+];
+const COUNT_FILTERS: DiscoveryFilters = { radiusKm: 25, openNow: false, minRating: null };
+
+export async function getDiscoveryCategoryCounts(
+  destination: string,
+): Promise<Partial<Record<DiscoveryCategory, number>>> {
+  const results = await Promise.allSettled(
+    COUNTABLE_CATEGORIES.map((cat) => getDiscoveryPlaces(destination, cat, COUNT_FILTERS, 1)),
+  );
+  const counts: Partial<Record<DiscoveryCategory, number>> = {};
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled' && result.value.ok) {
+      counts[COUNTABLE_CATEGORIES[i]] = result.value.data.total;
+    }
+  });
+  return counts;
+}

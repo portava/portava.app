@@ -13,6 +13,7 @@ import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
+import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
@@ -117,6 +118,7 @@ export default function DiscoveryHub() {
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
   const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
+  const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -131,6 +133,16 @@ export default function DiscoveryHub() {
       setDestinationLng(locationState.coords?.lng ?? null);
     }
   }, [locationState.place.city]);
+
+  // Fetch per-category result counts whenever the destination changes.
+  useEffect(() => {
+    setCategoryCounts({});
+    let cancelled = false;
+    getDiscoveryCategoryCounts(destination).then((counts) => {
+      if (!cancelled) setCategoryCounts(counts);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [destination]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
@@ -327,15 +339,19 @@ export default function DiscoveryHub() {
         >
           {TABS.map((tab) => {
             const active = tab.key === activeTab;
+            const count = categoryCounts[tab.key];
+            const isEmpty = count !== undefined && count === 0;
+            const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
+            const countSuffix = count !== undefined && count > 0 ? ` · ${count}` : '';
             return (
               <Pressable
                 key={tab.key}
-                style={[styles.tab, active && styles.tabActive]}
+                style={[styles.tab, active && styles.tabActive, !active && isEmpty && styles.tabDim]}
                 onPress={() => handleTabChange(tab.key)}
               >
-                <tab.Icon size={16} color={active ? color.signal : color.mute} />
-                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
-                  {tab.label}
+                <tab.Icon size={16} color={iconColor} />
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive, !active && isEmpty && styles.tabLabelDim]}>
+                  {tab.label}{countSuffix}
                 </Text>
               </Pressable>
             );
@@ -600,6 +616,12 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: color.signal,
     fontWeight: '700',
+  },
+  tabDim: {
+    opacity: 0.45,
+  },
+  tabLabelDim: {
+    color: color.faint,
   },
   modeBar: {
     flexGrow: 0,
