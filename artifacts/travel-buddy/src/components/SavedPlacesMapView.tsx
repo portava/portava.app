@@ -50,18 +50,34 @@ function computeBounds(places: BookmarkedPlace[]): LngLatBounds | null {
 }
 
 /**
- * Derive unique non-empty category labels from an already-coordinate-filtered
- * list of places.  The result drives CategoryChips: chips are only rendered
- * when there are 2+ distinct categories, so switching between them always
- * produces a visibly different set of pins.
+ * Sentinel value used as the activeCategory key for uncategorized places.
+ * Never shown directly as a label — CategoryChips displays it as "Uncategorized".
+ */
+const UNCATEGORIZED = '__uncategorized__';
+
+/**
+ * Derive unique category labels from an already-coordinate-filtered list of
+ * places.  Named categories are sorted alphabetically; if any place has a
+ * null/empty category the UNCATEGORIZED sentinel is appended at the end.
+ *
+ * The result drives CategoryChips: chips are only rendered when there are 2+
+ * distinct entries, so switching between them always produces a visibly
+ * different set of pins.
  */
 function uniqueCategories(places: BookmarkedPlace[]): string[] {
   const seen = new Set<string>();
+  let hasUncategorized = false;
   for (const p of places) {
     const cat = (p.category ?? '').trim();
-    if (cat) seen.add(cat);
+    if (cat) {
+      seen.add(cat);
+    } else {
+      hasUncategorized = true;
+    }
   }
-  return [...seen].sort();
+  const sorted = [...seen].sort();
+  if (hasUncategorized) sorted.push(UNCATEGORIZED);
+  return sorted;
 }
 
 // ── Pin component ─────────────────────────────────────────────────────────────
@@ -235,7 +251,9 @@ function CategoryChips({ categories, selected, onSelect }: CategoryChipsProps) {
           style={[chips.chip, selected === cat && chips.active]}
           onPress={() => onSelect(cat)}
         >
-          <Text style={[chips.label, selected === cat && chips.activeLabel]}>{cat}</Text>
+          <Text style={[chips.label, selected === cat && chips.activeLabel]}>
+            {cat === UNCATEGORIZED ? 'Uncategorized' : cat}
+          </Text>
         </Pressable>
       ))}
     </ScrollView>
@@ -292,13 +310,13 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
 
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
 
-  const visible = useMemo(
-    () =>
-      activeCategory
-        ? mappable.filter((p) => p.category === activeCategory)
-        : mappable,
-    [mappable, activeCategory],
-  );
+  const visible = useMemo(() => {
+    if (!activeCategory) return mappable;
+    if (activeCategory === UNCATEGORIZED) {
+      return mappable.filter((p) => !(p.category ?? '').trim());
+    }
+    return mappable.filter((p) => p.category === activeCategory);
+  }, [mappable, activeCategory]);
 
   const selected = useMemo(
     () => visible.find((p) => p.id === selectedId) ?? null,
