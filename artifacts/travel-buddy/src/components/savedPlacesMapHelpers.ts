@@ -118,11 +118,69 @@ export function categoryCounts(
  * Category keywords for each non-Places tab on the Saved screen.
  * Case-insensitive substring match against `BookmarkedPlace.category`.
  * Exported so callers (saved.tsx) and tests share the same mapping.
+ *
+ * ## Category value sources
+ *
+ * `BookmarkedPlace.category` is set from two pipelines:
+ *
+ * 1. **OSM/Discovery places** (PlaceCard, PlaceDetailSheet save buttons)
+ *    The value is the Discovery API tab category — one of:
+ *      'for_you' | 'places' | 'food' | 'nightlife' | 'activities' |
+ *      'events' | 'beaches' | 'transport'
+ *    These must be listed as keywords so saved places appear in the right tab.
+ *
+ * 2. **Community-submitted places** (discovery_places table)
+ *    The value is a free-form string chosen by the submitter, typically a raw
+ *    OSM amenity/tourism/leisure tag such as 'museum', 'bar', 'hostel', etc.
+ *    The OSM tags queried per Discovery category are:
+ *      places     → tourism: attraction|museum|viewpoint|gallery|castle|ruins|artwork|monument|historic
+ *                   historic: castle|monument|memorial|ruins|building|church|fort|palace
+ *      food       → amenity: restaurant|cafe|fast_food|bistro|food_court|bakery|ice_cream
+ *      nightlife  → amenity: bar|pub|nightclub|casino|biergarten|cocktail_bar
+ *      activities → leisure: park|sports_centre|fitness_centre|swimming_pool|golf_course|
+ *                            marina|water_park|miniature_golf|bowling_alley|stadium
+ *                   tourism: theme_park|zoo|aquarium
+ *      events     → amenity: marketplace|community_centre|events_venue|theatre|cinema|arts_centre
+ *                   tourism: gallery
+ *      beaches    → natural: beach
+ *                   leisure: beach_resort
+ *      transport  → amenity: bus_station|ferry_terminal|taxi|car_rental|bicycle_rental
+ *                   railway: station|halt|tram_stop|subway_entrance
+ *                   aeroway: aerodrome|terminal
+ *
+ *    Note: there is no Discovery 'hotels' category; hotel-type community places
+ *    use raw OSM tags (hotel|hostel|motel|resort|inn|accommodation|lodging|
+ *    guesthouse|bed_and_breakfast).
+ *
+ * When adding new Discovery categories or OSM tags, update both the keyword
+ * list and the source comment above.
  */
 export const TAB_CATEGORIES: Record<string, string[]> = {
-  Hotels:      ['hotel', 'hostel', 'motel', 'resort', 'inn', 'accommodation', 'lodging', 'guesthouse'],
-  Nightlife:   ['bar', 'pub', 'nightclub', 'nightlife', 'lounge', 'club', 'disco', 'karaoke'],
-  Itineraries: ['museum', 'attraction', 'tour', 'landmark', 'gallery', 'park', 'monument', 'temple', 'castle', 'historic'],
+  Hotels: [
+    // No Discovery API category maps to hotels — community-submitted places only.
+    // OSM tourism/amenity tags observed in community places:
+    'hotel', 'hostel', 'motel', 'resort', 'inn', 'accommodation', 'lodging',
+    'guesthouse', 'bed_and_breakfast',
+  ],
+  Nightlife: [
+    // Discovery API category name (exact match for OSM-sourced saved places):
+    'nightlife',
+    // OSM amenity tags (community-submitted places):
+    'bar', 'pub', 'nightclub', 'lounge', 'club', 'disco', 'karaoke',
+    'biergarten', 'cocktail_bar', 'casino',
+  ],
+  Itineraries: [
+    // Discovery API category names (OSM-sourced saved places):
+    'places',     // tourism: attraction|museum|viewpoint|gallery|castle|ruins|artwork|monument|historic
+    'activities', // leisure: park|sports_centre|...; tourism: theme_park|zoo|aquarium
+    'events',     // amenity: theatre|cinema|community_centre|events_venue|arts_centre; tourism: gallery
+    'beaches',    // natural: beach; leisure: beach_resort
+    // OSM tourism/amenity/leisure/historic tags (community-submitted places):
+    'museum', 'attraction', 'tour', 'landmark', 'gallery', 'park', 'monument',
+    'temple', 'castle', 'historic', 'viewpoint', 'ruins', 'artwork',
+    'aquarium', 'zoo', 'theme_park', 'theatre', 'cinema', 'arts_centre',
+    'beach', 'beach_resort',
+  ],
 };
 
 /**

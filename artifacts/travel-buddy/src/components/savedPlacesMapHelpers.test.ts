@@ -559,6 +559,101 @@ describe('placesForTab', () => {
     assert.equal(placesForTab('Hotels', afterRemoval).length, 0, 'Hotels tab empties after removal');
     assert.ok(placesForTab('Nightlife', afterRemoval).length > 0, 'other categories still have places');
   });
+
+  // ── Discovery API category names ─────────────────────────────────────────────
+  // Places saved from OSM/Discovery use the Discovery tab name as their category
+  // (e.g. 'nightlife', 'places', 'activities'). These must match TAB_CATEGORIES.
+
+  it('Nightlife tab matches Discovery API category name "nightlife"', () => {
+    const discPlace = place({ id: 'n1', category: 'nightlife' });
+    assert.deepEqual(placesForTab('Nightlife', [discPlace]), [discPlace]);
+  });
+
+  it('Itineraries tab matches Discovery API category name "places"', () => {
+    const discPlace = place({ id: 'p1', category: 'places' });
+    assert.deepEqual(placesForTab('Itineraries', [discPlace]), [discPlace]);
+  });
+
+  it('Itineraries tab matches Discovery API category name "activities"', () => {
+    const discPlace = place({ id: 'a1', category: 'activities' });
+    assert.deepEqual(placesForTab('Itineraries', [discPlace]), [discPlace]);
+  });
+
+  it('Itineraries tab matches Discovery API category name "events"', () => {
+    const discPlace = place({ id: 'e1', category: 'events' });
+    assert.deepEqual(placesForTab('Itineraries', [discPlace]), [discPlace]);
+  });
+
+  it('Itineraries tab matches Discovery API category name "beaches"', () => {
+    const discPlace = place({ id: 'b1', category: 'beaches' });
+    assert.deepEqual(placesForTab('Itineraries', [discPlace]), [discPlace]);
+  });
+
+  it('Discovery "food" and "transport" places appear only on Places catch-all tab', () => {
+    const food      = place({ id: 'f1', category: 'food' });
+    const transport = place({ id: 't1', category: 'transport' });
+    const all = [food, transport];
+    assert.deepEqual(placesForTab('Places', all), all);
+    assert.deepEqual(placesForTab('Hotels', all), []);
+    assert.deepEqual(placesForTab('Nightlife', all), []);
+    assert.deepEqual(placesForTab('Itineraries', all), []);
+  });
+
+  // ── Additional OSM tag variants (community-submitted places) ─────────────────
+
+  it('Hotels tab matches community place category "bed_and_breakfast"', () => {
+    const bnb = place({ id: 'bb1', category: 'bed_and_breakfast' });
+    assert.deepEqual(placesForTab('Hotels', [bnb]), [bnb]);
+  });
+
+  it('Nightlife tab matches community OSM tags "biergarten", "cocktail_bar", "casino"', () => {
+    const bg = place({ id: 'bg1', category: 'biergarten' });
+    const cb = place({ id: 'cb1', category: 'cocktail_bar' });
+    const ca = place({ id: 'ca1', category: 'casino' });
+    assert.deepEqual(placesForTab('Nightlife', [bg]), [bg]);
+    assert.deepEqual(placesForTab('Nightlife', [cb]), [cb]);
+    assert.deepEqual(placesForTab('Nightlife', [ca]), [ca]);
+  });
+
+  it('Itineraries tab matches community OSM tags "viewpoint", "ruins", "aquarium", "zoo", "theatre", "cinema"', () => {
+    const cases = [
+      place({ id: 'vp', category: 'viewpoint' }),
+      place({ id: 'ru', category: 'ruins' }),
+      place({ id: 'aq', category: 'aquarium' }),
+      place({ id: 'zo', category: 'zoo' }),
+      place({ id: 'th', category: 'theatre' }),
+      place({ id: 'ci', category: 'cinema' }),
+    ];
+    for (const p of cases) {
+      assert.deepEqual(
+        placesForTab('Itineraries', [p]),
+        [p],
+        `expected "${p.category}" to appear on Itineraries tab`,
+      );
+    }
+  });
+
+  it('Itineraries tab matches community OSM tag "beach" (natural=beach) and "beach_resort"', () => {
+    const beach  = place({ id: 'bc1', category: 'beach' });
+    const resort = place({ id: 'br1', category: 'beach_resort' });
+    assert.deepEqual(placesForTab('Itineraries', [beach]), [beach]);
+    assert.deepEqual(placesForTab('Itineraries', [resort]), [resort]);
+  });
+
+  it('mixed Discovery + community places are correctly split across tabs', () => {
+    const nightlifeDisc = place({ id: 'nd', category: 'nightlife' });      // Discovery
+    const nightlifeComm = place({ id: 'nc', category: 'pub' });            // community OSM
+    const itinDisc      = place({ id: 'id', category: 'activities' });     // Discovery
+    const itinComm      = place({ id: 'ic', category: 'museum' });         // community OSM
+    const hotelComm     = place({ id: 'hc', category: 'hostel' });         // community OSM
+    const food          = place({ id: 'fo', category: 'food' });           // catch-all only
+    const all = [nightlifeDisc, nightlifeComm, itinDisc, itinComm, hotelComm, food];
+
+    assert.equal(placesForTab('Nightlife', all).length, 2);
+    assert.equal(placesForTab('Itineraries', all).length, 2);
+    assert.equal(placesForTab('Hotels', all).length, 1);
+    assert.equal(placesForTab('Places', all).length, 6);  // catch-all: all
+  });
 });
 
 describe('resolveSelectedId', () => {
