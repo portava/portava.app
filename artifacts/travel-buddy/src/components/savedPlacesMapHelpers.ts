@@ -74,6 +74,26 @@ export function filterVisible(
 }
 
 /**
+ * Count how many mappable pins belong to each category key.
+ *
+ * Named categories are keyed by their trimmed label.
+ * Places with a null/empty category are keyed by the UNCATEGORIZED sentinel.
+ * The returned record covers every key that `uniqueCategories` would produce,
+ * so chip rendering can do a simple `counts[key] ?? 0` lookup.
+ */
+export function categoryCounts(
+  mappable: BookmarkedPlace[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const p of mappable) {
+    const cat = (p.category ?? '').trim();
+    const key = cat || UNCATEGORIZED;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
  * Should the "No pins in this category" overlay be shown?
  */
 export function shouldShowNoPinsOverlay(

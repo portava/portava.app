@@ -22,6 +22,7 @@ import {
   UNCATEGORIZED,
   filterMappable,
   uniqueCategories,
+  categoryCounts,
   filterVisible,
   shouldShowNoPinsOverlay,
   computeBounds,
@@ -183,11 +184,13 @@ const card = StyleSheet.create({
 
 interface CategoryChipsProps {
   categories: string[];
+  counts: Record<string, number>;
+  totalCount: number;
   selected: string | null;
   onSelect: (cat: string | null) => void;
 }
 
-function CategoryChips({ categories, selected, onSelect }: CategoryChipsProps) {
+function CategoryChips({ categories, counts, totalCount, selected, onSelect }: CategoryChipsProps) {
   // Hide when fewer than 2 distinct categories exist: with 0 or 1 category,
   // switching between "All" and the single chip would show the same set of pins,
   // so the chips add noise without giving the user any meaningful filter choice.
@@ -203,19 +206,25 @@ function CategoryChips({ categories, selected, onSelect }: CategoryChipsProps) {
         style={[chips.chip, selected === null && chips.active]}
         onPress={() => onSelect(null)}
       >
-        <Text style={[chips.label, selected === null && chips.activeLabel]}>All</Text>
+        <Text style={[chips.label, selected === null && chips.activeLabel]}>
+          All ({totalCount})
+        </Text>
       </Pressable>
-      {categories.map((cat) => (
-        <Pressable
-          key={cat}
-          style={[chips.chip, selected === cat && chips.active]}
-          onPress={() => onSelect(cat)}
-        >
-          <Text style={[chips.label, selected === cat && chips.activeLabel]}>
-            {cat === UNCATEGORIZED ? 'Uncategorized' : cat}
-          </Text>
-        </Pressable>
-      ))}
+      {categories.map((cat) => {
+        const label = cat === UNCATEGORIZED ? 'Uncategorized' : cat;
+        const count = counts[cat] ?? 0;
+        return (
+          <Pressable
+            key={cat}
+            style={[chips.chip, selected === cat && chips.active]}
+            onPress={() => onSelect(cat)}
+          >
+            <Text style={[chips.label, selected === cat && chips.activeLabel]}>
+              {label} ({count})
+            </Text>
+          </Pressable>
+        );
+      })}
     </ScrollView>
   );
 }
@@ -266,6 +275,7 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
   const mappable = useMemo(() => filterMappable(places), [places]);
 
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
+  const counts     = useMemo(() => categoryCounts(mappable), [mappable]);
 
   const visible = useMemo(
     () => filterVisible(mappable, activeCategory),
@@ -324,6 +334,8 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
       {/* Category filter chips — overlaid at the top of the map */}
       <CategoryChips
         categories={categories}
+        counts={counts}
+        totalCount={mappable.length}
         selected={activeCategory}
         onSelect={handleCategoryChange}
       />
