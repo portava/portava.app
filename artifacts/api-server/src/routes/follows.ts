@@ -701,6 +701,29 @@ router.get("/users/suggestions", async (req, res) => {
         }
       }
     } catch { /* fail-safe: all mutuals get base decay weight */ }
+
+    // Message threads: a mutual who shares a message thread with the caller
+    // is an active connection — give full weight (1.0) regardless of thread age.
+    // This runs as a separate try/catch so a thread-lookup failure never
+    // degrades the trip-based weights already computed above.
+    try {
+      const { data: callerThreadRows } = await sc
+        .from("message_thread_members")
+        .select("thread_id")
+        .eq("user_id", user.id);
+      const callerThreadIds = (callerThreadRows ?? []).map((r: any) => r.thread_id as string);
+      if (callerThreadIds.length > 0) {
+        const { data: sharedThreadRows } = await sc
+          .from("message_thread_members")
+          .select("user_id")
+          .in("thread_id", callerThreadIds)
+          .in("user_id", allMutualIds);
+        for (const r of (sharedThreadRows ?? [])) {
+          const mid = (r as any).user_id as string;
+          mutualInteractionWeights.set(mid, 1.0);
+        }
+      }
+    } catch { /* fail-safe: proceed without message-thread signal */ }
   }
 
   // Sum the per-mutual recency-weighted scores for each candidate.

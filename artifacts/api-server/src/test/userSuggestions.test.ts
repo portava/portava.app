@@ -47,6 +47,7 @@ function makeFakeClient(state: {
   blocks:        { blocker_id: string; blocked_id: string }[];
   trips?:        { id: string; owner_id: string; end_date: string; created_at?: string; destination_city?: string | null; destination_country?: string | null }[];
   trip_members?: { trip_id: string; user_id: string; role: string }[];
+  message_thread_members?: { thread_id: string; user_id: string }[];
 }) {
   return {
     auth: {
@@ -90,6 +91,7 @@ function makeFakeClient(state: {
         if (table === "user_blocks")   return state.blocks;
         if (table === "trips")         return state.trips ?? [];
         if (table === "trip_members")  return state.trip_members ?? [];
+        if (table === "message_thread_members") return state.message_thread_members ?? [];
         return [];
       }
 
@@ -1028,6 +1030,103 @@ describe("GET /api/users/suggestions", () => {
     assert.ok(
       posA < posB,
       `A (L_MUT best-of-two: weight≈0.967, combined≈2.9) must rank above B (M_MUT: weight=0.5, combined=1.5); got ${ids.join(", ")}`,
+    );
+  });
+
+  // ── message-thread interaction signal ─────────────────────────────────────
+
+  it("message-thread: mutual with a shared thread gets weight 1.0, outranking a non-interacted mutual (0.5)", async () => {
+    // N_MUT shares a message thread with ME → weight 1.0 → N_MUT follows A → A combined = 1.0×3 = 3
+    // P_MUT has no shared trip or thread → weight 0.5 → P_MUT follows B → B combined = 0.5×3 = 1.5
+    // A must rank above B.
+    const N_MUT = "user-n-mut";
+    const P_MUT = "user-p-mut";
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: N_MUT },
+        { follower_id: ME,    following_id: P_MUT },
+        { follower_id: N_MUT, following_id: A },
+        { follower_id: P_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false },
+        { id: N_MUT, handle: "nmut", name: "Nina",  avatar_url: null, is_private: false },
+        { id: P_MUT, handle: "pmut", name: "Pete",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      // No trips — only a message thread provides the interaction signal.
+      message_thread_members: [
+        { thread_id: "thread-1", user_id: ME    },
+        { thread_id: "thread-1", user_id: N_MUT }, // N_MUT shares thread with ME
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (message-thread mutual N_MUT) should appear");
+    assert.ok(posB !== -1, "B (non-interacted mutual P_MUT) should appear");
+    assert.ok(
+      posA < posB,
+      `A (thread mutual, weight=1.0, combined=3) must rank above B (non-interacted, weight=0.5, combined=1.5); got ${ids.join(", ")}`,
+    );
+  });
+
+  it("message-thread: mutual with a shared thread gets weight 1.0 even when the trip signal would only yield a lower weight", async () => {
+    // Q_MUT shares an old trip (730 days → floor 0.5) AND a message thread → thread lifts to 1.0
+    // R_MUT shares only the same old trip → weight 0.5
+    // A (via Q_MUT) must rank above B (via R_MUT).
+    const Q_MUT = "user-q-mut";
+    const R_MUT = "user-r-mut";
+    const oldDate = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: A,     following_id: ME },
+        { follower_id: B,     following_id: ME },
+        { follower_id: ME,    following_id: Q_MUT },
+        { follower_id: ME,    following_id: R_MUT },
+        { follower_id: Q_MUT, following_id: A },
+        { follower_id: R_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",   name: "Me",   avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",  name: "Alice", avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",  name: "Bob",   avatar_url: null, is_private: false },
+        { id: Q_MUT, handle: "qmut", name: "Quinn", avatar_url: null, is_private: false },
+        { id: R_MUT, handle: "rmut", name: "Ruth",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-old-qr", owner_id: ME, end_date: "2024-01-01", created_at: oldDate },
+      ],
+      trip_members: [
+        { trip_id: "trip-old-qr", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-old-qr", user_id: Q_MUT, role: "member" }, // old trip → 0.5, lifted by thread
+        { trip_id: "trip-old-qr", user_id: R_MUT, role: "member" }, // old trip → stays 0.5
+      ],
+      // Q_MUT also has a message thread → lifts to 1.0
+      message_thread_members: [
+        { thread_id: "thread-q", user_id: ME    },
+        { thread_id: "thread-q", user_id: Q_MUT },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const ids: string[] = body.users.map((u: any) => u.id);
+    const posA = ids.indexOf(A);
+    const posB = ids.indexOf(B);
+    assert.ok(posA !== -1, "A (old trip + message thread → 1.0) should appear");
+    assert.ok(posB !== -1, "B (old trip only → 0.5) should appear");
+    assert.ok(
+      posA < posB,
+      `A (Q_MUT: old trip lifted by thread to 1.0, combined=3) must rank above B (R_MUT: old trip only, 0.5, combined=1.5); got ${ids.join(", ")}`,
     );
   });
 
