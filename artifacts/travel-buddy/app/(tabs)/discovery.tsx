@@ -113,7 +113,6 @@ export default function DiscoveryHub() {
   // Debounced copy — used only for the count-badge effect so that typing in
   // the custom age TextInputs does not fire 7 parallel API requests per keystroke.
   const [debouncedAgeRange, setDebouncedAgeRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
-  const [showCustomInputs, setShowCustomInputs] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
@@ -332,7 +331,10 @@ export default function DiscoveryHub() {
               style={[styles.ageChip, active && styles.ageChipActive]}
               onPress={() => {
                 setAgeFilter(opt.key);
-                if (opt.key === 'custom') setShowCustomInputs(true);
+                if (opt.key !== 'custom') {
+                  setCustomAgeRange({ min: null, max: null });
+                  setDebouncedAgeRange({ min: null, max: null });
+                }
               }}
             >
               {opt.key === 'open_to_me' && (
