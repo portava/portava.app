@@ -1,0 +1,58 @@
+Do not ask me to run the provided push-notification SQL yet. Clean it up first.
+
+Issues found:
+
+1. The migration claims it is safe to re-run, but it uses plain CREATE POLICY ....
+Postgres does not support CREATE POLICY IF NOT EXISTS.
+If the migration is rerun, policy creation can fail.
+
+Fix:
+Make policy creation idempotent by wrapping each policy in a DO $$ BEGIN ... IF NOT EXISTS (...) THEN CREATE POLICY ... END IF; END $$; block, or by dropping/recreating policies intentionally with clear explanation.
+
+2. 0062 and 0063 define push_retry_queue differently.
+0062 uses:
+- user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE
+
+0063 uses:
+- user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+
+This must be resolved before production. Use one source of truth. Since the notifications schema mostly references public.profiles(id), keep push_retry_queue.user_id aligned with public.profiles(id) unless the app code clearly expects auth.users(id).
+
+3. 0062 already creates push_retry_queue, then 0063 creates it again.
+0063 should not redefine the whole table with a different schema.
+Rewrite 0063 as a true supplemental migration:
+- add missing columns only if needed
+- add indexes only if needed
+- add/confirm RLS only if needed
+- do not redefine conflicting foreign keys
+
+4. Verify public.feature_flags exists before inserting.
+If it may not exist, either:
+- include a guarded check,
+- create the table if this app owns it,
+- or split feature-flag insert into a separate owner-confirmed step.
+
+5. Provide one clean combined production SQL script.
+The script should:
+- be idempotent
+- use public. schema qualification consistently
+- not drop data
+- not weaken RLS
+- not create conflicting foreign keys
+- not silently assume feature_flags exists
+- include comments explaining service-role-only tables
+
+6. Provide verification SQL.
+Verification should check:
+- all required tables exist
+- all expected columns exist
+- push_retry_queue.user_id references the intended table
+- all expected indexes exist
+- RLS is enabled on all notification tables
+- expected policies exist
+- feature flags were inserted only if the table exists
+
+7. Provide rollback SQL separately.
+Clearly mark rollback as destructive because it deletes notification data.
+
+Do not mark the migration task complete until I confirm the SQL ran successfully in Supabase and paste back the verification results.
