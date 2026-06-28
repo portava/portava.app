@@ -35,15 +35,20 @@ export function usePassport(): PassportState {
   // Ref tracks whether we already have data — always current, no stale closure.
   const hasDataRef = useRef(false);
   if (profile !== null) hasDataRef.current = true;
+  // Ref tracks whether a previous fetch attempt ended in an error.
+  // Once set, subsequent reload()s do NOT show the full-screen loading spinner —
+  // the error-branch PassportContent stays mounted so useFocusEffect cannot
+  // trigger an unmount→mount→focus cycle that would create an infinite loop.
+  const hadErrorRef = useRef(false);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     let alive = true;
-    // Only show the full-screen spinner on initial load — subsequent reloads
-    // refresh silently so PassportContent stays mounted and avoids an infinite
-    // focus-effect → reload → unmount → mount → focus-effect loop.
-    if (!hasDataRef.current) setLoading(true);
+    // Only show the full-screen spinner on the very first load attempt.
+    // Subsequent reloads (focus events) and retries after an error refresh
+    // silently in the background — PassportContent stays mounted throughout.
+    if (!hasDataRef.current && !hadErrorRef.current) setLoading(true);
     setError(null);
 
     if (!isSupabaseConfigured) {
@@ -107,8 +112,13 @@ export function usePassport(): PassportState {
       getMyPassportSuggestions(),
     ]).then(([pRes, pcRes, stRes, memRes, sugRes]) => {
       if (!alive) return;
-      if (pRes.ok && pRes.data) setProfile(pRes.data as OwnProfile);
-      else setError(pRes.message ?? 'Could not load profile');
+      if (pRes.ok && pRes.data) {
+        hadErrorRef.current = false;
+        setProfile(pRes.data as OwnProfile);
+      } else {
+        hadErrorRef.current = true;
+        setError(pRes.message ?? 'Could not load profile');
+      }
       setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
       setStamps(stRes.ok ? (stRes.data ?? []) : []);
       setMemories(memRes.ok ? memRes.data : []);
@@ -116,6 +126,7 @@ export function usePassport(): PassportState {
       setLoading(false);
     }).catch(() => {
       if (!alive) return;
+      hadErrorRef.current = true;
       setError('Failed to load passport');
       setLoading(false);
     });
