@@ -166,11 +166,24 @@ export class NotificationRouter {
 
       // Use the stripped payload (private location redacted from body/data)
       const { strippedPayload } = decision;
-      await sendPushNotification(tokens, {
+      const pushResult = await sendPushNotification(tokens, {
         title: strippedPayload.title,
         body:  strippedPayload.body,
         data:  strippedPayload.data ?? {},
       });
+
+      // Remove any tokens Expo reports as no longer registered
+      const staleTokens = pushResult.errors
+        .filter((e) => e.error === "DeviceNotRegistered")
+        .map((e) => e.token);
+
+      if (staleTokens.length > 0) {
+        await this.cleanupStaleTokens(
+          userId,
+          staleTokens,
+          (profile as any)?.expo_push_token ?? null,
+        );
+      }
 
       await this.logAttempt(notification.id, userId, 'push', 'sent', undefined, {
         tokenCount: tokens.length,
@@ -178,6 +191,39 @@ export class NotificationRouter {
     } catch (err) {
       logger.warn({ err, notificationId: notification.id }, 'NotificationRouter: push failed');
       await this.logAttempt(notification.id, userId, 'push', 'failed', String(err));
+    }
+  }
+
+  /**
+   * Delete stale push tokens from the DB after Expo reports DeviceNotRegistered.
+   * Clears matching rows from notification_devices and, if the legacy
+   * profiles.expo_push_token column holds one of the stale tokens, nulls it out.
+   */
+  private async cleanupStaleTokens(
+    userId: string,
+    staleTokens: string[],
+    legacyToken: string | null,
+  ): Promise<void> {
+    try {
+      await this.db
+        .from('notification_devices')
+        .delete()
+        .eq('user_id', userId)
+        .in('push_token', staleTokens);
+
+      if (legacyToken && staleTokens.includes(legacyToken)) {
+        await this.db
+          .from('profiles')
+          .update({ expo_push_token: null })
+          .eq('id', userId);
+      }
+
+      logger.info(
+        { userId, staleCount: staleTokens.length },
+        'NotificationRouter: removed stale push tokens',
+      );
+    } catch (err) {
+      logger.warn({ err, userId }, 'NotificationRouter: failed to clean up stale tokens');
     }
   }
 

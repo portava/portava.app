@@ -98,8 +98,9 @@ interface FakeState {
 }
 
 function makeFakeClient(state: FakeState = {}) {
-  const inserted: Record<string, any[]> = {};
-  const updated:  Record<string, any[]> = {};
+  const inserted:      Record<string, any[]> = {};
+  const deleted:       Record<string, any[]> = {};
+  const updatePatches: Record<string, any[]> = {};
 
   function getRows(table: string): any[] {
     if (table === "profiles")                           return state.profiles ?? [];
@@ -118,6 +119,7 @@ function makeFakeClient(state: FakeState = {}) {
     const rows = getRows(table);
     let pendingInsert: any = null;
     let pendingUpdate: any = null;
+    let pendingDelete        = false;
     const filters: Array<(r: any) => boolean> = [];
     let countMode = false;
 
@@ -135,11 +137,12 @@ function makeFakeClient(state: FakeState = {}) {
       },
       update(patch: any) {
         pendingUpdate = patch;
-        if (!updated[table]) updated[table] = [];
+        if (!updatePatches[table]) updatePatches[table] = [];
+        updatePatches[table].push(patch);
         return b;
       },
       upsert(row: any, _opts?: any) { pendingInsert = row; return b; },
-      delete() { return b; },
+      delete() { pendingDelete = true; return b; },
       eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
       neq(col: string, val: any)   { filters.push((r) => r[col] !== val); return b; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
@@ -179,6 +182,12 @@ function makeFakeClient(state: FakeState = {}) {
       if (pendingUpdate) {
         return { data: getFiltered(), error: null, count: null };
       }
+      if (pendingDelete) {
+        const matched = getFiltered();
+        if (!deleted[table]) deleted[table] = [];
+        deleted[table].push(...matched);
+        return { data: matched, error: null, count: null };
+      }
       const matched = getFiltered();
       if (countMode) return { data: matched, count: matched.length, error: null };
       return { data: matched, error: null, count: null };
@@ -195,8 +204,9 @@ function makeFakeClient(state: FakeState = {}) {
         return { data: { user: null }, error: { message: "invalid" } };
       },
     },
-    __inserted: inserted,
-    __updated:  updated,
+    __inserted:      inserted,
+    __deleted:       deleted,
+    __updatePatches: updatePatches,
   };
   return client;
 }
@@ -628,5 +638,95 @@ describe("NotificationRouter — push dispatch end-to-end", () => {
     const pushAttempt = attempts.find((a: any) => a.channel === "push");
     assert.ok(pushAttempt, "a push delivery attempt must be logged");
     assert.equal(pushAttempt.status, "suppressed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. NotificationRouter — DeviceNotRegistered removes token from notification_devices
+// ─────────────────────────────────────────────────────────────────────────────
+describe("NotificationRouter — stale token cleanup on DeviceNotRegistered", () => {
+  it("deletes the stale device row from notification_devices", async () => {
+    const STALE_TOKEN = "ExponentPushToken[staleDevice]";
+    const GOOD_TOKEN  = "ExponentPushToken[goodDevice]";
+
+    _setTestFetch(async (_url, init) => {
+      const messages = JSON.parse((init?.body as string) ?? "null") as any[];
+      return new Response(
+        JSON.stringify({
+          data: messages.map((m: any) =>
+            m.to === STALE_TOKEN
+              ? { status: "error", message: "Not registered", details: { error: "DeviceNotRegistered" } }
+              : { status: "ok", id: "receipt-good" },
+          ),
+        }),
+        { status: 200 },
+      );
+    });
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "dev-good",  user_id: USER_ID, push_token: GOOD_TOKEN,  platform: "expo" },
+        { id: "dev-stale", user_id: USER_ID, push_token: STALE_TOKEN, platform: "expo" },
+      ],
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    await router.route(makeNotification() as any);
+
+    const deletedDevices = client.__deleted["notification_devices"] ?? [];
+    const staleDeleted = deletedDevices.some((d: any) => d.push_token === STALE_TOKEN);
+    assert.ok(staleDeleted, "the stale device row must be removed from notification_devices");
+
+    const goodDeleted = deletedDevices.some((d: any) => d.push_token === GOOD_TOKEN);
+    assert.equal(goodDeleted, false, "the healthy device must not be deleted");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 15. NotificationRouter — DeviceNotRegistered also clears profiles.expo_push_token
+  // ─────────────────────────────────────────────────────────────────────────
+  it("clears profiles.expo_push_token when the legacy token is the stale one", async () => {
+    const STALE_LEGACY = "ExponentPushToken[legacyStale]";
+
+    _setTestFetch(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status: "error",
+              message: "Not registered",
+              details: { error: "DeviceNotRegistered" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: STALE_LEGACY }],
+      notificationDevices: [], // no device rows — legacy path
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    await router.route(makeNotification() as any);
+
+    const profilePatches = client.__updatePatches["profiles"] ?? [];
+    const clearedLegacy = profilePatches.some(
+      (p: any) => "expo_push_token" in p && p.expo_push_token === null,
+    );
+    assert.ok(clearedLegacy, "profiles.expo_push_token must be set to null for the stale legacy token");
   });
 });
