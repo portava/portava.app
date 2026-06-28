@@ -730,3 +730,102 @@ describe("NotificationRouter — stale token cleanup on DeviceNotRegistered", ()
     assert.ok(clearedLegacy, "profiles.expo_push_token must be set to null for the stale legacy token");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. NotificationRouter — InvalidCredentials deletes the token (same as DeviceNotRegistered)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("NotificationRouter — stale token cleanup on InvalidCredentials", () => {
+  it("deletes the token from notification_devices on InvalidCredentials", async () => {
+    const INVALID_TOKEN = "ExponentPushToken[invalidCreds]";
+    const GOOD_TOKEN    = "ExponentPushToken[goodDevice2]";
+
+    _setTestFetch(async (_url, init) => {
+      const messages = JSON.parse((init?.body as string) ?? "null") as any[];
+      return new Response(
+        JSON.stringify({
+          data: messages.map((m: any) =>
+            m.to === INVALID_TOKEN
+              ? { status: "error", message: "Invalid credentials", details: { error: "InvalidCredentials" } }
+              : { status: "ok", id: "receipt-good" },
+          ),
+        }),
+        { status: 200 },
+      );
+    });
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "dev-good2",   user_id: USER_ID, push_token: GOOD_TOKEN,    platform: "expo" },
+        { id: "dev-invalid", user_id: USER_ID, push_token: INVALID_TOKEN, platform: "expo" },
+      ],
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    await router.route(makeNotification() as any);
+
+    const deletedDevices = client.__deleted["notification_devices"] ?? [];
+    assert.ok(
+      deletedDevices.some((d: any) => d.push_token === INVALID_TOKEN),
+      "the InvalidCredentials token must be removed from notification_devices",
+    );
+    assert.equal(
+      deletedDevices.some((d: any) => d.push_token === GOOD_TOKEN),
+      false,
+      "the healthy token must not be deleted",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17. NotificationRouter — MessageRateExceeded does NOT delete the token
+// ─────────────────────────────────────────────────────────────────────────────
+describe("NotificationRouter — token preserved on MessageRateExceeded", () => {
+  it("does not delete the token from notification_devices on MessageRateExceeded", async () => {
+    const RATE_TOKEN = "ExponentPushToken[rateLimited]";
+
+    _setTestFetch(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status: "error",
+              message: "Too many messages sent to this device",
+              details: { error: "MessageRateExceeded" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "dev-rate", user_id: USER_ID, push_token: RATE_TOKEN, platform: "expo" },
+      ],
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    await router.route(makeNotification() as any);
+
+    const deletedDevices = client.__deleted["notification_devices"] ?? [];
+    assert.equal(
+      deletedDevices.some((d: any) => d.push_token === RATE_TOKEN),
+      false,
+      "a rate-limited token must not be deleted — the device is still valid",
+    );
+  });
+});

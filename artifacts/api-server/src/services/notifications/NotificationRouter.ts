@@ -220,10 +220,31 @@ export class NotificationRouter {
       }
       // ── End retry queue ────────────────────────────────────────────────────
 
-      // Remove any tokens Expo reports as no longer registered
+      // ── Token error triage ─────────────────────────────────────────────────
+      // DeviceNotRegistered  — device is permanently gone; delete the token.
+      // InvalidCredentials   — push credentials are wrong for this token (always
+      //                        undeliverable); treat the same as DeviceNotRegistered
+      //                        and delete so the token doesn't accumulate.
+      // MessageRateExceeded  — the token is still valid but the send rate is too
+      //                        high right now.  Do NOT delete; log a warning so
+      //                        operators can see the pressure.  The retry queue
+      //                        handles re-dispatch for transient failures; a
+      //                        separate rate-limit back-off strategy can be added
+      //                        on top without touching the token registry.
       const staleTokens = pushResult.errors
-        .filter((e) => e.error === "DeviceNotRegistered")
+        .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials")
         .map((e) => e.token);
+
+      const rateLimitedTokens = pushResult.errors
+        .filter((e) => e.error === "MessageRateExceeded")
+        .map((e) => e.token);
+
+      if (rateLimitedTokens.length > 0) {
+        logger.warn(
+          { userId, rateLimitedCount: rateLimitedTokens.length },
+          "NotificationRouter: MessageRateExceeded — tokens are valid but rate-limited; not removed",
+        );
+      }
 
       if (staleTokens.length > 0) {
         await this.cleanupStaleTokens(
