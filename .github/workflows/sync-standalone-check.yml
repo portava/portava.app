@@ -3,8 +3,14 @@ name: Standalone dependency sync check
 on:
   push:
     branches: ["**"]
+    paths:
+      - "artifacts/travel-buddy/package.json"
+      - "travel-buddy-standalone/package.json"
   pull_request:
     branches: ["**"]
+    paths:
+      - "artifacts/travel-buddy/package.json"
+      - "travel-buddy-standalone/package.json"
 
 jobs:
   sync-standalone-check:
