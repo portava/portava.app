@@ -1,0 +1,26 @@
+name: Standalone dependency sync check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  sync-standalone-check:
+    name: Check standalone dep sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Check standalone dependency sync
+        run: bash scripts/sync-standalone.sh --dry-run

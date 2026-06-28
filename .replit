@@ -24,6 +24,10 @@ args = "routes-guard"
 task = "workflow.run"
 args = "typecheck-standalone"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "sync-standalone-check"
+
 [[workflows.workflow]]
 name = "routes-guard"
 author = "agent"
@@ -42,6 +46,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd travel-buddy-standalone && pnpm typecheck"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "sync-standalone-check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/sync-standalone.sh --dry-run"
 
 [workflows.workflow.metadata]
 isValidation = true
