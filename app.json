@@ -7,13 +7,29 @@
     "scheme": "travelbuddy",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true },
+    "ios": {
+      "supportsTablet": true
+    },
     "android": {
-      "adaptiveIcon": { "backgroundColor": "#FAF9F6" },
+      "adaptiveIcon": {
+        "backgroundColor": "#FAF9F6"
+      },
       "edgeToEdgeEnabled": true
     },
-    "web": { "bundler": "metro", "output": "single" },
-    "plugins": ["expo-router"],
-    "experiments": { "typedRoutes": true }
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6cd481d2-69e8-4311-b352-994c5dcc2ddf"
+      }
+    }
   }
 }

@@ -211,6 +211,8 @@ interface DiscoveryCategoryTabProps {
   customMaxAge?: number | null;
   lat?: number | null;
   lng?: number | null;
+  /** Called whenever the user changes radius, open-now, or min-rating. */
+  onFiltersChange?: (filters: DiscoveryFilters) => void;
 }
 
 export function DiscoveryCategoryTab({
@@ -227,6 +229,7 @@ export function DiscoveryCategoryTab({
   customMaxAge,
   lat,
   lng,
+  onFiltersChange,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -236,6 +239,9 @@ export function DiscoveryCategoryTab({
   const [total, setTotal]           = useState(0);
   const [filters, setFilters]       = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
   const loadingMore                 = useRef(false);
+
+  // Notify parent whenever the filter strip changes so it can refresh count badges.
+  useEffect(() => { onFiltersChange?.(filters); }, [filters, onFiltersChange]);
 
   const applyClientFilters = (raw: DiscoveryPlace[]): DiscoveryPlace[] => {
     let result = raw;

@@ -12,7 +12,7 @@ import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/ha
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode } from '../../src/services/discovery';
+import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
@@ -119,6 +119,7 @@ export default function DiscoveryHub() {
   const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
+  const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -134,15 +135,15 @@ export default function DiscoveryHub() {
     }
   }, [locationState.place.city]);
 
-  // Fetch per-category result counts whenever the destination changes.
+  // Fetch per-category result counts whenever the destination or active filters change.
   useEffect(() => {
     setCategoryCounts({});
     let cancelled = false;
-    getDiscoveryCategoryCounts(destination).then((counts) => {
+    getDiscoveryCategoryCounts(destination, activeFilters).then((counts) => {
       if (!cancelled) setCategoryCounts(counts);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [destination]);
+  }, [destination, activeFilters]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
@@ -163,11 +164,18 @@ export default function DiscoveryHub() {
     }
   }, [params.category]);
 
-  // Reset to list view when the user switches tabs
+  // Reset to list view and filters when the user switches tabs.
+  // activeFilters reset here keeps counts consistent until the newly-mounted
+  // DiscoveryCategoryTab fires its own onFiltersChange with its initial state.
   const handleTabChange = (key: DiscoveryCategory) => {
     setActiveTab(key);
     setViewMode('list');
+    setActiveFilters({ radiusKm: 10, openNow: false, minRating: null });
   };
+
+  const handleFiltersChange = useCallback((filters: DiscoveryFilters) => {
+    setActiveFilters(filters);
+  }, []);
 
   // Map toggle is shown on all native tabs (category tabs + for_you).
   const showMapToggle = Platform.OS !== 'web';
@@ -445,6 +453,7 @@ export default function DiscoveryHub() {
             customMaxAge={customMaxAge}
             lat={destinationLat}
             lng={destinationLng}
+            onFiltersChange={handleFiltersChange}
           />
         )}
       </View>

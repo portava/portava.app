@@ -297,13 +297,15 @@ export async function getDiscoveryPlaces(
 const COUNTABLE_CATEGORIES: DiscoveryCategory[] = [
   'places', 'food', 'nightlife', 'activities', 'events', 'beaches', 'transport',
 ];
-const COUNT_FILTERS: DiscoveryFilters = { radiusKm: 25, openNow: false, minRating: null };
+/** Matches the default filters in DiscoveryCategoryTab so initial counts align with tab content. */
+const DEFAULT_COUNT_FILTERS: DiscoveryFilters = { radiusKm: 10, openNow: false, minRating: null };
 
 export async function getDiscoveryCategoryCounts(
   destination: string,
+  filters: DiscoveryFilters = DEFAULT_COUNT_FILTERS,
 ): Promise<Partial<Record<DiscoveryCategory, number>>> {
   const results = await Promise.allSettled(
-    COUNTABLE_CATEGORIES.map((cat) => getDiscoveryPlaces(destination, cat, COUNT_FILTERS, 1)),
+    COUNTABLE_CATEGORIES.map((cat) => getDiscoveryPlaces(destination, cat, filters, 1)),
   );
   const counts: Partial<Record<DiscoveryCategory, number>> = {};
   results.forEach((result, i) => {
