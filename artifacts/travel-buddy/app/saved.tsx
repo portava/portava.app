@@ -132,6 +132,12 @@ export default function Saved() {
 
   const showPlaces = tab === 'Places';
 
+  /** Places filtered to the active tab (catch-all for 'Places'). */
+  const tabPlaces = useMemo(
+    () => placesForTab(tab, places),
+    [tab, places],
+  );
+
   const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
     setBuilderPlace(place);
   }, []);
@@ -233,13 +239,27 @@ export default function Saved() {
           </ScrollView>
         )
       ) : (
-        <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
-          <View style={s.empty}>
-            <Bookmark size={28} color={color.haze} />
-            <Text style={s.emptyTitle}>Nothing saved here yet</Text>
-            <Text style={s.emptySub}>Items you save will appear here.</Text>
+        loading ? (
+          <View style={s.center}>
+            <ActivityIndicator color={color.signal} />
           </View>
-        </ScrollView>
+        ) : tabPlaces.length === 0 ? (
+          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
+            <View style={s.empty}>
+              <Bookmark size={28} color={color.haze} />
+              <Text style={s.emptyTitle}>Nothing saved here yet</Text>
+              <Text style={s.emptySub}>
+                Save places from Discovery and they&apos;ll appear in this category.
+              </Text>
+            </View>
+          </ScrollView>
+        ) : (
+          <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
+            {tabPlaces.map((p) => (
+              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} onRemove={handleRemove} />
+            ))}
+          </ScrollView>
+        )
       )}
 
       <RouteBuilderSheet
