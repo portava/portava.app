@@ -9,7 +9,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import type { DiscoveryItem, TravelerPick } from '../data/discovery';
 import { getCommunityPlaces } from '../services/discovery';
-import type { CommunityPlaceItem } from '../services/discovery';
+import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery';
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
@@ -67,13 +67,36 @@ function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
   };
 }
 
+/** All community items converted to DiscoveryPlace[] for use with DiscoveryMapView. */
+function toDiscoveryPlace(item: CommunityPlaceItem): DiscoveryPlace {
+  return {
+    id:           item.id,
+    name:         item.name,
+    category:     item.placeType === 'traveler_pick' ? 'for_you' : (item.category ?? 'for_you'),
+    type:         item.tag ?? null,
+    description:  item.blurb ?? null,
+    distanceKm:   null,
+    lat:          item.lat ?? null,
+    lng:          item.lng ?? null,
+    tags:         item.tag ? [item.tag] : [],
+    address:      item.neighborhood ?? item.city ?? null,
+    website:      null,
+    phone:        null,
+    openingHours: null,
+    rating:       item.rating ?? null,
+    isOpenNow:    null,
+  };
+}
+
 interface CommunityDiscoveryState {
   gems: DiscoveryItem[];
   picks: TravelerPick[];
+  /** All community items as DiscoveryPlace[] for DiscoveryMapView. */
+  places: DiscoveryPlace[];
   loading: boolean;
 }
 
-const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], loading: false };
+const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
 
 export function useCommunityDiscovery(city: string | null): CommunityDiscoveryState {
   const [state, setState] = useState<CommunityDiscoveryState>(EMPTY);
@@ -91,14 +114,16 @@ export function useCommunityDiscovery(city: string | null): CommunityDiscoverySt
       if (ctrl.signal.aborted) return;
 
       if (!result.ok) {
-        setState({ gems: [], picks: [], loading: false });
+        setState({ gems: [], picks: [], places: [], loading: false });
         return;
       }
 
       const gems: DiscoveryItem[] = [];
       const picks: TravelerPick[] = [];
+      const places: DiscoveryPlace[] = [];
 
       for (const item of result.data.items) {
+        places.push(toDiscoveryPlace(item));
         if (item.placeType === 'traveler_pick') {
           picks.push(toTravelerPick(item));
         } else {
@@ -106,10 +131,10 @@ export function useCommunityDiscovery(city: string | null): CommunityDiscoverySt
         }
       }
 
-      setState({ gems, picks, loading: false });
+      setState({ gems, picks, places, loading: false });
     } catch {
       if (!ctrl.signal.aborted) {
-        setState({ gems: [], picks: [], loading: false });
+        setState({ gems: [], picks: [], places: [], loading: false });
       }
     }
   }, []);

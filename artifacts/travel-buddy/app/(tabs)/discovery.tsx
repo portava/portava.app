@@ -157,9 +157,8 @@ export default function DiscoveryHub() {
     setViewMode('list');
   };
 
-  // Map toggle is shown only on native (Platform.OS !== 'web') and only for
-  // category tabs that use DiscoveryCategoryTab (not for_you which is ForYouTab)
-  const showMapToggle = Platform.OS !== 'web' && activeTab !== 'for_you';
+  // Map toggle is shown on all native tabs (category tabs + for_you).
+  const showMapToggle = Platform.OS !== 'web';
 
   const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
     setDetailVisible(false);
@@ -412,6 +411,7 @@ export default function DiscoveryHub() {
             contextMode={contextMode}
             lat={destinationLat}
             lng={destinationLng}
+            viewMode={viewMode}
           />
         ) : (
           <DiscoveryCategoryTab

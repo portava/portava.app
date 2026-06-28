@@ -77,6 +77,8 @@ export interface CommunityPlaceItem {
   status: string;
   verified: boolean;
   createdAt: string;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface CommunityDiscoveryResult {

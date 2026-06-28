@@ -666,6 +666,8 @@ export interface CommunityDiscoveryItem {
   status: string;
   verified: boolean;
   createdAt: string;
+  lat: number | null;
+  lng: number | null;
 }
 
 const VALID_PLACE_TYPES = new Set(["hidden_gem", "traveler_pick", "all"]);
@@ -762,6 +764,8 @@ router.get("/discovery/community", async (req, res) => {
         status,
         verified,
         created_at,
+        lat,
+        lng,
         profiles:submitted_by ( id, display_name, name, avatar_url )
       `)
       .ilike("city", city.trim())
@@ -821,6 +825,8 @@ router.get("/discovery/community", async (req, res) => {
         status:    row.status ?? "provisional",
         verified:  Boolean(row.verified),
         createdAt: row.created_at as string,
+        lat:       row.lat != null ? parseFloat(row.lat) : null,
+        lng:       row.lng != null ? parseFloat(row.lng) : null,
       };
     });
 

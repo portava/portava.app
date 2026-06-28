@@ -4,7 +4,7 @@
  * Primary source: Compass feed (when enabled). Falls back to OSM when
  * compassEnabled is false. Uses PlaceCard for full interaction parity.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
 } from 'react-native';
@@ -17,6 +17,7 @@ import { getDiscoveryPlaces } from '../../services/discovery';
 import { PlaceSkeletonList } from './PlaceSkeleton';
 import PlaceCard from './PlaceCard';
 import { PlaceDetailSheet } from './PlaceDetailSheet';
+import { DiscoveryMapView } from './DiscoveryMapView';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { useSession } from '../../context/SessionContext';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
@@ -36,6 +37,7 @@ interface ForYouTabProps {
   contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
   lat?: number | null;
   lng?: number | null;
+  viewMode?: 'list' | 'map';
 }
 
 type ForYouItem =
@@ -62,7 +64,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, viewMode = 'list' }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -101,6 +103,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   );
 
   const community = useCommunityDiscovery(destination ?? null);
+
+  // All OSM/Compass items + community places unified for DiscoveryMapView.
+  const mapPlaces = useMemo<DiscoveryPlace[]>(() => {
+    const osmPlaces = items.map((i) => i.place);
+    // Community places already in DiscoveryPlace shape; DiscoveryMapView
+    // filters out those without lat/lng so nulls are safe.
+    return [...osmPlaces, ...community.places];
+  }, [items, community.places]);
 
   // Monotonically-increasing counter so stale async callbacks from an old
   // load() call can detect they've been superseded and bail out safely.
@@ -175,6 +185,26 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   if (loading && items.length === 0) {
     return <PlaceSkeletonList count={5} />;
+  }
+
+  if (viewMode === 'map') {
+    return (
+      <>
+        <DiscoveryMapView
+          places={mapPlaces}
+          onSelectPlace={(p) => setDetail(p)}
+        />
+        <PlaceDetailSheet
+          place={detail}
+          visible={detail !== null}
+          onClose={() => setDetail(null)}
+          onAddToPlan={(p) => {
+            setDetail(null);
+            onAddToPlan({ id: p.id, name: p.name, category: p.category, address: p.address });
+          }}
+        />
+      </>
+    );
   }
 
   return (
