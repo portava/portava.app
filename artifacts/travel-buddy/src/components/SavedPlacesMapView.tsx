@@ -49,10 +49,14 @@ function computeBounds(places: BookmarkedPlace[]): LngLatBounds | null {
   return [west - dLng, south - dLat, east + dLng, north + dLat];
 }
 
-/** Derive unique category labels from the saved places. */
+/**
+ * Derive unique category labels from places that have coordinates.
+ * Excludes coordinate-less places so every chip always shows at least one pin.
+ */
 function uniqueCategories(places: BookmarkedPlace[]): string[] {
   const seen = new Set<string>();
   for (const p of places) {
+    if (p.lat == null || p.lng == null) continue;
     const cat = (p.category ?? '').trim();
     if (cat) seen.add(cat);
   }
@@ -277,12 +281,12 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  const categories = useMemo(() => uniqueCategories(places), [places]);
-
   const mappable = useMemo(
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
   );
+
+  const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
 
   const visible = useMemo(
     () =>
@@ -357,6 +361,17 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
         />
       )}
 
+      {/* "No pins in this category" overlay — shown when the active filter yields zero pins */}
+      {activeCategory !== null && visible.length === 0 && (
+        <View style={s.noPinsOverlay}>
+          <View style={s.noPinsIcon}>
+            <MapPin size={22} color={color.faint} />
+          </View>
+          <Text style={s.noPinsTitle}>No pins in this category</Text>
+          <Text style={s.noPinsBody}>None of your saved places in "{activeCategory}" have map coordinates.</Text>
+        </View>
+      )}
+
       {/* "N places without coords" notice */}
       {places.length - mappable.length > 0 && selectedId === null && (
         <View style={s.noCoordsNotice}>
@@ -398,6 +413,39 @@ const s = StyleSheet.create({
     color: color.faint,
     textAlign: 'center',
     maxWidth: 260,
+  },
+  noPinsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.82)',
+    gap: space.sm,
+    paddingHorizontal: space.xxl,
+  },
+  noPinsIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noPinsTitle: {
+    ...t.title,
+    fontSize: 15,
+    color: color.mute,
+    textAlign: 'center',
+  },
+  noPinsBody: {
+    ...t.body,
+    fontSize: 13,
+    color: color.faint,
+    textAlign: 'center',
+    maxWidth: 240,
   },
   noCoordsNotice: {
     position: 'absolute',
