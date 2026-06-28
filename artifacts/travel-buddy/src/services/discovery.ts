@@ -151,6 +151,27 @@ export async function submitCommunityPlace(
   }
 }
 
+export async function saveCommunityPlace(
+  placeId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  try {
+    const res = await fetch(`${base}/api/discovery/community/${placeId}/save`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
 // ── OSM places (existing) ─────────────────────────────────────────────────────
 
 export type DiscoveryContextMode =

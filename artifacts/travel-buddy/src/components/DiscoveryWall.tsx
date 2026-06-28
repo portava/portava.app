@@ -17,6 +17,7 @@ import type { DiscoverySharePayload } from './DiscoveryShareSheet';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { saveCommunityPlace } from '../services/discovery';
 
 /* ── Header ── */
 export function DiscoveryHeader({
@@ -205,6 +206,8 @@ function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; ava
 export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
   const [shareVisible, setShareVisible] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const sharePayload: DiscoverySharePayload = {
     sourceId: gem.id,
     sourceType: 'hidden_gem',
@@ -218,7 +221,20 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
       <View style={g.card}>
         <View style={g.media}>
           <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
-          <Pressable style={g.saveIcon} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving gems is coming in a future update.')}><Bookmark size={15} color={color.onInk} /></Pressable>
+          <Pressable
+            style={g.saveIcon}
+            hitSlop={layout.hitSlop}
+            disabled={saving}
+            onPress={async () => {
+              if (saved || saving) return;
+              setSaving(true);
+              const result = await saveCommunityPlace(gem.id);
+              if (result.ok) setSaved(true);
+              setSaving(false);
+            }}
+          >
+            <Bookmark size={15} color={color.onInk} fill={saved ? color.onInk : 'none'} />
+          </Pressable>
         </View>
         <View style={g.body}>
           <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
@@ -312,6 +328,8 @@ export function NeighborhoodsSection({ items }: { items: NeighborhoodVibe[] }) {
 /* ── Traveler Picks ── */
 export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   const planPicker = usePlanPicker();
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   return (
     <View style={tpk.card}>
       <View style={tpk.head}>
@@ -335,8 +353,20 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
       </View>
       <Text style={tpk.note} numberOfLines={1}>{pick.note}</Text>
       <View style={tpk.btnRow}>
-        <Pressable style={({ pressed }) => [tpk.saveBtn, pressed && { opacity: layout.pressedOpacity }]} hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving traveler picks is coming in a future update.')}>
-          <Bookmark size={14} color={color.mute} /><Text style={tpk.saveText}>Save</Text>
+        <Pressable
+          style={({ pressed }) => [tpk.saveBtn, pressed && { opacity: layout.pressedOpacity }]}
+          hitSlop={layout.hitSlop}
+          disabled={saving}
+          onPress={async () => {
+            if (saved || saving) return;
+            setSaving(true);
+            const result = await saveCommunityPlace(pick.id);
+            if (result.ok) setSaved(true);
+            setSaving(false);
+          }}
+        >
+          <Bookmark size={14} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
+          <Text style={[tpk.saveText, saved && { color: color.signal }]}>{saved ? 'Saved' : 'Save'}</Text>
         </Pressable>
         {onAddToRoute ? (
           <Pressable
