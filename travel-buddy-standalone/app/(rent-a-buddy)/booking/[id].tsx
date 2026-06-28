@@ -1,0 +1,567 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal,
+  TextInput,
+} from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import {
+  ArrowLeft, MessageCircle, Clock, MapPin, Shield,
+  CheckCircle, AlertTriangle, Star, Flag, ChevronDown, ChevronUp,
+  X, Users, Calendar, Plus, Route,
+} from 'lucide-react-native';
+import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
+import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
+import { Stamp } from '../../../src/components/ui';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+type BookingStatus = BuddyBooking['status'];
+
+const STATUS_LABELS: Record<BookingStatus, string> = {
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  in_progress: 'Active',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  disputed: 'Disputed',
+};
+
+const STATUS_COLORS: Record<BookingStatus, string> = {
+  pending: color.warn,
+  confirmed: color.deep,
+  in_progress: color.success,
+  completed: color.mute,
+  cancelled: color.haze,
+  disputed: color.signal,
+};
+
+function StatusBadge({ status }: { status: BookingStatus }) {
+  const col = STATUS_COLORS[status];
+  return (
+    <View style={[sb.pill, { borderColor: col }]}>
+      <View style={[sb.dot, { backgroundColor: col }]} />
+      <Text style={[sb.text, { color: col }]}>{STATUS_LABELS[status]}</Text>
+    </View>
+  );
+}
+
+function BuddySummaryRow({ buddyId, city }: { buddyId: string; city: string }) {
+  return (
+    <Pressable
+      style={buddy.row}
+      onPress={() => router.push(`/(rent-a-buddy)/buddy/${buddyId}` as any)}
+    >
+      <View style={buddy.avatar}>
+        <Text style={buddy.initial}>B</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={buddy.name}>Your Buddy</Text>
+        <Text style={buddy.city}>{city}</Text>
+      </View>
+      <View style={buddy.ratingPill}>
+        <Star size={11} color={color.warn} fill={color.warn} />
+        <Text style={buddy.ratingText}>View profile</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function MeetupBlock({ city }: { city: string }) {
+  return (
+    <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
+      <Text style={styles.sectionHeading}>Meetup plan</Text>
+
+      {/* Map placeholder */}
+      <View style={map.placeholder}>
+        <MapPin size={28} color={color.signal} />
+        <View style={{ flex: 1 }}>
+          <Text style={map.label}>Public meetup zone</Text>
+          <Text style={map.city}>{city} — Central area</Text>
+          <Text style={map.hint}>Exact location confirmed after booking</Text>
+        </View>
+      </View>
+
+      {/* Route plan */}
+      <Text style={[styles.sectionHeading, { marginTop: space.lg }]}>Route & plan</Text>
+      {[
+        { step: 1, label: 'Meet at public zone', note: 'Confirmed with your Buddy' },
+        { step: 2, label: 'Review plan together', note: 'Set boundaries & expectations' },
+        { step: 3, label: 'Experience begins', note: 'Enjoy with safety features active' },
+        { step: 4, label: 'Check out via app', note: 'Rate your Buddy & end session' },
+      ].map(item => (
+        <View key={item.step} style={route.item}>
+          <View style={route.stepBadge}>
+            <Text style={route.stepNum}>{item.step}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={route.stepLabel}>{item.label}</Text>
+            <Text style={route.stepNote}>{item.note}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function SafetyPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <View style={safety.wrap}>
+      <Pressable style={safety.header} onPress={onToggle}>
+        <Shield size={16} color={color.success} />
+        <Text style={safety.title}>Safety panel</Text>
+        {open ? <ChevronUp size={16} color={color.mute} /> : <ChevronDown size={16} color={color.mute} />}
+      </Pressable>
+      {open && (
+        <View style={safety.body}>
+          <View style={safety.item}>
+            <CheckCircle size={13} color={color.success} />
+            <Text style={safety.itemText}>Share location with Trusted Circle</Text>
+          </View>
+          <View style={safety.item}>
+            <CheckCircle size={13} color={color.success} />
+            <Text style={safety.itemText}>Meetup starts at a public location</Text>
+          </View>
+          <View style={safety.item}>
+            <AlertTriangle size={13} color={color.warn} />
+            <Text style={safety.itemText}>Never pay cash before the meetup starts</Text>
+          </View>
+          <Pressable style={safety.reportBtn} onPress={() => {}}>
+            <Flag size={12} color={color.signal} />
+            <Text style={safety.reportText}>Report an issue</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: () => void; onAdd: (h: number) => void }) {
+  const [hours, setHours] = useState(1);
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <Text style={modal.title}>Add more time?</Text>
+          <Text style={modal.sub}>Extend your session with this Buddy.</Text>
+          <View style={modal.stepper}>
+            <Pressable style={modal.stepBtn} onPress={() => setHours(h => Math.max(1, h - 1))}>
+              <Text style={modal.stepBtnText}>−</Text>
+            </Pressable>
+            <Text style={modal.stepValue}>{hours} hour{hours !== 1 ? 's' : ''}</Text>
+            <Pressable style={modal.stepBtn} onPress={() => setHours(h => Math.min(8, h + 1))}>
+              <Text style={modal.stepBtnText}>+</Text>
+            </Pressable>
+          </View>
+          <View style={modal.actions}>
+            <Pressable style={modal.cancelBtn} onPress={onClose}>
+              <Text style={modal.cancelBtnText}>Never mind</Text>
+            </Pressable>
+            <Pressable style={modal.confirmBtn} onPress={() => { onAdd(hours); onClose(); }}>
+              <Text style={modal.confirmBtnText}>Add {hours}h</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClose: () => void; onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState('');
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <Text style={modal.title}>Cancel booking?</Text>
+          <Text style={modal.sub}>This cannot be undone. Cancellation fees may apply per policy.</Text>
+          <TextInput
+            style={modal.input}
+            value={reason}
+            onChangeText={setReason}
+            placeholder="Reason for cancellation (optional)"
+            placeholderTextColor={color.haze}
+            multiline
+          />
+          <View style={modal.actions}>
+            <Pressable style={modal.cancelBtn} onPress={onClose}>
+              <Text style={modal.cancelBtnText}>Keep booking</Text>
+            </Pressable>
+            <Pressable style={modal.confirmBtn} onPress={() => onConfirm(reason)}>
+              <Text style={modal.confirmBtnText}>Cancel booking</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+export default function BookingDetail() {
+  const insets = useSafeAreaInsets();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [booking, setBooking] = useState<BuddyBooking | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [cancelVisible, setCancelVisible] = useState(false);
+  const [addTimeVisible, setAddTimeVisible] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    const res = await getBooking(id);
+    setLoading(false);
+    if (!res.ok) { setError(res.error); return; }
+    setBooking(res.data.booking);
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCancel = async (reason: string) => {
+    if (!booking) return;
+    setCancelling(true);
+    const res = await cancelBooking(booking.id, reason);
+    setCancelling(false);
+    setCancelVisible(false);
+    if (res.ok) {
+      setBooking(prev => prev ? { ...prev, status: 'cancelled' } : prev);
+      Alert.alert('Booking cancelled', 'Your booking has been cancelled.');
+    } else {
+      Alert.alert('Error', res.error);
+    }
+  };
+
+  if (loading) return <TravelLoadingState label="Loading booking…" />;
+  if (error || !booking) return <TravelErrorState title="Couldn't load booking" sub={error ?? undefined} onRetry={load} />;
+
+  const isActive = booking.status === 'in_progress';
+  const isCompleted = booking.status === 'completed';
+  const isCancellable = booking.status === 'pending' || booking.status === 'confirmed';
+  const cashBalance = Math.round(booking.totalUsd * 0.7);
+  const deposit = Math.round(booking.totalUsd * 0.3);
+  const serviceFee = Math.round(booking.totalUsd * 0.12);
+
+  return (
+    <View style={styles.page}>
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+        <Pressable style={styles.backBtn} onPress={() => router.canGoBack() ? router.back() : router.push('/(rent-a-buddy)/' as any)}>
+          <ArrowLeft size={20} color={color.ink} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Booking</Text>
+        <StatusBadge status={booking.status} />
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 100 + insets.bottom }} showsVerticalScrollIndicator={false}>
+        {/* Buddy profile summary */}
+        <BuddySummaryRow buddyId={booking.buddyId} city={booking.city} />
+
+        {/* Date / duration / group grid */}
+        <View style={styles.infoGrid}>
+          <View style={styles.infoCell}>
+            <Calendar size={16} color={color.deep} />
+            <Text style={styles.infoCellLabel}>Date</Text>
+            <Text style={styles.infoCellVal}>{booking.bookingDate}</Text>
+          </View>
+          <View style={styles.infoCellDivider} />
+          <View style={styles.infoCell}>
+            <Clock size={16} color={color.deep} />
+            <Text style={styles.infoCellLabel}>Duration</Text>
+            <Text style={styles.infoCellVal}>{booking.durationH}h</Text>
+          </View>
+          <View style={styles.infoCellDivider} />
+          <View style={styles.infoCell}>
+            <Users size={16} color={color.deep} />
+            <Text style={styles.infoCellLabel}>Group</Text>
+            <Text style={styles.infoCellVal}>{booking.groupSize}</Text>
+          </View>
+        </View>
+
+        {/* Category */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.md }}>
+          <Stamp label={booking.category} tone="deep" rotate={0} />
+        </View>
+
+        {/* Meetup plan: map placeholder + route steps */}
+        <MeetupBlock city={booking.city} />
+
+        {/* Cash balance reminder */}
+        {cashBalance > 0 && booking.status !== 'cancelled' && (
+          <View style={[styles.cashBanner, { marginHorizontal: space.lg, marginTop: space.md }]}>
+            <AlertTriangle size={16} color={color.warn} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cashTitle}>Cash balance reminder</Text>
+              <Text style={styles.cashSub}>
+                ${cashBalance} is due in cash to your Buddy at the end of the meetup. Keep exact change if possible.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Payment summary */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
+          <Text style={styles.sectionHeading}>Payment summary</Text>
+          <TravelCard style={{ marginTop: space.sm }}>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceKey}>Subtotal</Text>
+              <Text style={styles.priceVal}>${booking.totalUsd}</Text>
+            </View>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceKey}>Deposit paid</Text>
+              <Text style={[styles.priceVal, { color: color.success }]}>–${deposit}</Text>
+            </View>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceKey}>Service fee</Text>
+              <Text style={styles.priceVal}>${serviceFee}</Text>
+            </View>
+            {cashBalance > 0 && (
+              <View style={styles.priceRow}>
+                <Text style={[styles.priceKey, { color: color.warn }]}>Cash to Buddy</Text>
+                <Text style={[styles.priceVal, { color: color.warn }]}>${cashBalance}</Text>
+              </View>
+            )}
+          </TravelCard>
+        </View>
+
+        {/* Safety panel */}
+        {(isActive || booking.status === 'confirmed') && (
+          <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
+            <SafetyPanel open={safetyOpen || isActive} onToggle={() => setSafetyOpen(o => !o)} />
+          </View>
+        )}
+
+        {/* Notes */}
+        {booking.notes && (
+          <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
+            <Text style={styles.sectionHeading}>Notes</Text>
+            <Text style={[styles.priceKey, { marginTop: space.sm }]}>{booking.notes}</Text>
+          </View>
+        )}
+
+        {/* Actions */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md }}>
+          {isActive && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, styles.actionBtnPrimary, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => router.push({ pathname: '/(rent-a-buddy)/active' as any, params: { bookingId: id } })}
+            >
+              <Text style={styles.actionBtnTextPrimary}>Open Active Session</Text>
+            </Pressable>
+          )}
+
+          {(isActive || booking.status === 'confirmed') && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => setAddTimeVisible(true)}
+            >
+              <Plus size={16} color={color.deep} />
+              <Text style={styles.actionBtnText}>Add time</Text>
+            </Pressable>
+          )}
+
+          <Pressable
+            style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+            onPress={async () => {
+              const threadRes = await getOrCreateBookingThread(id as string);
+              if (threadRes.ok && threadRes.data?.threadId) {
+                router.push({
+                  pathname: '/messages/[id]' as any,
+                  params: {
+                    id: threadRes.data.threadId,
+                    threadType: 'rent_buddy_booking',
+                    contextId: id,
+                    title: `Booking with ${booking.city}`,
+                  },
+                });
+              } else {
+                router.push(`/messages/${booking.buddyId}` as any);
+              }
+            }}
+          >
+            <MessageCircle size={16} color={color.ink} />
+            <Text style={styles.actionBtnText}>Message your Buddy</Text>
+          </Pressable>
+
+          {isCompleted && (
+            <>
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, styles.actionBtnSignal, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => router.push({ pathname: '/(rent-a-buddy)/review' as any, params: { bookingId: id } })}
+              >
+                <Star size={16} color={color.onInk} />
+                <Text style={styles.actionBtnTextPrimary}>Leave a review</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={async () => {
+                  const res = await optInStayConnected(id as string);
+                  Alert.alert(
+                    res.ok ? 'Stay Connected opted in' : 'Error',
+                    res.ok
+                      ? 'You\'ve opted to keep the chat open. If your Buddy also opts in, the thread will stay active.'
+                      : (res.error ?? 'Could not opt in'),
+                  );
+                }}
+              >
+                <MessageCircle size={16} color={color.deep} />
+                <Text style={styles.actionBtnText}>Stay connected</Text>
+              </Pressable>
+            </>
+          )}
+
+          {isCancellable && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => setCancelVisible(true)}
+            >
+              <X size={16} color={color.signal} />
+              <Text style={[styles.actionBtnText, { color: color.signal }]}>Cancel booking</Text>
+            </Pressable>
+          )}
+        </View>
+      </ScrollView>
+
+      <AddTimeModal
+        visible={addTimeVisible}
+        onClose={() => setAddTimeVisible(false)}
+        onAdd={async (h) => {
+          const res = await addExtraTime(id as string, h);
+          if (res.ok) {
+            setBooking(prev => prev ? { ...prev, durationH: res.data?.newDurationH ?? prev.durationH + h } : prev);
+            Alert.alert('Time added', `${h} hour${h !== 1 ? 's' : ''} added to your session.`);
+          } else {
+            Alert.alert('Error', res.error ?? 'Could not add time');
+          }
+        }}
+      />
+
+      <CancelModal
+        visible={cancelVisible}
+        onClose={() => setCancelVisible(false)}
+        onConfirm={handleCancel}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: color.paper },
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingHorizontal: space.lg, paddingBottom: space.md,
+    backgroundColor: color.paper, borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { ...t.heading, color: color.ink, flex: 1 },
+  infoGrid: {
+    flexDirection: 'row', backgroundColor: color.paperRaised,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  infoCell: { flex: 1, alignItems: 'center', paddingVertical: space.lg, gap: 4 },
+  infoCellDivider: { width: 1, backgroundColor: color.haze },
+  infoCellLabel: { ...t.small, color: color.mute },
+  infoCellVal: { ...t.bodyStrong, color: color.ink },
+  cashBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
+    backgroundColor: '#FFF8ED', borderRadius: radius.md, padding: space.md,
+    borderWidth: 1, borderColor: color.warn,
+  },
+  cashTitle: { ...t.small, fontWeight: '700', color: color.warn },
+  cashSub: { ...t.small, color: color.mute, marginTop: 2, lineHeight: 16 },
+  sectionHeading: { ...t.bodyStrong, color: color.ink, marginBottom: space.sm },
+  priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
+  priceKey: { ...t.body, color: color.mute },
+  priceVal: { ...t.body, fontWeight: '600', color: color.ink },
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    backgroundColor: color.paperRaised, paddingVertical: space.md,
+  },
+  actionBtnPrimary: { backgroundColor: color.ink, borderColor: color.ink },
+  actionBtnSignal: { backgroundColor: color.signal, borderColor: color.signal },
+  actionBtnText: { ...t.bodyStrong, color: color.ink },
+  actionBtnTextPrimary: { ...t.bodyStrong, color: color.onInk },
+});
+
+const buddy = StyleSheet.create({
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    padding: space.lg, backgroundColor: color.paperRaised,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  avatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
+  },
+  initial: { fontSize: 18, fontWeight: '700', color: color.onInk },
+  name: { ...t.bodyStrong, color: color.ink },
+  city: { ...t.small, color: color.mute },
+  ratingPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FFF8ED', borderRadius: 999,
+    paddingHorizontal: space.sm, paddingVertical: 4,
+  },
+  ratingText: { fontSize: 10, fontWeight: '700', color: color.warn, fontFamily: 'Courier' },
+});
+
+const map = StyleSheet.create({
+  placeholder: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    backgroundColor: '#F0F4F8', borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    padding: space.md, borderStyle: 'dashed',
+  },
+  label: { ...t.bodyStrong, color: color.ink },
+  city: { ...t.small, color: color.deep, marginTop: 2 },
+  hint: { ...t.small, color: color.haze, marginTop: 2 },
+});
+
+const route = StyleSheet.create({
+  item: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.md,
+    paddingVertical: space.sm,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  stepBadge: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
+    marginTop: 2,
+  },
+  stepNum: { fontSize: 11, fontWeight: '800', color: color.onInk, fontFamily: 'Courier' },
+  stepLabel: { ...t.bodyStrong, color: color.ink },
+  stepNote: { ...t.small, color: color.mute, marginTop: 2 },
+});
+
+const sb = StyleSheet.create({
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: 4 },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  text: { fontSize: 11, fontWeight: '700', fontFamily: 'Courier', letterSpacing: 0.3 },
+});
+
+const safety = StyleSheet.create({
+  wrap: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.success, overflow: 'hidden' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
+  title: { ...t.bodyStrong, color: color.ink, flex: 1 },
+  body: { padding: space.md, borderTopWidth: 1, borderTopColor: color.haze, gap: space.sm },
+  item: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  itemText: { ...t.body, color: color.ink },
+  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
+  reportText: { ...t.small, color: color.signal, fontWeight: '600' },
+});
+
+const modal = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: { backgroundColor: color.paper, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: space.xl, gap: space.md },
+  title: { ...t.title, color: color.ink },
+  sub: { ...t.body, color: color.mute },
+  input: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, ...t.body, color: color.ink, height: 80, textAlignVertical: 'top' },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg, justifyContent: 'center', paddingVertical: space.sm },
+  stepBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  stepBtnText: { fontSize: 22, color: color.ink, fontWeight: '600' },
+  stepValue: { ...t.bodyStrong, color: color.ink, minWidth: 100, textAlign: 'center', fontSize: 18 },
+  actions: { flexDirection: 'row', gap: space.md, marginTop: space.sm },
+  cancelBtn: { flex: 1, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, alignItems: 'center' },
+  cancelBtnText: { ...t.bodyStrong, color: color.ink },
+  confirmBtn: { flex: 1, borderRadius: radius.md, backgroundColor: color.signal, padding: space.md, alignItems: 'center' },
+  confirmBtnText: { ...t.bodyStrong, color: color.onInk },
+});

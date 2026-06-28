@@ -1,0 +1,369 @@
+/**
+ * Profile service — wraps the API server's profile endpoints.
+ * All mutations route through the API server (service-role pattern, matching
+ * createTrip / createPost). Reads also go through the API server so we can
+ * do server-side joins/filtering cleanly.
+ */
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp } from '../types/models';
+
+function apiBase(): string {
+  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+}
+
+async function freshToken(): Promise<string | null> {
+  const { data: refreshed } = await supabase.auth.refreshSession();
+  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+  return session?.access_token ?? null;
+}
+
+function isNetworkError(e: unknown): boolean {
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    m.includes('failed to fetch') ||
+    m.includes('network request failed') ||
+    m.includes('err_address_unreachable') ||
+    m.includes('networkerror') ||
+    m.includes('load failed')
+  );
+}
+
+export interface ProfileResult<T> {
+  ok: boolean;
+  data: T | null;
+  errorKind?: string;
+  message?: string;
+}
+
+/* ---------- Own profile ---------- */
+
+export async function getMyProfile(): Promise<ProfileResult<OwnProfile>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export interface UpdateProfileInput {
+  displayName?: string;
+  username?: string;
+  bio?: string;
+  homeCity?: string;
+  homeCountry?: string;
+  interests?: string[];
+  passportVisibility?: 'public' | 'followers_only' | 'private';
+  avatarUrl?: string;
+  coverUrl?: string;
+  travelStyle?: string;
+  openToMeet?: boolean;
+  spokenLanguages?: string[];
+  defaultLanguage?: string | null;
+  travelStyles?: string[];
+  travelPace?: 'slow' | 'balanced' | 'packed' | null;
+  budgetStyle?: 'budget' | 'mid-range' | 'luxury' | 'flexible' | null;
+  travelGroupStyle?: string[];
+  lookingFor?: string[];
+  comfortLevel?: string | null;
+  availabilityTags?: string[];
+  planningStyle?: string | null;
+  publicSocialLinks?: Record<string, string>;
+  preferredLanguage?: string | null;
+  dateOfBirth?: string | null;
+}
+
+export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Username check ---------- */
+
+export async function checkUsername(username: string): Promise<{ available: boolean; reason?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return { available: false, reason: 'Backend not configured' };
+  const token = await freshToken();
+  if (!token) return { available: false, reason: 'Not signed in' };
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/users/check-username?username=${encodeURIComponent(username.toLowerCase().trim())}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return { available: false, reason: 'Could not check username' };
+    return await res.json();
+  } catch {
+    return { available: false, reason: 'Network error' };
+  }
+}
+
+/* ---------- Avatar upload ---------- */
+
+export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string }>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  let blob: Blob;
+  try {
+    const resp = await fetch(uri);
+    blob = await resp.blob();
+  } catch (e) {
+    return { ok: false, data: null, errorKind: 'read_failed', message: 'Failed to read image file' };
+  }
+
+  if (blob.size > 5 * 1024 * 1024) {
+    return { ok: false, data: null, errorKind: 'too_large', message: 'Avatar must be under 5 MB' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/avatar/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': mimeType, Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
+    }
+    const body = await res.json();
+    return { ok: true, data: { url: body.url } };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Cover photo upload ---------- */
+
+export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string }>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  let blob: Blob;
+  try {
+    const resp = await fetch(uri);
+    blob = await resp.blob();
+  } catch (e) {
+    return { ok: false, data: null, errorKind: 'read_failed', message: 'Failed to read image file' };
+  }
+
+  if (blob.size > 10 * 1024 * 1024) {
+    return { ok: false, data: null, errorKind: 'too_large', message: 'Cover photo must be under 10 MB' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/cover/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': mimeType, Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
+    }
+    const body = await res.json();
+    return { ok: true, data: { url: body.url } };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Public profile (share card) ---------- */
+
+export interface PublicProfileCard {
+  id?: string;
+  username: string | null;
+  displayName: string | null;
+  bio?: string | null;
+  avatarUrl: string | null;
+  coverUrl: string | null;
+  tripCount: number;
+  stampCount: number;
+  visibility: string;
+  private?: boolean;
+}
+
+export async function getPublicProfile(username: string): Promise<ProfileResult<PublicProfileCard>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error' };
+  }
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/users/${encodeURIComponent(username)}/profile`,
+    );
+    if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ---------- Public passport ---------- */
+
+export async function getPublicPassport(username: string): Promise<ProfileResult<PublicProfile | { private: true }>> {
+  if (!apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error' };
+  }
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/users/${encodeURIComponent(username)}/passport`,
+    );
+    if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export async function getPublicPostcards(username: string): Promise<ProfileResult<PassportPostcard[]>> {
+  if (!apiBase()) return { ok: true, data: [] };
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/users/${encodeURIComponent(username)}/passport/postcards`,
+    );
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.postcards ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}
+
+/* ---------- Own stamps ---------- */
+
+export async function getMyStamps(): Promise<ProfileResult<PassportStamp[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/stamps`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.stamps ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}
+
+/* ---------- Own passport postcards ---------- */
+
+export async function getMyPassportPostcards(): Promise<ProfileResult<PassportPostcard[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/passport/postcards`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.postcards ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}
+
+/* ---------- Postcard actions ---------- */
+
+export interface PostcardPatch {
+  note?: string | null;
+  visibility?: 'public' | 'private' | 'trip_only';
+  pin?: boolean;
+}
+
+export async function updatePostcard(id: string, patch: PostcardPatch): Promise<ProfileResult<PassportPostcard>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/passport/postcards/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export async function removePostcard(id: string): Promise<ProfileResult<null>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/passport/postcards/${id}/remove`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 204) return { ok: true, data: null };
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
