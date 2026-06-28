@@ -74,6 +74,27 @@ export function filterVisible(
 }
 
 /**
+ * Determine the effective active-category after reading from storage or after
+ * the place list changes.
+ *
+ * Returns `stored` when it is a non-empty string that exists in `categories`;
+ * returns `null` in every other case (null input, empty string, stale key).
+ *
+ * This is the single pure decision used by both:
+ *   1. The mount-restore effect — resolves the AsyncStorage value against the
+ *      current category list before setting state.
+ *   2. The stale-category effect — resets to null when the active category has
+ *      been removed from the list (e.g. last place of that type deleted).
+ */
+export function resolveStoredCategory(
+  stored: string | null,
+  categories: string[],
+): string | null {
+  if (!stored) return null;
+  return categories.includes(stored) ? stored : null;
+}
+
+/**
  * Count how many mappable pins belong to each category key.
  *
  * Named categories are keyed by their trimmed label.

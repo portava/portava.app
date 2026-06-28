@@ -24,6 +24,7 @@ import {
   filterMappable,
   uniqueCategories,
   categoryCounts,
+  resolveStoredCategory,
   filterVisible,
   shouldShowNoPinsOverlay,
   computeBounds,
@@ -293,11 +294,9 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
     let cancelled = false;
     AsyncStorage.getItem(storageKey)
       .then((stored) => {
-        if (cancelled || !stored) return;
-        // Only restore if the category still exists in the current list.
-        if (categories.includes(stored)) {
-          setActiveCategory(stored);
-        }
+        if (cancelled) return;
+        const resolved = resolveStoredCategory(stored, categories);
+        if (resolved !== null) setActiveCategory(resolved);
       })
       .catch(() => {});
     return () => {
@@ -309,9 +308,8 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   // If the active category is removed from the list (e.g., last place of that
   // type was deleted), silently fall back to "All".
   useEffect(() => {
-    if (activeCategory !== null && !categories.includes(activeCategory)) {
-      setActiveCategory(null);
-    }
+    const resolved = resolveStoredCategory(activeCategory, categories);
+    if (resolved !== activeCategory) setActiveCategory(resolved);
   }, [categories, activeCategory]);
 
   const visible = useMemo(

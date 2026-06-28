@@ -19,6 +19,8 @@ import {
   UNCATEGORIZED,
   filterMappable,
   uniqueCategories,
+  resolveStoredCategory,
+  categoryCounts,
   shouldShowChips,
   filterVisible,
   shouldShowNoPinsOverlay,
@@ -212,6 +214,92 @@ describe('shouldShowNoPinsOverlay', () => {
 
   it('returns false when no category is active even with 0 pins', () => {
     assert.equal(shouldShowNoPinsOverlay(null, 0), false);
+  });
+});
+
+// ── resolveStoredCategory ──────────────────────────────────────────────────────
+
+describe('resolveStoredCategory', () => {
+  const cats = ['cafe', 'museum', UNCATEGORIZED];
+
+  it('returns null when stored is null', () => {
+    assert.equal(resolveStoredCategory(null, cats), null);
+  });
+
+  it('returns null when stored is an empty string', () => {
+    assert.equal(resolveStoredCategory('', cats), null);
+  });
+
+  it('returns the stored category when it exists in the list', () => {
+    assert.equal(resolveStoredCategory('cafe', cats), 'cafe');
+  });
+
+  it('returns null when stored category is not in the list (stale key)', () => {
+    assert.equal(resolveStoredCategory('restaurant', cats), null);
+  });
+
+  it('returns UNCATEGORIZED sentinel when it is in the list', () => {
+    assert.equal(resolveStoredCategory(UNCATEGORIZED, cats), UNCATEGORIZED);
+  });
+
+  it('returns null for UNCATEGORIZED sentinel when it is not in the list', () => {
+    assert.equal(resolveStoredCategory(UNCATEGORIZED, ['cafe', 'museum']), null);
+  });
+
+  it('returns null when categories list is empty', () => {
+    assert.equal(resolveStoredCategory('cafe', []), null);
+  });
+});
+
+// ── categoryCounts ────────────────────────────────────────────────────────────
+
+describe('categoryCounts', () => {
+  it('returns an empty object for an empty list', () => {
+    assert.deepEqual(categoryCounts([]), {});
+  });
+
+  it('counts each named category', () => {
+    const places = [
+      place({ id: '1', category: 'museum' }),
+      place({ id: '2', category: 'museum' }),
+      place({ id: '3', category: 'park' }),
+    ];
+    assert.deepEqual(categoryCounts(places), { museum: 2, park: 1 });
+  });
+
+  it('counts uncategorized places under the UNCATEGORIZED sentinel', () => {
+    const places = [
+      place({ id: '1', category: '' }),
+      place({ id: '2', category: '' }),
+    ];
+    assert.deepEqual(categoryCounts(places), { [UNCATEGORIZED]: 2 });
+  });
+
+  it('handles mixed categorized and uncategorized places', () => {
+    const places = [
+      place({ id: '1', category: 'cafe' }),
+      place({ id: '2', category: '' }),
+      place({ id: '3', category: 'cafe' }),
+    ];
+    assert.deepEqual(categoryCounts(places), { cafe: 2, [UNCATEGORIZED]: 1 });
+  });
+
+  it('treats whitespace-only category as uncategorized', () => {
+    const places = [
+      place({ id: '1', category: '   ' }),
+      place({ id: '2', category: 'park' }),
+    ];
+    assert.deepEqual(categoryCounts(places), { [UNCATEGORIZED]: 1, park: 1 });
+  });
+
+  it('pipeline test: filterMappable → categoryCounts ignores coord-less places', () => {
+    const raw = [
+      place({ id: '1', category: 'museum', lat: 48.8566, lng: 2.3522 }),
+      place({ id: '2', category: 'museum', lat: null, lng: null }),
+      place({ id: '3', category: 'park', lat: 51.5074, lng: -0.1278 }),
+    ];
+    const result = categoryCounts(filterMappable(raw));
+    assert.deepEqual(result, { museum: 1, park: 1 });
   });
 });
 

@@ -21,7 +21,9 @@
         "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
       ],
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["travelbuddy"],
+        "LSApplicationQueriesSchemes": [
+          "travelbuddy"
+        ],
         "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan.",
         "NSLocationWhenInUseUsageDescription": "Travel Buddy uses your location to show nearby places and auto-publish posts after you leave a spot.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Travel Buddy uses your location in the background to track route progress and trigger check-ins.",
@@ -42,7 +44,10 @@
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.RECORD_AUDIO",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "intentFilters": [
         {
@@ -53,7 +58,10 @@
               "scheme": "travelbuddy"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         },
         {
           "action": "VIEW",
@@ -70,7 +78,10 @@
               "pathPrefix": "/u"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -100,6 +111,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b"
+      }
+    },
+    "owner": "travel-buddy1"
   }
 }

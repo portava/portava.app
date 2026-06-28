@@ -58,7 +58,7 @@ catalogs:
       specifier: ^4.1.8
       version: 4.3.1
     tsx:
-      specifier: ^4.19.4
+      specifier: 4.22.4
       version: 4.22.4
     vite:
       specifier: ^6.3.5
@@ -499,6 +499,9 @@ importers:
       react-native-worklets:
         specifier: 0.5.1
         version: 0.5.1(@babel/core@7.29.7)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
       typescript:
         specifier: ~5.9.2
         version: 5.9.3
