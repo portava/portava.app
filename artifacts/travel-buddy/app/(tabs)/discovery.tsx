@@ -119,6 +119,7 @@ export default function DiscoveryHub() {
   const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
+  const [countsLoading, setCountsLoading] = useState(false);
   const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
@@ -136,12 +137,17 @@ export default function DiscoveryHub() {
   }, [locationState.place.city]);
 
   // Fetch per-category result counts whenever the destination or active filters change.
+  // countsLoading gates tab dimming so no tab flickers to "dimmed" before the
+  // full batch resolves.
   useEffect(() => {
     setCategoryCounts({});
+    setCountsLoading(true);
     let cancelled = false;
     getDiscoveryCategoryCounts(destination, activeFilters).then((counts) => {
-      if (!cancelled) setCategoryCounts(counts);
-    }).catch(() => {});
+      if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
+    }).catch(() => {
+      if (!cancelled) setCountsLoading(false);
+    });
     return () => { cancelled = true; };
   }, [destination, activeFilters]);
 
@@ -348,9 +354,11 @@ export default function DiscoveryHub() {
           {TABS.map((tab) => {
             const active = tab.key === activeTab;
             const count = categoryCounts[tab.key];
-            const isEmpty = count !== undefined && count === 0;
+            // Only dim when the full batch has resolved; suppress dimming while loading
+            // to prevent any tab flickering to "0" before all responses arrive.
+            const isEmpty = !countsLoading && count !== undefined && count === 0;
             const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
-            const countSuffix = count !== undefined && count > 0 ? ` · ${count}` : '';
+            const countSuffix = !countsLoading && count !== undefined && count > 0 ? ` · ${count}` : '';
             return (
               <Pressable
                 key={tab.key}
