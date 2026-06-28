@@ -10,6 +10,7 @@ import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
 import { warmUpDiscoveryCache } from "./lib/discoveryWarmup";
 import { startPushRetryWorker } from "./lib/pushRetryWorker";
+import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 
 const rawPort = process.env["PORT"];
 
@@ -41,6 +42,7 @@ app.listen(port, (err) => {
   startDelayedPostPublisher();
   startCompassAbuseScanScheduler();
   startPushRetryWorker();
+  startZombieTokenSweeper();
   warmUpDiscoveryCache(port).catch((e) =>
     logger.warn({ err: e }, "discovery warm-up: unhandled error"),
   );

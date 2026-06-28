@@ -27,6 +27,23 @@ import {
 
 const logger = rootLogger.child({ service: "NotificationRouter" });
 
+// ── Cleanup failure tracking ──────────────────────────────────────────────────
+// Counts consecutive cleanup failures so the log level can escalate from warn
+// to error after repeated problems — making zombie-token accumulation visible
+// to monitoring even when individual failures look transient.
+let _consecutiveCleanupFailures = 0;
+const CLEANUP_ERROR_THRESHOLD = 3; // escalate to error after this many in a row
+
+/** Exported for unit tests to reset between cases. */
+export function _resetCleanupFailureCount(): void {
+  _consecutiveCleanupFailures = 0;
+}
+
+/** Exported for unit tests to inspect current value. */
+export function _getCleanupFailureCount(): number {
+  return _consecutiveCleanupFailures;
+}
+
 /**
  * Map a NotificationRow's category/eventType to a CompassNotificationType
  * priority level. Safety-related events are always treated as highest priority
@@ -229,32 +246,80 @@ export class NotificationRouter {
    * Delete stale push tokens from the DB after Expo reports DeviceNotRegistered.
    * Clears matching rows from notification_devices and, if the legacy
    * profiles.expo_push_token column holds one of the stale tokens, nulls it out.
+   *
+   * Each DB operation is wrapped in its own try/catch so a failure in one step
+   * is independently logged with a structured event (operation, staleCount,
+   * consecutiveFailures). After CLEANUP_ERROR_THRESHOLD consecutive failures the
+   * log level escalates from warn to error so monitoring can alert on zombie-token
+   * accumulation.
    */
   private async cleanupStaleTokens(
     userId: string,
     staleTokens: string[],
     legacyToken: string | null,
   ): Promise<void> {
+    const staleCount = staleTokens.length;
+    let anyFailure = false;
+
+    // ── Step 1: remove from notification_devices ──────────────────────────────
     try {
-      await this.db
+      const { error } = await this.db
         .from('notification_devices')
         .delete()
         .eq('user_id', userId)
         .in('push_token', staleTokens);
 
-      if (legacyToken && staleTokens.includes(legacyToken)) {
-        await this.db
+      if (error) throw error;
+    } catch (err) {
+      anyFailure = true;
+      _consecutiveCleanupFailures += 1;
+      const logFields = {
+        err,
+        userId,
+        staleCount,
+        operation: 'delete_notification_devices',
+        consecutiveFailures: _consecutiveCleanupFailures,
+      };
+      if (_consecutiveCleanupFailures >= CLEANUP_ERROR_THRESHOLD) {
+        logger.error(logFields, 'NotificationRouter: stale-token cleanup failed — zombie tokens may accumulate');
+      } else {
+        logger.warn(logFields, 'NotificationRouter: failed to delete stale tokens from notification_devices');
+      }
+    }
+
+    // ── Step 2: null out legacy expo_push_token on profiles ───────────────────
+    if (legacyToken && staleTokens.includes(legacyToken)) {
+      try {
+        const { error } = await this.db
           .from('profiles')
           .update({ expo_push_token: null })
           .eq('id', userId);
-      }
 
+        if (error) throw error;
+      } catch (err) {
+        anyFailure = true;
+        _consecutiveCleanupFailures += 1;
+        const logFields = {
+          err,
+          userId,
+          staleCount,
+          operation: 'null_legacy_expo_push_token',
+          consecutiveFailures: _consecutiveCleanupFailures,
+        };
+        if (_consecutiveCleanupFailures >= CLEANUP_ERROR_THRESHOLD) {
+          logger.error(logFields, 'NotificationRouter: stale-token cleanup failed — zombie tokens may accumulate');
+        } else {
+          logger.warn(logFields, 'NotificationRouter: failed to null legacy expo_push_token on profile');
+        }
+      }
+    }
+
+    if (!anyFailure) {
+      _consecutiveCleanupFailures = 0;
       logger.info(
-        { userId, staleCount: staleTokens.length },
+        { userId, staleCount },
         'NotificationRouter: removed stale push tokens',
       );
-    } catch (err) {
-      logger.warn({ err, userId }, 'NotificationRouter: failed to clean up stale tokens');
     }
   }
 
