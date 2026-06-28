@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, FlatList, StyleSheet,
   ActivityIndicator, Pressable,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip } from '../src/components/ui';
@@ -14,6 +15,8 @@ import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
 import { removeSaved } from '../src/services/discoveryBookmarks';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
+
+const LIST_CAT_KEY = 'saved_places_list_cat_v1_global';
 
 // ── Place list card ───────────────────────────────────────────────────────────
 
@@ -85,6 +88,19 @@ export default function Saved() {
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
 
+  // Restore persisted tab on mount; fall back to 'Places' if stored value is gone
+  useEffect(() => {
+    AsyncStorage.getItem(LIST_CAT_KEY).then((stored) => {
+      if (stored && TABS.includes(stored)) setTab(stored);
+    }).catch(() => {});
+  }, []);
+
+  // Persist tab changes
+  const handleTabChange = useCallback((next: string) => {
+    setTab(next);
+    AsyncStorage.setItem(LIST_CAT_KEY, next).catch(() => {});
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -152,7 +168,7 @@ export default function Saved() {
         style={{ flexGrow: 0 }}
         contentContainerStyle={{ gap: space.sm, padding: space.lg }}
         renderItem={({ item }) => (
-          <Chip label={item} active={item === tab} onPress={() => setTab(item)} />
+          <Chip label={item} active={item === tab} onPress={() => handleTabChange(item)} />
         )}
       />
 
