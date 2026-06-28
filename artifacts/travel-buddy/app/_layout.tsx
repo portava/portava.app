@@ -1,5 +1,4 @@
-import { useEffect } from 'react';
-import { Stack, router } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 // Register the geofence background task at module root — must be imported
 // before any call to Location.startGeofencingAsync.
@@ -18,6 +17,7 @@ import { LocationProvider } from '../src/context/LocationContext';
 import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceContext';
 import { usePushToken } from '../src/hooks/usePushToken';
 import { useNotificationStream } from '../src/hooks/useNotifications';
+import { useNotificationHandler } from '../src/hooks/useNotificationHandler';
 import { useCompassFrontload } from '../src/hooks/compass/useCompassFrontload';
 import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
@@ -43,21 +43,7 @@ function CompassFrontloadSetup() {
 function PushSetup() {
   usePushToken();
   useNotificationStream();
-
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, unknown> | null;
-      if (!data) return;
-      if (data.screen === 'availability' && typeof data.tripId === 'string') {
-        router.push({ pathname: '/trip/[id]', params: { id: data.tripId } } as any);
-      } else if (data.screen === 'meetup' && typeof data.meetupId === 'string') {
-        router.push(`/meetup/${data.meetupId}` as any);
-      }
-    });
-    return () => sub.remove();
-  }, []);
-
+  useNotificationHandler();
   return null;
 }
 
