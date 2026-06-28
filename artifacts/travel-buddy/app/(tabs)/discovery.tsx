@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput,
 } from 'react-native';
@@ -140,22 +140,35 @@ export default function DiscoveryHub() {
     }
   }, [locationState.place.city]);
 
-  // Debounce custom age inputs (500 ms) so typing "25" doesn't fire two batches
-  // of 7 API requests; only the value after the user pauses is forwarded to counts.
+  // Debounce custom age inputs (500 ms) so that each keystroke while the user
+  // is typing a number doesn't fire a batch of 7 parallel API requests.
+  // Destination, contextMode, ageFilter, and activeFilters remain immediate.
+  // countsLoading is set to true immediately on the first keystroke so tab
+  // dimming is gated for the entire debounce window, not just the fetch time.
+  const ageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstAgeRender = useRef(true);
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedMinAge(customMinAge), 500);
-    return () => clearTimeout(t);
-  }, [customMinAge]);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedMaxAge(customMaxAge), 500);
-    return () => clearTimeout(t);
-  }, [customMaxAge]);
+    if (isFirstAgeRender.current) {
+      isFirstAgeRender.current = false;
+      return;
+    }
+    setCountsLoading(true);
+    if (ageDebounceRef.current) clearTimeout(ageDebounceRef.current);
+    ageDebounceRef.current = setTimeout(() => {
+      setDebouncedMinAge(customMinAge);
+      setDebouncedMaxAge(customMaxAge);
+    }, 500);
+    return () => {
+      if (ageDebounceRef.current) clearTimeout(ageDebounceRef.current);
+    };
+  }, [customMinAge, customMaxAge]);
 
   // Fetch per-category result counts whenever the destination, filters, context
   // mode, or age filter changes. Custom age inputs use debounced values to avoid
   // a count fetch on every keystroke. countsLoading gates tab dimming so no tab
   // flickers to "dimmed" before the full batch resolves.
+  // Custom age changes use the debounced values so rapid keystrokes don't
+  // trigger redundant fetches.
   useEffect(() => {
     setCategoryCounts({});
     setCountsLoading(true);
