@@ -50,13 +50,14 @@ function computeBounds(places: BookmarkedPlace[]): LngLatBounds | null {
 }
 
 /**
- * Derive unique category labels from places that have coordinates.
- * Excludes coordinate-less places so every chip always shows at least one pin.
+ * Derive unique non-empty category labels from an already-coordinate-filtered
+ * list of places.  The result drives CategoryChips: chips are only rendered
+ * when there are 2+ distinct categories, so switching between them always
+ * produces a visibly different set of pins.
  */
 function uniqueCategories(places: BookmarkedPlace[]): string[] {
   const seen = new Set<string>();
   for (const p of places) {
-    if (p.lat == null || p.lng == null) continue;
     const cat = (p.category ?? '').trim();
     if (cat) seen.add(cat);
   }
@@ -211,6 +212,9 @@ interface CategoryChipsProps {
 }
 
 function CategoryChips({ categories, selected, onSelect }: CategoryChipsProps) {
+  // Hide when fewer than 2 distinct categories exist: with 0 or 1 category,
+  // switching between "All" and the single chip would show the same set of pins,
+  // so the chips add noise without giving the user any meaningful filter choice.
   if (categories.length < 2) return null;
   return (
     <ScrollView
