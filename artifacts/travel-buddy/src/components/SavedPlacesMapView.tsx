@@ -13,6 +13,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
@@ -34,11 +35,19 @@ const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
 
+// ── Category persistence ───────────────────────────────────────────────────────
+
+const CATEGORY_STORAGE_PREFIX = 'saved_places_map_cat_v1_';
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface SavedPlacesMapViewProps {
   places: BookmarkedPlace[];
   onPlanRoute: (place: BookmarkedPlace) => void;
+  /** Stable identifier used to key the persisted category filter.
+   *  Defaults to 'global' (the single shared wishlist).
+   *  Pass a trip or wishlist id to give each list an independent filter state. */
+  listId?: string;
 }
 
 // ── Pin component ─────────────────────────────────────────────────────────────
@@ -267,7 +276,7 @@ const chips = StyleSheet.create({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewProps) {
+export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: SavedPlacesMapViewProps) {
   const cameraRef = useRef<CameraRef>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -276,6 +285,34 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
 
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
   const counts     = useMemo(() => categoryCounts(mappable), [mappable]);
+
+  const storageKey = `${CATEGORY_STORAGE_PREFIX}${listId}`;
+
+  // Restore persisted category on mount (or when listId changes).
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(storageKey)
+      .then((stored) => {
+        if (cancelled || !stored) return;
+        // Only restore if the category still exists in the current list.
+        if (categories.includes(stored)) {
+          setActiveCategory(stored);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]); // intentionally omits `categories` — we validate with the snapshot at read time
+
+  // If the active category is removed from the list (e.g., last place of that
+  // type was deleted), silently fall back to "All".
+  useEffect(() => {
+    if (activeCategory !== null && !categories.includes(activeCategory)) {
+      setActiveCategory(null);
+    }
+  }, [categories, activeCategory]);
 
   const visible = useMemo(
     () => filterVisible(mappable, activeCategory),
@@ -294,11 +331,16 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
     cameraRef.current.fitBounds(bounds, { padding: { top: 56, right: 24, bottom: 160, left: 24 }, duration: 500 });
   }, [visible]);
 
-  // Clear selection when category changes
+  // Clear selection and persist category when it changes.
   const handleCategoryChange = useCallback((cat: string | null) => {
     setActiveCategory(cat);
     setSelectedId(null);
-  }, []);
+    if (cat !== null) {
+      AsyncStorage.setItem(storageKey, cat).catch(() => {});
+    } else {
+      AsyncStorage.removeItem(storageKey).catch(() => {});
+    }
+  }, [storageKey]);
 
   if (mappable.length === 0) {
     return (
