@@ -56,6 +56,50 @@ pnpm run typecheck
 
 ---
 
+## Keeping the standalone in sync with the monorepo app
+
+Run this from the **workspace root** after any significant feature addition to `artifacts/travel-buddy/`:
+
+```bash
+# Preview what would change (no files written)
+bash scripts/sync-standalone.sh --dry-run
+
+# Apply the sync
+bash scripts/sync-standalone.sh
+```
+
+### What the script syncs
+
+| Item | Action |
+|---|---|
+| `app/`, `src/`, `assets/`, `components/`, `constants/`, `hooks/` | Replaced in full from monorepo source |
+| `docs/`, `migrations/`, `scripts/`, `server/` | Replaced in full from monorepo source |
+| `babel.config.js`, `metro.config.js`, `app.json`, `eas.json`, `expo-env.d.ts` | Copied file-by-file |
+
+### What the script deliberately leaves untouched
+
+| File | Why preserved |
+|---|---|
+| `package.json` | Different `name` + standalone-specific scripts (no monorepo `dev` script) |
+| `tsconfig.json` | `references` array removed (no `../../lib/api-client-react`) |
+| `pnpm-lock.yaml` | Standalone lockfile — regenerate with `pnpm install` after dep changes |
+| `pnpm-workspace.yaml` | Empty `packages: []` — keeps this folder isolated from the monorepo root |
+| `.npmrc` | `node-linker=hoisted` required for React Native native modules |
+| `README.md` | This file |
+| `.env`, `.env.example`, `.gitignore` | Standalone environment / VCS config |
+| `.replit-artifact/` | Replit artifact metadata |
+
+### After syncing — manual steps required
+
+1. **New dependencies**: diff `artifacts/travel-buddy/package.json` vs `travel-buddy-standalone/package.json`.
+   Add any new `dependencies` or `devDependencies` to the standalone `package.json`,
+   then run `pnpm install` inside `travel-buddy-standalone/`.
+2. **`tsconfig.json` changes**: apply the same change to the standalone copy, keeping
+   the `references` array absent.
+3. **Verify**: `cd travel-buddy-standalone && pnpm typecheck`
+
+---
+
 ## What was changed vs the monorepo version
 
 | File | Change |
