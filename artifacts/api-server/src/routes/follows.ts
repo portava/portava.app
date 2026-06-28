@@ -651,6 +651,10 @@ router.get("/users/suggestions", async (req, res) => {
   // Per-mutual best (highest) recency-weighted interaction score.
   // Absent entry → not interacted → falls back to DECAY_BASE.
   const mutualInteractionWeights = new Map<string, number>();
+  // Mutuals who shared a *recent* trip with the caller (trip weight > DECAY_BASE).
+  // Populated only by the trip-based block; message threads are intentionally excluded
+  // so the "Traveled together recently" label is specific to actual travel.
+  const recentlyTraveledMutuals = new Set<string>();
   const allMutualIds = Array.from(
     new Set(Array.from(mutualsByCandidate.values()).flat()),
   );
@@ -698,6 +702,7 @@ router.get("/users/suggestions", async (req, res) => {
             : DECAY_BASE; // no date available → treat same as non-interacted
           const prev = mutualInteractionWeights.get(mid) ?? 0;
           if (weight > prev) mutualInteractionWeights.set(mid, weight);
+          if (weight > DECAY_BASE) recentlyTraveledMutuals.add(mid);
         }
       }
     } catch { /* fail-safe: all mutuals get base decay weight */ }
@@ -874,7 +879,11 @@ router.get("/users/suggestions", async (req, res) => {
       } else if (follows) {
         reason = "Follows you";
       } else if (mc > 0) {
-        reason = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
+        const mutualLabel = mc === 1 ? "1 mutual connection" : `${mc} mutual connections`;
+        const hasRecentTrip = (mutualsByCandidate.get(p.id as string) ?? []).some(
+          (mid) => recentlyTraveledMutuals.has(mid),
+        );
+        reason = hasRecentTrip ? `${mutualLabel} · Traveled together recently` : mutualLabel;
       } else if ((interestScores.get(p.id as string) ?? 0) > 0) {
         reason = "Shares your travel style";
       }

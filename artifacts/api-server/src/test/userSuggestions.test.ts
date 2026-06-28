@@ -1130,6 +1130,82 @@ describe("GET /api/users/suggestions", () => {
     );
   });
 
+  // ── recency label in reason field ────────────────────────────────────────
+
+  it("reason: candidate with a recent mutual trip gets 'Traveled together recently' appended to mutual count", async () => {
+    // ME follows N_MUT (the mutual); N_MUT follows A (the candidate).
+    // A does NOT follow ME → fallback pool → reason comes from mc path.
+    // N_MUT shared a trip with ME 7 days ago → weight > DECAY_BASE → recency label.
+    const N_MUT = "user-n-label";
+    const recentDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: ME,    following_id: N_MUT },  // ME follows the mutual
+        { follower_id: N_MUT, following_id: A },       // mutual follows candidate A
+      ],
+      profiles: [
+        { id: ME,    handle: "me",    name: "Me",    avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",   name: "Alice", avatar_url: null, is_private: false },
+        { id: N_MUT, handle: "nmut2", name: "Nora",  avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-recent-label", owner_id: ME, end_date: "2099-12-31", created_at: recentDate },
+      ],
+      trip_members: [
+        { trip_id: "trip-recent-label", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-recent-label", user_id: N_MUT, role: "member" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const aUser = body.users.find((u: any) => u.id === A);
+    assert.ok(aUser, "A should appear in suggestions");
+    assert.equal(
+      aUser.reason,
+      "1 mutual connection · Traveled together recently",
+      `Expected recency label in reason; got: ${aUser.reason}`,
+    );
+  });
+
+  it("reason: candidate with only an old mutual trip gets plain mutual count (no recency label)", async () => {
+    // ME follows P_MUT (the mutual); P_MUT follows B (the candidate).
+    // B does NOT follow ME → fallback pool → reason comes from mc path.
+    // P_MUT shared a trip with ME 730 days ago → weight == DECAY_BASE floor → no label.
+    const P_MUT = "user-p-label";
+    const oldDate = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: ME,    following_id: P_MUT },  // ME follows the mutual
+        { follower_id: P_MUT, following_id: B },       // mutual follows candidate B
+      ],
+      profiles: [
+        { id: ME,    handle: "me",    name: "Me",   avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",   name: "Bob",  avatar_url: null, is_private: false },
+        { id: P_MUT, handle: "pmut2", name: "Paul", avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-old-label", owner_id: ME, end_date: "2024-01-01", created_at: oldDate },
+      ],
+      trip_members: [
+        { trip_id: "trip-old-label", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-old-label", user_id: P_MUT, role: "member" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const bUser = body.users.find((u: any) => u.id === B);
+    assert.ok(bUser, "B should appear in suggestions");
+    assert.equal(
+      bUser.reason,
+      "1 mutual connection",
+      `Expected plain mutual count (no recency label) for old trip; got: ${bUser.reason}`,
+    );
+  });
+
   // ── new profile fields: travel_group_style / looking_for / comfort_level / planning_style ──
 
   it("ranking: overlapping travel_group_style ranks a candidate above one without", async () => {
