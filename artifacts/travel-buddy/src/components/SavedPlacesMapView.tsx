@@ -18,6 +18,14 @@ import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 import { color, space, radius, type as t } from '../theme/tokens';
+import {
+  UNCATEGORIZED,
+  filterMappable,
+  uniqueCategories,
+  filterVisible,
+  shouldShowNoPinsOverlay,
+  computeBounds,
+} from './savedPlacesMapHelpers';
 
 // ── Map style ─────────────────────────────────────────────────────────────────
 
@@ -30,54 +38,6 @@ const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
 export interface SavedPlacesMapViewProps {
   places: BookmarkedPlace[];
   onPlanRoute: (place: BookmarkedPlace) => void;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function computeBounds(places: BookmarkedPlace[]): LngLatBounds | null {
-  const withCoords = places.filter((p) => p.lat != null && p.lng != null);
-  if (withCoords.length === 0) return null;
-  const lngs = withCoords.map((p) => p.lng!);
-  const lats = withCoords.map((p) => p.lat!);
-  const west  = Math.min(...lngs);
-  const east  = Math.max(...lngs);
-  const south = Math.min(...lats);
-  const north = Math.max(...lats);
-  // Add a small margin so pins aren't clipped at the viewport edge
-  const dLng = Math.max(east - west, 0.01) * 0.3;
-  const dLat = Math.max(north - south, 0.01) * 0.3;
-  return [west - dLng, south - dLat, east + dLng, north + dLat];
-}
-
-/**
- * Sentinel value used as the activeCategory key for uncategorized places.
- * Never shown directly as a label — CategoryChips displays it as "Uncategorized".
- */
-const UNCATEGORIZED = '__uncategorized__';
-
-/**
- * Derive unique category labels from an already-coordinate-filtered list of
- * places.  Named categories are sorted alphabetically; if any place has a
- * null/empty category the UNCATEGORIZED sentinel is appended at the end.
- *
- * The result drives CategoryChips: chips are only rendered when there are 2+
- * distinct entries, so switching between them always produces a visibly
- * different set of pins.
- */
-function uniqueCategories(places: BookmarkedPlace[]): string[] {
-  const seen = new Set<string>();
-  let hasUncategorized = false;
-  for (const p of places) {
-    const cat = (p.category ?? '').trim();
-    if (cat) {
-      seen.add(cat);
-    } else {
-      hasUncategorized = true;
-    }
-  }
-  const sorted = [...seen].sort();
-  if (hasUncategorized) sorted.push(UNCATEGORIZED);
-  return sorted;
 }
 
 // ── Pin component ─────────────────────────────────────────────────────────────
@@ -303,20 +263,14 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  const mappable = useMemo(
-    () => places.filter((p) => p.lat != null && p.lng != null),
-    [places],
-  );
+  const mappable = useMemo(() => filterMappable(places), [places]);
 
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
 
-  const visible = useMemo(() => {
-    if (!activeCategory) return mappable;
-    if (activeCategory === UNCATEGORIZED) {
-      return mappable.filter((p) => !(p.category ?? '').trim());
-    }
-    return mappable.filter((p) => p.category === activeCategory);
-  }, [mappable, activeCategory]);
+  const visible = useMemo(
+    () => filterVisible(mappable, activeCategory),
+    [mappable, activeCategory],
+  );
 
   const selected = useMemo(
     () => visible.find((p) => p.id === selectedId) ?? null,
@@ -384,7 +338,7 @@ export function SavedPlacesMapView({ places, onPlanRoute }: SavedPlacesMapViewPr
       )}
 
       {/* "No pins in this category" overlay — shown when the active filter yields zero pins */}
-      {activeCategory !== null && visible.length === 0 && (
+      {shouldShowNoPinsOverlay(activeCategory, visible.length) && (
         <View style={s.noPinsOverlay}>
           <View style={s.noPinsIcon}>
             <MapPin size={22} color={color.faint} />
