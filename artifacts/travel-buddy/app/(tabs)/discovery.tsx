@@ -107,12 +107,12 @@ export default function DiscoveryHub() {
   );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
-  const [customMinAge, setCustomMinAge] = useState<number | null>(null);
-  const [customMaxAge, setCustomMaxAge] = useState<number | null>(null);
-  // Debounced copies — used only for the count-badge effect so that typing in
+  // Single object so any preset updating both min and max is one setState call →
+  // one render → one debounce cycle (avoids the double-fetch when both change together).
+  const [customAgeRange, setCustomAgeRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
+  // Debounced copy — used only for the count-badge effect so that typing in
   // the custom age TextInputs does not fire 7 parallel API requests per keystroke.
-  const [debouncedMinAge, setDebouncedMinAge] = useState<number | null>(null);
-  const [debouncedMaxAge, setDebouncedMaxAge] = useState<number | null>(null);
+  const [debouncedAgeRange, setDebouncedAgeRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
   const [showCustomInputs, setShowCustomInputs] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -155,13 +155,12 @@ export default function DiscoveryHub() {
     setCountsLoading(true);
     if (ageDebounceRef.current) clearTimeout(ageDebounceRef.current);
     ageDebounceRef.current = setTimeout(() => {
-      setDebouncedMinAge(customMinAge);
-      setDebouncedMaxAge(customMaxAge);
+      setDebouncedAgeRange(customAgeRange);
     }, 500);
     return () => {
       if (ageDebounceRef.current) clearTimeout(ageDebounceRef.current);
     };
-  }, [customMinAge, customMaxAge]);
+  }, [customAgeRange]);
 
   // Fetch per-category result counts whenever the destination, filters, context
   // mode, or age filter changes. Custom age inputs use debounced values to avoid
@@ -173,13 +172,13 @@ export default function DiscoveryHub() {
     setCategoryCounts({});
     setCountsLoading(true);
     let cancelled = false;
-    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedMinAge, debouncedMaxAge).then((counts) => {
+    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max).then((counts) => {
       if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
     }).catch(() => {
       if (!cancelled) setCountsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [destination, activeFilters, contextMode, ageFilter, debouncedMinAge, debouncedMaxAge]);
+  }, [destination, activeFilters, contextMode, ageFilter, debouncedAgeRange]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
@@ -353,8 +352,8 @@ export default function DiscoveryHub() {
           <Text style={styles.customRangeLabel}>Min age</Text>
           <TextInput
             style={styles.customRangeInput}
-            value={customMinAge != null ? String(customMinAge) : ''}
-            onChangeText={(v) => setCustomMinAge(v ? parseInt(v, 10) || null : null)}
+            value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
+            onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
             keyboardType="number-pad"
             placeholder="e.g. 18"
             placeholderTextColor={color.mute}
@@ -363,8 +362,8 @@ export default function DiscoveryHub() {
           <Text style={styles.customRangeLabel}>Max age</Text>
           <TextInput
             style={styles.customRangeInput}
-            value={customMaxAge != null ? String(customMaxAge) : ''}
-            onChangeText={(v) => setCustomMaxAge(v ? parseInt(v, 10) || null : null)}
+            value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
+            onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
             keyboardType="number-pad"
             placeholder="e.g. 35"
             placeholderTextColor={color.mute}
@@ -487,8 +486,8 @@ export default function DiscoveryHub() {
             contextMode={contextMode}
             viewMode={viewMode}
             ageFilter={ageFilter}
-            customMinAge={debouncedMinAge}
-            customMaxAge={debouncedMaxAge}
+            customMinAge={debouncedAgeRange.min}
+            customMaxAge={debouncedAgeRange.max}
             lat={destinationLat}
             lng={destinationLng}
             onFiltersChange={handleFiltersChange}
