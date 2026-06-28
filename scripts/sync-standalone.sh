@@ -129,30 +129,79 @@ for f in "${CONFIG_FILES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 3. Reminders
+# 3. Dependency diff — compare package.json dep sections between source and target
 # ---------------------------------------------------------------------------
+diff_package_json_deps() {
+  node - "$SRC/package.json" "$DST/package.json" <<'EOF'
+const fs = require('fs');
+
+const [,, srcPath, dstPath] = process.argv;
+
+let srcPkg, dstPkg;
+try { srcPkg = JSON.parse(fs.readFileSync(srcPath, 'utf8')); }
+catch (e) { console.error('Cannot read source package.json:', e.message); process.exit(1); }
+try { dstPkg = JSON.parse(fs.readFileSync(dstPath, 'utf8')); }
+catch (e) { console.error('Cannot read standalone package.json:', e.message); process.exit(1); }
+
+const sections = ['dependencies', 'devDependencies'];
+let totalDiffs = 0;
+
+for (const section of sections) {
+  const src = srcPkg[section] || {};
+  const dst = dstPkg[section] || {};
+  const allKeys = new Set([...Object.keys(src), ...Object.keys(dst)]);
+
+  const added   = [];   // in monorepo, missing from standalone
+  const removed = [];   // in standalone, missing from monorepo
+  const changed = [];   // version differs
+
+  for (const pkg of [...allKeys].sort()) {
+    if (src[pkg] !== undefined && dst[pkg] === undefined) {
+      added.push(`  + ${pkg}: ${src[pkg]}`);
+    } else if (src[pkg] === undefined && dst[pkg] !== undefined) {
+      removed.push(`  - ${pkg}: ${dst[pkg]}`);
+    } else if (src[pkg] !== dst[pkg]) {
+      changed.push(`  ~ ${pkg}: ${dst[pkg]} → ${src[pkg]}`);
+    }
+  }
+
+  const sectionDiffs = added.length + removed.length + changed.length;
+  totalDiffs += sectionDiffs;
+
+  if (sectionDiffs > 0) {
+    console.log(`\n[${section}]`);
+    if (added.length)   { console.log(' MISSING from standalone (add these):');   added.forEach(l => console.log(l)); }
+    if (removed.length) { console.log(' EXTRA in standalone (not in monorepo):'); removed.forEach(l => console.log(l)); }
+    if (changed.length) { console.log(' VERSION MISMATCH:');                       changed.forEach(l => console.log(l)); }
+  }
+}
+
+if (totalDiffs === 0) {
+  console.log('  (no dependency differences — standalone is in sync)');
+} else {
+  console.log(`\n  ACTION REQUIRED: mirror the changes above into travel-buddy-standalone/package.json`);
+  console.log(`  then run: cd travel-buddy-standalone && pnpm install`);
+  process.exitCode = 1;
+}
+EOF
+}
+
+echo ""
+echo "=== Dependency diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
+DIFF_EXIT=0
+diff_package_json_deps || DIFF_EXIT=$?
 echo ""
 echo "=== Sync complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Review any new dependencies added to artifacts/travel-buddy/package.json"
-echo "     and mirror them into travel-buddy-standalone/package.json by hand."
-echo "     Then run:  cd travel-buddy-standalone && pnpm install"
+echo "  1. If there are dependency differences above, mirror them into"
+echo "     travel-buddy-standalone/package.json, then run:"
+echo "     cd travel-buddy-standalone && pnpm install"
 echo "  2. If tsconfig.json changed in the monorepo app, apply the same change to"
 echo "     travel-buddy-standalone/tsconfig.json (keep the 'references' array removed)."
 echo "  3. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
 echo ""
-echo "CI (GitHub Actions) — wire up the typecheck gate by adding a job:"
-echo ""
-echo "  jobs:"
-echo "    typecheck-standalone:"
-echo "      runs-on: ubuntu-latest"
-echo "      steps:"
-echo "        - uses: actions/checkout@v4"
-echo "        - uses: pnpm/action-setup@v4"
-echo "          with: { version: '10' }"
-echo "        - uses: actions/setup-node@v4"
-echo "          with: { node-version: '24', cache: 'pnpm', cache-dependency-path: 'travel-buddy-standalone/pnpm-lock.yaml' }"
-echo "        - run: cd travel-buddy-standalone && pnpm install --frozen-lockfile"
-echo "        - run: cd travel-buddy-standalone && pnpm typecheck"
-echo ""
+
+# Exit with the dependency diff code so CI can detect drift without
+# aborting the rest of this script prematurely (the || above captures it).
+exit $DIFF_EXIT
