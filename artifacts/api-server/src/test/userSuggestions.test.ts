@@ -1206,6 +1206,76 @@ describe("GET /api/users/suggestions", () => {
     );
   });
 
+  it("reason: 89-day-old mutual trip is still within 90-day window and gets the recency label", async () => {
+    // Boundary: 89 days < 90 → should show recency label.
+    const Q_MUT = "user-q-label";
+    const date89 = new Date(Date.now() - 89 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: ME,    following_id: Q_MUT },
+        { follower_id: Q_MUT, following_id: A },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",    name: "Me",    avatar_url: null, is_private: false },
+        { id: A,     handle: "aaa",   name: "Alice", avatar_url: null, is_private: false },
+        { id: Q_MUT, handle: "qmut",  name: "Quinn", avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-89d", owner_id: ME, end_date: "2099-12-31", created_at: date89 },
+      ],
+      trip_members: [
+        { trip_id: "trip-89d", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-89d", user_id: Q_MUT, role: "member" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const aUser = body.users.find((u: any) => u.id === A);
+    assert.ok(aUser, "A should appear");
+    assert.equal(
+      aUser.reason,
+      "1 mutual connection · Traveled together recently",
+      `Expected recency label for 89-day trip; got: ${aUser.reason}`,
+    );
+  });
+
+  it("reason: 91-day-old mutual trip is outside the 90-day window and gets no recency label", async () => {
+    // Boundary: 91 days > 90 → no recency label.
+    const R_MUT = "user-r-label";
+    const date91 = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
+    setup({
+      follows: [
+        { follower_id: ME,    following_id: R_MUT },
+        { follower_id: R_MUT, following_id: B },
+      ],
+      profiles: [
+        { id: ME,    handle: "me",    name: "Me",   avatar_url: null, is_private: false },
+        { id: B,     handle: "bbb",   name: "Bob",  avatar_url: null, is_private: false },
+        { id: R_MUT, handle: "rmut",  name: "Rita", avatar_url: null, is_private: false },
+      ],
+      blocks: [],
+      trips: [
+        { id: "trip-91d", owner_id: ME, end_date: "2024-01-01", created_at: date91 },
+      ],
+      trip_members: [
+        { trip_id: "trip-91d", user_id: ME,    role: "owner"  },
+        { trip_id: "trip-91d", user_id: R_MUT, role: "member" },
+      ],
+    });
+    const r = await req("/users/suggestions");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const bUser = body.users.find((u: any) => u.id === B);
+    assert.ok(bUser, "B should appear");
+    assert.equal(
+      bUser.reason,
+      "1 mutual connection",
+      `Expected plain mutual count for 91-day trip; got: ${bUser.reason}`,
+    );
+  });
+
   // ── new profile fields: travel_group_style / looking_for / comfort_level / planning_style ──
 
   it("ranking: overlapping travel_group_style ranks a candidate above one without", async () => {

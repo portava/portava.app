@@ -702,7 +702,12 @@ router.get("/users/suggestions", async (req, res) => {
             : DECAY_BASE; // no date available → treat same as non-interacted
           const prev = mutualInteractionWeights.get(mid) ?? 0;
           if (weight > prev) mutualInteractionWeights.set(mid, weight);
-          if (weight > DECAY_BASE) recentlyTraveledMutuals.add(mid);
+          // Recency label threshold: any trip within HALF_LIFE_DAYS (90 days) is
+          // considered "recent" regardless of the decay weight at that point.
+          // (weight > DECAY_BASE would only fire at ~62 days, not 90.)
+          if (daysSince !== null && daysSince <= HALF_LIFE_DAYS) {
+            recentlyTraveledMutuals.add(mid);
+          }
         }
       }
     } catch { /* fail-safe: all mutuals get base decay weight */ }
