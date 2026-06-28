@@ -870,6 +870,8 @@ router.post("/discovery/community", async (req, res) => {
     tag,
     note,
     rating,
+    lat,
+    lng,
   } = req.body as Record<string, unknown>;
 
   if (!city || typeof city !== "string" || city.trim().length === 0) {
@@ -892,6 +894,17 @@ router.post("/discovery/community", async (req, res) => {
     return;
   }
 
+  const latNum = lat != null ? parseFloat(String(lat)) : null;
+  const lngNum = lng != null ? parseFloat(String(lng)) : null;
+  if (latNum !== null && (isNaN(latNum) || latNum < -90 || latNum > 90)) {
+    sendError(res, "invalid_payload", "lat must be between -90 and 90");
+    return;
+  }
+  if (lngNum !== null && (isNaN(lngNum) || lngNum < -180 || lngNum > 180)) {
+    sendError(res, "invalid_payload", "lng must be between -180 and 180");
+    return;
+  }
+
   try {
     const { data, error } = await sc
       .from("discovery_places")
@@ -905,6 +918,8 @@ router.post("/discovery/community", async (req, res) => {
         tag:          typeof tag === "string" ? tag.trim() || null : null,
         note:         typeof note === "string" ? note.trim() || null : null,
         rating:       ratingNum,
+        lat:          latNum,
+        lng:          lngNum,
         submitted_by: auth.user.id,
         source:       "traveler",
         status:       "active",

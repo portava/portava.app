@@ -117,6 +117,9 @@ export interface SubmitPlacePayload {
   tag?: string;
   note?: string;
   rating?: number | null;
+  /** Optional coordinates — when present, the place appears as a pin on the For You map. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface SubmitPlaceResult {
