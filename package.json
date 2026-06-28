@@ -2,6 +2,7 @@
   "name": "travel-buddy-workspace",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@10.26.1",
   "scripts": {
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter !@workspace/travel-buddy run typecheck"
