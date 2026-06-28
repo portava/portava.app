@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
-  Gem, Star, Share2, Route,
+  Gem, Star, Share2, Route, Flag,
 } from 'lucide-react-native';
 import type { RouteStopDraft } from './RouteBuilderSheet';
 import type { DiscoveryItem } from '../data/discovery';
@@ -17,7 +17,40 @@ import type { DiscoverySharePayload } from './DiscoveryShareSheet';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
-import { saveCommunityPlace } from '../services/discovery';
+import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery';
+import type { PlaceReportReason } from '../services/discovery';
+
+const REPORT_REASONS: { label: string; value: PlaceReportReason }[] = [
+  { label: 'Spam',        value: 'spam' },
+  { label: 'Offensive',   value: 'offensive' },
+  { label: 'Inaccurate',  value: 'inaccurate' },
+  { label: 'Unsafe',      value: 'unsafe' },
+  { label: 'Duplicate',   value: 'duplicate' },
+  { label: 'Other',       value: 'other' },
+];
+
+function showReportSheet(placeId: string, onDone?: () => void) {
+  Alert.alert(
+    'Report this place',
+    'Why are you reporting this place?',
+    [
+      ...REPORT_REASONS.map(({ label, value }) => ({
+        text: label,
+        onPress: async () => {
+          const result = await reportCommunityPlace(placeId, value);
+          Alert.alert(
+            result.ok ? 'Reported' : 'Could not report',
+            result.ok
+              ? 'Thanks for helping keep Discovery accurate.'
+              : 'Please try again later.',
+          );
+          if (result.ok) onDone?.();
+        },
+      })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ],
+  );
+}
 
 /* ── Header ── */
 export function DiscoveryHeader({
@@ -208,6 +241,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [shareVisible, setShareVisible] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reported, setReported] = useState(false);
   const sharePayload: DiscoverySharePayload = {
     sourceId: gem.id,
     sourceType: 'hidden_gem',
@@ -273,6 +307,14 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
             >
               <Share2 size={13} color={color.mute} />
             </Pressable>
+            <Pressable
+              style={({ pressed }) => [g.reportBtn, pressed && { opacity: layout.pressedOpacity }]}
+              hitSlop={layout.hitSlop}
+              disabled={reported}
+              onPress={() => showReportSheet(gem.id, () => setReported(true))}
+            >
+              <Flag size={13} color={reported ? color.mute : color.mute} />
+            </Pressable>
           </View>
         </View>
       </View>
@@ -330,6 +372,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   const planPicker = usePlanPicker();
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reported, setReported] = useState(false);
   return (
     <View style={tpk.card}>
       <View style={tpk.head}>
@@ -380,6 +423,14 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
         <Pressable style={({ pressed }) => [tpk.addBtn, pressed && { opacity: layout.pressedOpacity }]}
           onPress={() => planPicker.open({ id: pick.id, type: 'place', title: pick.place, city: pick.city, category: pick.tag })}>
           <Text style={tpk.addText}>Add to Plan</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [tpk.reportBtn, pressed && { opacity: layout.pressedOpacity }]}
+          hitSlop={layout.hitSlop}
+          disabled={reported}
+          onPress={() => showReportSheet(pick.id, () => setReported(true))}
+        >
+          <Flag size={13} color={color.mute} />
         </Pressable>
       </View>
     </View>
@@ -561,6 +612,7 @@ const g = StyleSheet.create({
   routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
   routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
   shareBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
+  reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
 });
 
 const nb = StyleSheet.create({
@@ -592,6 +644,7 @@ const tpk = StyleSheet.create({
   addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
   routeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: space.sm, paddingVertical: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: color.deep },
   routeText: { ...t.small, fontWeight: '700', color: color.deep, fontSize: 11 },
+  reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
 });
 
 const sv = StyleSheet.create({

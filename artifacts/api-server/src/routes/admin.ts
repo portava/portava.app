@@ -336,6 +336,87 @@ router.post("/admin/venues/:id/moderate", async (req, res) => {
   res.json({ venue: data });
 });
 
+/**
+ * GET /admin/venues/reported
+ * Lists community discovery places that have received user reports,
+ * ordered by report count descending. Includes report count and most
+ * recent report reason so admins can prioritise review.
+ */
+router.get("/admin/venues/reported", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(100, Number(req.query.limit) || 50);
+
+  const { data, error } = await sc
+    .from("discovery_places")
+    .select(
+      "id, name, place_type, category, city, neighborhood, blurb, status, submitted_by, created_at, " +
+      "discovery_place_reports(count)",
+    )
+    .gt("discovery_place_reports.count" as any, 0)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Sort by report count descending after fetch (Supabase doesn't support ordering by embedded count)
+  const venues = (data ?? [])
+    .map((row: any) => ({
+      id:           row.id,
+      name:         row.name,
+      placeType:    row.place_type,
+      category:     row.category,
+      city:         row.city,
+      neighborhood: row.neighborhood,
+      blurb:        row.blurb,
+      status:       row.status,
+      submittedBy:  row.submitted_by,
+      createdAt:    row.created_at,
+      reportCount:  Array.isArray(row.discovery_place_reports)
+        ? (row.discovery_place_reports[0]?.count ?? 0)
+        : 0,
+    }))
+    .filter((v: any) => v.reportCount > 0)
+    .sort((a: any, b: any) => b.reportCount - a.reportCount);
+
+  res.json({ venues, total: venues.length });
+});
+
+/**
+ * PATCH /admin/venues/:id/status
+ * Flip the status of any discovery place (active, removed, verified, blocked, provisional).
+ * 'removed' is the primary action to hide an inappropriate place from all Discovery feeds.
+ * Removed places are automatically excluded from GET /api/discovery/community
+ * which filters `.eq('status', 'active')`.
+ */
+router.patch("/admin/venues/:id/status", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const schema = z.object({
+    status: z.enum(["active", "removed", "verified", "blocked", "provisional"]),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("discovery_places")
+    .update({ status: parsed.data.status })
+    .eq("id", req.params.id)
+    .select("id, name, status")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Venue not found"); return; }
+  res.json({ venue: data });
+});
+
 // ── Geofence admin controls ───────────────────────────────────────────────────
 // Table: geofence_admin_settings (migration 0039)
 // Single-row config for default/min/max check-in radius and global no-show flag.

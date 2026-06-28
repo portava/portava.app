@@ -177,6 +177,32 @@ export async function saveCommunityPlace(
   }
 }
 
+export type PlaceReportReason = 'spam' | 'offensive' | 'inaccurate' | 'unsafe' | 'duplicate' | 'other';
+
+export async function reportCommunityPlace(
+  placeId: string,
+  reason: PlaceReportReason,
+  notes?: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  try {
+    const res = await fetch(`${base}/api/discovery/community/${placeId}/report`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, notes }),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
 // ── OSM places (existing) ─────────────────────────────────────────────────────
 
 export type DiscoveryContextMode =

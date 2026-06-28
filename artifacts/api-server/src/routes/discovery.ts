@@ -18,6 +18,7 @@
  */
 
 import { Router } from "express";
+import { z } from "zod";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { sendError, requireUser } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
@@ -972,6 +973,76 @@ router.post("/discovery/community/:placeId/save", async (req, res) => {
   } catch {
     res.json({ ok: false, reason: "unavailable" });
   }
+});
+
+// ── Place reports ──────────────────────────────────────────────────────────────
+
+const PLACE_REPORT_REASONS = [
+  "spam", "offensive", "inaccurate", "unsafe", "duplicate", "other",
+] as const;
+
+const placeReportSchema = z.object({
+  reason: z.enum(PLACE_REPORT_REASONS),
+  notes:  z.string().max(500).optional(),
+});
+
+/**
+ * POST /api/discovery/community/:placeId/report
+ * Submit a moderation report for a community discovery place.
+ * One report per (place, reporter) pair — subsequent calls from the same user
+ * update the existing row (upsert).
+ */
+router.post("/discovery/community/:placeId/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { placeId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(placeId)) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+
+  const parsed = placeReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ ok: false, reason: "server_not_configured" }); return; }
+
+  // Verify the place exists and is active
+  const { data: place, error: placeErr } = await sc
+    .from("discovery_places")
+    .select("id")
+    .eq("id", placeId)
+    .maybeSingle();
+
+  if (placeErr || !place) {
+    sendError(res, "not_found", "Place not found");
+    return;
+  }
+
+  const { error } = await sc
+    .from("discovery_place_reports")
+    .upsert(
+      {
+        place_id:    placeId,
+        reporter_id: user.id,
+        reason:      parsed.data.reason,
+        notes:       parsed.data.notes ?? null,
+        created_at:  new Date().toISOString(),
+      },
+      { onConflict: "place_id,reporter_id" },
+    );
+
+  if (error) {
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true });
 });
 
 export default router;
