@@ -76,12 +76,24 @@ production release. Mark the platform column when verified.
 
 ### Passport card share / view-shot (`react-native-view-shot 4.0.3`)
 
+Automated coverage added in `src/services/passportShare.test.ts` (19 tests).
+The items marked **[auto]** are verified in CI; the remainder require a device.
+
 | Step | iOS | Android |
 |---|---|---|
-| Tapping Share on the Passport card captures a JPEG | | |
-| Share sheet shows the image preview (not text-only) | | |
-| Cancelled share does not crash or show an error | | |
-| On web: text-only fallback share opens correctly | | |
+| **[auto]** captureRef bare `/tmp/...` path → `file://` URI sent to NativeShare | ✓ | ✓ |
+| **[auto]** captureRef `file:///tmp/...` path → no double `file://` prefix | ✓ | ✓ |
+| **[auto]** captureRef `/data/...` bare path → `file://` URI sent to NativeShare | n/a | ✓ |
+| **[auto]** captureRef throws → text-only fallback, no error shown | ✓ | ✓ |
+| **[auto]** cardRef not yet attached → text-only fallback | ✓ | ✓ |
+| **[auto]** NativeShare image-open throws → text-only fallback | ✓ | ✓ |
+| **[auto]** "User did not share" cancel → no error, no fallback | ✓ | ✓ |
+| **[auto]** "cancelled" cancel → no error, no fallback | ✓ | ✓ |
+| **[auto]** Text-only NativeShare throws → error state set | ✓ | ✓ |
+| **[device]** Tapping Share on the Passport card captures a JPEG | | |
+| **[device]** Share sheet shows the image preview (not text-only) | | |
+| **[device]** Cancelled share does not crash or show an error | | |
+| **[device]** On web: text-only fallback share opens correctly | | |
 
 **Call sites:** `src/hooks/usePassportShare.ts`
 
