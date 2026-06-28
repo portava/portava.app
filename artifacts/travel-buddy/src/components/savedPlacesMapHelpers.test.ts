@@ -20,6 +20,7 @@ import {
   filterMappable,
   uniqueCategories,
   resolveStoredCategory,
+  resolveSelectedId,
   categoryCounts,
   shouldShowChips,
   filterVisible,
@@ -499,5 +500,44 @@ describe('computeBounds', () => {
     ];
     const result = computeBounds(places);
     assert.ok(result !== null);
+  });
+});
+
+// ── resolveSelectedId ──────────────────────────────────────────────────────────
+
+describe('resolveSelectedId', () => {
+  it('returns null when selectedId is null', () => {
+    const visible = [place({ id: 'a' })];
+    assert.equal(resolveSelectedId(null, visible), null);
+  });
+
+  it('returns selectedId when the place is still in visible', () => {
+    const visible = [place({ id: 'a' }), place({ id: 'b' })];
+    assert.equal(resolveSelectedId('a', visible), 'a');
+  });
+
+  it('returns null when the selected place is removed from visible', () => {
+    const visible = [place({ id: 'b' })];
+    assert.equal(resolveSelectedId('a', visible), null);
+  });
+
+  it('returns null when visible is empty (all places removed)', () => {
+    assert.equal(resolveSelectedId('a', []), null);
+  });
+
+  it('returns null when the selected place is filtered out by category change', () => {
+    const cafe  = place({ id: 'c1', category: 'cafe' });
+    const hotel = place({ id: 'h1', category: 'hotel' });
+    const visible = filterVisible([cafe, hotel], 'hotel');
+    assert.equal(resolveSelectedId('c1', visible), null);
+  });
+
+  it('pipeline: filterMappable → filterVisible → resolveSelectedId clears after removal', () => {
+    const kept    = place({ id: 'k1', lat: 48.0, lng: 2.0 });
+    const removed = place({ id: 'r1', lat: 48.1, lng: 2.1 });
+    const afterRemoval = filterMappable([kept]);
+    const visible = filterVisible(afterRemoval, null);
+    assert.equal(resolveSelectedId('r1', visible), null);
+    assert.equal(resolveSelectedId('k1', visible), 'k1');
   });
 });

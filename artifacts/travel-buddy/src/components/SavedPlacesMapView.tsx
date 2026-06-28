@@ -25,6 +25,7 @@ import {
   uniqueCategories,
   categoryCounts,
   resolveStoredCategory,
+  resolveSelectedId,
   filterVisible,
   shouldShowNoPinsOverlay,
   computeBounds,
@@ -321,6 +322,13 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
     () => visible.find((p) => p.id === selectedId) ?? null,
     [visible, selectedId],
   );
+
+  // If the selected place disappears from the visible list (removed or filtered
+  // out), clear selectedId so the callout card is dismissed immediately.
+  useEffect(() => {
+    const resolved = resolveSelectedId(selectedId, visible);
+    if (resolved !== selectedId) setSelectedId(resolved);
+  }, [visible, selectedId]);
 
   // Fit camera to the visible places whenever the list changes
   useEffect(() => {

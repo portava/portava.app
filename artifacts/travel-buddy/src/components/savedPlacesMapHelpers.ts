@@ -115,6 +115,24 @@ export function categoryCounts(
 }
 
 /**
+ * Determine the effective selectedId after the visible list changes.
+ *
+ * Returns `selectedId` when it still refers to a place that exists in
+ * `visible`; returns `null` in every other case (null input, or the place
+ * was removed / filtered out).
+ *
+ * This is the single pure decision used by the selection-sync effect so
+ * `selectedId` is always cleared in the same render cycle that drops the pin.
+ */
+export function resolveSelectedId(
+  selectedId: string | null,
+  visible: BookmarkedPlace[],
+): string | null {
+  if (selectedId === null) return null;
+  return visible.some((p) => p.id === selectedId) ? selectedId : null;
+}
+
+/**
  * Should the "No pins in this category" overlay be shown?
  */
 export function shouldShowNoPinsOverlay(
