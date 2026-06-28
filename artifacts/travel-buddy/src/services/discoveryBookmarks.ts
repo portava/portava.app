@@ -61,6 +61,11 @@ export async function listSaved(): Promise<BookmarkedPlace[]> {
 }
 
 export async function removeSaved(id: string): Promise<void> {
-  const all = await readAll();
-  await writeAll(all.filter((b) => b.id !== id));
+  // Read and write directly — bypassing the silent-catch helpers — so that
+  // any AsyncStorage failure propagates to the caller. The saved.tsx
+  // handleRemove relies on a rejected promise to trigger its optimistic
+  // rollback and error toast.
+  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(all.filter((b) => b.id !== id)));
 }

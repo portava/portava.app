@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, FlatList, StyleSheet,
-  ActivityIndicator, Pressable,
+  ActivityIndicator, Pressable, Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
@@ -89,6 +89,18 @@ export default function Saved() {
   const [loading, setLoading]   = useState(true);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const errorToastY = useRef(new Animated.Value(80)).current;
+
+  const showRemoveError = useCallback((msg: string) => {
+    setRemoveError(msg);
+    Animated.spring(errorToastY, { toValue: 0, useNativeDriver: true }).start();
+    setTimeout(() => {
+      Animated.timing(errorToastY, { toValue: 80, duration: 220, useNativeDriver: true }).start(
+        () => setRemoveError(null),
+      );
+    }, 3000);
+  }, [errorToastY]);
 
   // Restore persisted tab and viewMode on mount
   useEffect(() => {
@@ -162,14 +174,31 @@ export default function Saved() {
   //
   // If the active non-Places tab becomes empty after this removal, snap back
   // to 'Places' so the user isn't left on a highlighted but empty chip.
-  const handleRemove = useCallback((id: string) => {
+  //
+  // If removeSaved rejects (e.g. AsyncStorage failure), the optimistic removal
+  // is rolled back so the count badge stays accurate, and a brief error toast
+  // cues the user that removal did not succeed.
+  const handleRemove = useCallback(async (id: string) => {
+    const removed = places.find((p) => p.id === id);
     const next = places.filter((p) => p.id !== id);
     setPlaces(next);
-    removeSaved(id).catch(() => {});
     if (tab !== 'Places' && placesForTab(tab, next).length === 0) {
       handleTabChange('Places');
     }
-  }, [places, tab, handleTabChange]);
+    try {
+      await removeSaved(id);
+    } catch {
+      if (removed) {
+        setPlaces((prev) => {
+          if (prev.some((p) => p.id === id)) return prev;
+          const restored = [...prev, removed];
+          restored.sort((a, b) => b.savedAt - a.savedAt);
+          return restored;
+        });
+      }
+      showRemoveError('Couldn\'t remove — please try again.');
+    }
+  }, [places, tab, handleTabChange, showRemoveError]);
 
   // Count places that have usable coordinates (for map vs list info)
   const mappableCount = useMemo(
@@ -285,6 +314,15 @@ export default function Saved() {
         onRouteCreated={() => setBuilderPlace(null)}
         initialStops={initialStop}
       />
+
+      {removeError ? (
+        <Animated.View
+          style={[s.errorToast, { transform: [{ translateY: errorToastY }] }]}
+          pointerEvents="none"
+        >
+          <Text style={s.errorToastText}>{removeError}</Text>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -411,5 +449,21 @@ const s = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     textAlign: 'center',
+  },
+  errorToast: {
+    position: 'absolute',
+    bottom: 24,
+    left: space.lg,
+    right: space.lg,
+    backgroundColor: '#DC2626',
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  errorToastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
