@@ -136,20 +136,20 @@ export default function DiscoveryHub() {
     }
   }, [locationState.place.city]);
 
-  // Fetch per-category result counts whenever the destination or active filters change.
-  // countsLoading gates tab dimming so no tab flickers to "dimmed" before the
-  // full batch resolves.
+  // Fetch per-category result counts whenever the destination, filters, context
+  // mode, or age filter changes. countsLoading gates tab dimming so no tab
+  // flickers to "dimmed" before the full batch resolves.
   useEffect(() => {
     setCategoryCounts({});
     setCountsLoading(true);
     let cancelled = false;
-    getDiscoveryCategoryCounts(destination, activeFilters).then((counts) => {
+    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, customMinAge, customMaxAge).then((counts) => {
       if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
     }).catch(() => {
       if (!cancelled) setCountsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [destination, activeFilters]);
+  }, [destination, activeFilters, contextMode, ageFilter, customMinAge, customMaxAge]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.

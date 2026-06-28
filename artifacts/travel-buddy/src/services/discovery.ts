@@ -303,9 +303,15 @@ const DEFAULT_COUNT_FILTERS: DiscoveryFilters = { radiusKm: 10, openNow: false, 
 export async function getDiscoveryCategoryCounts(
   destination: string,
   filters: DiscoveryFilters = DEFAULT_COUNT_FILTERS,
+  contextMode?: DiscoveryContextMode | null,
+  ageFilter?: DiscoveryAgeFilter | null,
+  customMinAge?: number | null,
+  customMaxAge?: number | null,
 ): Promise<Partial<Record<DiscoveryCategory, number>>> {
   const results = await Promise.allSettled(
-    COUNTABLE_CATEGORIES.map((cat) => getDiscoveryPlaces(destination, cat, filters, 1)),
+    COUNTABLE_CATEGORIES.map((cat) =>
+      getDiscoveryPlaces(destination, cat, filters, 1, contextMode, ageFilter, customMinAge, customMaxAge),
+    ),
   );
   const counts: Partial<Record<DiscoveryCategory, number>> = {};
   results.forEach((result, i) => {
