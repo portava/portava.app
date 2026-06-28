@@ -45,19 +45,26 @@ export function Stamp({
 export function Chip({
   label,
   active,
+  count,
   onPress,
 }: {
   label: string;
   active?: boolean;
+  /** When provided, appends "· N" after the label. 0 dims the chip. */
+  count?: number;
   onPress?: () => void;
 }) {
+  const isEmpty = count !== undefined && count === 0;
+  const displayLabel = count !== undefined && count > 0 ? `${label} · ${count}` : label;
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
+      style={[styles.chip, active && styles.chipActive, isEmpty && styles.chipEmpty]}
       accessibilityRole="button"
     >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+      <Text style={[styles.chipText, active && styles.chipTextActive, isEmpty && styles.chipTextEmpty]}>
+        {displayLabel}
+      </Text>
     </Pressable>
   );
 }
@@ -107,6 +114,8 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
   },
   chipActive: { backgroundColor: color.ink, borderColor: color.ink },
+  chipEmpty: { opacity: 0.45 },
   chipText: { ...t.small, fontWeight: '600', color: color.ink },
   chipTextActive: { color: color.onInk },
+  chipTextEmpty: { color: color.mute },
 });

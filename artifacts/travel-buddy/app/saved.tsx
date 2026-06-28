@@ -138,6 +138,18 @@ export default function Saved() {
     [tab, places],
   );
 
+  /** Count per tab — computed once whenever `places` changes. */
+  const tabCounts = useMemo<Record<string, number>>(
+    () => {
+      const counts: Record<string, number> = {};
+      for (const tabName of TABS) {
+        counts[tabName] = placesForTab(tabName, places).length;
+      }
+      return counts;
+    },
+    [places],
+  );
+
   const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
     setBuilderPlace(place);
   }, []);
@@ -190,7 +202,12 @@ export default function Saved() {
         style={{ flexGrow: 0 }}
         contentContainerStyle={{ gap: space.sm, padding: space.lg }}
         renderItem={({ item }) => (
-          <Chip label={item} active={item === tab} onPress={() => handleTabChange(item)} />
+          <Chip
+            label={item}
+            active={item === tab}
+            count={loading ? undefined : tabCounts[item]}
+            onPress={() => handleTabChange(item)}
+          />
         )}
       />
 
