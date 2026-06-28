@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, FlatList, StyleSheet,
-  ActivityIndicator, Pressable, Alert,
+  ActivityIndicator, Pressable,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { ScreenHeader } from '../src/components/ScreenHeader';
@@ -10,32 +10,9 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
 import { MapPin, Bookmark, Route, List, Map } from 'lucide-react-native';
 import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
-import { DiscoveryMapView } from '../src/components/discovery/DiscoveryMapView';
-import type { DiscoveryPlace } from '../src/services/discovery';
+import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
-
-// ── Adapter ───────────────────────────────────────────────────────────────────
-
-function toDiscoveryPlace(b: BookmarkedPlace): DiscoveryPlace {
-  return {
-    id:           b.id,
-    name:         b.name,
-    category:     b.category ?? 'places',
-    type:         b.type,
-    description:  null,
-    distanceKm:   null,
-    lat:          b.lat ?? null,
-    lng:          b.lng ?? null,
-    tags:         [],
-    address:      b.address,
-    website:      null,
-    phone:        null,
-    openingHours: null,
-    rating:       null,
-    isOpenNow:    null,
-  };
-}
 
 // ── Place list card ───────────────────────────────────────────────────────────
 
@@ -97,10 +74,10 @@ function ViewToggle({ mode, onChange }: ViewToggleProps) {
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function Saved() {
-  const [tab, setTab]             = useState('Places');
-  const [places, setPlaces]       = useState<BookmarkedPlace[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [viewMode, setViewMode]   = useState<'list' | 'map'>('list');
+  const [tab, setTab]           = useState('Places');
+  const [places, setPlaces]     = useState<BookmarkedPlace[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
 
   const load = useCallback(async () => {
@@ -129,27 +106,11 @@ export default function Saved() {
     setBuilderPlace(place);
   }, []);
 
-  // DiscoveryPlace list derived from bookmarked places (only those with coords)
-  const mappablePlaces = useMemo(
-    () => places.map(toDiscoveryPlace).filter((p) => p.lat != null && p.lng != null),
+  // Count places that have usable coordinates (for map vs list info)
+  const mappableCount = useMemo(
+    () => places.filter((p) => p.lat != null && p.lng != null).length,
     [places],
   );
-
-  const handleSelectOnMap = useCallback((dp: DiscoveryPlace) => {
-    const original = places.find((p) => p.id === dp.id);
-    if (!original) return;
-    Alert.alert(
-      dp.name,
-      [dp.address ?? dp.type ?? '', dp.category].filter(Boolean).join(' · ') || undefined,
-      [
-        {
-          text: 'Plan route',
-          onPress: () => handleAddToRoute(original),
-        },
-        { text: 'Dismiss', style: 'cancel' },
-      ],
-    );
-  }, [places, handleAddToRoute]);
 
   const initialStop = builderPlace
     ? [{
@@ -180,7 +141,7 @@ export default function Saved() {
         )}
       />
 
-      {/* List / Map toggle — only on the Places tab */}
+      {/* List / Map toggle — only on the Places tab, only when there's data */}
       {showPlaces && !loading && places.length > 0 && (
         <ViewToggle mode={viewMode} onChange={setViewMode} />
       )}
@@ -202,17 +163,17 @@ export default function Saved() {
             </View>
           </ScrollView>
         ) : viewMode === 'map' ? (
+          /* Map view — SavedPlacesMapView handles the MapLibre / web split */
           <View style={{ flex: 1 }}>
-            <DiscoveryMapView
-              places={mappablePlaces}
-              onSelectPlace={handleSelectOnMap}
+            <SavedPlacesMapView
+              places={places}
+              onPlanRoute={handleAddToRoute}
             />
-            {mappablePlaces.length < places.length && (
+            {mappableCount === 0 && (
               <View style={s.noCoordsBanner}>
                 <Text style={s.noCoordsTxt}>
-                  {places.length - mappablePlaces.length} saved place
-                  {places.length - mappablePlaces.length === 1 ? '' : 's'} without coordinates
-                  {' '}not shown on map
+                  None of your saved places have coordinates yet.
+                  Save places from the map view in Discovery to see them here.
                 </Text>
               </View>
             )}
@@ -345,17 +306,18 @@ const s = StyleSheet.create({
   },
   noCoordsBanner: {
     position: 'absolute',
-    top: 10,
+    bottom: 24,
     left: 16,
     right: 16,
     backgroundColor: 'rgba(0,0,0,0.60)',
     borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     alignItems: 'center',
   },
   noCoordsTxt: {
     color: '#fff',
     fontSize: 12,
+    textAlign: 'center',
   },
 });
