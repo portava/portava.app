@@ -279,6 +279,22 @@ router.post('/me/devices', async (req, res) => {
 
   if (error) { sendError(res, 'db_error', error.message); return; }
 
+  // Remove stale tokens: delete all OTHER rows for this user+platform.
+  // When the app is re-installed, a new push token is issued while the old
+  // row stays in the table. The old token triggers DeviceNotRegistered on
+  // the next push attempt, but proactively deleting it here keeps the table
+  // bounded without waiting for a failed delivery.
+  const { error: cleanupErr } = await sc
+    .from('notification_devices')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('platform', parsed.data.platform)
+    .neq('push_token', parsed.data.pushToken);
+
+  if (cleanupErr) {
+    (req as any).log?.warn({ err: cleanupErr, userId: user.id }, 'devices: stale-token cleanup failed — old tokens may accumulate');
+  }
+
   // Backfill legacy expo_push_token on profiles (keep for SafeReturn compat)
   if (parsed.data.platform === 'expo') {
     await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);

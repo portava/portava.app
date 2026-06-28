@@ -829,3 +829,136 @@ describe("NotificationRouter — token preserved on MessageRateExceeded", () => 
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 18. POST /api/me/devices — stale token cleanup on re-registration
+//
+//   When a user reinstalls the app a new Expo push token is issued.  The old
+//   token row must be removed immediately at registration time so the table
+//   stays bounded.  Tokens for a different platform must not be affected.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("POST /api/me/devices — stale token cleanup on re-registration", () => {
+  let cleanupSrv: http.Server;
+  let cleanupBase: string;
+  let cleanupClient: ReturnType<typeof makeFakeClient>;
+
+  const OLD_TOKEN_A = "ExponentPushToken[installOne111abc]";
+  const OLD_TOKEN_B = "ExponentPushToken[installTwo222abc]";
+  const NEW_EXPO    = "ExponentPushToken[freshInstall333abc]";
+
+  before(async () => {
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: OLD_TOKEN_A }],
+      notificationDevices: [
+        { id: "stale-a", user_id: USER_ID, push_token: OLD_TOKEN_A, platform: "expo" },
+        { id: "stale-b", user_id: USER_ID, push_token: OLD_TOKEN_B, platform: "expo" },
+      ],
+      notificationPreferences:         [],
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts:    [],
+      locationPreferences:             [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+
+    cleanupClient = makeFakeClient(state);
+    _setTestClient(cleanupClient, true);
+    _setTestServiceClient(cleanupClient);
+
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => {
+      r.log = { error: () => {}, info: () => {}, warn: () => {} };
+      next();
+    });
+    app.use("/api", notificationsRouter);
+
+    cleanupSrv = http.createServer(app);
+    await new Promise<void>((resolve) => cleanupSrv.listen(0, "127.0.0.1", resolve));
+    const addr = cleanupSrv.address() as { port: number };
+    cleanupBase = `http://127.0.0.1:${addr.port}`;
+  });
+
+  after(() => new Promise<void>((r) => cleanupSrv.close(r)));
+
+  function reqTo(
+    method: string,
+    path: string,
+    body?: unknown,
+    token: string = FAKE_TOKEN,
+  ): Promise<{ status: number; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url     = new URL(path, cleanupBase);
+      const payload = body ? JSON.stringify(body) : undefined;
+      const r = http.request(
+        {
+          hostname: url.hostname,
+          port:     Number(url.port),
+          path:     url.pathname + url.search,
+          method,
+          headers: {
+            "content-type":  "application/json",
+            "authorization": `Bearer ${token}`,
+          },
+        },
+        (res) => {
+          let raw = "";
+          res.on("data", (c) => (raw += c));
+          res.on("end", () => {
+            let parsed: any;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: res.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      r.on("error", reject);
+      if (payload) r.write(payload);
+      r.end();
+    });
+  }
+
+  it("deletes all existing expo tokens for the user when a new expo token is registered", async () => {
+    const r = await reqTo("POST", "/api/me/devices", { pushToken: NEW_EXPO, platform: "expo" });
+    assert.equal(r.status, 201, `Expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.deviceId, "should return a deviceId");
+
+    const deleted      = cleanupClient.__deleted["notification_devices"] ?? [];
+    const deletedTokens: string[] = deleted.map((d: any) => d.push_token);
+
+    assert.ok(deletedTokens.includes(OLD_TOKEN_A), "first stale token must be deleted");
+    assert.ok(deletedTokens.includes(OLD_TOKEN_B), "second stale token must be deleted");
+    assert.ok(!deletedTokens.includes(NEW_EXPO),   "the newly registered token must not be deleted");
+  });
+
+  it("does not delete tokens belonging to a different platform", async () => {
+    const EXISTING_FCM  = "ExponentPushToken[fcmDeviceExisting]";
+    const EXISTING_EXPO = "ExponentPushToken[expoDeviceExisting]";
+    const NEW_FCM       = "ExponentPushToken[fcmDeviceNew555]";
+
+    const state2: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "cross-expo", user_id: USER_ID, push_token: EXISTING_EXPO, platform: "expo" },
+        { id: "cross-fcm",  user_id: USER_ID, push_token: EXISTING_FCM,  platform: "fcm" },
+      ],
+      notificationPreferences:         [],
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts:    [],
+      locationPreferences:             [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+
+    const crossClient = makeFakeClient(state2);
+    _setTestClient(crossClient, true);
+    _setTestServiceClient(crossClient);
+
+    const r = await reqTo("POST", "/api/me/devices", { pushToken: NEW_FCM, platform: "fcm" });
+    assert.equal(r.status, 201, `Expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const deleted      = crossClient.__deleted["notification_devices"] ?? [];
+    const deletedTokens: string[] = deleted.map((d: any) => d.push_token);
+
+    assert.ok(deletedTokens.includes(EXISTING_FCM),  "old FCM token on same platform must be deleted");
+    assert.ok(!deletedTokens.includes(EXISTING_EXPO), "expo token on a different platform must NOT be deleted");
+    assert.ok(!deletedTokens.includes(NEW_FCM),       "the newly registered FCM token must not be deleted");
+  });
+});
