@@ -17,7 +17,8 @@ import { placesForTab } from '../src/components/savedPlacesMapHelpers';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
 
-const LIST_CAT_KEY = 'saved_places_list_cat_v1_global';
+const LIST_CAT_KEY      = 'saved_places_list_cat_v1_global';
+const VIEW_MODE_KEY     = 'saved_places_view_mode_v1';
 
 // ── Place list card ───────────────────────────────────────────────────────────
 
@@ -89,10 +90,11 @@ export default function Saved() {
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
 
-  // Restore persisted tab on mount; fall back to 'Places' if stored value is gone
+  // Restore persisted tab and viewMode on mount
   useEffect(() => {
-    AsyncStorage.getItem(LIST_CAT_KEY).then((stored) => {
-      if (stored && TABS.includes(stored)) setTab(stored);
+    AsyncStorage.multiGet([LIST_CAT_KEY, VIEW_MODE_KEY]).then(([[, storedTab], [, storedMode]]) => {
+      if (storedTab && TABS.includes(storedTab)) setTab(storedTab);
+      if (storedMode === 'map') setViewMode('map');
     }).catch(() => {});
   }, []);
 
@@ -117,7 +119,13 @@ export default function Saved() {
   useEffect(() => { void load(); }, [load]);
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  // Reset to list when switching away from Places tab
+  // Persist viewMode when the user explicitly toggles it
+  const handleViewModeChange = useCallback((next: 'list' | 'map') => {
+    setViewMode(next);
+    AsyncStorage.setItem(VIEW_MODE_KEY, next).catch(() => {});
+  }, []);
+
+  // Reset to list when switching away from Places tab (do not persist this reset)
   useEffect(() => {
     if (tab !== 'Places') setViewMode('list');
   }, [tab]);
@@ -182,7 +190,7 @@ export default function Saved() {
 
       {/* List / Map toggle — only on the Places tab, only when there's data */}
       {showPlaces && !loading && places.length > 0 && (
-        <ViewToggle mode={viewMode} onChange={setViewMode} />
+        <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
       )}
 
       {/* Content */}
