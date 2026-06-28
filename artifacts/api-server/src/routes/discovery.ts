@@ -968,14 +968,16 @@ router.post("/discovery/community/:placeId/save", async (req, res) => {
       .maybeSingle();
     if (fetchErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     if (!place) { sendError(res, "not_found", "Place not found"); return; }
-    await sc
+    const { error: updateErr } = await sc
       .from("discovery_places")
       .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
       .eq("id", placeId);
+    if (updateErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     // Record the per-user save so saved-ids endpoint can return it later.
-    await sc
+    const { error: upsertErr } = await sc
       .from("discovery_place_saves")
       .upsert({ user_id: user.id, place_id: placeId }, { onConflict: "user_id,place_id" });
+    if (upsertErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     res.json({ ok: true, placeId });
   } catch {
     res.json({ ok: false, reason: "unavailable" });

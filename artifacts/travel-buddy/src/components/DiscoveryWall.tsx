@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,13 +25,28 @@ import type { PlaceReportReason } from '../services/discovery';
 // see filled bookmarks for places they saved in previous sessions.
 const savedPlaceIds = new Set<string>();
 
+// Subscribers are notified after prefillSavedPlaceIds() mutates the set so
+// already-mounted cards can re-check their id and re-render if needed.
+type SavedListener = () => void;
+const savedListeners = new Set<SavedListener>();
+
+function subscribeToSavedIds(fn: SavedListener): () => void {
+  savedListeners.add(fn);
+  return () => savedListeners.delete(fn);
+}
+
 /**
  * Seed the module-level saved set from the API response.
  * Called once on Discovery mount (when the user is signed in).
  * Existing entries are not removed — this is additive only.
+ * Notifies all mounted card subscribers so they re-render immediately.
  */
 export function prefillSavedPlaceIds(ids: string[]): void {
-  for (const id of ids) savedPlaceIds.add(id);
+  let changed = false;
+  for (const id of ids) {
+    if (!savedPlaceIds.has(id)) { savedPlaceIds.add(id); changed = true; }
+  }
+  if (changed) { for (const fn of savedListeners) fn(); }
 }
 
 const REPORT_REASONS: { label: string; value: PlaceReportReason }[] = [
@@ -257,6 +272,10 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
+  // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
+  useEffect(() => subscribeToSavedIds(() => {
+    if (!saved) setSaved(savedPlaceIds.has(gem.id));
+  }), [gem.id, saved]);
   const sharePayload: DiscoverySharePayload = {
     sourceId: gem.id,
     sourceType: 'hidden_gem',
@@ -395,6 +414,10 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(pick.savedCount ?? 0);
+  // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
+  useEffect(() => subscribeToSavedIds(() => {
+    if (!saved) setSaved(savedPlaceIds.has(pick.id));
+  }), [pick.id, saved]);
   return (
     <View style={tpk.card}>
       <View style={tpk.head}>
