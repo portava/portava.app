@@ -17,37 +17,15 @@
  *   EXPO_PUBLIC_WEB_ORIGIN is the Expo web-app root (same Replit dev domain),
  *   distinct from EXPO_PUBLIC_API_BASE_URL so intent is unambiguous.
  *   Falls back to EXPO_PUBLIC_API_BASE_URL origin if WEB_ORIGIN is not set.
+ *
+ * Pure helper functions (makeDeepLink, makeWebFallback, toFileUri) live in
+ * src/services/passportShareUtils.ts so they can be tested in Node.js.
  */
 import { useRef, useState, useCallback } from 'react';
 import { View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import NativeShare from 'react-native-share';
-
-function makeDeepLink(username: string): string {
-  return `travelbuddy://passport/@${encodeURIComponent(username)}`;
-}
-
-function makeWebFallback(username: string): string {
-  const webOrigin =
-    process.env.EXPO_PUBLIC_WEB_ORIGIN ||
-    (() => {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-      try {
-        return new URL(apiBase).origin;
-      } catch {
-        return '';
-      }
-    })();
-  const base = webOrigin.replace(/\/$/, '');
-  return base
-    ? `${base}/u/${encodeURIComponent(username)}`
-    : `https://travelbuddy.app/u/${encodeURIComponent(username)}`;
-}
-
-/** Ensure the URI has exactly one file:// prefix regardless of what captureRef returns. */
-function toFileUri(uri: string): string {
-  return uri.startsWith('file://') ? uri : `file://${uri}`;
-}
+import { makeDeepLink, makeWebFallback, toFileUri } from '../services/passportShareUtils';
 
 export interface PassportShareState {
   sharing: boolean;

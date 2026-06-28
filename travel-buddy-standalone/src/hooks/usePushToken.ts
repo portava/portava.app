@@ -4,35 +4,15 @@
  *
  * Call this hook once after the user is authenticated. It is idempotent:
  * re-registering with the same token is a no-op on the server.
+ *
+ * Token registration logic lives in src/services/pushTokenService.ts so it
+ * can be tested in Node.js without native Expo bindings.
  */
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { useSession } from '../context/SessionContext';
-import { supabase } from '../lib/supabase';
-
-function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
-
-async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
-}
-
-async function savePushToken(pushToken: string): Promise<void> {
-  const base = apiBase();
-  if (!base) return;
-  const token = await freshToken();
-  if (!token) return;
-  // Register via the multi-device notification pipeline (POST /api/me/devices).
-  // This replaces the legacy PUT /api/me/push-token endpoint so the token is
-  // stored in notification_devices and respects per-device routing.
-  await fetch(`${base}/api/me/devices`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pushToken, platform: 'expo' }),
-  }).catch(() => {});
-}
+import { savePushToken } from '../services/pushTokenService';
 
 export function usePushToken(): void {
   const { isAuthed } = useSession();
