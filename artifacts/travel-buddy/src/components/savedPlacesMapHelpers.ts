@@ -115,6 +115,36 @@ export function categoryCounts(
 }
 
 /**
+ * Category keywords for each non-Places tab on the Saved screen.
+ * Case-insensitive substring match against `BookmarkedPlace.category`.
+ * Exported so callers (saved.tsx) and tests share the same mapping.
+ */
+export const TAB_CATEGORIES: Record<string, string[]> = {
+  Hotels:      ['hotel', 'hostel', 'motel', 'resort', 'inn', 'accommodation', 'lodging', 'guesthouse'],
+  Nightlife:   ['bar', 'pub', 'nightclub', 'nightlife', 'lounge', 'club', 'disco', 'karaoke'],
+  Itineraries: ['museum', 'attraction', 'tour', 'landmark', 'gallery', 'park', 'monument', 'temple', 'castle', 'historic'],
+};
+
+/**
+ * Filter places for a given Saved screen tab.
+ * - 'Places' is the catch-all — returns the full list unchanged.
+ * - Other tabs return places whose category contains any of the tab's keywords
+ *   (case-insensitive substring match).
+ * - Unknown tab names (no entry in TAB_CATEGORIES) fall back to all places.
+ */
+export function placesForTab(
+  tabName: string,
+  places: BookmarkedPlace[],
+): BookmarkedPlace[] {
+  if (tabName === 'Places') return places;
+  const keywords = TAB_CATEGORIES[tabName];
+  if (!keywords || keywords.length === 0) return places;
+  return places.filter((p) =>
+    keywords.some((k) => (p.category ?? '').toLowerCase().includes(k))
+  );
+}
+
+/**
  * Determine the effective selectedId after the visible list changes.
  *
  * Returns `selectedId` when it still refers to a place that exists in

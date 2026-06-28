@@ -13,6 +13,7 @@ import { MapPin, Bookmark, Route, List, Map, Trash2 } from 'lucide-react-native'
 import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
 import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
 import { removeSaved } from '../src/services/discoveryBookmarks';
+import { placesForTab } from '../src/components/savedPlacesMapHelpers';
 
 const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
 
@@ -121,16 +122,6 @@ export default function Saved() {
     if (tab !== 'Places') setViewMode('list');
   }, [tab]);
 
-  // If the last saved place is removed while a non-Places tab is active, snap
-  // back to 'Places' so the user isn't left on an empty, unhelpful tab.
-  // Skipped during the initial load to avoid a spurious reset before data arrives.
-  useEffect(() => {
-    if (loading) return;
-    if (places.length === 0 && tab !== 'Places') {
-      handleTabChange('Places');
-    }
-  }, [places, tab, loading, handleTabChange]);
-
   const showPlaces = tab === 'Places';
 
   const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
@@ -142,10 +133,17 @@ export default function Saved() {
   // SavedPlacesMapView is purely prop-driven — it computes visible pins from
   // the `places` prop via useMemo, so the pin disappears on the next render
   // cycle without requiring a full reload or navigation away.
+  //
+  // If the active non-Places tab becomes empty after this removal, snap back
+  // to 'Places' so the user isn't left on a highlighted but empty chip.
   const handleRemove = useCallback((id: string) => {
-    setPlaces((prev) => prev.filter((p) => p.id !== id));
+    const next = places.filter((p) => p.id !== id);
+    setPlaces(next);
     removeSaved(id).catch(() => {});
-  }, []);
+    if (tab !== 'Places' && placesForTab(tab, next).length === 0) {
+      handleTabChange('Places');
+    }
+  }, [places, tab, handleTabChange]);
 
   // Count places that have usable coordinates (for map vs list info)
   const mappableCount = useMemo(

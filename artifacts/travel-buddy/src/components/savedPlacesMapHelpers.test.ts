@@ -21,6 +21,8 @@ import {
   uniqueCategories,
   resolveStoredCategory,
   resolveSelectedId,
+  TAB_CATEGORIES,
+  placesForTab,
   categoryCounts,
   shouldShowChips,
   filterVisible,
@@ -504,6 +506,60 @@ describe('computeBounds', () => {
 });
 
 // ── resolveSelectedId ──────────────────────────────────────────────────────────
+
+describe('placesForTab', () => {
+  it('Places tab returns all places unchanged', () => {
+    const all = [place({ id: '1', category: 'hotel' }), place({ id: '2', category: 'bar' })];
+    assert.deepEqual(placesForTab('Places', all), all);
+  });
+
+  it('Hotels tab returns places matching hotel keywords', () => {
+    const hotel  = place({ id: 'h', category: 'hotel' });
+    const hostel = place({ id: 'hs', category: 'hostel' });
+    const bar    = place({ id: 'b', category: 'bar' });
+    const result = placesForTab('Hotels', [hotel, hostel, bar]);
+    assert.deepEqual(result, [hotel, hostel]);
+  });
+
+  it('Hotels tab returns empty when no hotel-type places remain', () => {
+    const bar = place({ id: 'b', category: 'bar' });
+    assert.deepEqual(placesForTab('Hotels', [bar]), []);
+  });
+
+  it('Nightlife tab returns places matching nightlife keywords', () => {
+    const bar  = place({ id: 'b', category: 'bar' });
+    const cafe = place({ id: 'c', category: 'cafe' });
+    const result = placesForTab('Nightlife', [bar, cafe]);
+    assert.deepEqual(result, [bar]);
+  });
+
+  it('Itineraries tab returns places matching itinerary keywords', () => {
+    const museum = place({ id: 'm', category: 'museum' });
+    const hotel  = place({ id: 'h', category: 'hotel' });
+    const result = placesForTab('Itineraries', [museum, hotel]);
+    assert.deepEqual(result, [museum]);
+  });
+
+  it('unknown tab name falls back to all places', () => {
+    const all = [place({ id: '1', category: 'cafe' })];
+    assert.deepEqual(placesForTab('Unknown', all), all);
+  });
+
+  it('TAB_CATEGORIES has entries for Hotels, Nightlife, Itineraries', () => {
+    assert.ok(Array.isArray(TAB_CATEGORIES['Hotels']) && TAB_CATEGORIES['Hotels'].length > 0);
+    assert.ok(Array.isArray(TAB_CATEGORIES['Nightlife']) && TAB_CATEGORIES['Nightlife'].length > 0);
+    assert.ok(Array.isArray(TAB_CATEGORIES['Itineraries']) && TAB_CATEGORIES['Itineraries'].length > 0);
+  });
+
+  it('pipeline: removing last hotel empties Hotels tab — triggers reset condition', () => {
+    const hotel = place({ id: 'h1', category: 'hotel' });
+    const bar   = place({ id: 'b1', category: 'bar' });
+    const places = [hotel, bar];
+    const afterRemoval = places.filter((p) => p.id !== 'h1');
+    assert.equal(placesForTab('Hotels', afterRemoval).length, 0, 'Hotels tab empties after removal');
+    assert.ok(placesForTab('Nightlife', afterRemoval).length > 0, 'other categories still have places');
+  });
+});
 
 describe('resolveSelectedId', () => {
   it('returns null when selectedId is null', () => {
