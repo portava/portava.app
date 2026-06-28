@@ -1,0 +1,955 @@
+Create 8 files for Travel Buddy with EXACTLY the contents below. Do not modify the code or docs. Create folders if needed. After creating all 8, run: pnpm --filter @workspace/travel-buddy run typecheck — and report results verbatim.
+
+Note: docs/ is new. The loading/ and discovery/ folders already exist. DiscoveryMapView.web.tsx REPLACES the existing stub at that path (overwrite it).
+
+═══════════════════════════════════════════════════
+FILE: docs/BETA_READINESS_CHECKLIST.md
+═══════════════════════════════════════════════════
+# Travel Buddy — Beta Readiness Checklist
+
+> **Status of this document:** Prepared offline from a static read of the uploaded
+> source. **No code was executed, no typecheck was run, no device/EAS build was
+> performed, and the Supabase backend was not inspected.** Items marked
+> `UNKNOWN / NEEDS REPLIT CHECK` require running the app or the agent to confirm.
+> Anything described as REAL/WIRED means the *client code path is wired* — it does
+> **not** guarantee the backend returns real data.
+
+## Legend
+- **REAL / WIRED** — client path traced end-to-end to a real service/route
+- **FIXTURE-BACKED** — renders from `src/__fixtures__` or `src/data`, not live data
+- **STUB / COMING SOON** — intentionally inert (disabled button / alert only)
+- **WEB-OK** — verifiable in the Replit web preview
+- **DEVICE-ONLY** — requires a real phone / dev build to verify
+- **BROKEN / BLOCKED** — known to fail
+- **UNKNOWN** — needs a Replit run or agent check to classify
+
+---
+
+## Executive summary
+
+Travel Buddy has a **real, well-structured client spine**: expo-router navigation,
+core tabs, messaging, profiles, and trips invites are wired to real services. The
+gaps to beta are **not "build the app"** — they are:
+
+1. **The app has never run on its target surface.** All development has been in the
+   Replit *web* preview. Every native-dependent feature (GPS, map, geofence, Safe
+   Return, Trip Crew location, camera/media, push) is structurally present but
+   **unexecuted on a device.** This is the #1 risk.
+2. **Several user-facing screens are fixture-backed**, not live. They will demo well
+   and fail for real beta users (e.g. trip detail shows mock stamps/plans).
+3. **Store-build prerequisites are missing**: no bundle identifier, no Android
+   package, no EAS link, no permission usage strings, no crash logging.
+
+The native social map — the focus of much recent work — is the **most expensive and
+least beta-blocking** item. A functional beta needs sign-up, navigation, trips,
+messaging, and non-crashing native features. The Instagram-style map can ship in
+the first update.
+
+---
+
+## Main checklist
+
+| Area | State | Notes |
+|---|---|---|
+| Auth — login / signup | REAL / WIRED · UNKNOWN backend | Routes wired; Supabase connection unverified off web preview |
+| Tab navigation (Pulse/Discover/Create/Trips/Passport) | REAL / WIRED · WEB-OK | Confirmed in audit |
+| Discovery — list, filters, search | REAL / WIRED · WEB-OK | Toggle + filter state shared across views |
+| Discovery — Map mode | DEVICE-ONLY · partial | Native only; venue pins only; hidden on web by design |
+| Trips — list, create, open detail | REAL / WIRED | `/trip/new`, `/trip/[id]` wired |
+| Trips — invite accept / decline | REAL / WIRED | Real `acceptTripInvite` / `declineTripInvite` |
+| Trip detail — Plans/Circle/Stamps/Posts | FIXTURE-BACKED | Merges real fields onto `mockTripDetail`; sub-sections fixture |
+| Telegraph — inbox, DM, group, send | REAL / WIRED · UNKNOWN backend | `useThreadMessages`, send, translate, RSVP, block/report all real |
+| Passport — own profile | REAL / WIRED | `usePassport()` real |
+| Passport — public profile `/passport/[username]` | REAL / WIRED | Real `getPublicProfile` / postcards / follow |
+| Post detail `/post/[id]` | FIXTURE-BACKED | `postById()` from cebu fixture; comments is a labeled stub |
+| Pulse / City Pulse feed | FIXTURE-BACKED (mixed) | Real `useGlobalFeed` mixed with `pulseFeed` fixture |
+| Compass (AI) | REAL path · FIXTURE seed | `postCompassAsk` real; opening text is a seeded fixture |
+| Create flow | UNKNOWN | Not fully traced; verify in Replit |
+| GPS / location permission | DEVICE-ONLY | `location.ts` present; never executed on device |
+| Background geofence | DEVICE-ONLY | `geofence.ts` + exit task present; device-only behavior |
+| Safe Return | STUB / COMING SOON | Setup + Emergency Contacts are alert-only |
+| Trip Crew location sharing | DEVICE-ONLY · privacy-gated | `useTripCrewMap`; private-by-default; device-only |
+| Delayed-post geofence privacy | DEVICE-ONLY | Logic present; requires device to verify timing |
+| Camera / media upload | DEVICE-ONLY | `expo-image-picker`, `expo-av` installed — need dev build |
+| Push notifications | DEVICE-ONLY | `expo-notifications` installed — need dev build |
+| Edit Trip | STUB / COMING SOON | Disabled, opacity 0.35, no onPress |
+| Pulse card Report / Hide / Bookmark | STUB / COMING SOON | "Coming soon" alerts |
+| Loading animations | REAL / WIRED (built) | 4 loaders created + typechecked by agent; not yet wired into screens |
+| Crash logging (Sentry/etc.) | MISSING | None found — add before beta |
+| App identifiers (bundle id / package) | MISSING / BLOCKED | Build cannot run until set |
+| Permission usage strings | MISSING / BLOCKED | iOS rejects builds without these |
+| EAS config / project link | MISSING | No eas.json, no Expo account link |
+| Splash asset | PARTIAL | Reuses icon.png; needs a real splash for store |
+
+---
+
+## Priority plan
+
+### P0 — Blocks any device beta (do first)
+1. **Android dev build on a real phone.** Surfaces every native unknown above. Start
+   Android (no paid account) before iOS.
+2. **App identifiers** — set iOS `bundleIdentifier` + Android `package`.
+3. **Permission usage strings** — location (when-in-use + always), camera, photos,
+   notifications, mic. iOS review *requires* these.
+4. **Verify backend on device** — auth, Supabase URL/keys in env, deep links working
+   off the web preview.
+
+### P1 — Beta would embarrass without these
+5. **Resolve fixture screens** — for each FIXTURE-BACKED row, decide *wire now* vs
+   *label "coming soon."* Trip detail showing fake stamps to real users is worse than
+   honestly hiding it. (See `FIXTURE_STUB_EXPOSURE_PLAN.md`.)
+6. **Crash logging** — add Sentry or equivalent, or beta feedback is unactionable.
+7. **Honest web fallbacks** — ensure no native-only feature crashes the web preview
+   (web map fallback copy fix is prepared; see below).
+
+### P2 — Strongly wanted, not blocking
+8. Wire the 4 loaders into real loading states (audit already mapped where).
+9. Splash asset, app icon polish.
+10. Finish the Compass opening to use real context instead of a seed.
+
+### P3 — Post-beta / v1.1
+11. **The native MapLibre/Mapbox social map.** Highest effort, lowest beta-blocking
+    value. Ship once real users are in. (See `NATIVE_MAP_PROVIDER_PLAN.md`.)
+12. Build out the "coming soon" stubs (Edit Trip, post-card actions, Safe Return).
+
+---
+
+## Cut / hide / label recommendations for beta
+
+- **Trip detail sub-sections (Plans/Circle/Stamps/Posts):** label fixture sections
+  "Preview" or hide until wired. Do not present mock data as the user's real trip.
+- **Post detail comments:** label "Comments coming soon" (already a stub — keep honest).
+- **Pulse feed:** if the fixture mix is visible, either filter to real items or label
+  the seeded ones. Don't blend fake and real silently.
+- **Safe Return / Emergency Contacts:** keep as "coming soon" — do **not** ship as if
+  functional. A safety feature that looks live but isn't is a trust/liability problem.
+- **Edit Trip / Report / Hide / Bookmark:** fine as visible "coming soon."
+
+---
+
+## Next 5 Replit tasks (when cooldown ends)
+1. Run `pnpm --filter @workspace/travel-buddy run typecheck` and paste results — establish a clean baseline.
+2. Dispatch the **EAS dev-build setup** command (identifiers, eas.json, permission strings).
+3. Owner: `eas login` → `eas init` → `eas build --profile development --platform android`.
+4. Apply the **fixture/stub exposure plan** decisions (wire or label each).
+5. Add crash logging (Sentry Expo SDK).
+
+> After P0–P1, "beta-ready" is a defensible claim. Until the app runs on a phone,
+> it is not — regardless of how complete the code looks.
+
+═══════════════════════════════════════════════════
+FILE: docs/FIXTURE_STUB_EXPOSURE_PLAN.md
+═══════════════════════════════════════════════════
+# Travel Buddy — Fixture / Stub Exposure Plan
+
+> **Prepared offline from static source.** No app run, no backend check. Each item
+> lists what was observed in the client code and a recommended beta action. "Wire now"
+> means real backend work is required and is **not** done yet — do not assume it exists.
+
+## Why this matters for beta
+
+A beta with **real users** is different from a demo. Fixture data that looks fine in a
+walkthrough becomes a trust problem when a real user sees a trip that isn't theirs, a
+stamp they didn't earn, or a "Safe Return" that does nothing in an emergency. The rule
+for beta: **every surface is either backed by real data or honestly labeled. Nothing
+fake is presented as real.**
+
+Recommended actions, in order of preference:
+- **WIRE NOW** — connect to a real service (only if the service/route already exists)
+- **LABEL COMING SOON** — keep visible, mark clearly as not-yet-functional
+- **HIDE FOR BETA** — remove from the UI until real
+- **KEEP (test/admin-only)** — fine if not on a user path
+- **DEFER** — revisit post-beta
+
+---
+
+## User-facing fixtures & stubs
+
+### 1. `post/[id]` — Cebu fixture
+**Observed:** `postById()` resolves from the cebu fixture, not a live posts service.
+**Risk:** Real users opening a post see fabricated content / wrong post.
+**Recommendation:** **WIRE NOW** *if* a real post-fetch service exists; otherwise
+**HIDE** deep-linking to posts for beta and only surface posts that come from the real
+feed. Do not ship fabricated post bodies to real users.
+
+### 2. Post detail — comments stub
+**Observed:** Comments section is a labeled shell with no real thread.
+**Risk:** Low if labeled.
+**Recommendation:** **LABEL COMING SOON** ("Comments coming soon"). Already a stub —
+keep it honest, don't make it look interactive.
+
+### 3. `trip/[id]` — `mockTripDetail` merge
+**Observed:** Real trip fields are merged onto `mockTripDetail`; the screen is a hybrid.
+**Risk:** **High.** Users see a mix of their real trip and mock content with no way to
+tell which is which.
+**Recommendation:** Split clearly. Render real fields from the real trip; for any
+section still backed by mock, either **WIRE NOW** or **HIDE/LABEL**. Do not present a
+half-real trip as the user's trip.
+
+### 4. Trip detail — TripPlans (fixture)
+**Observed:** Plans list is fixture data. (A separate real `TripPlanSection` may run
+alongside — verify which is shown.)
+**Recommendation:** **WIRE NOW** if `TripPlanSection` is the real one — show only that
+and remove the fixture list. If no real source, **HIDE FOR BETA**.
+
+### 5. Trip detail — TripCircle (fixture)
+**Observed:** Crew/circle avatars are fixture.
+**Recommendation:** **WIRE NOW** if a real trip-members service exists; else **HIDE**.
+Showing fake crew members on a real trip is misleading.
+
+### 6. Trip detail — TripStamps (fixture)
+**Observed:** Stamps are fixture.
+**Risk:** Stamps imply earned travel history. Faking them undermines the Passport
+concept.
+**Recommendation:** **HIDE FOR BETA** unless real stamp data exists. Better empty than
+fabricated.
+
+### 7. Trip detail — TripPosts (fixture)
+**Observed:** Posts section is fixture.
+**Recommendation:** **WIRE NOW** to the real feed filtered by trip, or **HIDE**.
+
+### 8. Pulse / City Pulse — fixture mixing
+**Observed:** Real `useGlobalFeed` blended with `pulseFeed` fixture items.
+**Risk:** Real and fake items interleaved with no distinction.
+**Recommendation:** **WIRE NOW** — filter the feed to real items for beta. If volume is
+too thin without the fixtures, show an honest empty/low-content state rather than
+padding with fakes.
+
+### 9. Compass — seeded / fixture opening text
+**Observed:** Compass opening message is a seeded fixture string.
+**Risk:** Low — it's framing copy, and `postCompassAsk` is real.
+**Recommendation:** **KEEP** for beta (acceptable as intro copy), or **WIRE NOW** to
+generate from real context if cheap. Not blocking.
+
+### 10. Safe Return — setup / Emergency Contacts (alert-only)
+**Observed:** Flows show alerts; no real setup or contact persistence.
+**Risk:** **Highest.** A safety feature that appears functional but isn't is a real
+user-safety and liability issue.
+**Recommendation:** **LABEL COMING SOON** unmistakably, or **HIDE FOR BETA**. Under no
+circumstances ship Safe Return looking operational. If beta markets safety, this must be
+either truly working or clearly absent.
+
+### 11. Pulse card — Report / Hide / Bookmark (stubs)
+**Observed:** "Coming soon" alerts.
+**Recommendation:** **LABEL COMING SOON** (fine as-is) — but note **Report** is a
+moderation primitive; if the beta has real user content, a working Report path is
+strongly advisable before launch.
+
+### 12. Edit Trip — disabled / coming soon
+**Observed:** Disabled button, opacity 0.35, no handler.
+**Recommendation:** **LABEL COMING SOON** or leave disabled. Non-blocking.
+
+---
+
+## Summary table
+
+| Item | Risk | Recommended beta action |
+|---|---|---|
+| post/[id] cebu fixture | High | Wire now / else hide deep-link |
+| Comments stub | Low | Label coming soon |
+| trip/[id] mock merge | High | Split real vs mock; wire or hide |
+| TripPlans fixture | Med | Wire (TripPlanSection) or hide |
+| TripCircle fixture | Med | Wire or hide |
+| TripStamps fixture | High | Hide unless real |
+| TripPosts fixture | Med | Wire or hide |
+| Pulse fixture mix | Med | Filter to real; honest empty state |
+| Compass seed text | Low | Keep or wire |
+| Safe Return alert-only | **Highest** | Label coming soon or hide — never fake |
+| Pulse Report/Hide/Bookmark | Low–Med | Label; Report should work if UGC live |
+| Edit Trip disabled | Low | Label / leave disabled |
+
+## Guiding principle
+**Empty and honest beats full and fake.** For every item above, the safe default if
+real wiring isn't ready is to hide or clearly label — never to let fixture data pose as
+the user's real content. This is especially non-negotiable for **Safe Return** and
+**stamps**.
+
+═══════════════════════════════════════════════════
+FILE: docs/NATIVE_MAP_PROVIDER_PLAN.md
+═══════════════════════════════════════════════════
+# Travel Buddy — Native Map Provider Plan
+
+> **Planning document only. No packages installed, no native config changed, no
+> builds run.** This is the implementation roadmap for the real native social map,
+> to be executed once the dev-build path exists and the feasibility gate clears.
+
+## Decision summary
+
+- **Primary:** MapLibre native + MapTiler tiles.
+- **Fallback:** Mapbox (`@rnmapbox/maps`) — only if MapLibre's RN package does not
+  safely support the project's New Architecture at the installed version.
+- **Why MapLibre:** Travel Buddy's backend is the source of truth for pins, privacy,
+  events, people, saved places. The provider only supplies the basemap, vector style,
+  clustering, and marker rendering — so MapLibre's open, lower-lock-in stack fits, and
+  costs less than Mapbox for a "renderer only" role.
+
+## Confirmed project context (verified from source)
+- Expo SDK 54, React Native 0.81.5, New Architecture ON.
+- `react-native-maps` is currently installed and used by the native
+  `DiscoveryMapView.tsx` (plain markers, venue/place pins only).
+- `DiscoveryMapView.web.tsx` is a web-safe fallback (no native import) — now updated
+  to show an honest "available on mobile" message.
+- `PlaceDetailSheet.tsx` exists and is the bottom sheet to reuse for selected pins.
+- `map.ts` exists with private-by-default location, `listNearbyUsers`,
+  `listVisibleCircleLocations`. **It has no bounded/viewport query and no rich unified
+  pin shape** — both are net-new backend work.
+
+## The hard gate: New Architecture compatibility
+
+**Before installing anything**, verify the exact `@maplibre/maplibre-react-native`
+version supports RN New Architecture (newArchEnabled: true) on RN 0.81. If support is
+incomplete/unstable:
+- Stop. Switch to Mapbox `@rnmapbox/maps` (solid New-Arch support).
+- The prepared `DiscoveryMapLibreView.tsx` component is structured so the swap is
+  ~1:1 (one import line + the map/marker component names).
+
+## Manual owner steps (cannot be automated)
+- Create / log into an Expo account; `eas login`, `eas init`.
+- Obtain a **MapTiler API key**; set `EXPO_PUBLIC_MAPTILER_KEY` in env.
+- Run `eas build --profile development` for android (and ios — ios needs a paid Apple
+  Developer account + device registration).
+- Install the dev client on a physical device and smoke-test the map there.
+- Verify provider attribution renders (MapTiler/OSM attribution is required by license).
+
+## Backend gaps (net-new — do NOT assume these exist)
+
+### Gap A — bounded viewport pin query
+`map.ts` pulls visible rows with no spatial filter. Needed:
+- Minimum: lat/lng range filter by north/south/east/west + a sane limit/pagination.
+- Preferred: PostGIS geometry column + `ST_Within`/bbox + spatial index (migration).
+- Server-side privacy filtering must run inside this query, not on the client.
+
+### Gap B — unified rich pin shape
+Current `MapPin` ≈ `{ id, ownerId, tripId, title, category, lat, lng, city, isPrivate }`.
+Target adds: `pinType, linkedEntityType, linkedEntityId, imageUrl, avatarUrl, trustLabel,
+verified, neighborhood, privacyPrecision, distanceMeters, actionType, source`. This means
+a migration **and** a normalization adapter that maps events / hidden gems / saved places
+/ postcards / people / buddy-availability into one shape. Several of these sources are
+fixture-only without coordinates today — those types defer until they have real coords.
+
+### Gap C — image sources
+Photo pins need each entity's real primary image; avatar pins need profile images.
+**Never fabricate image URLs.** Pin types lacking a real image use the category-icon
+fallback (already implemented in the prepared `DiscoveryMapLibreView.tsx`).
+
+## Implementation phases (post-gate)
+
+1. **Feasibility report + provider lock** — New-Arch check → MapLibre or Mapbox.
+2. **EAS dev build path** — eas.json, dev-client, identifiers, permission strings.
+   (Covered by the separate EAS setup task.)
+3. **Install provider + MapTiler key** — packages + env. Owner runs builds.
+4. **Swap renderer** — replace `react-native-maps` inside `DiscoveryMapView.tsx` with
+   the prepared `DiscoveryMapLibreView.tsx` (or Mapbox variant). Keep the
+   `places`/`onSelectPlace` contract so discovery.tsx is untouched.
+5. **Backend Gap A** — bounded pin query + migration + server-side privacy filter.
+6. **Backend Gap B** — rich pin schema + normalization adapter (only real-coord sources).
+7. **People/avatar pins** — wire `listNearbyUsers` (approximate-by-default) onto the map.
+8. **Bottom sheet** — extend `PlaceDetailSheet.tsx` with type-specific actions for the
+   pin types actually present.
+9. **Web** — either MapLibre GL JS for a real web map, or keep the honest fallback.
+10. **Clustering + "search this area"** on the bounded query.
+11. **Compass map-context adapter** — safe bounds/filters context only.
+12. **Tests + device verification.**
+
+## Prepared assets (ready to apply after the gate)
+- `DiscoveryMapLibreView.tsx` — native MapLibre component (photo pins, category-icon
+  fallback, honest empty/unconfigured states). **Will not typecheck/run until the
+  provider package is installed.**
+- `DiscoveryMapView.web.tsx` (updated) — honest web fallback, no native import.
+
+## Honest status
+The map is **not beta-blocking** (see `BETA_READINESS_CHECKLIST.md`). It is the highest
+effort, lowest-urgency item: a functional beta needs sign-up, navigation, trips,
+messaging, and non-crashing native features first. Build the map for v1.1 once real
+users are in and the dev-build loop is established.
+
+═══════════════════════════════════════════════════
+FILE: src/components/loading/TelegraphLoader.tsx
+═══════════════════════════════════════════════════
+/**
+ * TelegraphLoader — Travel Buddy's chat/messaging loading animation.
+ *
+ * Lightweight + fast: a chat bubble with animated typing dots and a small
+ * paper-plane that drifts. Subtle by design — used for short message actions, not
+ * full-screen loads.
+ *
+ * Use for: opening conversations, loading group chat, sending messages,
+ * translating messages, fetching saved/replied messages.
+ *
+ * Accessibility: respects OS "Reduce Motion" — shows a static bubble + text.
+ *
+ * Uses the same RN `Animated` pattern as the existing PlaceSkeleton (not
+ * Reanimated) so it works without the Reanimated babel plugin and stays
+ * consistent with the existing skeleton system. Tokens only.
+ */
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  Animated,
+  StyleSheet,
+  AccessibilityInfo,
+  type ViewStyle,
+} from 'react-native';
+import { color, space, type as t, font } from '../../theme/tokens';
+
+const DEFAULT_MESSAGES = [
+  'Opening Telegraph…',
+  'Syncing messages…',
+  'Sending…',
+];
+
+export interface TelegraphLoaderProps {
+  /** Override rotating copy. Single-item array for a fixed message. */
+  messages?: string[];
+  /** Compact: just the bubble, no text (inline in a send button / row). */
+  compact?: boolean;
+  style?: ViewStyle;
+  accessibilityLabel?: string;
+}
+
+export function TelegraphLoader({
+  messages = DEFAULT_MESSAGES,
+  compact = false,
+  style,
+  accessibilityLabel = 'Loading messages',
+}: TelegraphLoaderProps) {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((e) => { if (mounted) setReduceMotion(e); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (e) => {
+      if (mounted) setReduceMotion(e);
+    });
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (compact || messages.length <= 1) return;
+    const id = setInterval(() => setMsgIndex((i) => (i + 1) % messages.length), 1500);
+    return () => clearInterval(id);
+  }, [compact, messages.length]);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      dot1.setValue(0.6); dot2.setValue(0.6); dot3.setValue(0.6);
+      return;
+    }
+    const pulse = (v: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(v, { toValue: 1, duration: 320, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.3, duration: 320, useNativeDriver: true }),
+          Animated.delay(360 - delay),
+        ]),
+      );
+    const a = pulse(dot1, 0);
+    const b = pulse(dot2, 120);
+    const c = pulse(dot3, 240);
+    a.start(); b.start(); c.start();
+    return () => { a.stop(); b.stop(); c.stop(); };
+  }, [reduceMotion]);
+
+  return (
+    <View
+      style={[compact ? s.rootCompact : s.root, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={s.bubble}>
+        <Animated.View style={[s.dot, { opacity: dot1 }]} />
+        <Animated.View style={[s.dot, { opacity: dot2 }]} />
+        <Animated.View style={[s.dot, { opacity: dot3 }]} />
+      </View>
+
+      {!compact && (
+        <Text style={s.text} accessibilityLiveRegion="polite">
+          {messages[msgIndex]}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  root: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingVertical: space.lg,
+  },
+  rootCompact: { alignItems: 'center', justifyContent: 'center' },
+  bubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: color.haze,
+    borderRadius: 16,
+    borderBottomLeftRadius: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: color.mute,
+  },
+  text: {
+    ...t.small,
+    fontFamily: font.stamp,
+    color: color.mute,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+});
+
+export default TelegraphLoader;
+
+═══════════════════════════════════════════════════
+FILE: src/components/loading/TravelBuddyLoader.tsx
+═══════════════════════════════════════════════════
+/**
+ * TravelBuddyLoader — the single entry point for loading states across the app.
+ *
+ * Two jobs:
+ *   1. CONTEXTUAL: map a loading *context* to the right loader, so the animation
+ *      communicates what's happening (GPS → Pulse Pin, AI → Compass Lock, etc.).
+ *   2. VARIETY: for generic full-screen loads, optionally rotate among the
+ *      "delight" loaders so users see variety instead of the same animation.
+ *
+ * This matches the loading spec's §9: use the right loader by context; don't show
+ * a large full-screen loader for a small inline action.
+ *
+ * Tokens-only children; no new colors here.
+ */
+import React, { useMemo } from 'react';
+import type { ViewStyle } from 'react-native';
+import { PassportStampLoader } from './PassportStampLoader';
+import { PulsePinLoader } from './PulsePinLoader';
+import { CompassLockLoader } from './CompassLockLoader';
+import { RoutePathLoader } from './RoutePathLoader';
+import { TelegraphLoader } from './TelegraphLoader';
+
+/**
+ * Loading context. Pick the one that matches what's actually loading.
+ * - 'app' / 'screen'    → full-screen Passport Stamp (or rotated, see `rotate`)
+ * - 'location' / 'gps'  → Pulse Pin
+ * - 'ai' / 'compass'    → Compass Lock
+ * - 'route' / 'trip'    → Route Path itinerary
+ * - 'chat' / 'message'  → Telegraph
+ */
+export type LoaderContext =
+  | 'app'
+  | 'screen'
+  | 'location'
+  | 'gps'
+  | 'ai'
+  | 'compass'
+  | 'route'
+  | 'trip'
+  | 'chat'
+  | 'message';
+
+export interface TravelBuddyLoaderProps {
+  /** What is loading. Determines which animation shows. Default 'screen'. */
+  context?: LoaderContext;
+  /** Override rotating copy passed down to the chosen loader. */
+  messages?: string[];
+  /** Compact/inline variant where the chosen loader supports it (location/ai/chat). */
+  compact?: boolean;
+  /**
+   * For generic full-screen contexts ('app'/'screen'), rotate among the
+   * full-screen "delight" loaders so repeated loads feel varied. Ignored for
+   * contextual loaders (those must stay tied to their meaning). Default false.
+   */
+  rotate?: boolean;
+  /** Stamp label for the Passport loader (e.g. a destination). */
+  stampLabel?: string;
+  style?: ViewStyle;
+  accessibilityLabel?: string;
+}
+
+// Full-screen loaders eligible for random rotation on generic loads.
+// Pulse Pin / Compass Lock / Telegraph are intentionally NOT here — they carry
+// specific meaning and shouldn't appear for a generic screen load.
+const ROTATION_POOL = ['passport', 'route'] as const;
+type RotationKey = (typeof ROTATION_POOL)[number];
+
+function pickRotation(): RotationKey {
+  return ROTATION_POOL[Math.floor(Math.random() * ROTATION_POOL.length)];
+}
+
+export function TravelBuddyLoader({
+  context = 'screen',
+  messages,
+  compact = false,
+  rotate = false,
+  stampLabel,
+  style,
+  accessibilityLabel,
+}: TravelBuddyLoaderProps) {
+  // Decide once per mount so it doesn't flip mid-load.
+  const rotated = useMemo<RotationKey>(() => pickRotation(), []);
+
+  switch (context) {
+    case 'location':
+    case 'gps':
+      return (
+        <PulsePinLoader
+          messages={messages}
+          compact={compact}
+          style={style}
+          accessibilityLabel={accessibilityLabel}
+        />
+      );
+
+    case 'ai':
+    case 'compass':
+      return (
+        <CompassLockLoader
+          messages={messages}
+          compact={compact}
+          style={style}
+          accessibilityLabel={accessibilityLabel}
+        />
+      );
+
+    case 'route':
+    case 'trip':
+      return (
+        <RoutePathLoader
+          messages={messages}
+          style={style}
+          accessibilityLabel={accessibilityLabel}
+        />
+      );
+
+    case 'chat':
+    case 'message':
+      return (
+        <TelegraphLoader
+          messages={messages}
+          compact={compact}
+          style={style}
+          accessibilityLabel={accessibilityLabel}
+        />
+      );
+
+    case 'app':
+    case 'screen':
+    default: {
+      if (rotate && rotated === 'route') {
+        return (
+          <RoutePathLoader
+            messages={messages}
+            style={style}
+            accessibilityLabel={accessibilityLabel}
+          />
+        );
+      }
+      return (
+        <PassportStampLoader
+          messages={messages}
+          stampLabel={stampLabel}
+          style={style}
+          accessibilityLabel={accessibilityLabel}
+        />
+      );
+    }
+  }
+}
+
+export default TravelBuddyLoader;
+
+═══════════════════════════════════════════════════
+FILE: src/components/discovery/DiscoveryMapView.web.tsx
+═══════════════════════════════════════════════════
+/**
+ * DiscoveryMapView.web.tsx — honest web fallback.
+ *
+ * react-native-maps (and any native map SDK) uses native modules unavailable on
+ * web. Metro picks THIS file automatically when bundling for web, so the native
+ * DiscoveryMapView.tsx is never compiled there — that is what prevents the
+ * native-map web crash.
+ *
+ * The Discovery toggle in discovery.tsx is currently hidden on web
+ * (Platform.OS !== 'web'), so in normal use this never renders. But returning an
+ * honest, styled message — instead of null — means that IF the toggle is ever
+ * shown on web (or this view is mounted directly), the user sees a clear
+ * "available on mobile" state rather than a blank area.
+ *
+ * This imports NO native map module. Safe on web.
+ */
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { MapPin } from 'lucide-react-native';
+import type { DiscoveryPlace } from '../../services/discovery';
+import { color, space, radius, type as t } from '../../theme/tokens';
+
+export interface DiscoveryMapViewProps {
+  places: DiscoveryPlace[];
+  onSelectPlace: (place: DiscoveryPlace) => void;
+}
+
+export function DiscoveryMapView(_props: DiscoveryMapViewProps) {
+  return (
+    <View style={s.root}>
+      <View style={s.iconCircle}>
+        <MapPin size={26} color={color.faint} />
+      </View>
+      <Text style={s.title}>Map is available on mobile</Text>
+      <Text style={s.body}>
+        Open Travel Buddy on your phone to explore the interactive map. The list
+        view here shows the same places.
+      </Text>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  root: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.xxl,
+    minHeight: 240,
+  },
+  iconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.pill,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.xs,
+  },
+  title: { ...t.title, fontSize: 16, color: color.mute, textAlign: 'center' },
+  body: { ...t.body, color: color.faint, textAlign: 'center', maxWidth: 280 },
+});
+
+export default DiscoveryMapView;
+
+═══════════════════════════════════════════════════
+FILE: src/components/discovery/mapPinAdapter.ts
+═══════════════════════════════════════════════════
+/**
+ * mapPinAdapter — PROPOSED, NEEDS REPLIT VERIFICATION (not yet typechecked).
+ *
+ * Purpose: let the EXISTING PlaceDetailSheet handle future rich map pins (people,
+ * events, etc.) WITHOUT duplicating the bottom sheet and WITHOUT requiring new
+ * backend fields today. It is a pure, presentation-only normalization layer.
+ *
+ * Why this shape:
+ *   PlaceDetailSheet is tightly bound to DiscoveryPlace and works well for venue
+ *   pins (real save via discoveryBookmarks, OSM attribution, Directions/Add-to-Plan
+ *   footer). It cannot directly render a person/buddy pin (different fields, different
+ *   primary action). Rather than fork the sheet, this adapter:
+ *     1. Defines a minimal, provider-agnostic MapPin type for future rich pins.
+ *     2. Converts a MapPin → DiscoveryPlace-compatible object for display reuse.
+ *     3. Surfaces an `actionType` so the caller can choose the right primary action
+ *        (View Place / View Event / Book Buddy / View Profile…) WITHOUT the sheet
+ *        needing to know about every entity type.
+ *
+ * IMPORTANT honesty constraints baked in:
+ *   - No fabricated images: imageUrl/avatarUrl are optional; absence → caller uses
+ *     the category-icon fallback (already implemented in DiscoveryMapLibreView).
+ *   - No fabricated backend fields: every rich field is optional. Venue pins keep
+ *     working unchanged because they never go through this adapter.
+ *   - This does NOT create a second bottom sheet or a second map/location service.
+ *
+ * INTEGRATION (later, on Replit — do not wire blindly):
+ *   - For venue pins: keep passing DiscoveryPlace straight to PlaceDetailSheet (no
+ *     change). This adapter is only for NON-venue rich pins.
+ *   - To support non-venue pins in the sheet, PlaceDetailSheet needs a small,
+ *     additive change: accept an optional `primaryAction?: { label: string; onPress:
+ *     () => void }` and, when present, render it INSTEAD of the default
+ *     "Add to Plan" button. That change is described at the bottom of this file but
+ *     intentionally NOT applied here, since it must be typechecked against the live
+ *     project first.
+ */
+import type { DiscoveryPlace } from '../../services/discovery';
+
+/** Provider-agnostic pin types Travel Buddy may render on the map later. */
+export type MapPinType =
+  | 'place'
+  | 'event'
+  | 'hidden_gem'
+  | 'food'
+  | 'nightlife'
+  | 'postcard'
+  | 'saved'
+  | 'compass_pick'
+  | 'person'
+  | 'buddy';
+
+/** The action a pin's primary button should perform. Caller maps this to a handler. */
+export type MapPinAction =
+  | 'view_place'
+  | 'view_event'
+  | 'join_event'
+  | 'open_postcard'
+  | 'view_profile'
+  | 'book_buddy'
+  | 'add_to_trip';
+
+/**
+ * Minimal rich pin. EVERY rich field is optional so nothing is fabricated and
+ * venue pins are unaffected. Coordinates are required (no map pin without them).
+ */
+export interface MapPin {
+  id: string;
+  pinType: MapPinType;
+  title: string;
+  latitude: number;
+  longitude: number;
+
+  // Optional display — absence is honest, not an error.
+  subtitle?: string | null;
+  imageUrl?: string | null;   // places/events/postcards
+  avatarUrl?: string | null;  // people/buddies
+  category?: string | null;
+  city?: string | null;
+  country?: string | null;
+  neighborhood?: string | null;
+  distanceMeters?: number | null;
+  trustLabel?: string | null;
+  verified?: boolean;
+  description?: string | null;
+  actionType?: MapPinAction | null;
+
+  // Linkage for navigation / detail routing.
+  linkedEntityType?: string | null;
+  linkedEntityId?: string | null;
+  source?: string | null;
+}
+
+/** True for venue-style pins that the existing PlaceDetailSheet handles natively. */
+export function isVenuePin(pin: MapPin): boolean {
+  return (
+    pin.pinType === 'place' ||
+    pin.pinType === 'food' ||
+    pin.pinType === 'nightlife' ||
+    pin.pinType === 'hidden_gem' ||
+    pin.pinType === 'saved' ||
+    pin.pinType === 'compass_pick'
+  );
+}
+
+/** True for people-style pins (different primary action, approximate location). */
+export function isPersonPin(pin: MapPin): boolean {
+  return pin.pinType === 'person' || pin.pinType === 'buddy';
+}
+
+/** Default primary action per pin type, when the pin doesn't specify one. */
+export function defaultActionFor(pinType: MapPinType): MapPinAction {
+  switch (pinType) {
+    case 'event':       return 'view_event';
+    case 'postcard':    return 'open_postcard';
+    case 'person':      return 'view_profile';
+    case 'buddy':       return 'book_buddy';
+    default:            return 'view_place';
+  }
+}
+
+/** Human label for a primary action (used by the optional sheet button). */
+export function actionLabel(action: MapPinAction): string {
+  switch (action) {
+    case 'view_event':   return 'View Event';
+    case 'join_event':   return 'Join Event';
+    case 'open_postcard':return 'Open Postcard';
+    case 'view_profile': return 'View Profile';
+    case 'book_buddy':   return 'Book Buddy';
+    case 'add_to_trip':  return 'Add to Trip';
+    case 'view_place':
+    default:             return 'View Place';
+  }
+}
+
+/**
+ * Convert a rich MapPin into a DiscoveryPlace-compatible object so the EXISTING
+ * PlaceDetailSheet can render it. Only fills fields the sheet reads; everything the
+ * pin lacks stays undefined/empty (honest absence, not fabricated values).
+ *
+ * NOTE: cast is intentional and localized — DiscoveryPlace has more fields than a
+ * non-venue pin can supply. The sheet guards each optional field, so undefined is
+ * safe. This must still be verified against the live DiscoveryPlace type on Replit.
+ */
+export function pinToDisplayPlace(pin: MapPin): DiscoveryPlace {
+  const distanceKm =
+    pin.distanceMeters != null ? Math.round((pin.distanceMeters / 1000) * 10) / 10 : null;
+
+  const display: Partial<DiscoveryPlace> = {
+    id: pin.id,
+    name: pin.title,
+    category: (pin.category ?? pin.pinType) as DiscoveryPlace['category'],
+    type: pin.pinType,
+    description: pin.description ?? undefined,
+    address: pin.neighborhood ?? pin.city ?? undefined,
+    lat: pin.latitude,
+    lng: pin.longitude,
+    distanceKm: distanceKm ?? undefined,
+    tags: [],
+  };
+
+  return display as DiscoveryPlace;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * PROPOSED additive change to PlaceDetailSheet.tsx (DO NOT APPLY UNTIL VERIFIED)
+ * ───────────────────────────────────────────────────────────────────────────
+ *
+ * 1. Extend props:
+ *      interface PlaceDetailSheetProps {
+ *        place: DiscoveryPlace | null;
+ *        visible: boolean;
+ *        onClose: () => void;
+ *        onAddToPlan: (place: DiscoveryPlace) => void;
+ *        // NEW (optional — venue pins ignore it, behavior unchanged):
+ *        primaryAction?: { label: string; onPress: () => void };
+ *      }
+ *
+ * 2. In the footer, when primaryAction is provided, render it instead of the
+ *    default Add-to-Plan button:
+ *
+ *      {primaryAction ? (
+ *        <Pressable style={styles.addBtn} onPress={primaryAction.onPress}>
+ *          <Text style={styles.addText}>{primaryAction.label}</Text>
+ *        </Pressable>
+ *      ) : (
+ *        <Pressable style={styles.addBtn} onPress={() => onAddToPlan(place)}>
+ *          <Plus size={18} color={color.onInk} />
+ *          <Text style={styles.addText}>Add to Plan</Text>
+ *        </Pressable>
+ *      )}
+ *
+ * 3. Caller wiring (in the map view), for a non-venue pin:
+ *      const place = pinToDisplayPlace(pin);
+ *      const action = pin.actionType ?? defaultActionFor(pin.pinType);
+ *      <PlaceDetailSheet
+ *        place={place}
+ *        visible
+ *        onClose={...}
+ *        onAddToPlan={...}
+ *        primaryAction={{ label: actionLabel(action), onPress: () => routeFor(pin) }}
+ *      />
+ *
+ * This keeps ONE bottom sheet, adds zero required backend fields, and leaves the
+ * existing venue flow byte-for-byte unchanged. Verify types + render on Replit
+ * before relying on it.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+═══════════════════════════════════════════════════
+END — 7 files. Create them, run typecheck, report exact pass/fail.
+═══════════════════════════════════════════════════
