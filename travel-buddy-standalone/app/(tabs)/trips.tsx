@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable, Image,
-  ActivityIndicator, StyleSheet, Alert,
+  ActivityIndicator, StyleSheet, Alert, RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
 import { NotificationBell } from '../../src/components/NotificationBell';
@@ -157,12 +157,18 @@ export default function Trips() {
   const { data: realTrips, loading, error, reload } = useMyTrips();
   const { meetups: meetupCount } = useUnreadCounts();
   const [layoverOpen, setLayoverOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
   }, []));
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.resolve(reload()).finally(() => setRefreshing(false));
+  }, [reload]);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -178,7 +184,12 @@ export default function Trips() {
           </View>
         }
       />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
+      <ScrollView
+        contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+        }
+      >
         <MeetupsShortcut count={meetupCount} />
 
         {/* Layover Mode quick-access banner */}

@@ -37,6 +37,11 @@ const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
 
+// ── Fallback viewport (Fort Lauderdale) shown when no places have coordinates ──
+
+const FALLBACK_CENTER: [number, number] = [-80.1373, 26.1224];
+const FALLBACK_ZOOM = 11;
+
 // ── Category persistence ───────────────────────────────────────────────────────
 
 const CATEGORY_STORAGE_PREFIX = 'saved_places_map_cat_v1_';
@@ -348,24 +353,17 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
     }
   }, [storageKey]);
 
-  if (mappable.length === 0) {
-    return (
-      <View style={s.empty}>
-        <View style={s.emptyIcon}>
-          <MapPin size={28} color={color.faint} />
-        </View>
-        <Text style={s.emptyTitle}>No pins available</Text>
-        <Text style={s.emptyBody}>
-          Save places with coordinates from Discovery to see them on the map.
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <View style={{ flex: 1 }}>
       <Map mapStyle={MAP_STYLE} style={{ flex: 1 }}>
-        <Camera ref={cameraRef} />
+        {/* When no places have coordinates, use a sensible fallback viewport so
+            the map is always visible and interactive (not a blank screen). */}
+        <Camera
+          ref={cameraRef}
+          {...(mappable.length === 0
+            ? { initialViewState: { center: FALLBACK_CENTER, zoom: FALLBACK_ZOOM } }
+            : {})}
+        />
         {visible.map((place) => (
           <Marker
             key={place.id}
@@ -395,6 +393,20 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
           onPlanRoute={() => { onPlanRoute(selected); setSelectedId(null); }}
           onDismiss={() => setSelectedId(null)}
         />
+      )}
+
+      {/* "Zero places with coords" overlay — all saves lack coordinates; map is still
+          rendered behind it so the user can see the base tiles (not a blank screen). */}
+      {mappable.length === 0 && (
+        <View style={s.noPinsOverlay} pointerEvents="none">
+          <View style={s.noPinsIcon}>
+            <MapPin size={22} color={color.faint} />
+          </View>
+          <Text style={s.noPinsTitle}>No pins available</Text>
+          <Text style={s.noPinsBody}>
+            Save places with coordinates from Discovery to see them on the map.
+          </Text>
+        </View>
       )}
 
       {/* "No pins in this category" overlay — shown when the active filter yields zero pins */}

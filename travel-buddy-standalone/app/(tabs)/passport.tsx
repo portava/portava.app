@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Users, Clock } from 'lucide-react-native';
@@ -315,6 +315,7 @@ function PassportContent({
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(useCallback(() => {
     reload();
@@ -323,12 +324,20 @@ function PassportContent({
     }).catch(() => {});
   }, [reload]));
 
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.resolve(reload()).finally(() => setRefreshing(false));
+  }, [reload]);
+
   return (
     <View style={{ flex: 1 }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: color.paper }}
         contentContainerStyle={{ paddingTop: insets.top, paddingBottom: space.xxxl }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+        }
       >
         {/* Profile header */}
         <PassportHero
