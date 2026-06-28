@@ -47,3 +47,44 @@ export function stopPushRetryWorker(): void {
     logger.info("push retry worker: stopped");
   }
 }
+
+/**
+ * Snapshot of push_retry_queue health used by the admin endpoint and the
+ * startup stale-queue warning.
+ */
+export interface PushRetryHealth {
+  queued_count:      number;
+  failed_count:      number;
+  oldest_queued_at:  string | null;
+  last_succeeded_at: string | null;
+}
+
+/**
+ * Query the push_retry_queue table for operator health metrics.
+ * Returns null if the service client is unavailable.
+ */
+export async function queryPushRetryHealth(): Promise<PushRetryHealth | null> {
+  const db = getServiceClient();
+  if (!db) return null;
+
+  const [
+    { count: queuedCount, error: e1 },
+    { count: failedCount, error: e2 },
+    { data: oldestRows,   error: e3 },
+    { data: lastSentRows, error: e4 },
+  ] = await Promise.all([
+    db.from("push_retry_queue").select("*", { count: "exact", head: true }).eq("status", "queued") as any,
+    db.from("push_retry_queue").select("*", { count: "exact", head: true }).eq("status", "failed") as any,
+    db.from("push_retry_queue").select("created_at").eq("status", "queued").order("created_at", { ascending: true }).limit(1) as any,
+    db.from("push_retry_queue").select("updated_at").eq("status", "sent").order("updated_at", { ascending: false }).limit(1) as any,
+  ]);
+
+  if (e1 ?? e2 ?? e3 ?? e4) return null;
+
+  return {
+    queued_count:      queuedCount ?? 0,
+    failed_count:      failedCount ?? 0,
+    oldest_queued_at:  (oldestRows  as any[])?.[0]?.created_at  ?? null,
+    last_succeeded_at: (lastSentRows as any[])?.[0]?.updated_at ?? null,
+  };
+}

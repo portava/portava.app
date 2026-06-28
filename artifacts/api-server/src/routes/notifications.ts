@@ -23,8 +23,9 @@
  * Admin:
  *   GET    /admin/notification-templates            — list all templates
  *   POST   /admin/notifications/account-notice      — send account notice to a user
- *   GET    /admin/notification-delivery-attempts    — list delivery attempts
+ *   GET    /admin/notification-delivery-attempts    — list delivery attempts (status can be 'pending' for retry-queued attempts)
  *   PUT    /admin/notification-defaults             — update default prefs
+ *   GET    /admin/push-retry-health                 — push_retry_queue snapshot (queued/failed counts + timestamps)
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -540,7 +541,51 @@ router.post('/admin/notifications/account-notice', async (req, res) => {
   res.status(201).json({ ok: true, notification });
 });
 
-/** GET /admin/notification-delivery-attempts */
+/**
+ * GET /admin/push-retry-health
+ *
+ * Returns a snapshot of push_retry_queue health:
+ *   queued_count      — rows still awaiting retry (non-zero means retries are pending)
+ *   failed_count      — rows that exhausted all attempts (non-zero signals delivery loss)
+ *   oldest_queued_at  — created_at of the oldest queued row; null if the queue is empty
+ *   last_succeeded_at — updated_at of the most recently sent row; null if none yet
+ *
+ * A stale oldest_queued_at (e.g. > 2 minutes old with queued_count > 0) may indicate
+ * the push retry worker has stalled.
+ */
+router.get('/admin/push-retry-health', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const [
+    { count: queuedCount, error: e1 },
+    { count: failedCount, error: e2 },
+    { data: oldestRows,   error: e3 },
+    { data: lastSentRows, error: e4 },
+  ] = await Promise.all([
+    admin.sc.from('push_retry_queue').select('*', { count: 'exact', head: true }).eq('status', 'queued') as any,
+    admin.sc.from('push_retry_queue').select('*', { count: 'exact', head: true }).eq('status', 'failed') as any,
+    admin.sc.from('push_retry_queue').select('created_at').eq('status', 'queued').order('created_at', { ascending: true }).limit(1) as any,
+    admin.sc.from('push_retry_queue').select('updated_at').eq('status', 'sent').order('updated_at', { ascending: false }).limit(1) as any,
+  ]);
+
+  const firstError = e1 ?? e2 ?? e3 ?? e4;
+  if (firstError) { sendError(res, 'db_error', firstError.message); return; }
+
+  res.json({
+    queued_count:      queuedCount ?? 0,
+    failed_count:      failedCount ?? 0,
+    oldest_queued_at:  (oldestRows  as any[])?.[0]?.created_at  ?? null,
+    last_succeeded_at: (lastSentRows as any[])?.[0]?.updated_at ?? null,
+  });
+});
+
+/** GET /admin/notification-delivery-attempts
+ *
+ * Lists delivery attempt records (paginated, filterable by status and channel).
+ * Attempts created by the push retry queue have status='pending' until the queue
+ * worker resolves them to 'sent' or 'failed'.
+ */
 router.get('/admin/notification-delivery-attempts', async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
