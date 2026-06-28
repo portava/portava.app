@@ -411,16 +411,24 @@ export default function Settings() {
           </View>
         )}
 
-        {/* Rent a Buddy Admin — only visible to admins when the feature flag is on */}
-        {isAdmin && rentBuddyEnabled && (
+        {/* Admin section — visible to users with role = 'admin' */}
+        {isAdmin && (
           <View style={{ gap: space.sm }}>
             <Text style={styles.h}>Admin</Text>
             <Pressable
               style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-              onPress={() => router.push('/(rent-a-buddy)/admin' as any)}
+              onPress={() => router.push('/admin/feature-flags' as any)}
             >
-              <Text style={styles.item}>Rent a Buddy Admin</Text>
+              <Text style={styles.item}>Feature Flags</Text>
             </Pressable>
+            {rentBuddyEnabled && (
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => router.push('/(rent-a-buddy)/admin' as any)}
+              >
+                <Text style={styles.item}>Rent a Buddy Admin</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
