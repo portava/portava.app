@@ -58,7 +58,9 @@ pnpm run typecheck
 
 ## Keeping the standalone in sync with the monorepo app
 
-Run this from the **workspace root** after any significant feature addition to `artifacts/travel-buddy/`:
+**Sync runs automatically** after every task merge via `scripts/post-merge.sh` — no manual step required for routine feature additions.
+
+To run it manually from the **workspace root** (e.g. to preview upcoming changes or re-sync after a manual edit to `artifacts/travel-buddy/`):
 
 ```bash
 # Preview what would change (no files written)

@@ -106,8 +106,7 @@
         }
       ],
       "expo-dev-client",
-      "@maplibre/maplibre-react-native",
-      "@react-native-community/datetimepicker"
+      "@maplibre/maplibre-react-native"
     ],
     "experiments": {
       "typedRoutes": true,
