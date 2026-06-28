@@ -296,6 +296,11 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
   const handleRefresh = useCallback(async () => {
     if (refreshing || loading) return;
     setRefreshing(true);
+    // Clear locally-dismissed entries so previously-skipped people reappear.
+    // Must happen before load() so loadDismissed() sees an empty store and the
+    // filter in load() doesn't exclude anyone the user dismissed days ago.
+    await AsyncStorage.removeItem(DISMISSED_KEY);
+    setDismissed(new Map());
     await clearSuggestionsSeen();
     await load();
     setRefreshing(false);
