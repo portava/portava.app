@@ -682,7 +682,8 @@ router.get("/discovery/community", async (req, res) => {
     return;
   }
 
-  const rawType  = req.query.type as string | undefined;
+  // Accept place_type (canonical) or type (backward-compatible alias)
+  const rawType  = (req.query.place_type ?? req.query.type) as string | undefined;
   const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
   const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
 
@@ -764,6 +765,7 @@ router.get("/discovery/community", async (req, res) => {
         profiles:submitted_by ( id, display_name, name, avatar_url )
       `)
       .ilike("city", city.trim())
+      .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -835,6 +837,86 @@ router.get("/discovery/community", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");
     res.json({ items: [], city, total: 0 });
+  }
+});
+
+/**
+ * POST /api/discovery/community  — submit a new community place (hidden gem or traveler pick).
+ * Requires auth. Inserts via service role client to bypass RLS (P-256 JWT key rotation).
+ */
+router.post("/discovery/community", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    res.status(503).json({ ok: false, reason: "server_not_configured" });
+    return;
+  }
+
+  const {
+    city,
+    name,
+    place_type,
+    category,
+    neighborhood,
+    blurb,
+    tag,
+    note,
+    rating,
+  } = req.body as Record<string, unknown>;
+
+  if (!city || typeof city !== "string" || city.trim().length === 0) {
+    sendError(res, "invalid_payload", "city is required");
+    return;
+  }
+  if (!name || typeof name !== "string" || name.trim().length === 0) {
+    sendError(res, "invalid_payload", "name is required");
+    return;
+  }
+  const VALID_PLACE_TYPES_POST = new Set(["hidden_gem", "traveler_pick"]);
+  if (!place_type || !VALID_PLACE_TYPES_POST.has(place_type as string)) {
+    sendError(res, "invalid_payload", "place_type must be hidden_gem or traveler_pick");
+    return;
+  }
+
+  const ratingNum = rating != null ? parseFloat(String(rating)) : null;
+  if (ratingNum !== null && (isNaN(ratingNum) || ratingNum < 0 || ratingNum > 5)) {
+    sendError(res, "invalid_payload", "rating must be between 0 and 5");
+    return;
+  }
+
+  try {
+    const { data, error } = await sc
+      .from("discovery_places")
+      .insert({
+        city:         (city as string).trim(),
+        name:         (name as string).trim(),
+        place_type:   place_type as string,
+        category:     typeof category === "string" ? category.trim() : null,
+        neighborhood: typeof neighborhood === "string" ? neighborhood.trim() || null : null,
+        blurb:        typeof blurb === "string" ? blurb.trim() || null : null,
+        tag:          typeof tag === "string" ? tag.trim() || null : null,
+        note:         typeof note === "string" ? note.trim() || null : null,
+        rating:       ratingNum,
+        submitted_by: auth.user.id,
+        source:       "traveler",
+        status:       "active",
+        verified:     false,
+      })
+      .select("id, name, city, place_type, status, created_at")
+      .single();
+
+    if (error) {
+      req.log.error({ err: error }, "discovery/community POST insert failed");
+      res.status(500).json({ ok: false, reason: "insert_failed" });
+      return;
+    }
+
+    res.status(201).json({ ok: true, place: data });
+  } catch (err) {
+    req.log.error({ err }, "discovery/community POST unexpected error");
+    res.status(500).json({ ok: false, reason: "unexpected_error" });
   }
 });
 

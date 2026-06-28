@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane, Users, Hash,
+  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -28,6 +28,7 @@ import { FollowingHighlightsStrip } from '../../src/components/FollowingHighligh
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
+import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -114,6 +115,8 @@ export default function DiscoveryHub() {
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [routeBuilderDraft, setRouteBuilderDraft] = useState<RouteStopDraft | null>(null);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
+  const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
+  const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -213,7 +216,19 @@ export default function DiscoveryHub() {
             <LocationChip {...locationChipProps} size="sm" muted />
           )}
         </View>
-        <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
+        <View style={styles.headerRight}>
+          {isAuthed && (
+            <Pressable
+              style={styles.sharePlaceBtn}
+              onPress={() => setSubmitPlaceOpen(true)}
+              hitSlop={8}
+            >
+              <PlusCircle size={16} color={color.signal} />
+              <Text style={styles.sharePlaceBtnText}>Share a Place</Text>
+            </Pressable>
+          )}
+          <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
+        </View>
       </View>
 
       {/* ── Context mode selector ── */}
@@ -390,7 +405,7 @@ export default function DiscoveryHub() {
       <View style={{ flex: 1 }}>
         {activeTab === 'for_you' ? (
           <ForYouTab
-            key={`${destination}-${contextMode}`}
+            key={`${destination}-${contextMode}-${communityRefreshKey}`}
             destination={destination}
             onAddToPlan={handleAddToPlan}
             onAddToRoute={handleAddToRoute}
@@ -456,6 +471,17 @@ export default function DiscoveryHub() {
           router.push(`/route/${route.plan.id}`);
         }}
       />
+
+      {/* Submit a community place */}
+      <SubmitPlaceSheet
+        visible={submitPlaceOpen}
+        city={destination}
+        onClose={() => setSubmitPlaceOpen(false)}
+        onSubmitted={() => {
+          setSubmitPlaceOpen(false);
+          setCommunityRefreshKey((k) => k + 1);
+        }}
+      />
     </View>
   );
 }
@@ -480,6 +506,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
     flex: 1,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    flexShrink: 0,
+  },
+  sharePlaceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal + '12',
+    borderWidth: 1,
+    borderColor: color.signal + '30',
+  },
+  sharePlaceBtnText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: color.signal,
   },
   headerTitle: {
     ...t.heading,

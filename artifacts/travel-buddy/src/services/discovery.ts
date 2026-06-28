@@ -2,8 +2,19 @@
  * Discovery service — fetches place data from /api/discovery.
  * Destination-scoped, category-filtered, no auth required.
  */
+import { supabase } from '../lib/supabase';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+async function freshToken(): Promise<string | null> {
+  try {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export type DiscoveryCategory =
   | 'for_you'
@@ -89,6 +100,52 @@ export async function getCommunityPlaces(
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = (await res.json()) as CommunityDiscoveryResult;
     return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+export interface SubmitPlacePayload {
+  city: string;
+  name: string;
+  place_type: 'hidden_gem' | 'traveler_pick';
+  category?: string;
+  neighborhood?: string;
+  blurb?: string;
+  tag?: string;
+  note?: string;
+  rating?: number | null;
+}
+
+export interface SubmitPlaceResult {
+  ok: true;
+  place: { id: string; name: string; city: string; place_type: string; status: string; created_at: string };
+}
+
+export async function submitCommunityPlace(
+  payload: SubmitPlacePayload,
+): Promise<SubmitPlaceResult | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  try {
+    const res = await fetch(`${base}/api/discovery/community`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as unknown;
+    const obj = data as Record<string, unknown>;
+    if (!res.ok || !obj.ok) {
+      return { ok: false, error: (obj.message as string) ?? `HTTP ${res.status}` };
+    }
+    return obj as unknown as SubmitPlaceResult;
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
   }
