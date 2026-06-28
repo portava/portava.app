@@ -1209,7 +1209,10 @@ describe("GET /api/users/suggestions", () => {
   it("reason: 89-day-old mutual trip is still within 90-day window and gets the recency label", async () => {
     // Boundary: 89 days < 90 → should show recency label.
     const Q_MUT = "user-q-label";
+    // end_date is the boundary anchor (89 days ago); created_at is intentionally
+    // set to an old date to verify the code prefers end_date, not created_at.
     const date89 = new Date(Date.now() - 89 * 24 * 60 * 60 * 1000).toISOString();
+    const veryOldDate = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
     setup({
       follows: [
         { follower_id: ME,    following_id: Q_MUT },
@@ -1222,7 +1225,8 @@ describe("GET /api/users/suggestions", () => {
       ],
       blocks: [],
       trips: [
-        { id: "trip-89d", owner_id: ME, end_date: "2099-12-31", created_at: date89 },
+        // end_date = 89 days ago (within window); created_at = 2 years ago (would miss without end_date preference)
+        { id: "trip-89d", owner_id: ME, end_date: date89, created_at: veryOldDate },
       ],
       trip_members: [
         { trip_id: "trip-89d", user_id: ME,    role: "owner"  },
@@ -1237,14 +1241,16 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(
       aUser.reason,
       "1 mutual connection · Traveled together recently",
-      `Expected recency label for 89-day trip; got: ${aUser.reason}`,
+      `Expected recency label for 89-day end_date trip; got: ${aUser.reason}`,
     );
   });
 
   it("reason: 91-day-old mutual trip is outside the 90-day window and gets no recency label", async () => {
-    // Boundary: 91 days > 90 → no recency label.
+    // Boundary: end_date 91 days ago > 90-day window → no recency label.
+    // created_at is intentionally set to a recent date to verify end_date takes priority.
     const R_MUT = "user-r-label";
     const date91 = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
+    const veryRecentDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     setup({
       follows: [
         { follower_id: ME,    following_id: R_MUT },
@@ -1257,7 +1263,8 @@ describe("GET /api/users/suggestions", () => {
       ],
       blocks: [],
       trips: [
-        { id: "trip-91d", owner_id: ME, end_date: "2024-01-01", created_at: date91 },
+        // end_date = 91 days ago (outside window); created_at = 1 day ago (would give label if wrongly used)
+        { id: "trip-91d", owner_id: ME, end_date: date91, created_at: veryRecentDate },
       ],
       trip_members: [
         { trip_id: "trip-91d", user_id: ME,    role: "owner"  },
@@ -1272,7 +1279,7 @@ describe("GET /api/users/suggestions", () => {
     assert.equal(
       bUser.reason,
       "1 mutual connection",
-      `Expected plain mutual count for 91-day trip; got: ${bUser.reason}`,
+      `Expected plain mutual count for 91-day end_date trip; got: ${bUser.reason}`,
     );
   });
 

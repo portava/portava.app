@@ -673,19 +673,26 @@ router.get("/users/suggestions", async (req, res) => {
           .in("trip_id", callerTripIds)
           .in("user_id", allMutualIds);
 
-        // Fetch trip creation dates so we can compute days since last interaction.
+        // Fetch trip dates to anchor the recency computation.
+        // Prefer end_date (when travel actually ended) for accuracy — created_at
+        // is only when the row was inserted and may be wrong for backfilled trips.
+        // Priority: end_date → start_date → created_at (last resort).
         const sharedTripIds = [
           ...new Set((sharedRows ?? []).map((r: any) => r.trip_id as string)),
         ];
-        const tripCreatedAtMap = new Map<string, number>(); // trip_id → ms
+        const tripDateMap = new Map<string, number>(); // trip_id → ms
         if (sharedTripIds.length > 0) {
           const { data: tripDateRows } = await sc
             .from("trips")
-            .select("id, created_at")
+            .select("id, end_date, start_date, created_at")
             .in("id", sharedTripIds);
           for (const t of (tripDateRows ?? [])) {
-            const ts = t.created_at ? new Date(t.created_at as string).getTime() : NaN;
-            if (!isNaN(ts)) tripCreatedAtMap.set(t.id as string, ts);
+            const raw =
+              (t.end_date as string | null) ??
+              (t.start_date as string | null) ??
+              (t.created_at as string | null);
+            const ts = raw ? new Date(raw).getTime() : NaN;
+            if (!isNaN(ts)) tripDateMap.set(t.id as string, ts);
           }
         }
 
@@ -693,7 +700,7 @@ router.get("/users/suggestions", async (req, res) => {
         // keep the best score for that mutual across all shared trips.
         for (const r of (sharedRows ?? [])) {
           const mid = (r as any).user_id as string;
-          const tripTs = tripCreatedAtMap.get((r as any).trip_id as string);
+          const tripTs = tripDateMap.get((r as any).trip_id as string);
           const daysSince = tripTs !== undefined
             ? (nowMs - tripTs) / (1000 * 60 * 60 * 24)
             : null;
