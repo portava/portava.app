@@ -1,0 +1,66 @@
+APPEND THIS RESEARCH to the EAS pnpm monorepo fix command. These are the DOCUMENTED fixes from official Expo docs + known EAS issues — apply these specific changes rather than discovering them by trial and error.
+
+═══════════════════════════════════════════════════════════════════
+CONFIRMED: Expo officially supports pnpm monorepos
+═══════════════════════════════════════════════════════════════════
+- Expo has first-class monorepo support for pnpm; it auto-detects monorepos from the workspace config.
+- expo/metro-config has BUILT-IN monorepo support — do NOT hand-write custom Metro monorepo config unless expo-doctor flags a specific problem. Over-customizing Metro is a documented source of breakage ("disableHierarchicalLookup" mismatches, watchFolders errors). Prefer the default getDefaultConfig from expo/metro-config.
+- Known limit: the pnpm-workspace Expo pattern is flaky with MORE THAN ONE mobile app. This repo has ONE mobile app (travel-buddy), so this is fine — but do not add a second Expo app to this workspace without revisiting.
+
+═══════════════════════════════════════════════════════════════════
+ROOT CAUSE of this specific failure (confirmed from build log)
+═══════════════════════════════════════════════════════════════════
+The build log said: "We detected that 'artifacts/travel-buddy' is a npm workspace" → ran `npm ci` → failed on catalog mismatch (@types/node 26 vs 22, undici-types).
+Two separate problems:
+  (A) EAS detected the WRONG package manager (npm, not pnpm). This is a known EAS bug (eas-cli issue #2978 — "EAS mistakes pnpm for yarn/npm workspace").
+  (B) Even if it used pnpm, the default isolated/symlinked node-linker often breaks React Native native modules (like MapLibre).
+
+═══════════════════════════════════════════════════════════════════
+THE DOCUMENTED FIX — apply these specific changes IN ORDER
+═══════════════════════════════════════════════════════════════════
+
+FIX 1 — Force hoisted node-linker (most likely to unblock the build)
+In the ROOT pnpm-workspace.yaml, add:
+    nodeLinker: hoisted
+Reason: Official Expo docs — "If you encounter issues with isolated installations with pnpm, switch to the hoisted installation strategy by changing the nodeLinker setting in pnpm-workspace.yaml in the root." RN libraries frequently fail under pnpm's default isolated layout. The catalog/@types mismatch is this class of error.
+After adding, re-run `pnpm install` at root to regenerate the lockfile under hoisted layout.
+
+FIX 2 — Force pnpm detection via packageManager field
+In the ROOT package.json, add (use the actual installed pnpm version — run `pnpm --version` to get it):
+    "packageManager": "pnpm@<version>"
+Reason: Forces EAS/corepack to detect pnpm instead of guessing npm/yarn (eas-cli #2978 workaround).
+
+FIX 3 — Add corepack pre-install hook
+In the APP package.json (artifacts/travel-buddy/package.json) scripts, add:
+    "eas-build-pre-install": "corepack enable"
+Reason: Ensures corepack activates pnpm on the EAS build server before install runs. Documented workaround for the same detection bug.
+
+FIX 4 — Verify eas.json location + install context
+- eas.json can stay in artifacts/travel-buddy. Expo auto-detects the monorepo root and installs from there when pnpm-workspace.yaml + the packageManager field are present.
+- Do NOT set unsupported custom EAS fields. Do NOT invent EAS_BUILD_WORKINGDIR hacks unless the default monorepo detection provably fails after FIX 1–3.
+
+FIX 5 — Metro (only if needed)
+- First confirm whether artifacts/travel-buddy has a metro.config.js and what it contains.
+- If it uses the default expo/metro-config, LEAVE IT — Expo handles monorepo resolution automatically.
+- Only if expo-doctor flags Metro resolution issues, apply the minimal documented monorepo Metro config (watchFolders to monorepo root, unstable_enableSymlinks: true, do NOT set disableHierarchicalLookup: true). Keep changes minimal.
+
+═══════════════════════════════════════════════════════════════════
+VALIDATION before declaring fixed
+═══════════════════════════════════════════════════════════════════
+Run from ROOT:
+- pnpm install  (regenerates lockfile under hoisted linker — confirm it succeeds)
+- pnpm --filter @workspace/travel-buddy run typecheck  (or the app's typecheck script)
+- npx expo-doctor  (run inside artifacts/travel-buddy — report all failed checks; fix only Metro/dependency issues it flags, ignore advisory noise)
+- grep -R "<<<<<<<\|=======\|>>>>>>>" . --exclude-dir=node_modules --exclude-dir=.git  (confirm no conflict markers; specifically re-check DiscoveryWall.tsx)
+- confirm DiscoveryMapView.web.tsx does NOT import @maplibre/maplibre-react-native or react-native-maps
+
+DO NOT claim the EAS build passes. The agent cannot run the cloud build. After applying FIX 1–4, the MANUAL OWNER STEP is:
+    cd ~/workspace/artifacts/travel-buddy
+    export EXPO_TOKEN=<owner's token>   (or eas login)
+    eas build --profile development --platform android
+Report whether install/typecheck/doctor passed locally, and hand the owner the exact rebuild command.
+
+═══════════════════════════════════════════════════════════════════
+IF FIX 1–4 STILL FAIL (fallback, only if proven necessary)
+═══════════════════════════════════════════════════════════════════
+The documented last resort (multiple sources) is publishing lib/* internal packages as real npm packages so EAS treats them as normal deps. This is invasive — do NOT do it unless the monorepo build is proven impossible after FIX 1–4, and flag it to the owner as a significant structural change before proceeding.

@@ -121,6 +121,16 @@ export default function Saved() {
     if (tab !== 'Places') setViewMode('list');
   }, [tab]);
 
+  // If the last saved place is removed while a non-Places tab is active, snap
+  // back to 'Places' so the user isn't left on an empty, unhelpful tab.
+  // Skipped during the initial load to avoid a spurious reset before data arrives.
+  useEffect(() => {
+    if (loading) return;
+    if (places.length === 0 && tab !== 'Places') {
+      handleTabChange('Places');
+    }
+  }, [places, tab, loading, handleTabChange]);
+
   const showPlaces = tab === 'Places';
 
   const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
