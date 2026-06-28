@@ -1,0 +1,123 @@
+Travel Buddy native map + EAS dev-build setup. Provider feasibility is RESOLVED — proceed with MapLibre. Complete the EAS/dev-build scaffold and native config; do NOT implement the full map yet.
+
+═══════════════════════════════════════════════════════════════════
+PROVIDER DECISION — RESOLVED (not an open question)
+═══════════════════════════════════════════════════════════════════
+- SELECTED: MapLibre React Native + MapTiler tiles.
+- TARGET LINE: @maplibre/maplibre-react-native v11.x (current latest ~v11.3.x).
+- New Architecture: v11 is **New-Architecture-ONLY** (old Paper/Bridge dropped). This
+  project already has newArchEnabled: true, so this is a MATCH, not a risk.
+- Mapbox (@rnmapbox/maps) is the fallback ONLY if MapLibre v11 fails during install /
+  native config / device build. It is no longer an equal first choice.
+
+The agent must NOT re-litigate the provider choice. Confirm version + compatibility,
+then proceed to setup.
+
+═══════════════════════════════════════════════════════════════════
+v11 BREAKING-API AWARENESS (the prepared component already targets v11)
+═══════════════════════════════════════════════════════════════════
+v11 was a breaking rewrite aligned to MapLibre GL JS. When reviewing/integrating the
+prepared DiscoveryMapLibreView.tsx, expect (and keep) these v11 patterns:
+- `Map` component (NOT `MapView`); style via `mapStyle`.
+- `Camera` with `initialViewState={{ center, zoom }}` (NOT defaultSettings /
+  centerCoordinate / zoomLevel).
+- `setAccessToken` REMOVED — do not call it.
+- Events via `event.nativeEvent`.
+- Layers consolidated to `<Layer type="..." />`; sources renamed (ShapeSource →
+  GeoJSONSource), clustering uses clusterId.
+Do not "fix" the component back to v10 patterns. If anything fails to typecheck, align
+to v11 docs, not v10.
+
+═══════════════════════════════════════════════════════════════════
+iOS / EXPO MANAGED CONSTRAINT (important)
+═══════════════════════════════════════════════════════════════════
+This is an Expo MANAGED project — there is NO ios/ folder. MapLibre v11 iOS setup
+requires `$MLRN.post_install(installer)` in the Podfile. In managed Expo this is handled
+via an **Expo config plugin** and/or `expo prebuild` during the EAS build — NOT by hand-
+editing a Podfile (there isn't one). The agent must:
+- Add the MapLibre config plugin to app.json/app.config plugins (if the package ships
+  one) OR document the prebuild/config-plugin step required.
+- Ensure the development EAS profile produces a dev client with the native module.
+Android needs no extra native setup beyond the rebuild.
+
+═══════════════════════════════════════════════════════════════════
+PART 1 — Confirm stack + package (report only)
+═══════════════════════════════════════════════════════════════════
+Report:
+- current map packages (react-native-maps present)
+- Expo SDK (54), RN (0.81.5), newArchEnabled (true) — confirm
+- exact installable @maplibre/maplibre-react-native version + that it supports RN 0.81 /
+  Expo 54 / New Arch
+- whether the package provides an Expo config plugin
+- MapTiler env/key + attribution requirements
+- any install/config risks → if blocking, recommend Mapbox fallback with reason
+
+DO NOT install the package in this pass unless explicitly continuing to integration.
+This task ends at scaffold + config readiness.
+
+═══════════════════════════════════════════════════════════════════
+PART 2 — EAS / dev-build scaffold
+═══════════════════════════════════════════════════════════════════
+Confirmed-missing from prior inspection (ADD, don't just verify):
+- iOS bundleIdentifier (none) — e.g. com.<owner>.travelbuddy (confirm with owner)
+- Android package (none) — same
+- Expo account link / projectId (none) — owner runs `eas login` + `eas init`
+- Dedicated splash asset (reuses icon.png) — placeholder OK for dev, flag for store
+
+Scaffold:
+- eas.json with: development profile (developmentClient: true, internal), preview/internal
+  beta profile, production placeholder.
+- Add expo-dev-client.
+- App identity in app.json/app.config: name, bundleIdentifier, package, version,
+  iOS buildNumber, Android versionCode.
+- Permission usage strings (iOS) + Android permissions: location (when-in-use + always —
+  geofence/Safe Return/Trip Crew), camera, photo library, notifications, mic (if expo-av
+  records). Placeholders allowed; mark "owner must finalize for store."
+- Env vars needed for a device build: Supabase URL/key, EXPO_PUBLIC_MAPTILER_KEY.
+
+Manual owner steps (label clearly, DO NOT run / DO NOT claim done):
+- "Manual owner step: create/login Expo account (`eas login`)"
+- "Manual owner step: `eas init` to create projectId"
+- "Manual owner step: add EXPO_PUBLIC_MAPTILER_KEY (get a MapTiler account/key)"
+- "Manual owner step: `eas build --profile development --platform android`"
+- "Manual owner step: `eas build --profile development --platform ios` (needs paid Apple
+  Developer account + device registration)"
+- "Manual owner step: install the dev client on a real phone"
+Note for owner: Android dev build needs NO paid account; iOS device install REQUIRES a
+paid Apple Developer account ($99/yr). If no Apple account yet, start on Android.
+
+═══════════════════════════════════════════════════════════════════
+PART 3 — Web preview honesty (unchanged)
+═══════════════════════════════════════════════════════════════════
+- DiscoveryMapView.web.tsx must NOT import native MapLibre — keep the honest
+  "Map is available on mobile" fallback already prepared.
+- Web preview must never crash; it does NOT prove native map readiness.
+
+═══════════════════════════════════════════════════════════════════
+PART 4 — Backend honesty (for the LATER map-data pass, note now)
+═══════════════════════════════════════════════════════════════════
+These are net-new if missing — do not claim they exist:
+- bounded viewport pin query (map.ts currently has none)
+- unified rich pin shape (current MapPin lacks pinType/imageUrl/avatarUrl/etc.)
+- server-side privacy filtering on the bounded query
+- NEVER fabricate image/avatar URLs; category-icon fallback when no real image exists
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT REQUIRED
+═══════════════════════════════════════════════════════════════════
+- confirmed MapLibre version + compatibility result
+- whether package install is safe to proceed next (yes/no + why)
+- config-plugin / prebuild approach for managed Expo iOS
+- eas.json + profiles created
+- app identifiers added (flag placeholders)
+- permission strings added / still needed
+- env vars/keys needed
+- EXACT commands the owner must run
+- manual owner steps remaining (clearly not done)
+- what is web-verifiable vs device-only
+- exact pass/fail counts for any checks actually run
+
+Completion rule:
+Complete when provider is confirmed (MapLibre v11), EAS dev-build path is scaffolded,
+managed-Expo iOS config approach is documented, and all build/account/device actions are
+labeled manual-owner (not claimed done). Full map implementation is the NEXT task.
