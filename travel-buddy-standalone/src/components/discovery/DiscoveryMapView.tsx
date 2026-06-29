@@ -2,14 +2,9 @@
  * DiscoveryMapView — renders Discovery venue pins on a MapLibre Map.
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
- *
- * The Map is ALWAYS mounted in map mode — even when there are zero places.
- * A "no pins" overlay is shown on top of the tiles when no mappable places
- * are available. This ensures the toggle is visually meaningful and the
- * native MapLibre module is exercised regardless of data state.
  */
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, LayoutChangeEvent } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
@@ -21,26 +16,6 @@ const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
 const MAP_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
-
-const STYLE_HOST = (() => {
-  try { return new URL(MAP_STYLE).hostname; } catch { return '(parse error)'; }
-})();
-
-// ── Debug logger (stripped in production) ─────────────────────────────────────
-
-function dbg(msg: string, data?: Record<string, unknown>) {
-  if (!__DEV__) return;
-  if (data) {
-    console.log(`[TravelBuddyMapDebug] ${msg}`, data);
-  } else {
-    console.log(`[TravelBuddyMapDebug] ${msg}`);
-  }
-}
-
-// ── Fallback viewport (Fort Lauderdale) when no places have coordinates ────────
-
-const FALLBACK_CENTER: [number, number] = [-80.1373, 26.1224]; // [lng, lat]
-const FALLBACK_ZOOM = 12;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,71 +65,32 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
   );
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
-  const [containerWidth, setContainerWidth]   = useState(0);
-  const [containerHeight, setContainerHeight] = useState(0);
-  const [mapLoaded, setMapLoaded]             = useState(false);
-  const [styleLoaded, setStyleLoaded]         = useState(false);
-  const [mapError, setMapError]               = useState<string | null>(null);
-
-  // ── mount log ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    dbg('Map component mounted', {
-      pinCount: mappable.length,
-      hasViewport: viewport !== null,
-      styleURLBuilt: Boolean(MAP_STYLE),
-      styleHost: STYLE_HOST,
-      maptilerKeyPresent: Boolean(MAPTILER_KEY),
-      platform: Platform.OS,
-    });
-    return () => {
-      dbg('Map component unmounted');
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleLayout = useCallback((e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setContainerWidth(width);
-    setContainerHeight(height);
-    dbg('container dimensions measured', { width, height, usable: width > 0 && height > 0 });
-  }, []);
-
-  const handleMapLoaded = useCallback(() => {
-    setMapLoaded(true);
-    dbg('MapLibre fired map-loaded event');
-  }, []);
-
-  const handleStyleLoaded = useCallback(() => {
-    setStyleLoaded(true);
-    dbg('MapLibre fired style-loaded event');
-  }, []);
-
-  const handleMapError = useCallback(() => {
-    const msg = 'map failed to load';
-    setMapError(msg);
-    dbg('MapLibre error', { message: msg });
-  }, []);
-
-  const center  = viewport?.center ?? FALLBACK_CENTER;
-  const zoom    = viewport?.zoom   ?? FALLBACK_ZOOM;
-  const noPins  = mappable.length === 0;
-  const noSize  = containerWidth === 0 || containerHeight === 0;
+  if (!viewport) {
+    return (
+      <View style={s.empty}>
+        <View style={s.emptyIcon}>
+          <MapPin size={28} color={color.faint} />
+        </View>
+        <Text style={s.emptyTitle}>No pins available</Text>
+        <Text style={s.emptyBody}>
+          These places don't have coordinates yet. Try a different search area or category.
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={s.root} onLayout={handleLayout}>
-      {/* ── Map always mounts ─────────────────────────────────────────────── */}
+    <View style={s.root}>
       <Map
         style={StyleSheet.absoluteFill}
         mapStyle={MAP_STYLE}
         logo={false}
         attribution={false}
-        onDidFinishLoadingMap={handleMapLoaded}
-        onDidFinishLoadingStyle={handleStyleLoaded}
-        onDidFailLoadingMap={handleMapError}
       >
         <Camera
           initialViewState={{
-            center,
-            zoom,
+            center: viewport.center,
+            zoom: viewport.zoom,
           }}
         />
         {mappable.map((place) => (
@@ -170,60 +106,12 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
           </Marker>
         ))}
       </Map>
-
-      {/* ── No-size warning overlay (layout error) ────────────────────────── */}
-      {noSize && containerWidth + containerHeight > 0 && (
-        <View style={s.warnBanner}>
-          <Text style={s.warnText}>Map container has no usable size.</Text>
-        </View>
-      )}
-
-      {/* ── No-pins overlay (shown on top of tiles) ───────────────────────── */}
-      {noPins && !noSize && (
-        <View style={s.noPinsOverlay} pointerEvents="none">
-          <View style={s.emptyIcon}>
-            <MapPin size={22} color={color.faint} />
-          </View>
-          <Text style={s.emptyTitle}>No pins available</Text>
-          <Text style={s.emptyBody}>
-            These places don't have coordinates yet.{'\n'}Try a different search area or category.
-          </Text>
-        </View>
-      )}
-
-      {/* ── Pin count badge (shown when there are pins) ───────────────────── */}
-      {!noPins && (
-        <View style={s.badge}>
-          <MapPin size={10} color="#fff" />
-          <Text style={s.badgeText}>
-            {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
-          </Text>
-        </View>
-      )}
-
-      {/* ── DEV-only diagnostic overlay ───────────────────────────────────── */}
-      {__DEV__ && (
-        <View style={s.debug} pointerEvents="none">
-          <Text style={s.debugTitle}>MapDebug</Text>
-          <Text style={s.debugLine}>mapMode: map</Text>
-          <Text style={s.debugLine}>MapLibre mounted: true</Text>
-          <Text style={s.debugLine}>containerWidth: {containerWidth.toFixed(0)}</Text>
-          <Text style={s.debugLine}>containerHeight: {containerHeight.toFixed(0)}</Text>
-          <Text style={s.debugLine}>styleURL exists: {Boolean(MAP_STYLE) ? 'yes' : 'NO'}</Text>
-          <Text style={s.debugLine}>styleURL host: {STYLE_HOST}</Text>
-          <Text style={s.debugLine}>MAPTILER_KEY exists: {Boolean(MAPTILER_KEY) ? 'yes' : 'NO ⚠'}</Text>
-          <Text style={s.debugLine}>pinCount: {mappable.length}</Text>
-          <Text style={s.debugLine}>platform: {Platform.OS}</Text>
-          <Text style={s.debugLine}>mapLoaded: {mapLoaded ? 'yes' : 'no'}</Text>
-          <Text style={s.debugLine}>styleLoaded: {styleLoaded ? 'yes' : 'no'}</Text>
-          {mapError && (
-            <Text style={[s.debugLine, s.debugError]}>error: {mapError}</Text>
-          )}
-          {!MAPTILER_KEY && (
-            <Text style={[s.debugLine, s.debugError]}>MapTiler key missing — using demo tiles</Text>
-          )}
-        </View>
-      )}
+      <View style={s.badge}>
+        <MapPin size={10} color="#fff" />
+        <Text style={s.badgeText}>
+          {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -234,7 +122,6 @@ const s = StyleSheet.create({
   root: {
     flex: 1,
     position: 'relative',
-    minHeight: 300,
   },
   pin: {
     width: 30,
@@ -250,38 +137,32 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 3,
   },
-  noPinsOverlay: {
-    ...StyleSheet.absoluteFillObject,
+  empty: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.sm,
     paddingHorizontal: space.xxl,
+    paddingVertical: space.xxxl,
   },
   emptyIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
   },
   emptyTitle: {
     ...t.title,
-    fontSize: 15,
-    color: '#333',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    paddingHorizontal: 8,
-    borderRadius: 6,
+    fontSize: 16,
+    color: color.mute,
   },
   emptyBody: {
     ...t.body,
-    fontSize: 12,
-    color: '#555',
+    color: color.faint,
     textAlign: 'center',
-    backgroundColor: 'rgba(255,255,255,0.80)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    maxWidth: 260,
   },
   badge: {
     position: 'absolute',
@@ -299,45 +180,5 @@ const s = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
-  },
-  warnBanner: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#f00',
-    padding: 6,
-    alignItems: 'center',
-  },
-  warnText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  debug: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    borderRadius: 8,
-    padding: 8,
-    gap: 2,
-    maxWidth: 220,
-  },
-  debugTitle: {
-    color: '#0f0',
-    fontSize: 10,
-    fontWeight: '800',
-    marginBottom: 3,
-    letterSpacing: 1,
-  },
-  debugLine: {
-    color: '#eee',
-    fontSize: 9,
-    fontFamily: 'monospace',
-  },
-  debugError: {
-    color: '#f88',
-    fontWeight: '700',
   },
 });
