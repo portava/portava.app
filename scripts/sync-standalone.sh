@@ -2,7 +2,7 @@
 # sync-standalone.sh — copy source changes from the monorepo Expo app to the standalone EAS build target.
 #
 # Usage (from the workspace root):
-#   bash scripts/sync-standalone.sh [--dry-run] [--apply-deps] [--check-source]
+#   bash scripts/sync-standalone.sh [--dry-run] [--apply-deps] [--check-source] [--fix-source]
 #
 # Flags:
 #   --dry-run       Show what would change without writing any files.
@@ -18,6 +18,11 @@
 #                   This flag is read-only — no files are written. It runs independently
 #                   of --dry-run and --apply-deps; when used alone only the source diff
 #                   is executed.
+#   --fix-source    Re-sync only the source directories reported by --check-source
+#                   (controlled by SOURCE_DRIFT_DIRS). Package.json, tsconfig.json,
+#                   babel.config.js, metro.config.js, and other preserved files are
+#                   never touched. Combine with --dry-run to preview changes before
+#                   applying them.
 #
 # Environment variables:
 #   SOURCE_DRIFT_THRESHOLD  Maximum number of differing source files before --check-source
@@ -54,6 +59,7 @@ DST="$REPO_ROOT/travel-buddy-standalone"
 DRY_RUN=false
 APPLY_DEPS=false
 CHECK_SOURCE=false
+FIX_SOURCE=false
 SOURCE_DRIFT_THRESHOLD="${SOURCE_DRIFT_THRESHOLD:-0}"
 # Default: all directories that the sync step copies (docs/migrations/scripts/server are
 # lower-churn; include them anyway so no directory silently escapes the check).
@@ -64,9 +70,89 @@ for arg in "$@"; do
     --dry-run)       DRY_RUN=true ;;
     --apply-deps)    APPLY_DEPS=true ;;
     --check-source)  CHECK_SOURCE=true ;;
+    --fix-source)    FIX_SOURCE=true ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
+
+# ---------------------------------------------------------------------------
+# Helper: sync a directory using cp -a + remove stale files
+# Defined early so both --fix-source and the main sync path can call it.
+# ---------------------------------------------------------------------------
+sync_dir() {
+  local name="$1"
+  local from="$SRC/$name"
+  local to="$DST/$name"
+
+  if [[ ! -d "$from" ]]; then
+    echo "    (skipping $name/ — not present in source)"
+    return
+  fi
+
+  echo ">>> $name/"
+
+  if $DRY_RUN; then
+    # Show what would change: new/modified files in source vs destination
+    while IFS= read -r -d '' f; do
+      rel="${f#$from/}"
+      dst_file="$to/$rel"
+      if [[ ! -f "$dst_file" ]]; then
+        echo "    [dry] + $name/$rel (new)"
+      elif ! diff -q "$f" "$dst_file" &>/dev/null; then
+        echo "    [dry] ~ $name/$rel (changed)"
+      fi
+    done < <(find "$from" -type f -not -path "*/node_modules/*" -print0)
+
+    # Files in destination that no longer exist in source
+    if [[ -d "$to" ]]; then
+      while IFS= read -r -d '' f; do
+        rel="${f#$to/}"
+        src_file="$from/$rel"
+        if [[ ! -f "$src_file" ]]; then
+          echo "    [dry] - $name/$rel (removed from source)"
+        fi
+      done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
+    fi
+  else
+    # Remove the destination dir and replace it cleanly (preserves no stale files)
+    rm -rf "$to"
+    cp -a "$from" "$to"
+    echo "    synced"
+  fi
+}
+
+# Tracks whether any synced config file has drifted in dry-run mode.
+# Set to 1 by sync_file when a difference is detected so CI can fail.
+CONFIG_DRIFT_EXIT=0
+
+# ---------------------------------------------------------------------------
+# Helper: sync a single file
+# ---------------------------------------------------------------------------
+sync_file() {
+  local name="$1"
+  local from="$SRC/$name"
+  local to="$DST/$name"
+
+  if [[ ! -f "$from" ]]; then
+    echo "    (skipping $name — not present in source)"
+    return
+  fi
+
+  if $DRY_RUN; then
+    if [[ ! -f "$to" ]]; then
+      echo "    [dry] + $name (new)"
+      CONFIG_DRIFT_EXIT=1
+    elif ! diff -q "$from" "$to" &>/dev/null; then
+      echo "    [dry] ~ $name (changed)"
+      CONFIG_DRIFT_EXIT=1
+    else
+      echo "    [dry] = $name (unchanged)"
+    fi
+  else
+    cp "$from" "$to"
+    echo "    copied $name"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # --check-source mode: diff src/ and app/ then exit.
@@ -143,16 +229,60 @@ if $CHECK_SOURCE; then
   if [[ $SOURCE_DRIFT_COUNT -gt $SOURCE_DRIFT_THRESHOLD ]]; then
     echo "FAIL: Source drift ($SOURCE_DRIFT_COUNT file(s)) exceeds threshold ($SOURCE_DRIFT_THRESHOLD)."
     echo ""
-    echo "To sync the standalone source from the main app, run:"
-    echo "  bash scripts/sync-standalone.sh"
+    echo "To re-sync only the drifted source directories, run:"
+    echo "  bash scripts/sync-standalone.sh --fix-source"
     echo ""
-    echo "To see exactly what would change without writing files:"
-    echo "  bash scripts/sync-standalone.sh --dry-run"
+    echo "To preview what --fix-source would change without writing files:"
+    echo "  bash scripts/sync-standalone.sh --dry-run --fix-source"
+    echo ""
+    echo "To do a full sync (source dirs + config files), run:"
+    echo "  bash scripts/sync-standalone.sh"
     exit 1
   else
     echo "PASS: Source drift is within the acceptable threshold."
     exit 0
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# --fix-source mode: re-sync only the SOURCE_DRIFT_DIRS directories, then exit.
+# Respects --dry-run. Does not touch package.json, tsconfig.json, babel.config.js,
+# metro.config.js, or any other preserved file.
+# ---------------------------------------------------------------------------
+if $FIX_SOURCE; then
+  read -r -a FIX_SOURCE_DIRS <<< "$SOURCE_DRIFT_DIRS"
+
+  if $DRY_RUN; then
+    echo "=== DRY RUN — no files will be written ==="
+  fi
+  echo ""
+  echo "=== Fix source: re-syncing drifted directories ==="
+  echo "    Source : $SRC"
+  echo "    Target : $DST"
+  echo "    Directories: ${FIX_SOURCE_DIRS[*]}"
+  echo ""
+
+  for dir in "${FIX_SOURCE_DIRS[@]}"; do
+    sync_dir "$dir"
+  done
+
+  echo ""
+  if $DRY_RUN; then
+    echo "=== Dry run complete — no files were written ==="
+    echo ""
+    echo "To apply these changes, run:"
+    echo "  bash scripts/sync-standalone.sh --fix-source"
+  else
+    echo "=== Fix-source complete ==="
+    echo ""
+    echo "Next: run typecheck to verify the standalone is healthy:"
+    echo "  cd travel-buddy-standalone && pnpm typecheck"
+    echo ""
+    echo "To check for any remaining drift:"
+    echo "  bash scripts/sync-standalone.sh --check-source"
+  fi
+  echo ""
+  exit 0
 fi
 
 if $DRY_RUN; then
@@ -163,84 +293,6 @@ echo ""
 echo "Source : $SRC"
 echo "Target : $DST"
 echo ""
-
-# ---------------------------------------------------------------------------
-# Helper: sync a directory using cp -a + remove stale files
-# ---------------------------------------------------------------------------
-sync_dir() {
-  local name="$1"
-  local from="$SRC/$name"
-  local to="$DST/$name"
-
-  if [[ ! -d "$from" ]]; then
-    echo "    (skipping $name/ — not present in source)"
-    return
-  fi
-
-  echo ">>> $name/"
-
-  if $DRY_RUN; then
-    # Show what would change: new/modified files in source vs destination
-    while IFS= read -r -d '' f; do
-      rel="${f#$from/}"
-      dst_file="$to/$rel"
-      if [[ ! -f "$dst_file" ]]; then
-        echo "    [dry] + $name/$rel (new)"
-      elif ! diff -q "$f" "$dst_file" &>/dev/null; then
-        echo "    [dry] ~ $name/$rel (changed)"
-      fi
-    done < <(find "$from" -type f -not -path "*/node_modules/*" -print0)
-
-    # Files in destination that no longer exist in source
-    if [[ -d "$to" ]]; then
-      while IFS= read -r -d '' f; do
-        rel="${f#$to/}"
-        src_file="$from/$rel"
-        if [[ ! -f "$src_file" ]]; then
-          echo "    [dry] - $name/$rel (removed from source)"
-        fi
-      done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
-    fi
-  else
-    # Remove the destination dir and replace it cleanly (preserves no stale files)
-    rm -rf "$to"
-    cp -a "$from" "$to"
-    echo "    synced"
-  fi
-}
-
-# Tracks whether any synced config file has drifted in dry-run mode.
-# Set to 1 by sync_file when a difference is detected so CI can fail.
-CONFIG_DRIFT_EXIT=0
-
-# ---------------------------------------------------------------------------
-# Helper: sync a single file
-# ---------------------------------------------------------------------------
-sync_file() {
-  local name="$1"
-  local from="$SRC/$name"
-  local to="$DST/$name"
-
-  if [[ ! -f "$from" ]]; then
-    echo "    (skipping $name — not present in source)"
-    return
-  fi
-
-  if $DRY_RUN; then
-    if [[ ! -f "$to" ]]; then
-      echo "    [dry] + $name (new)"
-      CONFIG_DRIFT_EXIT=1
-    elif ! diff -q "$from" "$to" &>/dev/null; then
-      echo "    [dry] ~ $name (changed)"
-      CONFIG_DRIFT_EXIT=1
-    else
-      echo "    [dry] = $name (unchanged)"
-    fi
-  else
-    cp "$from" "$to"
-    echo "    copied $name"
-  fi
-}
 
 # ---------------------------------------------------------------------------
 # 1. Sync directories
