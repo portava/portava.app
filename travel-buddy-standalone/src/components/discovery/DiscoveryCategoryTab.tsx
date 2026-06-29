@@ -315,8 +315,6 @@ export function DiscoveryCategoryTab({
 
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
-      ) : viewMode === 'map' ? (
-        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />
       ) : error && places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Couldn't load places</Text>
@@ -332,6 +330,8 @@ export function DiscoveryCategoryTab({
             Try increasing the search radius or adjust the filters.
           </Text>
         </View>
+      ) : viewMode === 'map' ? (
+        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />
       ) : (
         <FlatList
           data={places}
