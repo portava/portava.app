@@ -47,6 +47,9 @@ jobs:
       - name: Test pre-release fix hints
         run: bash scripts/test-pre-release-hints.sh
 
+      - name: Test bundle-ID placeholder guard
+        run: bash scripts/test-bundle-id-guard.sh
+
       - name: Run pre-release checks
         env:
           SKIP_EAS_PREFLIGHT: "1"
