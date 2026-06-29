@@ -15,6 +15,7 @@ on:
       - "travel-buddy-standalone/package.json"
       - "travel-buddy-standalone/pnpm-lock.yaml"
       - "scripts/sync-standalone.sh"
+      - "scripts/src/workflow-paths.test.ts"
       - "artifacts/travel-buddy/src/**"
       - "travel-buddy-standalone/src/**"
       - "artifacts/travel-buddy/app/**"
@@ -39,6 +40,7 @@ on:
       - "travel-buddy-standalone/package.json"
       - "travel-buddy-standalone/pnpm-lock.yaml"
       - "scripts/sync-standalone.sh"
+      - "scripts/src/workflow-paths.test.ts"
       - "artifacts/travel-buddy/src/**"
       - "travel-buddy-standalone/src/**"
       - "artifacts/travel-buddy/app/**"
@@ -112,3 +114,24 @@ jobs:
             echo "  git add travel-buddy-standalone/pnpm-lock.yaml && git commit -m 'chore: sync standalone lockfile'"
             exit 1
           }
+
+  workflow-paths-tests:
+    name: Run workflow-paths unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run workflow-paths tests
+        run: pnpm --filter @workspace/scripts run test:workflow-paths
