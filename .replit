@@ -28,6 +28,10 @@ args = "typecheck-standalone"
 task = "workflow.run"
 args = "sync-standalone-check"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "sync-regression"
+
 [[workflows.workflow]]
 name = "routes-guard"
 author = "agent"
@@ -57,6 +61,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash scripts/sync-standalone.sh --dry-run"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "sync-regression"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/test-sync-standalone.sh"
 
 [workflows.workflow.metadata]
 isValidation = true
