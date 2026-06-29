@@ -12,10 +12,32 @@ WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
 # ── Required-tool preflight ──────────────────────────────────────────────────
-# Only pnpm and node are shell-level prerequisites. tsc is resolved through
-# pnpm package scripts (node_modules/.bin) and does not need to be on PATH.
+# Shell-level prerequisites for this script and the sync helpers it calls.
+# tsc is resolved through pnpm package scripts (node_modules/.bin) and does
+# not need to be on PATH.  eas and expo are only required when you intend to
+# trigger an EAS build — they are checked here so a missing CLI fails fast
+# rather than partway through a build.
+#
+# Tool      Why needed
+# -------   -----------------------------------------------------------------
+# bash      explicit sub-shell calls in run_check (bash -c / bash scripts/…)
+# git       sync-standalone.sh uses git diff for source-drift checks
+# node      pnpm runs on Node; also used directly by build scripts
+# pnpm      all package installs and workspace script execution
+# eas       EAS build / submit commands (eas-cli, must be installed globally)
+# expo      Expo CLI — expo export and doctor steps in CI
+
+declare -A tool_fix=(
+  [bash]="install Bash 4+ (macOS: brew install bash; Linux: apt-get install bash)"
+  [git]="install Git (https://git-scm.com/downloads or your OS package manager)"
+  [node]="use Node Version Manager (nvm) or actions/setup-node in CI"
+  [pnpm]="corepack enable && corepack prepare pnpm@latest --activate"
+  [eas]="npm install -g eas-cli  (or pnpm add -g eas-cli)"
+  [expo]="npm install -g expo-cli  (or pnpm add -g expo-cli)"
+)
+
 missing_tools=()
-for tool in pnpm node; do
+for tool in bash git node pnpm eas expo; do
   if ! command -v "$tool" &>/dev/null; then
     missing_tools+=("$tool")
   fi
@@ -23,12 +45,10 @@ done
 if [[ ${#missing_tools[@]} -gt 0 ]]; then
   printf '\n❌  pre-release-check: required tool(s) not found on PATH:\n'
   for t in "${missing_tools[@]}"; do
-    printf '      • %s\n' "$t"
+    printf '      • %-8s  fix: %s\n' "$t" "${tool_fix[$t]}"
   done
-  printf '\n   Install the missing tool(s) and re-run.\n'
-  printf '   Typical fixes:\n'
-  printf '     pnpm  → corepack enable && corepack prepare pnpm@latest --activate\n'
-  printf '     node  → use Node Version Manager (nvm) or actions/setup-node in CI\n\n'
+  printf '\nInstall the missing tool(s) and re-run.\n'
+  printf 'See docs/eas-runbook.md → "Required tools" for full install instructions.\n\n'
   exit 1
 fi
 

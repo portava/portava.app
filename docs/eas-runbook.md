@@ -2,6 +2,45 @@
 
 The project is scaffolded for EAS builds and MapLibre native maps. The following steps require the project owner to complete before triggering a real device build.
 
+## Required tools
+
+Install all of the following on any machine or CI runner before triggering a build or running the pre-release check script. The preflight block in `scripts/pre-release-check.sh` validates each one and prints the relevant install hint when any is missing.
+
+| Tool | Min version | Why needed | Install |
+|------|-------------|-----------|---------|
+| **bash** | 4.0+ | Sub-shell calls in `pre-release-check.sh` and `sync-standalone.sh` | macOS: `brew install bash` · Linux: `apt-get install bash` |
+| **git** | 2.x | Source-drift diff in `sync-standalone.sh --check-source` | https://git-scm.com/downloads or OS package manager |
+| **node** | 24.x (LTS) | Runtime for pnpm and all build scripts | [nvm](https://github.com/nvm-sh/nvm): `nvm install 24` · CI: `actions/setup-node@v4` with `node-version: 24` |
+| **pnpm** | 10.x | Workspace installs and all `pnpm run …` scripts | `corepack enable && corepack prepare pnpm@latest --activate` |
+| **eas-cli** | latest | `eas build`, `eas submit`, `eas update` commands | `npm install -g eas-cli` (or `pnpm add -g eas-cli`) |
+| **expo** (Expo CLI) | latest | `expo export`, `expo doctor`, and local dev server | `npm install -g expo-cli` (or `pnpm add -g expo-cli`) |
+
+### CI runner quick-start (GitHub Actions example)
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    node-version: 24
+
+- run: corepack enable && corepack prepare pnpm@latest --activate
+
+- run: npm install -g eas-cli expo-cli
+
+# Verify all tools before running the pre-release check
+- run: bash scripts/pre-release-check.sh
+```
+
+### Verifying locally
+
+Run the preflight check in isolation to confirm your environment is ready:
+
+```bash
+# From the workspace root
+bash scripts/pre-release-check.sh
+```
+
+The script exits immediately with a list of missing tools and their install commands if anything is absent.
+
 ## Applied EAS monorepo fixes (already in the repo)
 
 Four fixes are applied so EAS cloud builds detect pnpm and use the correct node-linker for React Native native modules (MapLibre, etc.):
