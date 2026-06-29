@@ -15,10 +15,25 @@ A social travel passport mobile app — log trips, track destinations, and share
 
 ```bash
 cd ~/workspace/travel-buddy-standalone
-pnpm run dev   # includes all required Replit env vars
+pnpm run dev           # prints the Android URL and starts Metro
+pnpm run dev:android   # same, but clears Metro cache first (--clear)
 ```
 
 The web preview shows the non-native build — MapLibre requires iOS or Android runtime.
+
+## Physical Android device connection
+
+The Replit preview QR code routes through a proxy that Android cannot reach. **Do not scan it.**
+
+**Every time you start the dev server, the correct URL is printed in the terminal.**
+
+Manual steps:
+1. Install the **Travel Buddy EAS development build** on the device (not Expo Go).
+2. Open the app → tap **Enter URL manually**.
+3. Paste the `.expo.spock.replit.dev` URL printed by `pnpm run dev` and tap **Connect**.
+4. If connection times out, run: `curl -I https://$REPLIT_EXPO_DEV_DOMAIN` from the Replit shell to confirm Metro is up.
+
+The tunnel URL is read from `$REPLIT_EXPO_DEV_DOMAIN` at runtime — it updates automatically if Replit rotates the domain. The startup script is `travel-buddy-standalone/scripts/android-dev.sh`.
 
 ## Run & Operate
 

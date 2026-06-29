@@ -1,0 +1,72 @@
+Fix the Android dev-client connection workflow. Stop relying on the Replit preview QR code.
+
+Current issue:
+The Android development build cannot reach Metro through the Replit preview QR/proxy. Metro is running and healthy, but the device times out because it is being pointed at the wrong URL.
+
+Known working tunnel URL format:
+https://<repl-domain>.expo.spock.replit.dev
+
+Current working URL:
+https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7.expo.spock.replit.dev
+
+The user has been stuck because the workflow keeps showing/using the wrong connection path.
+
+Goal:
+Make the standalone Travel Buddy dev workflow print the correct Android dev-client manual URL clearly, every time, and document that the Replit preview QR should not be used for physical Android devices.
+
+Tasks:
+
+1. Update travel-buddy-standalone/package.json
+Make pnpm run dev start Expo dev client in a way that uses the Replit Expo tunnel/proxy domain, not a LAN/localhost URL that Android cannot reach.
+
+2. Add a clear startup message
+When the dev command runs, print:
+
+“ANDROID DEV BUILD CONNECTION:
+Open the Travel Buddy development build app, tap Enter URL manually, and paste:
+https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7.expo.spock.replit.dev
+
+Do not use the Replit preview QR code for physical Android devices.”
+
+If the domain can be read dynamically from env vars, generate it dynamically. If not, document the current domain and explain where to update it if Replit changes.
+
+3. Add a dedicated script
+Add something like:
+
+pnpm run dev:android
+
+That:
+- starts the standalone app dev server
+- clears cache if needed
+- prints the manual Android URL
+- reminds the user to open the installed dev build, not Expo Go
+
+4. Update docs
+Update replit.md or the standalone README with:
+
+Physical Android connection steps:
+- install/open the EAS development build
+- tap Enter URL manually
+- paste the .expo.spock.replit.dev URL
+- do not scan the Replit preview QR
+- do not use Expo Go
+- if connection times out, verify Metro is reachable at the tunnel URL from the phone browser
+
+5. Add a quick health check
+Provide a command that checks Metro is responding from Replit:
+
+bash cd ~/workspace/travel-buddy-standalone curl -I https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7.expo.spock.replit.dev 
+
+6. Do not keep debugging MapLibre until the device is connected to the correct bundle
+No more map debugging should happen until:
+- the Android dev build connects to Metro using the correct manual URL
+- the app loads the standalone bundle
+- the notification crash fix is confirmed on-device
+- then Discovery → Map is tested
+
+Completion proof:
+- show the exact command to start standalone dev server
+- show the exact URL the user should enter manually
+- confirm the docs say not to use Replit preview QR
+- confirm whether Metro responds at the tunnel URL
+- do not claim the device connected unless the user confirms the Android app loaded the bundle
