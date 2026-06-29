@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 // Register the geofence background task at module root — must be imported
@@ -7,7 +8,6 @@ import '../src/tasks/checkpointArrivalTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import { AttachmentProvider } from '../src/context/AttachmentStore';
 import { AttachControllerProvider } from '../src/components/AttachController';
 import { PlanPickerControllerProvider } from '../src/components/PlanPickerController';
@@ -22,18 +22,7 @@ import { useCompassFrontload } from '../src/hooks/compass/useCompassFrontload';
 import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
-
-// Notify handler: show banner even when app is foregrounded
-if (Platform.OS !== 'web') {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowList: true,
-    }),
-  });
-}
+import { setNotificationHandler } from '../src/lib/safeNotifications';
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
@@ -44,6 +33,22 @@ function PushSetup() {
   usePushToken();
   useNotificationStream();
   useNotificationHandler();
+
+  // Register the foreground notification handler after mount via the safe
+  // wrapper. This avoids crashing at module load if ExpoTopicSubscriptionModule
+  // or other expo-notifications native modules are absent in the current build.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowList: true,
+      }),
+    });
+  }, []);
+
   return null;
 }
 
