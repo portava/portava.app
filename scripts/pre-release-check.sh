@@ -11,6 +11,27 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
+# ── Required-tool preflight ──────────────────────────────────────────────────
+# Only pnpm and node are shell-level prerequisites. tsc is resolved through
+# pnpm package scripts (node_modules/.bin) and does not need to be on PATH.
+missing_tools=()
+for tool in pnpm node; do
+  if ! command -v "$tool" &>/dev/null; then
+    missing_tools+=("$tool")
+  fi
+done
+if [[ ${#missing_tools[@]} -gt 0 ]]; then
+  printf '\n❌  pre-release-check: required tool(s) not found on PATH:\n'
+  for t in "${missing_tools[@]}"; do
+    printf '      • %s\n' "$t"
+  done
+  printf '\n   Install the missing tool(s) and re-run.\n'
+  printf '   Typical fixes:\n'
+  printf '     pnpm  → corepack enable && corepack prepare pnpm@latest --activate\n'
+  printf '     node  → use Node Version Manager (nvm) or actions/setup-node in CI\n\n'
+  exit 1
+fi
+
 PASS=0
 FAIL=1
 
