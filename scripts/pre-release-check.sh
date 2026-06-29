@@ -103,6 +103,11 @@ run_check "api-server-build" \
   "API server esbuild bundle (artifacts/api-server)" \
   pnpm --filter @workspace/api-server run build
 
+# ── 6. Lockfile drift ────────────────────────────────────────────────────────
+run_check "lockfile-drift" \
+  "Lockfile drift (resolved versions: monorepo vs standalone)" \
+  bash scripts/sync-standalone.sh --check-lockfile
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf '\n'
 sep
@@ -117,6 +122,9 @@ for entry in "${results[@]}"; do
   else
     detail="${rest#*|}"
     printf '  ✘  %-30s FAIL  (%s)\n' "$name" "$detail"
+    if [[ "$name" == "lockfile-drift" ]]; then
+      printf '     fix: bash scripts/sync-standalone.sh --fix-lockfile\n'
+    fi
   fi
 done
 sep
