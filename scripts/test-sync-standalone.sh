@@ -725,6 +725,58 @@ assert_contains "18d: devDependencies section header shown"    "[devDependencies
 rm -rf "$T18"
 
 # ---------------------------------------------------------------------------
+# Test 19: --apply-deps writes a devDependency-only bump to standalone
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 19: --apply-deps applies devDependency-only changes ==="
+
+T19="$(setup_workspace)"
+src19="$T19/artifacts/travel-buddy"
+dst19="$T19/travel-buddy-standalone"
+
+# Source: identical dependencies, bumped typescript devDep only
+cat > "$src19/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.1"
+  }
+}
+EOF
+
+# Standalone: old typescript version + a standalone-only devDep that must be preserved
+cat > "$dst19/package.json" <<'EOF'
+{
+  "name": "travel-buddy-standalone",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "standalone-only-devdep": "3.0.0",
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+ec19=0
+out19="$(run_sync "$T19" --apply-deps 2>&1)" || ec19=$?
+
+assert_exit         "19a: exits 0 after apply"                                   0  "$ec19"
+assert_file_content "19b: bumped devDep version written to standalone"           "$dst19/package.json" '"typescript": "~5.9.1"'
+assert_file_content "19c: standalone-only devDep preserved"                      "$dst19/package.json" "standalone-only-devdep"
+assert_file_content "19d: standalone name preserved"                             "$dst19/package.json" "travel-buddy-standalone"
+assert_not_contains "19e: no FAIL in output"                                     "FAIL:" "$out19"
+
+rm -rf "$T19"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
