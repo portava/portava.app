@@ -108,12 +108,11 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         # --non-interactive  suppress interactive prompts (required in CI)
-        # --no-wait          submit the build and move on; the EAS dashboard
-        #                    tracks completion so the job does not block on the
-        #                    longer iOS cloud queue (m-medium resource class).
+        # (no --no-wait)     CI waits for the cloud build to finish and exits
+        #                    non-zero if the build fails, so a broken iOS build
+        #                    blocks the release branch the same way Android does.
         run: >
           eas build
           --platform ios
           --profile preview
           --non-interactive
-          --no-wait
