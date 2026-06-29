@@ -1,0 +1,93 @@
+Fix: the Discovery List/Map toggle never shows the map when there are no places.
+
+App: ~/workspace/travel-buddy-standalone (NOT artifacts/travel-buddy — that's the backup). Work only in the standalone.
+
+═══════════════════════════════════════════════════════════════════
+ROOT CAUSE (confirmed by reading the source)
+═══════════════════════════════════════════════════════════════════
+In src/components/discovery/DiscoveryCategoryTab.tsx the render is a conditional chain in this order:
+
+    {loading ? (
+      <spinner/>
+    ) : error ? (
+      <"Couldn't load places" />
+    ) : places.length === 0 ? (
+      <"No places found" />          ← when empty, THIS renders and the chain STOPS
+    ) : viewMode === 'map' ? (
+      <DiscoveryMapView ... />       ← line ~333, NEVER reached when places is empty
+    ) : (
+      <FlatList ... />
+    )}
+
+Because `places.length === 0` (and `error`) are checked BEFORE `viewMode === 'map'`, when there are
+no places the empty/error state renders and the map branch is never reached. Result: tapping "Map" with
+no data shows the same "No places found" screen as List — the map never mounts. (DiscoveryMapView itself
+was already fixed to always render a map with a no-pins overlay, but it's unreachable because this PARENT
+guard intercepts first.)
+
+═══════════════════════════════════════════════════════════════════
+THE FIX
+═══════════════════════════════════════════════════════════════════
+Reorder the conditional chain so `viewMode === 'map'` is checked FIRST (right after the `loading` check),
+BEFORE the `error` and `places.length === 0` guards. In map mode the map must ALWAYS render regardless of
+error/empty state, because DiscoveryMapView already handles the no-pins case with its own overlay. The
+`error` and "No places found" empty states should apply to LIST mode ONLY.
+
+Target order:
+
+    {loading ? (
+      <spinner/>
+    ) : viewMode === 'map' ? (
+      <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />   // map ALWAYS renders in map mode
+    ) : error ? (
+      <"Couldn't load places" />                                          // list-mode only
+    ) : places.length === 0 ? (
+      <"No places found" />                                               // list-mode only
+    ) : (
+      <FlatList ... />
+    )}
+
+Keep the loading check first (a spinner is fine in both modes — but if there is already-loaded data while
+refetching, prefer showing the map in map mode rather than blocking it with a spinner; use judgment, the
+key requirement is that map mode shows the map whenever data has loaded, empty or not).
+
+Do NOT change DiscoveryMapView.tsx (already correct). Do NOT remove the error/empty states — just gate
+them to list mode by ordering. Do NOT fabricate place data.
+
+═══════════════════════════════════════════════════════════════════
+ALSO CHECK — same bug likely elsewhere
+═══════════════════════════════════════════════════════════════════
+Audit these for the SAME pattern (error/empty guard checked before viewMode==='map') and apply the same
+reorder so map mode always renders the map:
+- src/components/discovery/ForYouTab.tsx   (very likely identical structure — it also imports DiscoveryMapView)
+- any other Discovery tab/screen with a list/map viewMode and an error/empty-before-map chain
+For each file: report whether it had the bug and was fixed, or was already correct.
+
+═══════════════════════════════════════════════════════════════════
+GUARDRAILS
+═══════════════════════════════════════════════════════════════════
+- Standalone only (travel-buddy-standalone); do NOT touch artifacts/travel-buddy.
+- No production Supabase migrations. No DB changes.
+- Do NOT weaken privacy/safety/location logic.
+- Do NOT fabricate places or pins. An empty map (with the existing no-pins overlay) is the correct result.
+- Preserve bottom nav (Pulse, Discover, Create, Trips, Passport — no Messages tab).
+
+═══════════════════════════════════════════════════════════════════
+VALIDATION
+═══════════════════════════════════════════════════════════════════
+From ~/workspace/travel-buddy-standalone:
+- typecheck (report pass/fail; say so if it times out)
+- conflict-marker scan: grep -R "<<<<<<<\|=======\|>>>>>>>" src --exclude-dir=node_modules
+- list every file changed
+
+REPORT:
+- which files had the error/empty-before-map ordering bug and were fixed (and any already correct)
+- the exact new conditional order in DiscoveryCategoryTab.tsx
+- typecheck result with pass/fail counts
+
+ACCEPTANCE:
+- Tapping "Map" in Discovery shows the interactive MapLibre map EVEN WHEN there are zero places
+  (map renders with fallback viewport + the existing "no pins" overlay; it is visually different from
+  the List empty state).
+- List mode still shows "Couldn't load places" on error and "No places found" when empty.
+- Same fix applied to ForYouTab and any other tab with the identical pattern.
