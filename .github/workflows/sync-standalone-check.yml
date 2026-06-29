@@ -42,6 +42,8 @@ on:
       - "travel-buddy-standalone/scripts/**"
       - "artifacts/travel-buddy/server/**"
       - "travel-buddy-standalone/server/**"
+      - "scripts/sync-standalone.sh"
+      - "scripts/src/sync-standalone-check.test.ts"
   pull_request:
     branches: ["**"]
     paths:
@@ -83,6 +85,8 @@ on:
       - "travel-buddy-standalone/scripts/**"
       - "artifacts/travel-buddy/server/**"
       - "travel-buddy-standalone/server/**"
+      - "scripts/sync-standalone.sh"
+      - "scripts/src/sync-standalone-check.test.ts"
 
 jobs:
   sync-standalone-check:
@@ -117,6 +121,27 @@ jobs:
 
       - name: Diff source directories
         run: bash scripts/sync-standalone.sh --check-source
+
+  drift-check-tests:
+    name: Run sync-standalone drift-check unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run drift-check tests
+        run: pnpm --filter @workspace/scripts run test:sync-check
 
   standalone-typecheck:
     name: Typecheck travel-buddy-standalone
