@@ -9,9 +9,29 @@ export interface AuthResult {
   error: string | null;
 }
 
+/** Classify a caught error into a user-readable message. */
+function networkMessage(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (
+    msg.includes('Network request failed') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('ERR_NAME_NOT_RESOLVED') ||
+    msg.includes('ENOTFOUND')
+  ) {
+    return 'Cannot reach the server. Check your internet connection and try again.';
+  }
+  return msg || 'Something went wrong. Please try again.';
+}
+
 export async function signUp(email: string, password: string, meta?: { name?: string; handle?: string }): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
-  const { data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } });
+  if (__DEV__) console.log('[Auth] signUp →', email);
+  let data: any, error: any;
+  try {
+    ({ data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } }));
+  } catch (e) {
+    return { userId: null, error: networkMessage(e) };
+  }
   if (error) return { userId: null, error: error.message };
   const userId = data.user?.id ?? null;
   // Create the profile from the client (the auth trigger approach hit permission issues).
@@ -36,16 +56,20 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
     { id: userId, handle, name },
     { onConflict: 'id', ignoreDuplicates: true },
   );
-  // Ensure a location-privacy row exists, defaulting to PRIVATE (never auto-share).
-  await supabase.from('user_location_privacy').upsert(
-    { user_id: userId, sharing: 'private', ghost_mode: false },
-    { onConflict: 'user_id', ignoreDuplicates: true },
-  );
+  // Note: the location_preferences row (migration 0032) is created on first
+  // location-service access, not at profile creation — the table schema differs
+  // from the old user_location_privacy table that was removed.
 }
 
 export async function signIn(email: string, password: string): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (__DEV__) console.log('[Auth] signIn →', email);
+  let data: any, error: any;
+  try {
+    ({ data, error } = await supabase.auth.signInWithPassword({ email, password }));
+  } catch (e) {
+    return { userId: null, error: networkMessage(e) };
+  }
   if (error) return { userId: null, error: error.message };
   const userId = data.user?.id ?? null;
   // Backfill: ensure a profile exists (covers accounts made before client-side profile creation).
@@ -74,7 +98,12 @@ export function onAuthChange(cb: (userId: string | null) => void): () => void {
 /** Send a password-reset email via Supabase Auth. */
 export async function requestPasswordReset(email: string): Promise<{ error?: string }> {
   if (!isSupabaseConfigured) return { error: 'Backend not configured.' };
-  const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+  let error: any;
+  try {
+    ({ error } = await supabase.auth.resetPasswordForEmail(email.trim()));
+  } catch (e) {
+    return { error: networkMessage(e) };
+  }
   if (error) return { error: error.message };
   return {};
 }
@@ -84,6 +113,7 @@ export async function lookupUsernameByEmail(email: string): Promise<{ handle?: s
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   if (!apiBase) return { error: 'Backend not configured.' };
   try {
+    if (__DEV__) console.log('[Auth] lookupUsername POST →', `${apiBase}/api/auth/lookup-username`);
     const res = await fetch(`${apiBase}/api/auth/lookup-username`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -92,7 +122,7 @@ export async function lookupUsernameByEmail(email: string): Promise<{ handle?: s
     const data = await res.json();
     if (!res.ok) return { error: data?.error ?? 'Could not find an account with that email.' };
     return { handle: data.handle };
-  } catch {
-    return { error: 'Network error — please try again.' };
+  } catch (e) {
+    return { error: networkMessage(e) };
   }
 }

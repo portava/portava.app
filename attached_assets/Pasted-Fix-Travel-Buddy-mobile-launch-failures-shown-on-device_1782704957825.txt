@@ -1,0 +1,70 @@
+Fix Travel Buddy mobile launch failures shown on device.
+
+Observed errors:
+1. Login screen shows "Network request failed" and toast "TypeError: Network request failed" during sign-in.
+2. Android red screen crash on launch:
+   "Cannot find native module 'ExpoTopicSubscriptionModule'"
+   Source points to app/_layout.tsx line importing:
+   import * as Notifications from 'expo-notifications';
+
+Scope:
+- Diagnose and fix both issues end-to-end.
+- Do not add new product features.
+- Keep existing UI/UX intact unless required for the fix.
+- Make the app launch cleanly on Android device and allow auth requests to reach the backend.
+- Add defensive error handling so these failures show clear user/dev messages instead of crashing.
+
+Required fixes:
+
+A) Fix expo-notifications native module crash
+- Audit package.json, Expo SDK version, expo-notifications version, and lockfile.
+- Ensure expo-notifications version is compatible with the current Expo SDK.
+- If the app is using Expo Go or a development build where notifications are unsupported/mismatched, guard all notification initialization behind a safe runtime wrapper.
+- Remove direct top-level notification side effects from app/_layout.tsx.
+- Create a safe notifications service/module such as src/lib/notifications/safeNotifications.ts.
+- The service must:
+  - Dynamically import expo-notifications only inside guarded functions.
+  - Catch missing native module errors.
+  - Return a disabled/unavailable state instead of crashing.
+  - Log a helpful warning in development.
+  - No-op gracefully when notifications are unavailable.
+- Update _layout.tsx to use the safe wrapper only after app mount.
+- Make sure the app can launch even if expo-notifications native modules are unavailable.
+- If package changes are required, update dependencies correctly and document whether a fresh dev build is required.
+
+B) Fix "Network request failed" on sign-in
+- Audit the API/auth client configuration used by the mobile app.
+- Find every place the app builds fetch URLs, Supabase URLs, auth URLs, or backend base URLs.
+- Confirm the mobile app is not calling localhost/127.0.0.1 from a physical device.
+- Add a single canonical API base URL resolver for mobile.
+- It should prefer public Replit/backend URL env vars and fail with a clear dev message if missing.
+- Normalize trailing slashes to avoid malformed URLs.
+- Add request logging in development showing method + resolved URL, without logging passwords/tokens.
+- Add better error messages for:
+  - backend unreachable
+  - missing API base URL
+  - invalid auth credentials
+  - server error
+- Make sign-in and create-account use the same API client.
+- Confirm CORS/server binding is correct:
+  - backend listens on 0.0.0.0
+  - correct port is exposed
+  - frontend env points to public backend URL, not localhost
+- If this app uses Supabase, verify SUPABASE_URL and anon key are available to the Expo app using EXPO_PUBLIC_* vars.
+
+C) Verification
+Run the strongest available checks:
+- npm install or dependency sync if package versions changed
+- typecheck
+- lint if available
+- unit tests if available
+- start backend health endpoint and confirm it responds
+- verify the mobile API base URL resolves to the public backend URL
+- verify app/_layout.tsx no longer imports expo-notifications in a way that can crash at module load
+- verify sign-in request reaches the backend instead of throwing immediate network failure
+
+Deliver a report with:
+- exact files changed
+- root cause of each error
+- what command to run locally/Replit to rebuild if native dependency changes require it
+- verification results with pass/fail counts

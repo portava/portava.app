@@ -19,3 +19,4 @@
 - [_setTestClient also needs service client](test-service-client-override.md) — _setTestClient sets _testClient (used by requireUser) but NOT getServiceClient(); routes that call getServiceClient() directly hit the real DB in tests; fix: _setTestClient now also calls _setTestServiceClient so both slots point to the fake client
 - [Metro cold cache + Reanimated plugin](metro-cache-reanimated.md) — cold rebuild ~68s (3485 modules); warm is 2-4s; babel config change with compatible plugin stays warm; wait 90s before concluding Metro hung
 - [MapLibre React Native v11 API](maplibre-v11-api.md) — Map/Camera/Marker/GeoJSONSource/Layer; coordinate order [lng,lat]; requires @types/geojson devDep
+- [expo-notifications safe wrapper](safe-notifications.md) — ExpoTopicSubscriptionModule crash fixed by lazy require() in safeNotifications.ts; remove all top-level imports; user_location_privacy table was renamed to location_preferences (migration 0032)
