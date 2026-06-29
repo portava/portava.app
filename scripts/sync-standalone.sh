@@ -14,7 +14,8 @@
 #
 # What it syncs:
 #   Directories: app/ src/ assets/ components/ constants/ hooks/ docs/ migrations/ scripts/ server/
-#   Config files: babel.config.js  metro.config.js  app.json  eas.json  expo-env.d.ts
+#   Config files: app.json  eas.json  expo-env.d.ts
+#   (babel.config.js and metro.config.js are NOT overwritten — structural drift checks run instead)
 #
 # What it preserves (standalone-only — never overwritten):
 #   package.json        — different name + scripts (no monorepo dev script)
@@ -145,7 +146,7 @@ done
 # ---------------------------------------------------------------------------
 echo ""
 echo ">>> config files"
-CONFIG_FILES=(metro.config.js app.json eas.json expo-env.d.ts)
+CONFIG_FILES=(app.json eas.json expo-env.d.ts)
 
 for f in "${CONFIG_FILES[@]}"; do
   sync_file "$f"
@@ -501,6 +502,79 @@ NODEEOF
 BABEL_DRIFT_EXIT=$?
 
 echo ""
+echo "=== metro.config.js structural diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
+
+METRO_DRIFT_EXIT=0
+
+node - "$SRC/metro.config.js" "$DST/metro.config.js" <<'NODEEOF'
+const fs = require('fs');
+const [,, srcPath, dstPath] = process.argv;
+
+let srcText, dstText;
+try { srcText = fs.readFileSync(srcPath, 'utf8'); }
+catch (e) { console.error('  Cannot read source metro.config.js:', e.message); process.exit(1); }
+try { dstText = fs.readFileSync(dstPath, 'utf8'); }
+catch (e) { console.error('  Cannot read standalone metro.config.js:', e.message); process.exit(1); }
+
+// Extract top-level config property names referenced in the file.
+// Metro configs are written imperatively (config.resolver = ..., config.serializer.X = ...)
+// so we extract the first segment of every `config.<key>` reference without evaluating
+// the file — which avoids the need for all Expo dependencies to be present.
+function extractTopLevelKeys(text) {
+  const keys = new Set();
+  // Match config.<identifier> — captures only the first segment (top-level key).
+  const re = /\bconfig\.([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    keys.add(m[1]);
+  }
+  return keys;
+}
+
+const srcKeys = extractTopLevelKeys(srcText);
+const dstKeys = extractTopLevelKeys(dstText);
+const allKeys = new Set([...srcKeys, ...dstKeys]);
+
+let drifted = false;
+
+for (const key of [...allKeys].sort()) {
+  const inSrc = srcKeys.has(key);
+  const inDst = dstKeys.has(key);
+  if (inSrc && inDst) {
+    console.log(`  = config.${key} (in sync)`);
+  } else if (inSrc) {
+    console.log(`  ~ config.${key}: present in source but missing from standalone (DRIFT)`);
+    drifted = true;
+  } else {
+    console.log(`  ~ config.${key}: [standalone-only] (noted — intentional divergence)`);
+  }
+}
+
+if (drifted) {
+  console.log('');
+  console.log('  ACTION REQUIRED: metro.config.js config sections have drifted.');
+  console.log('  Manually apply the missing config section(s) to travel-buddy-standalone/metro.config.js.');
+  console.log('  (standalone-only sections are intentional — do not remove them)');
+  process.exit(1);
+}
+
+// All source keys are present — check whether content is identical.
+// Divergence here may be intentional (different __dirname-relative paths, extra
+// standalone shims, etc.) so it does not fail CI, but surfaces a diff hint.
+if (srcText === dstText) {
+  console.log('');
+  console.log('  (metro.config.js is identical — fully in sync)');
+} else {
+  console.log('');
+  console.log('  NOTE: metro.config.js top-level keys match but file content differs.');
+  console.log('  This may be intentional (standalone-specific shims, paths, etc.).');
+  console.log('  Review manually:');
+  console.log('    diff artifacts/travel-buddy/metro.config.js travel-buddy-standalone/metro.config.js');
+}
+NODEEOF
+METRO_DRIFT_EXIT=$?
+
+echo ""
 echo "=== Dependency diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
 
 DIFF_EXIT=0
@@ -535,9 +609,15 @@ if [[ $BABEL_DRIFT_EXIT -ne 0 ]]; then
   echo "     Manually update travel-buddy-standalone/babel.config.js to match."
   echo "     (standalone-only plugins/presets are intentional — do not remove them)"
 fi
+if [[ $METRO_DRIFT_EXIT -ne 0 ]]; then
+  echo "  *. metro.config.js config sections are out of sync (see diff above)."
+  echo "     Manually apply the missing section(s) to travel-buddy-standalone/metro.config.js."
+  echo "     (standalone-only sections are intentional — do not remove them)"
+fi
 echo "  2. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
 echo ""
 
-# Exit non-zero if config-file drift, preserved-file drift, tsconfig drift, babel drift, or dep drift.
-FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT | TSCONFIG_DRIFT_EXIT | BABEL_DRIFT_EXIT ))
+# Exit non-zero if config-file drift, preserved-file drift, tsconfig drift,
+# babel drift, metro drift, or dep drift.
+FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT | TSCONFIG_DRIFT_EXIT | BABEL_DRIFT_EXIT | METRO_DRIFT_EXIT ))
 exit $FINAL_EXIT
