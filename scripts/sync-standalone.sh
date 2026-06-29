@@ -145,7 +145,7 @@ done
 # ---------------------------------------------------------------------------
 echo ""
 echo ">>> config files"
-CONFIG_FILES=(babel.config.js metro.config.js app.json eas.json expo-env.d.ts)
+CONFIG_FILES=(metro.config.js app.json eas.json expo-env.d.ts)
 
 for f in "${CONFIG_FILES[@]}"; do
   sync_file "$f"
@@ -353,6 +353,154 @@ NODEEOF
 TSCONFIG_DRIFT_EXIT=$?
 
 echo ""
+echo "=== babel.config.js structural diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
+
+BABEL_DRIFT_EXIT=0
+
+node - "$SRC/babel.config.js" "$DST/babel.config.js" <<'NODEEOF'
+const [,, srcPath, dstPath] = process.argv;
+
+// Minimal babel api mock — only cache() is needed for typical configs.
+const mockApi = { cache: () => {}, env: () => false, caller: () => false };
+
+let srcCfg, dstCfg;
+try { srcCfg = require(srcPath)(mockApi); }
+catch (e) { console.error('  Cannot load source babel.config.js:', e.message); process.exit(1); }
+try { dstCfg = require(dstPath)(mockApi); }
+catch (e) { console.error('  Cannot load standalone babel.config.js:', e.message); process.exit(1); }
+
+// Normalise a plugin/preset entry → [name, serialisedOptions | null]
+// Preserves the exact entry for order-aware comparison.
+function normalise(item) {
+  if (typeof item === 'string') return [item, null];
+  if (Array.isArray(item)) return [String(item[0]), item.length > 1 ? JSON.stringify(item[1]) : null];
+  return [String(item), null];
+}
+
+let drifted = false;
+
+// ── Array sections (plugins, presets) ──────────────────────────────────────
+// Babel plugin/preset order matters for transform execution. Rules:
+//   • Entry in source but absent from standalone → DRIFT (fail)
+//   • Entry options differ → DRIFT (fail)
+//   • Relative order of shared entries differs → DRIFT (fail)
+//   • Entry only in standalone → [standalone-only] (noted, no fail — intentional divergence)
+//   • Duplicate names in either list → warning (options for extras may not be fully compared)
+const ARRAY_SECTIONS = ['presets', 'plugins'];
+
+for (const section of ARRAY_SECTIONS) {
+  const srcNorm = (srcCfg[section] || []).map(normalise);
+  const dstNorm = (dstCfg[section] || []).map(normalise);
+
+  if (srcNorm.length === 0 && dstNorm.length === 0) {
+    console.log(`  = ${section}: [] (in sync)`);
+    continue;
+  }
+
+  console.log(`  ${section}:`);
+  let sectionDrifted = false;
+
+  const srcNames = srcNorm.map(([n]) => n);
+  const dstNames = dstNorm.map(([n]) => n);
+  const srcSet   = new Set(srcNames);
+  const dstSet   = new Set(dstNames);
+
+  // Warn about duplicate names within either list (first occurrence wins for options).
+  const srcDups = srcNames.filter((n, i) => srcNames.indexOf(n) !== i);
+  const dstDups = dstNames.filter((n, i) => dstNames.indexOf(n) !== i);
+  if (srcDups.length > 0)
+    console.log(`    ! source has duplicate entries: ${[...new Set(srcDups)].join(', ')} — options for duplicates may not be fully compared`);
+  if (dstDups.length > 0)
+    console.log(`    ! standalone has duplicate entries: ${[...new Set(dstDups)].join(', ')} — options for duplicates may not be fully compared`);
+
+  // First-occurrence options map for shared entries.
+  const srcOptsMap = new Map(srcNorm.map(([n, o]) => [n, o]));
+  const dstOptsMap = new Map(dstNorm.map(([n, o]) => [n, o]));
+
+  // ① Source-only entries (DRIFT — missing from standalone).
+  for (const [name] of srcNorm) {
+    if (!dstSet.has(name)) {
+      console.log(`    ~ ${name}: present in source but missing from standalone (DRIFT)`);
+      sectionDrifted = true;
+    }
+  }
+
+  // ② Shared entries — options comparison (in source order).
+  for (const [name] of srcNorm) {
+    if (!dstSet.has(name)) continue; // already reported above
+    const srcOpts = srcOptsMap.get(name);
+    const dstOpts = dstOptsMap.get(name);
+    if (srcOpts === dstOpts) {
+      console.log(`    = ${name} (in sync)`);
+    } else {
+      console.log(`    ~ ${name}: options differ (DRIFT)`);
+      console.log(`        source:     ${srcOpts}`);
+      console.log(`        standalone: ${dstOpts}`);
+      sectionDrifted = true;
+    }
+  }
+
+  // ③ Standalone-only entries (noted, no fail).
+  for (const [name] of dstNorm) {
+    if (!srcSet.has(name)) {
+      console.log(`    ~ ${name}: [standalone-only] (preserved — intentional divergence)`);
+    }
+  }
+
+  // ④ Relative-order check — shared entries must appear in the same order in both lists.
+  //    Babel applies presets/plugins in declaration order; reordering can change behaviour.
+  const sharedInSrcOrder = srcNames.filter(n => dstSet.has(n));
+  const sharedInDstOrder = dstNames.filter(n => srcSet.has(n));
+  if (sharedInSrcOrder.join('\0') !== sharedInDstOrder.join('\0')) {
+    console.log(`    ! RELATIVE ORDER DIFFERS (DRIFT)`);
+    console.log(`        source order:     [${sharedInSrcOrder.join(', ')}]`);
+    console.log(`        standalone order: [${sharedInDstOrder.join(', ')}]`);
+    sectionDrifted = true;
+  }
+
+  if (sectionDrifted) drifted = true;
+}
+
+// ── Other top-level keys (env, overrides, etc.) ────────────────────────────
+// Any key present in source but absent/different in standalone → DRIFT.
+// Keys only in standalone are noted but do not fail.
+const handledKeys = new Set(ARRAY_SECTIONS);
+const allKeys = new Set([...Object.keys(srcCfg), ...Object.keys(dstCfg)]);
+for (const k of handledKeys) allKeys.delete(k);
+
+for (const key of [...allKeys].sort()) {
+  const sv = JSON.stringify(srcCfg[key] ?? null, null, 2);
+  const dv = JSON.stringify(dstCfg[key] ?? null, null, 2);
+  if (sv === dv) {
+    console.log(`  = ${key} (in sync)`);
+  } else if (!(key in srcCfg)) {
+    console.log(`  ~ ${key}: [standalone-only] (preserved — intentional divergence)`);
+  } else if (!(key in dstCfg)) {
+    console.log(`  ~ ${key}: present in source but missing from standalone (DRIFT)`);
+    console.log(`      source: ${sv}`);
+    drifted = true;
+  } else {
+    console.log(`  ~ ${key}: VALUES DIFFER (DRIFT)`);
+    console.log(`      source:     ${sv}`);
+    console.log(`      standalone: ${dv}`);
+    drifted = true;
+  }
+}
+
+if (drifted) {
+  console.log('');
+  console.log('  ACTION REQUIRED: babel.config.js plugin/preset configuration has drifted.');
+  console.log('  Apply the same change to travel-buddy-standalone/babel.config.js.');
+  console.log('  (standalone-only plugins/presets are intentional — do not remove them)');
+  process.exit(1);
+} else {
+  console.log('');
+  console.log('  (babel.config.js is in sync)');
+}
+NODEEOF
+BABEL_DRIFT_EXIT=$?
+
+echo ""
 echo "=== Dependency diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
 
 DIFF_EXIT=0
@@ -382,9 +530,14 @@ if [[ $TSCONFIG_DRIFT_EXIT -ne 0 ]]; then
   echo "     Manually update travel-buddy-standalone/tsconfig.json to match."
   echo "     Keep the 'references' array removed — it is intentionally absent."
 fi
+if [[ $BABEL_DRIFT_EXIT -ne 0 ]]; then
+  echo "  *. babel.config.js plugins/presets are out of sync (see diff above)."
+  echo "     Manually update travel-buddy-standalone/babel.config.js to match."
+  echo "     (standalone-only plugins/presets are intentional — do not remove them)"
+fi
 echo "  2. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
 echo ""
 
-# Exit non-zero if config-file drift, preserved-file drift, tsconfig drift, or dep drift.
-FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT | TSCONFIG_DRIFT_EXIT ))
+# Exit non-zero if config-file drift, preserved-file drift, tsconfig drift, babel drift, or dep drift.
+FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT | TSCONFIG_DRIFT_EXIT | BABEL_DRIFT_EXIT ))
 exit $FINAL_EXIT
