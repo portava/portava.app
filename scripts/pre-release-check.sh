@@ -4,6 +4,11 @@
 # Usage (from the workspace root):
 #   bash scripts/pre-release-check.sh
 #
+# Environment variables:
+#   SKIP_EAS_PREFLIGHT=1   Skip the eas/expo tool checks (useful in CI jobs that
+#                          do not trigger an EAS build and don't have those CLIs
+#                          installed).
+#
 # Exits 0 only when every check passes. Any failure prints a summary and exits 1.
 
 set -euo pipefail
@@ -26,6 +31,8 @@ cd "$WORKSPACE_ROOT"
 # pnpm      all package installs and workspace script execution
 # eas       EAS build / submit commands (eas-cli, must be installed globally)
 # expo      Expo CLI — expo export and doctor steps in CI
+#
+# Set SKIP_EAS_PREFLIGHT=1 to omit eas/expo from the check list.
 
 declare -A tool_fix=(
   [bash]="install Bash 4+ (macOS: brew install bash; Linux: apt-get install bash)"
@@ -36,8 +43,17 @@ declare -A tool_fix=(
   [expo]="npm install -g expo-cli  (or pnpm add -g expo-cli)"
 )
 
+tools_to_check=(bash git node pnpm)
+
+if [[ "${SKIP_EAS_PREFLIGHT:-0}" == "1" ]]; then
+  printf '\n⚠️   SKIP_EAS_PREFLIGHT=1 — skipping eas/expo tool checks.\n'
+  printf '    EAS build / expo export steps will not be available in this run.\n\n'
+else
+  tools_to_check+=(eas expo)
+fi
+
 missing_tools=()
-for tool in bash git node pnpm eas expo; do
+for tool in "${tools_to_check[@]}"; do
   if ! command -v "$tool" &>/dev/null; then
     missing_tools+=("$tool")
   fi
