@@ -129,6 +129,7 @@ declare -A EXPECTED_HINTS=(
   [api-server-build]="fix: pnpm --filter @workspace/api-server run build"
   [lockfile-drift]="fix: bash scripts/sync-standalone.sh --fix-lockfile"
   [bundle-id-placeholder]="fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json"
+  [version-bump]="fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json"
 )
 
 # ── cross-reference: EXPECTED_HINTS keys vs run_check names ──────────────────
@@ -190,7 +191,7 @@ sep
 printf '  Pre-release fix-hint assertions\n'
 sep
 
-for check_name in typecheck typecheck-standalone dependency-drift source-drift api-server-build lockfile-drift bundle-id-placeholder; do
+for check_name in typecheck typecheck-standalone dependency-drift source-drift api-server-build lockfile-drift bundle-id-placeholder version-bump; do
   expected="${EXPECTED_HINTS[$check_name]}"
   output="$(run_summary_for "$check_name")"
   assert_contains "$check_name" "$expected" "$output"

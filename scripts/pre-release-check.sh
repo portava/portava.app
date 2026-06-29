@@ -159,6 +159,48 @@ run_check "bundle-id-placeholder" \
     exit $ok
   '
 
+# ── 8. Version / build-number floor guard ────────────────────────────────────
+# Fails if ios.buildNumber or android.versionCode still equal 1, which is the
+# first-submission default that Apple and Google have already seen.  Both
+# stores reject a binary whose build number is not strictly greater than the
+# last accepted submission.
+#
+# Override the floor with VERSION_BUMP_FLOOR (default: 1) if your project's
+# baseline is higher.
+run_check "version-bump" \
+  "Version / build-number floor guard (buildNumber and versionCode must be > ${VERSION_BUMP_FLOOR:-1})" \
+  bash -c '
+    FLOOR="${VERSION_BUMP_FLOOR:-1}"
+    BUILD_NUMBER=$(node -e "
+      const fs = require(\"fs\");
+      const app = JSON.parse(fs.readFileSync(\"travel-buddy-standalone/app.json\", \"utf8\"));
+      process.stdout.write(String(app.expo.ios.buildNumber));
+    ")
+    VERSION_CODE=$(node -e "
+      const fs = require(\"fs\");
+      const app = JSON.parse(fs.readFileSync(\"travel-buddy-standalone/app.json\", \"utf8\"));
+      process.stdout.write(String(app.expo.android.versionCode));
+    ")
+    ok=0
+    if [ "$BUILD_NUMBER" = "$FLOOR" ]; then
+      printf "  ✘  ios.buildNumber is still the baseline floor: %s\n" "$BUILD_NUMBER"
+      printf "     Increment ios.buildNumber in travel-buddy-standalone/app.json before building.\n"
+      printf "     Apple rejects a binary whose build number has already been submitted.\n"
+      ok=1
+    fi
+    if [ "$VERSION_CODE" = "$FLOOR" ]; then
+      printf "  ✘  android.versionCode is still the baseline floor: %s\n" "$VERSION_CODE"
+      printf "     Increment android.versionCode in travel-buddy-standalone/app.json before building.\n"
+      printf "     Google Play rejects a binary whose version code has already been submitted.\n"
+      ok=1
+    fi
+    if [ $ok -eq 0 ]; then
+      printf "  ✔  ios.buildNumber=%s  android.versionCode=%s  (both above floor %s)\n" \
+        "$BUILD_NUMBER" "$VERSION_CODE" "$FLOOR"
+    fi
+    exit $ok
+  '
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf '\n'
 sep
@@ -194,6 +236,9 @@ for entry in "${results[@]}"; do
         ;;
       bundle-id-placeholder)
         printf '     fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json\n'
+        ;;
+      version-bump)
+        printf '     fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json\n'
         ;;
     esac
   fi

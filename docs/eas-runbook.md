@@ -189,6 +189,48 @@ Push a test `release-*` branch to confirm CI passes the credential check before 
 
 > **Version / build numbers:** `version` is `1.0.1`, `buildNumber` is `2`, `versionCode` is `2`. Increment `buildNumber` (iOS) and `versionCode` (Android) for every binary uploaded to the stores; bump `version` for user-facing releases.
 
+## Bumping version and build numbers before a release
+
+Both Apple App Store and Google Play reject a binary whose build number is not strictly greater than the last accepted submission. The pre-release check (`version-bump`) blocks the release if either value equals `1` (the first-submission default).
+
+### Which field controls what?
+
+| Field | File key | Platform | Rule |
+|-------|----------|----------|------|
+| `expo.ios.buildNumber` | `travel-buddy-standalone/app.json` | iOS (Apple) | String; must increase with every binary uploaded to App Store Connect. Apple compares this lexicographically, so use plain integers (`"2"`, `"3"`, …). |
+| `expo.android.versionCode` | `travel-buddy-standalone/app.json` | Android (Google) | Integer; must be strictly greater than the last version code accepted by Google Play. |
+| `expo.version` | `travel-buddy-standalone/app.json` | Both (user-visible) | The human-readable version string shown in the store listing (e.g. `"1.0.2"`). Only bump this for user-facing releases — not for every build upload. |
+
+### When to bump
+
+- **Every EAS build you submit to a store** — increment `buildNumber` (iOS) and `versionCode` (Android) by at least 1.
+- **User-facing releases only** — bump `version` (e.g. `1.0.1` → `1.0.2`) when shipping a new public version to reviewers or production. Internal/test builds on the same version are fine as long as the build number goes up.
+- **Rejected builds still consume the number** — even if Apple or Google rejects a binary, that build number is consumed and cannot be reused. Always increment before your next submission attempt.
+
+### How to bump
+
+Edit `travel-buddy-standalone/app.json` directly:
+
+```jsonc
+// Before
+"ios":     { "buildNumber": "2" },
+"android": { "versionCode": 2 }
+
+// After (next submission)
+"ios":     { "buildNumber": "3" },
+"android": { "versionCode": 3 }
+```
+
+Then re-run `bash scripts/pre-release-check.sh` to confirm the `version-bump` check passes before triggering an EAS build.
+
+### Configuring the floor
+
+The check defaults to floor `1`. If your app has already shipped multiple versions and the relevant baseline is higher, set `VERSION_BUMP_FLOOR` before running the check:
+
+```bash
+VERSION_BUMP_FLOOR=5 bash scripts/pre-release-check.sh
+```
+
 ## EAS build commands (after completing the above)
 
 ```bash
