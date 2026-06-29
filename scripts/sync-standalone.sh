@@ -53,7 +53,9 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SYNC_STANDALONE_REPO_ROOT overrides the auto-detected root so tests can point
+# the script at a throwaway temp workspace instead of the real monorepo.
+REPO_ROOT="${SYNC_STANDALONE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SRC="$REPO_ROOT/artifacts/travel-buddy"
 DST="$REPO_ROOT/travel-buddy-standalone"
 
