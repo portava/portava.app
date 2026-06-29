@@ -34,6 +34,14 @@ on:
       - "travel-buddy-standalone/constants/**"
       - "artifacts/travel-buddy/hooks/**"
       - "travel-buddy-standalone/hooks/**"
+      - "artifacts/travel-buddy/docs/**"
+      - "travel-buddy-standalone/docs/**"
+      - "artifacts/travel-buddy/migrations/**"
+      - "travel-buddy-standalone/migrations/**"
+      - "artifacts/travel-buddy/scripts/**"
+      - "travel-buddy-standalone/scripts/**"
+      - "artifacts/travel-buddy/server/**"
+      - "travel-buddy-standalone/server/**"
   pull_request:
     branches: ["**"]
     paths:
@@ -67,6 +75,14 @@ on:
       - "travel-buddy-standalone/constants/**"
       - "artifacts/travel-buddy/hooks/**"
       - "travel-buddy-standalone/hooks/**"
+      - "artifacts/travel-buddy/docs/**"
+      - "travel-buddy-standalone/docs/**"
+      - "artifacts/travel-buddy/migrations/**"
+      - "travel-buddy-standalone/migrations/**"
+      - "artifacts/travel-buddy/scripts/**"
+      - "travel-buddy-standalone/scripts/**"
+      - "artifacts/travel-buddy/server/**"
+      - "travel-buddy-standalone/server/**"
 
 jobs:
   sync-standalone-check:
@@ -88,14 +104,14 @@ jobs:
         run: bash scripts/sync-standalone.sh --dry-run
 
   source-drift-check:
-    name: Check standalone source sync (src/ app/ assets/ components/ constants/ hooks/)
+    name: Check standalone source sync (src/ app/ assets/ components/ constants/ hooks/ docs/ migrations/ scripts/ server/)
     runs-on: ubuntu-latest
     env:
       # Set to a positive integer to allow a temporary grace margin during a
       # large-batch sync. Default is 0 — any divergence fails the build.
       SOURCE_DRIFT_THRESHOLD: 0
       # Override SOURCE_DRIFT_DIRS here to restrict or expand the checked set.
-      # Default (when unset): "src app assets components constants hooks"
+      # Default (when unset): "src app assets components constants hooks docs migrations scripts server"
     steps:
       - uses: actions/checkout@v4
 

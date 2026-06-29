@@ -30,7 +30,8 @@
 #                           to allow a grace margin during a large-batch sync.
 #   SOURCE_DRIFT_DIRS       Space-separated list of directories to compare when
 #                           --check-source is used. Defaults to all directories that
-#                           this script syncs: "src app assets components constants hooks".
+#                           this script syncs: "src app assets components constants hooks
+#                           docs migrations scripts server".
 #                           Override to restrict or expand the checked set, e.g.:
 #                             SOURCE_DRIFT_DIRS="src app" bash scripts/sync-standalone.sh --check-source
 #
@@ -63,7 +64,7 @@ FIX_SOURCE=false
 SOURCE_DRIFT_THRESHOLD="${SOURCE_DRIFT_THRESHOLD:-0}"
 # Default: all directories that the sync step copies (docs/migrations/scripts/server are
 # lower-churn; include them anyway so no directory silently escapes the check).
-SOURCE_DRIFT_DIRS="${SOURCE_DRIFT_DIRS:-src app assets components constants hooks}"
+SOURCE_DRIFT_DIRS="${SOURCE_DRIFT_DIRS:-src app assets components constants hooks docs migrations scripts server}"
 
 for arg in "$@"; do
   case "$arg" in
