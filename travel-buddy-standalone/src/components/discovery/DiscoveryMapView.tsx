@@ -2,10 +2,6 @@
  * DiscoveryMapView — renders Discovery venue pins on a MapLibre Map.
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
- *
- * The map is ALWAYS rendered, even when there are zero places with coordinates.
- * When no places are mappable the camera falls back to a sensible default
- * location and the pin-count badge shows "0 places".
  */
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -20,11 +16,6 @@ const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
 const MAP_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
-
-// ── Fallback viewport (Fort Lauderdale) when no places have coordinates ────────
-
-const FALLBACK_CENTER: [number, number] = [-80.1373, 26.1224];
-const FALLBACK_ZOOM = 11;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,10 +65,19 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
   );
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
-  // Always use a valid center/zoom — fall back to Fort Lauderdale when no
-  // places have coordinates so the interactive map is always visible.
-  const center = viewport?.center ?? FALLBACK_CENTER;
-  const zoom   = viewport?.zoom   ?? FALLBACK_ZOOM;
+  if (!viewport) {
+    return (
+      <View style={s.empty}>
+        <View style={s.emptyIcon}>
+          <MapPin size={28} color={color.faint} />
+        </View>
+        <Text style={s.emptyTitle}>No pins available</Text>
+        <Text style={s.emptyBody}>
+          These places don't have coordinates yet. Try a different search area or category.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={s.root}>
@@ -88,7 +88,10 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
         attribution={false}
       >
         <Camera
-          initialViewState={{ center, zoom }}
+          initialViewState={{
+            center: viewport.center,
+            zoom: viewport.zoom,
+          }}
         />
         {mappable.map((place) => (
           <Marker
@@ -103,27 +106,12 @@ export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProp
           </Marker>
         ))}
       </Map>
-
-      {/* Pin-count badge — shows "0 places" honestly when the list is empty */}
       <View style={s.badge}>
         <MapPin size={10} color="#fff" />
         <Text style={s.badgeText}>
           {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
         </Text>
       </View>
-
-      {/* Overlay hint when there are no pins — map still visible behind it */}
-      {mappable.length === 0 && (
-        <View style={s.emptyOverlay} pointerEvents="none">
-          <View style={s.emptyIcon}>
-            <MapPin size={22} color={color.faint} />
-          </View>
-          <Text style={s.emptyTitle}>No pins available</Text>
-          <Text style={s.emptyBody}>
-            These places don't have coordinates yet. Try a different search area or category.
-          </Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -149,6 +137,33 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 3,
   },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.xxl,
+    paddingVertical: space.xxxl,
+  },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyTitle: {
+    ...t.title,
+    fontSize: 16,
+    color: color.mute,
+  },
+  emptyBody: {
+    ...t.body,
+    color: color.faint,
+    textAlign: 'center',
+    maxWidth: 260,
+  },
   badge: {
     position: 'absolute',
     bottom: 20,
@@ -165,37 +180,5 @@ const s = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
-  },
-  emptyOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.78)',
-    gap: space.sm,
-    paddingHorizontal: space.xxl,
-  },
-  emptyIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyTitle: {
-    ...t.title,
-    fontSize: 15,
-    color: color.mute,
-    textAlign: 'center',
-  },
-  emptyBody: {
-    ...t.body,
-    color: color.faint,
-    textAlign: 'center',
-    maxWidth: 260,
   },
 });
