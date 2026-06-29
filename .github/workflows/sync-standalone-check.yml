@@ -20,6 +20,8 @@ on:
       - "travel-buddy-standalone/.env.example"
       - "travel-buddy-standalone/**/*.ts"
       - "travel-buddy-standalone/**/*.tsx"
+      - "artifacts/travel-buddy/**/*.ts"
+      - "artifacts/travel-buddy/**/*.tsx"
   pull_request:
     branches: ["**"]
     paths:
@@ -39,6 +41,8 @@ on:
       - "travel-buddy-standalone/.env.example"
       - "travel-buddy-standalone/**/*.ts"
       - "travel-buddy-standalone/**/*.tsx"
+      - "artifacts/travel-buddy/**/*.ts"
+      - "artifacts/travel-buddy/**/*.tsx"
 
 jobs:
   sync-standalone-check:
