@@ -300,6 +300,42 @@ describe('standalone-drift.yml — paths filter', () => {
       patterns,
     );
   });
+
+  test('TRIGGERS: travel-buddy-standalone/app/ change', () => {
+    patterns ??= loadPatterns('standalone-drift.yml');
+    assertTriggers(
+      'standalone app dir change',
+      'travel-buddy-standalone/app/(tabs)/index.tsx',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/assets/ change', () => {
+    patterns ??= loadPatterns('standalone-drift.yml');
+    assertTriggers(
+      'standalone assets change',
+      'travel-buddy-standalone/assets/icon.png',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/app.json change', () => {
+    patterns ??= loadPatterns('standalone-drift.yml');
+    assertTriggers(
+      'standalone app.json change',
+      'travel-buddy-standalone/app.json',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/pnpm-lock.yaml change', () => {
+    patterns ??= loadPatterns('standalone-drift.yml');
+    assertTriggers(
+      'standalone lockfile change',
+      'travel-buddy-standalone/pnpm-lock.yaml',
+      patterns,
+    );
+  });
 });
 
 // ── extra edge-case paths ─────────────────────────────────────────────────────
