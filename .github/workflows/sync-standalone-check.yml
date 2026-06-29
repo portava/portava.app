@@ -7,12 +7,18 @@ on:
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
       - "scripts/sync-standalone.sh"
+      - "pnpm-workspace.yaml"
+      - "artifacts/travel-buddy/tsconfig.json"
+      - "travel-buddy-standalone/tsconfig.json"
   pull_request:
     branches: ["**"]
     paths:
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
       - "scripts/sync-standalone.sh"
+      - "pnpm-workspace.yaml"
+      - "artifacts/travel-buddy/tsconfig.json"
+      - "travel-buddy-standalone/tsconfig.json"
 
 jobs:
   sync-standalone-check:
