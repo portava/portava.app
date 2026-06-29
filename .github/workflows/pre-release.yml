@@ -83,6 +83,16 @@ jobs:
         working-directory: travel-buddy-standalone
         run: pnpm install --frozen-lockfile
 
+      - name: Verify EXPO_TOKEN is configured
+        # EXPO_TOKEN must be stored in GitHub → Settings → Secrets and variables → Actions.
+        # Without it every eas build call below will fail with an auth error.
+        # Fail here with a clear message rather than mid-build.
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is not set. Add it in GitHub → Settings → Secrets and variables → Actions, then re-run this workflow. See docs/eas-runbook.md → 'iOS credentials setup for CI' for full instructions."
+            exit 1
+          fi
+
       - name: Run EAS/expo preflight (pre-release checks without SKIP_EAS_PREFLIGHT)
         working-directory: travel-buddy-standalone
         run: |

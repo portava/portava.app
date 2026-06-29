@@ -54,6 +54,77 @@ Four fixes are applied so EAS cloud builds detect pnpm and use the correct node-
 
 > **Note:** The hoisted linker takes effect on the next fresh `pnpm install`. The existing Replit dev environment continues to work as-is.
 
+## iOS credentials setup for CI
+
+**Do this once before you push your first `release-*` branch.** The `eas-build` CI job runs `eas build --non-interactive`, which cannot prompt for Apple credentials. If credentials have not been stored in EAS cloud ahead of time the job fails immediately. The steps below store them once and every subsequent CI run picks them up automatically.
+
+### Prerequisites
+
+- An **Apple Developer account** (individual or org) with a paid membership active.
+- The **Expo account** that owns this EAS project (`eas login` confirmed).
+- `eas-cli` installed globally: `npm install -g eas-cli`.
+
+### Step 1 — Log in to Expo and link the project
+
+```bash
+eas login                          # sign in with the Expo account that owns the project
+cd travel-buddy-standalone
+eas whoami                         # confirm the correct account is active
+```
+
+### Step 2 — Store Apple credentials in EAS
+
+EAS manages the Apple certificate and provisioning profile in its cloud keystore. Run the interactive flow once locally:
+
+```bash
+cd travel-buddy-standalone
+eas credentials --platform ios
+```
+
+At the prompt, choose **"Expo Go / Managed workflow"** and then **"Build credentials"**. EAS will:
+
+1. Ask you to sign in to your Apple Developer account (opens a browser or prompts for Apple ID + password).
+2. Generate a Distribution Certificate (or reuse an existing one).
+3. Generate a Provisioning Profile for the `com.travelbuddy.app` bundle ID.
+4. Upload both to EAS cloud storage — they are encrypted and tied to your Expo project.
+
+You do **not** need to store any `.p12` or `.mobileprovision` files yourself; EAS holds them.
+
+> **Bundle ID note:** `com.travelbuddy.app` is the current value in `travel-buddy-standalone/app.json → ios.bundleIdentifier`. If you change it before running `eas credentials`, make sure the bundle ID matches what is registered in App Store Connect, otherwise Apple will reject the provisioning profile request.
+
+### Step 3 — Create an EXPO_TOKEN for GitHub Actions
+
+1. Go to **https://expo.dev/accounts/[your-username]/settings/access-tokens**.
+2. Click **Create token** → give it a name like `github-ci` → copy the value.
+3. In your GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret**.
+4. Name: `EXPO_TOKEN` · Value: the token you just copied.
+5. Save.
+
+The CI workflow (`eas-build` job) reads `${{ secrets.EXPO_TOKEN }}` and passes it to every `eas build` call. A dedicated preflight step in the workflow will fail immediately with a clear error if this secret is missing — you will not burn EAS build credits on a misconfigured run.
+
+### Step 4 — Verify with a test release branch push
+
+```bash
+git checkout -b release-v1.0.0-test
+git push origin release-v1.0.0-test
+```
+
+Go to **GitHub → Actions → "EAS preview build (Android + iOS)"** and confirm both build steps appear. Then go to **https://expo.dev/accounts/[your-username]/projects/travel-buddy/builds** and confirm two new builds (Android + iOS) are queued or running.
+
+Once verified, delete the test branch:
+
+```bash
+git push origin --delete release-v1.0.0-test
+```
+
+### Summary checklist
+
+- [ ] `eas credentials --platform ios` completed successfully (no errors from Apple)
+- [ ] `EXPO_TOKEN` secret added to GitHub → Settings → Secrets and variables → Actions
+- [ ] Test push to a `release-*` branch shows both Android and iOS EAS builds in the dashboard
+
+---
+
 ## TODO (owner must finalize)
 
 | Item | What to do |
@@ -62,10 +133,10 @@ Four fixes are applied so EAS cloud builds detect pnpm and use the correct node-
 | **`version`, `buildNumber`, `versionCode`** | Currently `1.0.0` / `1` / `1`. Bump as needed for each release. |
 | **Apple / Google store setup** | Register the app on App Store Connect and Google Play Console before a production build. |
 | **`eas login`** | Run `eas login` with the Expo account that owns the project. |
-| **`eas init`** | Run `eas init` in `artifacts/travel-buddy/` to link this project to your EAS project ID and write `extra.eas.projectId` into `app.json`. |
-| **MapTiler API key** | Create a free account at https://www.maptiler.com/, generate an API key, and set `EXPO_PUBLIC_MAPTILER_KEY` in `artifacts/travel-buddy/.env` (dev) and as an EAS secret (CI builds). |
+| **`eas init`** | Run `eas init` in `travel-buddy-standalone/` to link this project to your EAS project ID and write `extra.eas.projectId` into `app.json`. |
+| **MapTiler API key** | Create a free account at https://www.maptiler.com/, generate an API key, and set `EXPO_PUBLIC_MAPTILER_KEY` in `travel-buddy-standalone/.env` (dev) and as an EAS secret (CI builds). |
 | **iOS permission copy** | Review all `infoPlist` usage description strings in `app.json` and replace placeholder copy with your final wording before App Store submission. |
-| **Apple credentials for CI** | The `eas-build` CI job triggers an iOS preview build on every release branch push. EAS manages Apple certificates and provisioning profiles automatically, but the Expo account must be linked to an Apple Developer account (`eas credentials`) before the first iOS CI run succeeds. Store the `EXPO_TOKEN` secret in GitHub → Settings → Secrets and variables → Actions. |
+| **Apple credentials for CI** | See "iOS credentials setup for CI" section above. |
 
 ## EAS build commands (after completing the above)
 
