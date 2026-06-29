@@ -47,7 +47,13 @@ CI-style checks (registered as named validation steps in the project):
 | `dependency-drift`      | `bash scripts/sync-standalone.sh --check-deps`      | Any package added to `artifacts/travel-buddy` that is missing or version-mismatched in `travel-buddy-standalone`. Fails on any mismatch. |
 | `source-drift`          | `bash scripts/sync-standalone.sh --check-source`    | Any source file in the synced directories (`src/`, `app/`, `assets/`, etc.) that differs between the monorepo app and standalone. Fails when differing-file count exceeds `SOURCE_DRIFT_THRESHOLD` (default: 0). |
 
-Run all four from the workspace root:
+Run all four with one command from the workspace root:
+
+```bash
+bash scripts/pre-release-check.sh
+```
+
+The script runs every check in sequence, prints a pass/fail summary, and exits non-zero if anything fails. Individual commands (for targeted re-runs after fixing a specific issue):
 
 ```bash
 pnpm run typecheck
