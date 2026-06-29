@@ -1,0 +1,45 @@
+name: Typecheck
+
+# Run TypeScript checks on every branch push and every PR regardless of
+# target branch, so type errors are visible before review begins.
+#
+# CONVENTION: always keep `.github/workflows/typecheck.yml` in every `paths`
+# list below. Without it, editing this file alone would not re-trigger the
+# workflow, silently skipping the new logic on the very commit that introduced it.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  typecheck:
+    name: TypeScript typecheck (monorepo + standalone)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install monorepo dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck monorepo
+        run: pnpm run typecheck
+
+      - name: Install standalone dependencies
+        working-directory: travel-buddy-standalone
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck standalone
+        working-directory: travel-buddy-standalone
+        run: pnpm typecheck
