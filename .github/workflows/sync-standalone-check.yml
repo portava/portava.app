@@ -18,6 +18,8 @@ on:
       - "travel-buddy-standalone/app.json"
       - "artifacts/travel-buddy/.env.example"
       - "travel-buddy-standalone/.env.example"
+      - "travel-buddy-standalone/**/*.ts"
+      - "travel-buddy-standalone/**/*.tsx"
   pull_request:
     branches: ["**"]
     paths:
@@ -35,6 +37,8 @@ on:
       - "travel-buddy-standalone/app.json"
       - "artifacts/travel-buddy/.env.example"
       - "travel-buddy-standalone/.env.example"
+      - "travel-buddy-standalone/**/*.ts"
+      - "travel-buddy-standalone/**/*.tsx"
 
 jobs:
   sync-standalone-check:
@@ -54,3 +58,25 @@ jobs:
 
       - name: Check standalone dependency sync
         run: bash scripts/sync-standalone.sh --dry-run
+
+  standalone-typecheck:
+    name: Typecheck travel-buddy-standalone
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install standalone dependencies
+        working-directory: travel-buddy-standalone
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck standalone
+        working-directory: travel-buddy-standalone
+        run: pnpm typecheck
