@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Reorders DiscoveryCategoryTab.tsx so the map renders in map mode even when there are no places.
+# Moves the `viewMode === 'map'` branch ABOVE the error/empty guards.
+# Safe: makes a backup first, verifies the change, and tells you if anything looks off.
+
+set -euo pipefail
+
+FILE="$HOME/workspace/travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx"
+
+if [ ! -f "$FILE" ]; then
+  echo "ERROR: file not found at $FILE"
+  exit 1
+fi
+
+# 1. Backup
+cp "$FILE" "$FILE.bak"
+echo "Backup saved: $FILE.bak"
+
+# 2. Use a Node script to do a precise structural edit (more reliable than sed for multi-line).
+node - "$FILE" <<'NODE'
+const fs = require('fs');
+const path = process.argv[2];
+let src = fs.readFileSync(path, 'utf8');
+
+// The map branch we want to move (match flexibly on whitespace).
+const mapBranchRe = /\)\s*:\s*viewMode === 'map' \? \(\s*\n\s*<DiscoveryMapView places=\{places\} onSelectPlace=\{onSelectPlace\} \/>\s*\n/;
+
+const m = src.match(mapBranchRe);
+if (!m) {
+  console.error('COULD NOT FIND the viewMode map branch to move. No changes made.');
+  process.exit(2);
+}
+
+// Remove the map branch from its current (wrong) position.
+const withoutMap = src.replace(mapBranchRe, '');
+
+// Insert it right after the skeleton branch.
+// Skeleton branch looks like:  {loading && places.length === 0 ? (\n   <PlaceSkeletonList count={6} />\n   ) :
+const skeletonRe = /(\{loading && places\.length === 0 \? \(\s*\n\s*<PlaceSkeletonList count=\{6\} \/>\s*\n\s*\) :)/;
+
+if (!skeletonRe.test(withoutMap)) {
+  console.error('COULD NOT FIND the skeleton branch to insert after. No changes made.');
+  process.exit(3);
+}
+
+const mapBranchInsert =
+  " viewMode === 'map' ? (\n" +
+  "        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />\n" +
+  "      ) :";
+
+const out = withoutMap.replace(skeletonRe, '$1' + mapBranchInsert);
+
+fs.writeFileSync(path, out, 'utf8');
+console.log('Edit applied.');
+NODE
+
+# 3. Verify the new order: viewMode map check should now come BEFORE "No places found"
+echo ""
+echo "=== verifying new order ==="
+MAP_LINE=$(grep -n "viewMode === 'map'" "$FILE" | head -1 | cut -d: -f1)
+EMPTY_LINE=$(grep -n "No places found" "$FILE" | head -1 | cut -d: -f1)
+echo "viewMode==='map' is now at line: $MAP_LINE"
+echo "'No places found' is now at line: $EMPTY_LINE"
+
+if [ "$MAP_LINE" -lt "$EMPTY_LINE" ]; then
+  echo "SUCCESS: map branch ($MAP_LINE) is now BEFORE the empty guard ($EMPTY_LINE). Fix applied correctly."
+else
+  echo "WARNING: map branch is still after the empty guard. Restoring backup."
+  cp "$FILE.bak" "$FILE"
+  echo "Restored original. No changes kept."
+  exit 4
+fi
+
+echo ""
+echo "=== new render block (lines 308-345) ==="
+sed -n '308,345p' "$FILE"
