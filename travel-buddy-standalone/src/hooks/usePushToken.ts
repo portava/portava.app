@@ -12,15 +12,11 @@
  * Without it the call throws on standalone builds (works only in Expo Go).
  */
 import { useEffect } from 'react';
+import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { useSession } from '../context/SessionContext';
 import { savePushToken } from '../services/pushTokenService';
-import {
-  getPermissionsAsync,
-  requestPermissionsAsync,
-  getExpoPushTokenAsync,
-} from '../lib/safeNotifications';
 
 export function usePushToken(): void {
   const { isAuthed } = useSession();
@@ -31,10 +27,10 @@ export function usePushToken(): void {
     let cancelled = false;
 
     (async () => {
-      const perms = await getPermissionsAsync();
+      const perms = (await Notifications.getPermissionsAsync()) as { granted?: boolean };
 
       if (!perms.granted) {
-        const newPerms = await requestPermissionsAsync();
+        const newPerms = (await Notifications.requestPermissionsAsync()) as { granted?: boolean };
         if (!newPerms.granted || cancelled) return;
       }
 
@@ -43,7 +39,7 @@ export function usePushToken(): void {
       const projectId =
         Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
 
-      const { data: pushToken } = await getExpoPushTokenAsync(
+      const { data: pushToken } = await Notifications.getExpoPushTokenAsync(
         projectId ? { projectId } : undefined,
       );
       if (!pushToken || cancelled) return;
