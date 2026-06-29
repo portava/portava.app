@@ -22,6 +22,10 @@ on:
       - "travel-buddy-standalone/**/*.tsx"
       - "artifacts/travel-buddy/**/*.ts"
       - "artifacts/travel-buddy/**/*.tsx"
+      - "artifacts/travel-buddy/src/**"
+      - "travel-buddy-standalone/src/**"
+      - "artifacts/travel-buddy/app/**"
+      - "travel-buddy-standalone/app/**"
   pull_request:
     branches: ["**"]
     paths:
@@ -43,10 +47,14 @@ on:
       - "travel-buddy-standalone/**/*.tsx"
       - "artifacts/travel-buddy/**/*.ts"
       - "artifacts/travel-buddy/**/*.tsx"
+      - "artifacts/travel-buddy/src/**"
+      - "travel-buddy-standalone/src/**"
+      - "artifacts/travel-buddy/app/**"
+      - "travel-buddy-standalone/app/**"
 
 jobs:
   sync-standalone-check:
-    name: Check standalone dep sync
+    name: Check standalone dep/config sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,8 +68,21 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Check standalone dependency sync
+      - name: Check standalone dependency and config sync
         run: bash scripts/sync-standalone.sh --dry-run
+
+  source-drift-check:
+    name: Check standalone source sync (src/ app/)
+    runs-on: ubuntu-latest
+    env:
+      # Set to a positive integer to allow a temporary grace margin during a
+      # large-batch sync. Default is 0 — any divergence fails the build.
+      SOURCE_DRIFT_THRESHOLD: 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Diff source directories
+        run: bash scripts/sync-standalone.sh --check-source
 
   standalone-typecheck:
     name: Typecheck travel-buddy-standalone

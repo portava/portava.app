@@ -2,15 +2,26 @@
 # sync-standalone.sh — copy source changes from the monorepo Expo app to the standalone EAS build target.
 #
 # Usage (from the workspace root):
-#   bash scripts/sync-standalone.sh [--dry-run] [--apply-deps]
+#   bash scripts/sync-standalone.sh [--dry-run] [--apply-deps] [--check-source]
 #
 # Flags:
-#   --dry-run      Show what would change without writing any files.
-#   --apply-deps   Auto-patch travel-buddy-standalone/package.json with dependency
-#                  changes from the monorepo app (added packages + version updates).
-#                  Standalone-only packages are never removed. Prints a summary then
-#                  reminds you to run `pnpm install` inside the standalone.
-#                  --dry-run takes precedence: if both flags are set, nothing is written.
+#   --dry-run       Show what would change without writing any files.
+#   --apply-deps    Auto-patch travel-buddy-standalone/package.json with dependency
+#                   changes from the monorepo app (added packages + version updates).
+#                   Standalone-only packages are never removed. Prints a summary then
+#                   reminds you to run `pnpm install` inside the standalone.
+#                   --dry-run takes precedence: if both flags are set, nothing is written.
+#   --check-source  Diff source directories (src/ and app/) between the main app and
+#                   standalone. Exits non-zero when the number of differing files exceeds
+#                   SOURCE_DRIFT_THRESHOLD (default: 0, i.e. any drift fails).
+#                   This flag is read-only — no files are written. It runs independently
+#                   of --dry-run and --apply-deps; when used alone only the source diff
+#                   is executed.
+#
+# Environment variables:
+#   SOURCE_DRIFT_THRESHOLD  Maximum number of differing source files before --check-source
+#                           fails. Default: 0 (any drift fails). Set to a positive integer
+#                           to allow a grace margin during a large-batch sync.
 #
 # What it syncs:
 #   Directories: app/ src/ assets/ components/ constants/ hooks/ docs/ migrations/ scripts/ server/
@@ -36,14 +47,102 @@ DST="$REPO_ROOT/travel-buddy-standalone"
 
 DRY_RUN=false
 APPLY_DEPS=false
+CHECK_SOURCE=false
+SOURCE_DRIFT_THRESHOLD="${SOURCE_DRIFT_THRESHOLD:-0}"
 
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)    DRY_RUN=true ;;
-    --apply-deps) APPLY_DEPS=true ;;
+    --dry-run)       DRY_RUN=true ;;
+    --apply-deps)    APPLY_DEPS=true ;;
+    --check-source)  CHECK_SOURCE=true ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
+
+# ---------------------------------------------------------------------------
+# --check-source mode: diff src/ and app/ then exit.
+# Runs independently of --dry-run and --apply-deps.
+# ---------------------------------------------------------------------------
+if $CHECK_SOURCE; then
+  echo "=== Source drift check: artifacts/travel-buddy vs travel-buddy-standalone ==="
+  echo "    Directories: src/  app/"
+  echo "    Threshold:   ${SOURCE_DRIFT_THRESHOLD} file(s)"
+  echo ""
+
+  SOURCE_DRIFT_COUNT=0
+  SOURCE_CHECK_DIRS=(src app)
+
+  for dir in "${SOURCE_CHECK_DIRS[@]}"; do
+    from="$SRC/$dir"
+    to="$DST/$dir"
+
+    if [[ ! -d "$from" ]]; then
+      echo "  (skipping $dir/ — not present in source)"
+      continue
+    fi
+
+    if [[ ! -d "$to" ]]; then
+      echo "  DRIFT: $dir/ exists in source but is missing in travel-buddy-standalone/"
+      missing_count=$(find "$from" -type f -not -path "*/node_modules/*" | wc -l | tr -d ' ')
+      echo "         ($missing_count file(s) in source have no standalone counterpart)"
+      SOURCE_DRIFT_COUNT=$(( SOURCE_DRIFT_COUNT + missing_count ))
+      continue
+    fi
+
+    echo "  >>> $dir/"
+    dir_drift=0
+
+    # Files added or modified in the source
+    while IFS= read -r -d '' f; do
+      rel="${f#$from/}"
+      dst_file="$to/$rel"
+      if [[ ! -f "$dst_file" ]]; then
+        echo "    + $dir/$rel (new in source — missing from standalone)"
+        dir_drift=$(( dir_drift + 1 ))
+      elif ! diff -q "$f" "$dst_file" &>/dev/null; then
+        echo "    ~ $dir/$rel (modified — standalone is out of date)"
+        dir_drift=$(( dir_drift + 1 ))
+      fi
+    done < <(find "$from" -type f -not -path "*/node_modules/*" -print0 | sort -z)
+
+    # Files in standalone that no longer exist in source
+    while IFS= read -r -d '' f; do
+      rel="${f#$to/}"
+      src_file="$from/$rel"
+      if [[ ! -f "$src_file" ]]; then
+        echo "    - $dir/$rel (removed from source — stale in standalone)"
+        dir_drift=$(( dir_drift + 1 ))
+      fi
+    done < <(find "$to" -type f -not -path "*/node_modules/*" -print0 | sort -z)
+
+    if [[ $dir_drift -eq 0 ]]; then
+      echo "    (in sync)"
+    else
+      echo "    ($dir_drift file(s) differ)"
+    fi
+
+    SOURCE_DRIFT_COUNT=$(( SOURCE_DRIFT_COUNT + dir_drift ))
+  done
+
+  echo ""
+  echo "  Total drifted files: $SOURCE_DRIFT_COUNT"
+  echo "  Threshold:           $SOURCE_DRIFT_THRESHOLD"
+  echo ""
+
+  if [[ $SOURCE_DRIFT_COUNT -gt $SOURCE_DRIFT_THRESHOLD ]]; then
+    echo "FAIL: Source drift ($SOURCE_DRIFT_COUNT file(s)) exceeds threshold ($SOURCE_DRIFT_THRESHOLD)."
+    echo ""
+    echo "To sync the standalone source from the main app, run:"
+    echo "  bash scripts/sync-standalone.sh"
+    echo ""
+    echo "To see exactly what would change without writing files:"
+    echo "  bash scripts/sync-standalone.sh --dry-run"
+    exit 1
+  else
+    echo "PASS: Source drift is within the acceptable threshold."
+    exit 0
+  fi
+fi
 
 if $DRY_RUN; then
   echo "=== DRY RUN — no files will be written ==="
