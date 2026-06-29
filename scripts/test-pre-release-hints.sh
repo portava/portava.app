@@ -57,23 +57,32 @@ if [[ -z "$SUMMARY_BLOCK" ]]; then
   exit 1
 fi
 
-# Self-check: the extracted block must contain at least 5 lines.  If the
-# for-loop header in pre-release-check.sh is reformatted (variable renamed,
-# split across lines, etc.) the awk range pattern goes stale and silently
-# returns an empty or truncated block.  A suspiciously short block means the
-# extraction is broken, not that the script shrank.
+# Self-check: the extracted block must be at least 80 % of the for-loop's
+# actual length as measured directly from the source file (not from the
+# extracted copy).  This makes the guard self-calibrating: when new case
+# branches are added to the loop the minimum grows proportionally, so the
+# threshold never goes stale.
+#
+# If you refactor the for-loop header (rename variable, split across lines,
+# etc.) you must also update the awk pattern on line ~51 of this file AND
+# the matching pattern in _SUMMARY_SOURCE_LINES below.
 _SUMMARY_LINE_COUNT="$(printf '%s\n' "$SUMMARY_BLOCK" | wc -l | tr -d ' ')"
-_SUMMARY_MIN_LINES=5
+_SUMMARY_SOURCE_LINES="$(awk \
+  '/^for entry in "\$\{results\[@\]\}"/,/^done$/' \
+  scripts/pre-release-check.sh | wc -l | tr -d ' ')"
+# 80 % of source length, rounded down.  Bump the percentage here if you want
+# a stricter guard after a large refactor shrinks the loop intentionally.
+_SUMMARY_MIN_LINES=$(( _SUMMARY_SOURCE_LINES * 80 / 100 ))
 if [[ "$_SUMMARY_LINE_COUNT" -lt "$_SUMMARY_MIN_LINES" ]]; then
-  printf '\n❌  SUMMARY_BLOCK extraction looks broken: got %s line(s), expected at least %s.\n' \
-    "$_SUMMARY_LINE_COUNT" "$_SUMMARY_MIN_LINES"
+  printf '\n❌  SUMMARY_BLOCK extraction looks broken: got %s line(s), expected at least %s (80%% of %s source lines).\n' \
+    "$_SUMMARY_LINE_COUNT" "$_SUMMARY_MIN_LINES" "$_SUMMARY_SOURCE_LINES"
   printf '    The awk pattern on line ~51 of test-pre-release-hints.sh matches:\n'
   printf '      /^for entry in "\\$\\{results\\[\\@\\]\\}"/,/^done$/\n'
   printf '    Update that pattern to match the current for-loop header in\n'
   printf '    scripts/pre-release-check.sh.\n\n'
   exit 1
 fi
-unset _SUMMARY_LINE_COUNT _SUMMARY_MIN_LINES
+unset _SUMMARY_LINE_COUNT _SUMMARY_SOURCE_LINES _SUMMARY_MIN_LINES
 
 # Run the extracted block in a subshell with a single synthetic FAIL result.
 run_summary_for() {
