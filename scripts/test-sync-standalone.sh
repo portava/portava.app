@@ -690,6 +690,41 @@ fi
 rm -rf "$T17"
 
 # ---------------------------------------------------------------------------
+# Test 18: --check-deps exits 1 when only devDependencies differ
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 18: --check-deps exits 1 when only devDependencies differ ==="
+
+T18="$(setup_workspace)"
+src18="$T18/artifacts/travel-buddy"
+# dst18 keeps the write_pkg defaults: dependencies and devDependencies identical to source
+
+# Source: identical dependencies, but bump typescript devDep version
+cat > "$src18/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.1"
+  }
+}
+EOF
+
+ec18=0
+out18="$(run_sync "$T18" --check-deps 2>&1)" || ec18=$?
+
+assert_exit     "18a: exits 1 on devDependency-only mismatch"  1  "$ec18"
+assert_contains "18b: FAIL shown"                              "FAIL:" "$out18"
+assert_contains "18c: drifted devDep package name in output"   "typescript" "$out18"
+assert_contains "18d: devDependencies section header shown"    "[devDependencies]" "$out18"
+
+rm -rf "$T18"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
