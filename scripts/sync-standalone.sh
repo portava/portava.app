@@ -286,6 +286,73 @@ for f in "${PRESERVED_FILES[@]}"; do
 done
 
 echo ""
+echo "=== tsconfig.json compiler options diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
+
+TSCONFIG_DRIFT_EXIT=0
+
+node - "$SRC/tsconfig.json" "$DST/tsconfig.json" <<'NODEEOF'
+const fs = require('fs');
+const [,, srcPath, dstPath] = process.argv;
+
+let srcCfg, dstCfg;
+try { srcCfg = JSON.parse(fs.readFileSync(srcPath, 'utf8')); }
+catch (e) { console.error('Cannot read source tsconfig.json:', e.message); process.exit(1); }
+try { dstCfg = JSON.parse(fs.readFileSync(dstPath, 'utf8')); }
+catch (e) { console.error('Cannot read standalone tsconfig.json:', e.message); process.exit(1); }
+
+// Drop 'references' — standalone intentionally omits the monorepo lib reference.
+delete srcCfg.references;
+delete dstCfg.references;
+
+// Stable serialiser: sort object keys recursively so key order doesn't cause false diffs.
+function stableStringify(val) {
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+    return JSON.stringify(val);
+  }
+  const sorted = Object.fromEntries(
+    Object.entries(val).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, JSON.parse(stableStringify(v))])
+  );
+  return JSON.stringify(sorted, null, 2);
+}
+
+const topKeys = new Set([...Object.keys(srcCfg), ...Object.keys(dstCfg)]);
+let drifted = false;
+
+for (const key of [...topKeys].sort()) {
+  const srcVal = stableStringify(srcCfg[key] ?? null);
+  const dstVal = stableStringify(dstCfg[key] ?? null);
+  if (srcVal === dstVal) {
+    console.log(`  = ${key} (in sync)`);
+  } else if (!(key in srcCfg)) {
+    console.log(`  ~ ${key}: standalone has value not present in source (DRIFT)`);
+    console.log(`      standalone: ${dstVal}`);
+    drifted = true;
+  } else if (!(key in dstCfg)) {
+    console.log(`  ~ ${key}: source has value not present in standalone (DRIFT)`);
+    console.log(`      source:     ${srcVal}`);
+    drifted = true;
+  } else {
+    console.log(`  ~ ${key}: VALUES DIFFER (DRIFT)`);
+    console.log(`      source:     ${srcVal}`);
+    console.log(`      standalone: ${dstVal}`);
+    drifted = true;
+  }
+}
+
+if (drifted) {
+  console.log('');
+  console.log('  ACTION REQUIRED: tsconfig.json compiler options are out of sync.');
+  console.log('  Manually apply the same change to travel-buddy-standalone/tsconfig.json');
+  console.log('  (keep the "references" array removed — it is intentionally absent).');
+  process.exit(1);
+} else {
+  console.log('');
+  console.log('  (tsconfig.json compiler options are in sync)');
+}
+NODEEOF
+TSCONFIG_DRIFT_EXIT=$?
+
+echo ""
 echo "=== Dependency diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
 
 DIFF_EXIT=0
@@ -310,11 +377,14 @@ if [[ $PRESERVED_DIFF_EXIT -ne 0 ]]; then
   echo "  *. Preserved files are out of sync (see diff above)."
   echo "     Manually update travel-buddy-standalone/ to match artifacts/travel-buddy/."
 fi
-echo "  2. If tsconfig.json changed in the monorepo app, apply the same change to"
-echo "     travel-buddy-standalone/tsconfig.json (keep the 'references' array removed)."
-echo "  3. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
+if [[ $TSCONFIG_DRIFT_EXIT -ne 0 ]]; then
+  echo "  *. tsconfig.json compiler options are out of sync (see diff above)."
+  echo "     Manually update travel-buddy-standalone/tsconfig.json to match."
+  echo "     Keep the 'references' array removed — it is intentionally absent."
+fi
+echo "  2. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
 echo ""
 
-# Exit non-zero if config-file drift, preserved-file drift, or dep drift was detected.
-FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT ))
+# Exit non-zero if config-file drift, preserved-file drift, tsconfig drift, or dep drift.
+FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT | TSCONFIG_DRIFT_EXIT ))
 exit $FINAL_EXIT
