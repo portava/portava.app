@@ -499,6 +499,197 @@ assert_contains "12b: error message shown"         "Unknown flag: --unknown-flag
 rm -rf "$T12"
 
 # ---------------------------------------------------------------------------
+# Test 13: --check-deps exits 1 when a dep is missing from standalone
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 13: --check-deps exits 1 when a dep is missing from standalone ==="
+
+T13="$(setup_workspace)"
+src13="$T13/artifacts/travel-buddy"
+dst13="$T13/travel-buddy-standalone"
+
+# Add a new package to source that standalone does not have
+cat > "$src13/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2",
+    "react-native-maps": "1.14.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+ec13=0
+out13="$(run_sync "$T13" --check-deps 2>&1)" || ec13=$?
+
+assert_exit     "13a: exits 1 when dep is missing from standalone"  1  "$ec13"
+assert_contains "13b: FAIL shown"                                   "FAIL:" "$out13"
+assert_contains "13c: missing package reported"                     "react-native-maps" "$out13"
+
+rm -rf "$T13"
+
+# ---------------------------------------------------------------------------
+# Test 14: --check-deps exits 1 when a dep version differs
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 14: --check-deps exits 1 when a dep version differs ==="
+
+T14="$(setup_workspace)"
+src14="$T14/artifacts/travel-buddy"
+dst14="$T14/travel-buddy-standalone"
+
+# Source has a newer expo; standalone is on an older one
+cat > "$src14/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.1.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+# Standalone stays at ~54.0.0 (written by write_pkg via setup_workspace)
+
+ec14=0
+out14="$(run_sync "$T14" --check-deps 2>&1)" || ec14=$?
+
+assert_exit     "14a: exits 1 on version mismatch"   1  "$ec14"
+assert_contains "14b: FAIL shown"                    "FAIL:" "$out14"
+assert_contains "14c: expo version drift reported"   "expo" "$out14"
+assert_contains "14d: old version shown"             "~54.0.0" "$out14"
+assert_contains "14e: new version shown"             "~54.1.0" "$out14"
+
+rm -rf "$T14"
+
+# ---------------------------------------------------------------------------
+# Test 15: --check-deps exits 0 when deps are identical
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 15: --check-deps exits 0 when deps are identical ==="
+
+T15="$(setup_workspace)"
+# setup_workspace writes the same package.json to both src and dst via write_pkg
+
+ec15=0
+out15="$(run_sync "$T15" --check-deps 2>&1)" || ec15=$?
+
+assert_exit     "15a: exits 0 when deps are in sync"  0  "$ec15"
+assert_contains "15b: PASS shown"                     "PASS:" "$out15"
+
+rm -rf "$T15"
+
+# ---------------------------------------------------------------------------
+# Test 16: --apply-deps writes new and updated packages into standalone package.json
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 16: --apply-deps writes updated deps into standalone package.json ==="
+
+T16="$(setup_workspace)"
+src16="$T16/artifacts/travel-buddy"
+dst16="$T16/travel-buddy-standalone"
+
+# Source: bump react version + add a new dep
+cat > "$src16/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.5",
+    "react-native-maps": "1.14.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+# Standalone keeps a package that the source no longer has (standalone-only — must be preserved)
+cat > "$dst16/package.json" <<'EOF'
+{
+  "name": "travel-buddy-standalone",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2",
+    "standalone-only-pkg": "1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+ec16=0
+out16="$(run_sync "$T16" --apply-deps 2>&1)" || ec16=$?
+
+assert_exit             "16a: exits 0 after apply"                        0   "$ec16"
+assert_file_content     "16b: new dep written to standalone package.json" "$dst16/package.json" "react-native-maps"
+assert_file_content     "16c: bumped version written"                     "$dst16/package.json" "18.3.5"
+assert_file_content     "16d: standalone-only pkg preserved"              "$dst16/package.json" "standalone-only-pkg"
+assert_file_content     "16e: standalone name preserved"                  "$dst16/package.json" "travel-buddy-standalone"
+assert_not_contains     "16f: no FAIL in output"                          "FAIL:" "$out16"
+
+rm -rf "$T16"
+
+# ---------------------------------------------------------------------------
+# Test 17: --apply-deps --dry-run shows diff without writing
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 17: --apply-deps --dry-run shows diff without writing ==="
+
+T17="$(setup_workspace)"
+src17="$T17/artifacts/travel-buddy"
+dst17="$T17/travel-buddy-standalone"
+
+# Source: bump typescript devDep + add a new dep
+cat > "$src17/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2",
+    "new-pkg": "2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.1"
+  }
+}
+EOF
+
+# Capture the standalone package.json before the run so we can compare after
+dst17_before="$(cat "$dst17/package.json")"
+
+ec17=0
+out17="$(run_sync "$T17" --apply-deps --dry-run 2>&1)" || ec17=$?
+
+assert_exit         "17a: exits 1 in dry-run mode (action still required)"  1   "$ec17"
+assert_contains     "17b: dry-run flag shown in output"           "dry" "$out17"
+assert_contains     "17c: new dep reported"                       "new-pkg" "$out17"
+assert_contains     "17d: typescript version drift reported"      "typescript" "$out17"
+
+# Verify the file was NOT modified
+dst17_after="$(cat "$dst17/package.json")"
+if [[ "$dst17_before" == "$dst17_after" ]]; then
+  pass "17e: standalone package.json not written in dry-run"
+else
+  fail "17e: standalone package.json was modified during dry-run"
+fi
+
+rm -rf "$T17"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
