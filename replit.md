@@ -35,24 +35,27 @@ DiscoveryMapView.web.tsx instead.
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
 - Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
-## Release checklist — standalone drift checks
+## Release checklist — CI validation steps
 
-Before cutting a release or syncing the standalone EAS build target, run these two
+Before cutting a release or syncing the standalone EAS build target, run these
 CI-style checks (registered as named validation steps in the project):
 
 | Validation name    | Command                                             | What it checks |
 |--------------------|-----------------------------------------------------|----------------|
+| `typecheck`        | `pnpm run typecheck`                                | Full TypeScript typecheck across all monorepo workspace packages (libs + API server + web artifacts). Fails on any type error. |
 | `dependency-drift` | `bash scripts/sync-standalone.sh --check-deps`      | Any package added to `artifacts/travel-buddy` that is missing or version-mismatched in `travel-buddy-standalone`. Fails on any mismatch. |
 | `source-drift`     | `bash scripts/sync-standalone.sh --check-source`    | Any source file in the synced directories (`src/`, `app/`, `assets/`, etc.) that differs between the monorepo app and standalone. Fails when differing-file count exceeds `SOURCE_DRIFT_THRESHOLD` (default: 0). |
 
-Run both from the workspace root:
+Run all three from the workspace root:
 
 ```bash
+pnpm run typecheck
 bash scripts/sync-standalone.sh --check-deps
 bash scripts/sync-standalone.sh --check-source
 ```
 
-Fix any reported drift before building a release:
+Fix any reported issues before building a release:
+- **Type errors** → fix failing TypeScript errors in the relevant workspace package.
 - **Dependency drift** → run `bash scripts/sync-standalone.sh --apply-deps` then `pnpm install` inside `travel-buddy-standalone/`.
 - **Source drift** → run `bash scripts/sync-standalone.sh --fix-source` to re-sync only the drifted directories.
 
