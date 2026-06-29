@@ -57,6 +57,28 @@ if [[ -z "$SUMMARY_BLOCK" ]]; then
   exit 1
 fi
 
+# Structural sanity-check: the extracted block must contain the keywords that
+# make the per-check assertions meaningful.  Both SUMMARY_BLOCK and the 80 %
+# size guard below use the same awk pattern, so if that pattern goes stale
+# both return the same short result and the size comparison becomes
+# meaningless.  Checking for structural keywords is independent of the awk
+# pattern and catches this class of failure before the 80 % guard runs.
+_block_ok=1
+for _kw in 'case' 'esac' 'fix:'; do
+  if ! printf '%s\n' "$SUMMARY_BLOCK" | grep -qF "$_kw"; then
+    printf '\n❌  SUMMARY_BLOCK is missing expected keyword "%s".\n' "$_kw"
+    _block_ok=0
+  fi
+done
+if [[ $_block_ok -eq 0 ]]; then
+  printf '    The extracted block does not look like the case-based summary loop.\n'
+  printf '    Has the for-loop body been refactored? Update the awk pattern on\n'
+  printf '    line ~51 of test-pre-release-hints.sh to match the current header\n'
+  printf '    in scripts/pre-release-check.sh.\n\n'
+  exit 1
+fi
+unset _block_ok _kw
+
 # Self-check: the extracted block must be at least 80 % of the for-loop's
 # actual length as measured directly from the source file (not from the
 # extracted copy).  This makes the guard self-calibrating: when new case
