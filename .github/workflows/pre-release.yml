@@ -99,6 +99,95 @@ jobs:
           eas --version
           expo --version
 
+      - name: Check iOS EAS credentials are present and not near-expiry
+        # Fails fast with a clear message if the Apple Distribution Certificate or
+        # Provisioning Profile stored in EAS cloud are missing, already expired, or
+        # expiring within 30 days — before burning EAS build credits on a doomed run.
+        # To rotate credentials: run `eas credentials --platform ios` locally and
+        # follow the prompts. See docs/eas-runbook.md → 'Rotating iOS credentials'.
+        working-directory: travel-buddy-standalone
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set +e
+          eas credentials --platform ios --non-interactive --json \
+            > /tmp/ios-creds.json 2>/tmp/ios-creds-err.txt
+          EAS_EXIT=$?
+          set -e
+
+          if [ $EAS_EXIT -ne 0 ]; then
+            echo "::error::EAS credential check failed — could not retrieve iOS credentials from EAS cloud. Ensure 'eas credentials --platform ios' has been run at least once and that EXPO_TOKEN has access to this project. See docs/eas-runbook.md → 'iOS credentials setup for CI' and 'Rotating iOS credentials'."
+            cat /tmp/ios-creds-err.txt || true
+            exit 1
+          fi
+
+          node << 'NODESCRIPT'
+          const fs = require('fs');
+
+          let creds;
+          try {
+            const raw = fs.readFileSync('/tmp/ios-creds.json', 'utf8').trim();
+            creds = JSON.parse(raw);
+          } catch (e) {
+            console.log('::error::EAS credential check failed — could not parse JSON output from eas credentials. Raw output may be empty or malformed. Run eas credentials --platform ios locally to diagnose. See docs/eas-runbook.md → "Rotating iOS credentials".');
+            process.exit(1);
+          }
+
+          const WARN_DAYS = 30;
+          const now = Date.now();
+          const msPerDay = 86400_000;
+          let failed = false;
+
+          // Walk the credential object and collect all expiry-like date values.
+          // EAS CLI JSON shape has changed across versions; field names seen in the
+          // wild include: validityNotAfter, expirationTime, expiresAt, expires,
+          // provisioningProfileExpirationTime. Scan all string values that look like
+          // ISO dates and are keyed with "expir" or "notafter" (case-insensitive).
+          function findExpiries(obj, path) {
+            if (!obj || typeof obj !== 'object') return;
+            for (const [k, v] of Object.entries(obj)) {
+              const kl = k.toLowerCase();
+              if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) &&
+                  (kl.includes('expir') || kl.includes('notafter') || kl.includes('validity'))) {
+                const ts = Date.parse(v);
+                if (isNaN(ts)) return;
+                const daysLeft = (ts - now) / msPerDay;
+                const loc = `${path}.${k}`;
+                if (daysLeft <= 0) {
+                  console.log(`::error::iOS credential EXPIRED: ${loc} expired ${Math.abs(Math.floor(daysLeft))} day(s) ago (${v}). Run 'eas credentials --platform ios' locally to rotate. See docs/eas-runbook.md → "Rotating iOS credentials".`);
+                  failed = true;
+                } else if (daysLeft <= WARN_DAYS) {
+                  console.log(`::error::iOS credential expiring soon: ${loc} expires in ${Math.floor(daysLeft)} day(s) (${v}). Rotate now to avoid a broken release build. Run 'eas credentials --platform ios' locally. See docs/eas-runbook.md → "Rotating iOS credentials".`);
+                  failed = true;
+                } else {
+                  console.log(`iOS credential OK: ${loc} — ${Math.floor(daysLeft)} day(s) remaining (expires ${v})`);
+                }
+              } else if (typeof v === 'object') {
+                findExpiries(v, `${path}.${k}`);
+              }
+            }
+          }
+
+          // Check distribution certificate presence.
+          const hasCert = creds.iosDistributionCertificate ||
+                          creds.distributionCertificate ||
+                          creds.distCert ||
+                          (Array.isArray(creds) && creds.length > 0);
+          if (!hasCert && typeof creds === 'object' && !Array.isArray(creds) &&
+              Object.keys(creds).length === 0) {
+            console.log('::error::No iOS credentials found in EAS cloud. Run "eas credentials --platform ios" locally to create a Distribution Certificate and Provisioning Profile. See docs/eas-runbook.md → "iOS credentials setup for CI".');
+            process.exit(1);
+          }
+
+          findExpiries(creds, 'ios');
+
+          if (failed) {
+            process.exit(1);
+          }
+
+          console.log('iOS EAS credential check passed.');
+          NODESCRIPT
+
       - name: Trigger EAS Android preview build
         working-directory: travel-buddy-standalone
         env:

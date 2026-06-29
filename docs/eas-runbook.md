@@ -125,6 +125,56 @@ git push origin --delete release-v1.0.0-test
 
 ---
 
+## Rotating iOS credentials
+
+The `eas-build` CI job runs a **credential pre-flight check** before every Android/iOS build step. It calls `eas credentials --platform ios --non-interactive --json`, parses the JSON response, and fails immediately with a `::error::` annotation if:
+
+- No Distribution Certificate or Provisioning Profile is found in EAS cloud.
+- The Distribution Certificate expires within **30 days**.
+- The Provisioning Profile expires within **30 days**.
+
+This prevents a cryptic mid-build failure from burning EAS build credits on a doomed run.
+
+### When does a credential expire?
+
+| Credential | Typical validity | Issued by |
+|-----------|-----------------|-----------|
+| Apple Distribution Certificate | 1 year from creation | Apple Developer portal |
+| Provisioning Profile | 1 year from creation (or App ID expiry) | Apple Developer portal via EAS |
+
+Apple does not renew these automatically. You must rotate them before (or shortly after) they expire.
+
+### How to rotate
+
+Run the interactive flow locally once. EAS will revoke the old credential and upload a fresh one to EAS cloud storage. Every subsequent CI run picks up the new credential automatically.
+
+```bash
+eas login                          # confirm you are signed in as the project owner
+cd travel-buddy-standalone
+eas credentials --platform ios     # follow the prompts to regenerate certificate / profile
+```
+
+At the menu, choose **"Build credentials"** → **"Update Distribution Certificate"** (or **"Update Provisioning Profile"**) for whichever credential is near-expiry. If both are expiring, rotate the certificate first — a new certificate invalidates any existing profiles, so EAS will regenerate the profile as part of the certificate rotation.
+
+After the command completes, confirm the new expiry:
+
+```bash
+eas credentials --platform ios --non-interactive --json | node -e "
+const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+console.log(JSON.stringify(data, null, 2));
+"
+```
+
+Push a test `release-*` branch to confirm CI passes the credential check before triggering a full build.
+
+### If the CI check fires unexpectedly
+
+1. **"Could not retrieve iOS credentials"** — `EXPO_TOKEN` may have been revoked or the token does not have access to this EAS project. Regenerate the token at https://expo.dev/accounts/[your-username]/settings/access-tokens, update the `EXPO_TOKEN` GitHub secret, and re-run the workflow.
+2. **"No iOS credentials found"** — `eas credentials --platform ios` has never been run for this project, or credentials were manually deleted. Follow Step 2 in "iOS credentials setup for CI" above.
+3. **"EXPIRED"** — The certificate or profile has already lapsed. Rotate immediately using the steps above. You may also need to re-register the bundle ID in App Store Connect if the associated profile was revoked by Apple.
+
+---
+
 ## TODO (owner must finalize)
 
 | Item | What to do |
