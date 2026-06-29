@@ -51,11 +51,11 @@ function handleResponse(response: NotificationResponse): void {
 }
 
 export function useNotificationHandler(): void {
-  if (Platform.OS === 'web') return;
-
+  // Hooks must be called unconditionally — platform guard is inside each effect.
   const coldStartHandled = useRef(false);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
 
@@ -67,6 +67,7 @@ export function useNotificationHandler(): void {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const sub = addNotificationResponseReceivedListener(handleResponse);
     return () => sub.remove();
   }, []);
