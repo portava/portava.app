@@ -191,6 +191,102 @@ jobs:
           console.log('iOS EAS credential check passed.');
           NODESCRIPT
 
+      - name: Check Android EAS credentials are present and not near-expiry
+        # Fails fast with a clear message if the Android keystore stored in EAS
+        # cloud is missing, already expired, or expiring within 30 days — before
+        # burning EAS build credits on a doomed run.
+        # To rotate the keystore: run `eas credentials --platform android` locally
+        # and follow the prompts. See docs/eas-runbook.md → 'Rotating Android keystore'.
+        working-directory: travel-buddy-standalone
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set +e
+          eas credentials --platform android --non-interactive --json \
+            > /tmp/android-creds.json 2>/tmp/android-creds-err.txt
+          EAS_EXIT=$?
+          set -e
+
+          if [ $EAS_EXIT -ne 0 ]; then
+            echo "::error::EAS credential check failed — could not retrieve Android credentials from EAS cloud. Ensure 'eas credentials --platform android' has been run at least once and that EXPO_TOKEN has access to this project. See docs/eas-runbook.md → 'Android credentials setup for CI' and 'Rotating Android keystore'."
+            cat /tmp/android-creds-err.txt || true
+            exit 1
+          fi
+
+          node << 'NODESCRIPT'
+          const fs = require('fs');
+
+          let creds;
+          try {
+            const raw = fs.readFileSync('/tmp/android-creds.json', 'utf8').trim();
+            creds = JSON.parse(raw);
+          } catch (e) {
+            console.log('::error::EAS credential check failed — could not parse JSON output from eas credentials. Raw output may be empty or malformed. Run eas credentials --platform android locally to diagnose. See docs/eas-runbook.md → "Rotating Android keystore".');
+            process.exit(1);
+          }
+
+          const WARN_DAYS = 30;
+          const now = Date.now();
+          const msPerDay = 86400_000;
+          let failed = false;
+
+          // Walk the credential object and collect all expiry-like date values.
+          // EAS CLI JSON shape has changed across versions; field names seen in the
+          // wild include: validityNotAfter, expirationTime, expiresAt, expires,
+          // keystoreValidityNotAfter. Scan all string values that look like ISO
+          // dates and are keyed with "expir", "notafter", or "validity"
+          // (case-insensitive).
+          function findExpiries(obj, path) {
+            if (!obj || typeof obj !== 'object') return;
+            for (const [k, v] of Object.entries(obj)) {
+              const kl = k.toLowerCase();
+              if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) &&
+                  (kl.includes('expir') || kl.includes('notafter') || kl.includes('validity'))) {
+                const ts = Date.parse(v);
+                if (isNaN(ts)) return;
+                const daysLeft = (ts - now) / msPerDay;
+                const loc = `${path}.${k}`;
+                if (daysLeft <= 0) {
+                  console.log(`::error::Android credential EXPIRED: ${loc} expired ${Math.abs(Math.floor(daysLeft))} day(s) ago (${v}). Run 'eas credentials --platform android' locally to rotate. See docs/eas-runbook.md → "Rotating Android keystore".`);
+                  failed = true;
+                } else if (daysLeft <= WARN_DAYS) {
+                  console.log(`::error::Android credential expiring soon: ${loc} expires in ${Math.floor(daysLeft)} day(s) (${v}). Rotate now to avoid a broken release build. Run 'eas credentials --platform android' locally. See docs/eas-runbook.md → "Rotating Android keystore".`);
+                  failed = true;
+                } else {
+                  console.log(`Android credential OK: ${loc} — ${Math.floor(daysLeft)} day(s) remaining (expires ${v})`);
+                }
+              } else if (typeof v === 'object') {
+                findExpiries(v, `${path}.${k}`);
+              }
+            }
+          }
+
+          // Check keystore presence. EAS CLI JSON shape varies across versions:
+          //   • Object with "keystore" or "androidKeystore" key (most common)
+          //   • Array of build-profile objects each containing a keystore entry
+          //   • Non-empty object without either key → also treated as missing
+          // Fail on ANY shape where no keystore is discoverable — this covers
+          // empty object {}, empty array [], non-empty object without a keystore
+          // key, and array entries that lack a keystore entry.
+          const hasKeystore = !!(
+            (creds && !Array.isArray(creds) && (creds.keystore || creds.androidKeystore)) ||
+            (Array.isArray(creds) && creds.length > 0 &&
+              creds.some(p => p && (p.keystore || p.androidKeystore)))
+          );
+          if (!hasKeystore) {
+            console.log('::error::No Android keystore found in EAS cloud. Run "eas credentials --platform android" locally to create and upload a keystore. See docs/eas-runbook.md → "Android credentials setup for CI".');
+            process.exit(1);
+          }
+
+          findExpiries(creds, 'android');
+
+          if (failed) {
+            process.exit(1);
+          }
+
+          console.log('Android EAS credential check passed.');
+          NODESCRIPT
+
       - name: Trigger EAS Android preview build
         working-directory: travel-buddy-standalone
         env:

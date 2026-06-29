@@ -175,6 +175,109 @@ Push a test `release-*` branch to confirm CI passes the credential check before 
 
 ---
 
+## Android credentials setup for CI
+
+**Do this once before you push your first `release-*` branch targeting Android.** The `eas-build` CI job runs `eas build --non-interactive`, which cannot prompt for a keystore. If no keystore has been stored in EAS cloud the job fails immediately. The steps below create and store one so every subsequent CI run picks it up automatically.
+
+### Prerequisites
+
+- A **Google Play Console** account (required only for production submissions; a keystore can be generated without one).
+- The **Expo account** that owns this EAS project (`eas login` confirmed).
+- `eas-cli` installed globally: `npm install -g eas-cli`.
+
+### Step 1 — Log in to Expo and link the project
+
+```bash
+eas login                          # sign in with the Expo account that owns the project
+cd travel-buddy-standalone
+eas whoami                         # confirm the correct account is active
+```
+
+### Step 2 — Store a keystore in EAS
+
+EAS can generate a keystore for you and store it in its cloud (recommended), or you can upload an existing `.jks` / `.keystore` file.
+
+```bash
+cd travel-buddy-standalone
+eas credentials --platform android
+```
+
+At the menu choose **"Keystore: Manage everything needed to build your project"**, then **"Set up a new keystore"**. EAS will:
+
+1. Generate a fresh keystore with a random alias, password, and a long validity period (typically 25+ years for new keystores).
+2. Upload it to EAS cloud storage — encrypted and tied to your Expo project.
+
+You do **not** need to store the `.jks` file yourself; EAS holds it. If you already have a keystore from a prior Google Play submission, choose **"Upload an existing keystore"** instead — Google Play locks your app to its first uploaded signing certificate, so you **must** use the same key for every subsequent release of the same app.
+
+> **⚠ Critical:** Once a version of your app has been uploaded to Google Play, the signing key can never be changed. Back up the EAS-stored keystore using `eas credentials --platform android` → **"Download existing keystore"** and store the `.jks` file and its passwords somewhere safe (a password manager or secure vault). Losing it means you cannot publish updates to your existing Play Store listing.
+
+### Step 3 — Verify the credential check passes
+
+```bash
+eas credentials --platform android --non-interactive --json
+```
+
+The output should contain a `keystore` object (not an empty `{}`). The CI preflight step runs this same command and fails with a `::error::` annotation if the keystore is missing or near-expiry.
+
+### Summary checklist
+
+- [ ] `eas credentials --platform android` completed successfully
+- [ ] Keystore backed up to a secure location (passwords included)
+- [ ] Test push to a `release-*` branch shows the Android EAS build in the dashboard
+
+---
+
+## Rotating Android keystore
+
+The `eas-build` CI job runs an **Android credential pre-flight check** before every Android build step. It calls `eas credentials --platform android --non-interactive --json`, parses the JSON response, and fails immediately with a `::error::` annotation if:
+
+- No keystore is found in EAS cloud.
+- The keystore's `validityNotAfter` (or equivalent expiry field) is within **30 days**.
+- The keystore's expiry date has already passed.
+
+This prevents a cryptic mid-build failure from burning EAS build credits on a doomed run.
+
+### When does a keystore expire?
+
+| Credential | Typical validity | Notes |
+|-----------|-----------------|-------|
+| Android Keystore | Set at creation time | EAS-generated keystores default to ~25 years; manually created keystores vary widely. Check with `keytool -list -v -keystore <file>`. |
+
+Android keystores do not auto-renew. If you created the keystore with a short validity period (common with old `keytool` defaults of 90 days or 1 year), you must rotate it before expiry. **However:** Google Play locks your app's signing certificate at the first upload, so if the app is already live you cannot simply generate a new keystore — see the warning below.
+
+> **⚠ Google Play signing lock:** If your app has been published to Google Play, you **cannot** replace the signing key with a new one through EAS. The only path is to enroll in **Google Play App Signing** (where Google holds the upload key separately from the app signing key). Contact Google Play support if you face an expired key on a live app — the self-service rotation path is unavailable.
+
+### Rotating before the first Play Store submission (safe path)
+
+If the app has **never** been submitted to Google Play, you can freely generate a new keystore:
+
+```bash
+eas login                              # confirm you are signed in as the project owner
+cd travel-buddy-standalone
+eas credentials --platform android     # choose "Set up a new keystore" at the menu
+```
+
+EAS revokes the old keystore in its cloud and stores the new one. Every subsequent CI run picks it up automatically.
+
+After the command completes, confirm the new expiry:
+
+```bash
+eas credentials --platform android --non-interactive --json | node -e "
+const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+console.log(JSON.stringify(data, null, 2));
+"
+```
+
+Push a test `release-*` branch to confirm CI passes the Android credential check before triggering a full build.
+
+### If the CI check fires unexpectedly
+
+1. **"Could not retrieve Android credentials"** — `EXPO_TOKEN` may have been revoked or the token does not have access to this EAS project. Regenerate the token at https://expo.dev/accounts/[your-username]/settings/access-tokens, update the `EXPO_TOKEN` GitHub secret, and re-run the workflow.
+2. **"No Android keystore found"** — `eas credentials --platform android` has never been run for this project, or the keystore was manually deleted. Follow "Android credentials setup for CI" above.
+3. **"EXPIRED"** — The keystore has already lapsed. If the app has never been submitted to Google Play, rotate using the steps above. If it is live on Google Play, see the Google Play signing lock warning.
+
+---
+
 ## TODO (owner must finalize)
 
 | Item | What to do |
