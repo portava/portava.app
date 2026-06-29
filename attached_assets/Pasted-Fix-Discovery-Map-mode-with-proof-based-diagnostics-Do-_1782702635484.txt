@@ -1,0 +1,113 @@
+Fix Discovery Map mode with proof-based diagnostics. Do not mark complete unless the Map toggle is proven to enable the map view.
+
+Current issue:
+The Travel Buddy app bundles and loads, but Discovery Map mode still shows no usable map. Stop guessing and add hard proof inside the running app.
+
+Goal:
+When the user taps the Discovery List/Map toggle, Map mode must visibly switch from the list to the map surface. If the map cannot render, the app must show a debug-only diagnostic overlay explaining the exact blocker.
+
+Requirements:
+
+1. Add a temporary debug-only Discovery Map diagnostic overlay
+Show only in development/debug mode.
+
+The overlay must display:
+- mapMode
+- MapLibre component mounted
+- containerWidth
+- containerHeight
+- styleURL exists
+- styleURL host
+- EXPO_PUBLIC_MAPTILER_KEY exists
+- pinCount
+- platform
+- MapLibre import success
+- latest map error message
+- map loaded/style loaded status if available
+
+Do not display the actual MapTiler key.
+
+2. Prove the Map toggle works
+Add logs with prefix:
+
+[TravelBuddyMapDebug]
+
+Log:
+- Discovery opened
+- initial mode
+- user tapped List
+- user tapped Map
+- selected mode after tap
+- whether Map component mounted
+- container dimensions
+- whether style URL was built
+- whether MapLibre fired load/style events
+
+3. Measure layout
+Use onLayout around the map container.
+
+If width or height is zero, show:
+“Map container has no usable size.”
+
+If height is below a usable threshold, fix the parent layout so Map mode has real height/flex space.
+
+4. Fix missing/empty style URL behavior
+If EXPO_PUBLIC_MAPTILER_KEY is missing or empty:
+- do not pass an empty style/source URI
+- show “MapTiler key missing” in debug overlay
+- keep app stable
+- do not silently show a blank map
+- do not commit secrets
+
+5. Remove empty image source warnings
+Find and fix all map/discovery cases where an image source can become:
+
+source={{ uri: '' }}
+
+Only render remote images when URI is non-empty, otherwise use a local fallback icon/avatar.
+
+6. Check env and restart dev client
+Run:
+
+bash id="342cgu" cd ~/workspace/travel-buddy-standalone grep -rn "EXPO_PUBLIC_MAPTILER_KEY\|MAP_STYLE\|maptiler" src app components lib 2>/dev/null || true node -e "require('dotenv').config(); console.log('key seen by node:', process.env.EXPO_PUBLIC_MAPTILER_KEY ? 'PRESENT' : 'EMPTY')" npx expo start --dev-client --clear 
+
+7. Validation
+Run:
+- typecheck
+- app start/dev-client
+- open Discovery
+- confirm List mode shows normal Discovery list
+- tap Map
+- confirm UI state changes to Map mode
+- confirm map container mounts
+- confirm map container has non-zero width and height
+- confirm either the actual native map visibly renders, or the debug overlay clearly identifies the exact blocker
+
+8. Hard completion rule
+Do not mark this task complete if:
+- the app only bundles
+- Discovery opens but Map mode stays blank
+- the toggle changes state but the map does not mount
+- the map container has zero height
+- the MapTiler key is missing
+- the style URL is empty
+- MapLibre fails to mount
+- style-loaded/map-loaded never fires and no exact blocker is shown
+
+Completion requires screenshot or log proof showing:
+- Discovery screen opened
+- Map toggle selected
+- map debug panel values
+- map container dimensions
+- MapLibre mount/style status
+- final rendered map or exact blocker
+
+Final report must include:
+- files changed
+- exact debug values
+- Metro logs with [TravelBuddyMapDebug]
+- whether issue was env, layout, native module, style URL, or overlay
+- exact tests/checks run
+- exact pass/fail counts
+
+Do not say “should work” or “wired.” Only report verified facts.
