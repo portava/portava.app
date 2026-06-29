@@ -37,6 +37,7 @@ Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 | `typecheck-standalone` | `cd travel-buddy-standalone && pnpm typecheck`   | Fix TS errors in standalone |
 | `dependency-drift`     | `bash scripts/sync-standalone.sh --check-deps`   | Run `--apply-deps` then `pnpm install` in standalone |
 | `source-drift`         | `bash scripts/sync-standalone.sh --check-source` | Run `--fix-source` to re-sync |
+| `api-server-build`     | `pnpm --filter @workspace/api-server run build`  | Fix esbuild errors in `artifacts/api-server/src/` |
 
 ## Stack
 

@@ -57,6 +57,11 @@ run_check "source-drift" \
   "Source drift (synced directories)" \
   bash scripts/sync-standalone.sh --check-source
 
+# ── 5. API server build ───────────────────────────────────────────────────────
+run_check "api-server-build" \
+  "API server esbuild bundle (artifacts/api-server)" \
+  pnpm --filter @workspace/api-server run build
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf '\n'
 sep

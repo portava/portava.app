@@ -43,3 +43,6 @@ jobs:
       - name: Typecheck standalone
         working-directory: travel-buddy-standalone
         run: pnpm typecheck
+
+      - name: Build API server (esbuild bundle)
+        run: pnpm --filter @workspace/api-server run build
