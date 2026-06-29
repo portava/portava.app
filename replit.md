@@ -1,6 +1,6 @@
 # Travel Buddy
 
-[![Pre-release checks](https://github.com/OWNER/REPO/actions/workflows/pre-release.yml/badge.svg?branch=main)](https://github.com/OWNER/REPO/actions/workflows/pre-release.yml)
+[![Pre-release checks](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml/badge.svg?branch=main)](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml)
 
 A social travel passport mobile app — log trips, track destinations, and share your travel story.
 
