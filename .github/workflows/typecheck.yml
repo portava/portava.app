@@ -46,3 +46,6 @@ jobs:
 
       - name: Build API server (esbuild bundle)
         run: pnpm --filter @workspace/api-server run build
+
+      - name: Lint (API server + standalone)
+        run: pnpm run lint

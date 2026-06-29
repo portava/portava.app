@@ -5,10 +5,15 @@
   "packageManager": "pnpm@10.26.1",
   "scripts": {
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm -r --filter !@workspace/travel-buddy run typecheck"
+    "typecheck": "pnpm -r --filter !@workspace/travel-buddy run typecheck",
+    "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
-    "typescript": "~5.9.2"
+    "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.62.0",
+    "zod-validation-error": "^4.0.0"
   }
 }
