@@ -16,7 +16,7 @@ catalogs:
       specifier: ^4.1.8
       version: 4.3.1
     '@tanstack/react-query':
-      specifier: ^5.80.7
+      specifier: ^5.101.2
       version: 5.101.0
     '@types/node':
       specifier: ^22.15.21
@@ -395,8 +395,8 @@ importers:
         specifier: ^1.0.2
         version: 1.0.2
       '@tanstack/react-query':
-        specifier: ^5.80.7
-        version: 5.101.0(react@19.1.0)
+        specifier: ^5.101.2
+        version: 5.101.2(react@19.1.0)
       '@types/geojson':
         specifier: ^7946.0.16
         version: 7946.0.16
@@ -407,8 +407,8 @@ importers:
         specifier: ~19.1.7
         version: 19.1.11(@types/react@19.1.17)
       '@ungap/structured-clone':
-        specifier: ^1.3.0
-        version: 1.3.1
+        specifier: ^1.3.2
+        version: 1.3.2
       babel-plugin-react-compiler:
         specifier: ^19.0.0-beta-e993439-20250117
         version: 19.0.0-beta-ebf51a3-20250411
@@ -3182,8 +3182,16 @@ packages:
   '@tanstack/query-core@5.101.0':
     resolution: {integrity: sha512-cQetA74EB+seWySv1TTKr828TnP0u39m6LykwDXIo84SNortpDkp30TMEjkqtYCNP9c40uT/iwl6MLiufEt0Ow==}
 
+  '@tanstack/query-core@5.101.2':
+    resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
+
   '@tanstack/react-query@5.101.0':
     resolution: {integrity: sha512-rLlJXSpkqfizLWgkR5+eLeIk0MvTx/meEIR7LRjxic+qxiQP8zVjq7BqQkiCMNLQBlLfuOLqqr6KO5GtrDlmSg==}
+    peerDependencies:
+      react: ^18 || ^19
+
+  '@tanstack/react-query@5.101.2':
+    resolution: {integrity: sha512-seDkr6kzGzX1okaaTtZPtgA688CDPlXUz1C6xSg0ESqn04Vuc8tlrYms1s3de+znBqhPVxFRfpAfUf+6XvfPWg==}
     peerDependencies:
       react: ^18 || ^19
 
@@ -3341,8 +3349,8 @@ packages:
   '@types/yargs@17.0.35':
     resolution: {integrity: sha512-qUHkeCyQFxMXg79wQfTtfndEC+N9ZZg76HJftDJp+qH2tV7Gj4OJi7l+PiWwJ+pWtW8GwSmqsDj/oymhrTWXjg==}
 
-  '@ungap/structured-clone@1.3.1':
-    resolution: {integrity: sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==}
+  '@ungap/structured-clone@1.3.2':
+    resolution: {integrity: sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA==}
 
   '@urql/core@5.2.0':
     resolution: {integrity: sha512-/n0ieD0mvvDnVAXEQgX/7qJiVcvYvNkOHeBvkwtylfjydar123caCXcl58PXFY11oU1oquJocVXHxLAbtv4x1A==}
@@ -9654,9 +9662,16 @@ snapshots:
 
   '@tanstack/query-core@5.101.0': {}
 
+  '@tanstack/query-core@5.101.2': {}
+
   '@tanstack/react-query@5.101.0(react@19.1.0)':
     dependencies:
       '@tanstack/query-core': 5.101.0
+      react: 19.1.0
+
+  '@tanstack/react-query@5.101.2(react@19.1.0)':
+    dependencies:
+      '@tanstack/query-core': 5.101.2
       react: 19.1.0
 
   '@turf/distance@7.3.5':
@@ -9859,7 +9874,7 @@ snapshots:
     dependencies:
       '@types/yargs-parser': 21.0.3
 
-  '@ungap/structured-clone@1.3.1': {}
+  '@ungap/structured-clone@1.3.2': {}
 
   '@urql/core@5.2.0':
     dependencies:
@@ -11092,7 +11107,7 @@ snapshots:
       '@expo/metro': 54.2.0
       '@expo/metro-config': 54.0.16(expo@54.0.35)
       '@expo/vector-icons': 15.1.1(expo-font@14.0.12(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
-      '@ungap/structured-clone': 1.3.1
+      '@ungap/structured-clone': 1.3.2
       babel-preset-expo: 54.0.11(@babel/core@7.29.7)(@babel/runtime@7.29.7)(expo@54.0.35)(react-refresh@0.14.2)
       expo-asset: 12.0.13(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
       expo-constants: 18.0.13(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))
