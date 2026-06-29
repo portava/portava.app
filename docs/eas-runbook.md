@@ -125,6 +125,29 @@ git push origin --delete release-v1.0.0-test
 
 ---
 
+## Scheduled credential health check
+
+A GitHub Actions workflow (`.github/workflows/credential-health.yml`) runs every **Monday at 09:00 UTC** and inspects all EAS credentials with a **60-day warning window** — twice the 30-day window used by the release build. This gives the team enough runway to rotate credentials without urgency.
+
+### What it does
+
+| Condition | Action |
+|-----------|--------|
+| All credentials healthy (> 60 days remaining) | No-op; closes any open `credential-health` issue automatically |
+| Any credential missing, expired, or expiring within 60 days | Opens (or comments on) a GitHub issue labelled `credential-health` with details and rotation steps |
+
+The issue title is always **`[credential-health] EAS credentials expiring soon`**. Only one issue is open at a time — subsequent runs comment on the existing issue rather than opening a duplicate. The issue closes itself once credentials are healthy again.
+
+### Triggering a manual run
+
+Go to **GitHub → Actions → "Credential health check" → Run workflow**. This is useful after rotating credentials to confirm the check now passes without waiting for the next Monday.
+
+### Required setup
+
+The workflow reads `EXPO_TOKEN` from GitHub Secrets — the same secret used by the `eas-build` CI job. No additional setup is needed beyond what is already described in "iOS credentials setup for CI" above.
+
+---
+
 ## Rotating iOS credentials
 
 The `eas-build` CI job runs a **credential pre-flight check** before every Android/iOS build step. It calls `eas credentials --platform ios --non-interactive --json`, parses the JSON response, and fails immediately with a `::error::` annotation if:
