@@ -24,6 +24,15 @@
 #                   reported but never cause a failure (they may be intentional).
 #                   This flag is read-only — no files are written. Runs independently
 #                   of --dry-run, --apply-deps, and --check-source.
+#   --check-lockfile
+#                   Compare resolved versions in pnpm-lock.yaml files between the
+#                   monorepo app (root pnpm-lock.yaml, importer "artifacts/travel-buddy")
+#                   and the standalone (travel-buddy-standalone/pnpm-lock.yaml,
+#                   importer "."). Exits non-zero when any shared direct dependency
+#                   resolves to a different version string — this is the root cause of
+#                   transitive-dep build failures on EAS. Standalone-only packages are
+#                   informational and never cause a failure. This flag is read-only.
+#                   Runs independently of all other flags.
 #   --fix-source    Re-sync only the source directories reported by --check-source
 #                   (controlled by SOURCE_DRIFT_DIRS). Package.json, tsconfig.json,
 #                   babel.config.js, metro.config.js, and other preserved files are
@@ -69,6 +78,7 @@ DRY_RUN=false
 APPLY_DEPS=false
 CHECK_SOURCE=false
 CHECK_DEPS=false
+CHECK_LOCKFILE=false
 FIX_SOURCE=false
 TOTAL_ADDED=0
 TOTAL_UPDATED=0
@@ -80,11 +90,12 @@ SOURCE_DRIFT_DIRS="${SOURCE_DRIFT_DIRS:-src app assets components constants hook
 
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)       DRY_RUN=true ;;
-    --apply-deps)    APPLY_DEPS=true ;;
-    --check-source)  CHECK_SOURCE=true ;;
-    --check-deps)    CHECK_DEPS=true ;;
-    --fix-source)    FIX_SOURCE=true ;;
+    --dry-run)          DRY_RUN=true ;;
+    --apply-deps)       APPLY_DEPS=true ;;
+    --check-source)     CHECK_SOURCE=true ;;
+    --check-deps)       CHECK_DEPS=true ;;
+    --check-lockfile)   CHECK_LOCKFILE=true ;;
+    --fix-source)       FIX_SOURCE=true ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
@@ -357,6 +368,204 @@ console.log('  cd travel-buddy-standalone && pnpm install');
 console.log('');
 console.log('To preview what --apply-deps would change without writing files:');
 console.log('  bash scripts/sync-standalone.sh --dry-run --apply-deps');
+process.exit(1);
+NODEEOF
+
+  exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# --check-lockfile mode: compare resolved versions in pnpm-lock.yaml files.
+#
+# Reads:
+#   $REPO_ROOT/pnpm-lock.yaml            (importer key: "artifacts/travel-buddy")
+#   $DST/pnpm-lock.yaml                  (importer key: ".")
+#
+# For every direct dependency (dependencies + devDependencies) that appears in
+# both importers, compares the resolved "version:" string.  A mismatch means
+# the two lock files resolved the package differently, which can cause native
+# module build failures on EAS that are hard to trace.
+#
+# Standalone-only packages are reported as informational and never cause a
+# failure.  Packages in the monorepo app but missing from the standalone
+# lockfile DO cause a failure (run --check-deps / --apply-deps first).
+# ---------------------------------------------------------------------------
+if $CHECK_LOCKFILE; then
+  echo "=== Lockfile drift check: root pnpm-lock.yaml (artifacts/travel-buddy) vs travel-buddy-standalone/pnpm-lock.yaml ==="
+  echo ""
+
+  node - "$REPO_ROOT/pnpm-lock.yaml" "$DST/pnpm-lock.yaml" <<'NODEEOF'
+const fs = require('fs');
+const [,, rootLockPath, standaloneLockPath] = process.argv;
+
+// ---------------------------------------------------------------------------
+// Minimal pnpm-lock.yaml v9 parser.
+//
+// Extracts the direct-dependency map for a named importer key.
+// Returns: Map<pkgName, resolvedVersion>
+//
+// The lockfile format uses consistent 2-space indentation:
+//   importers:
+//     <importerKey>:            <- 2-space indent
+//       dependencies:           <- 4-space indent
+//         <pkg>:                <- 6-space indent
+//           specifier: ...      <- 8-space indent
+//           version: <resolved> <- 8-space indent (this is what we compare)
+// ---------------------------------------------------------------------------
+function parseImporterDeps(content, importerKey) {
+  const lines = content.split('\n');
+  const deps = new Map();
+
+  // Normalise the key: keys in the lockfile may be bare (e.g. `.`) or quoted.
+  // We match both `  importerKey:` and `  'importerKey':`.
+  const keyPattern = new RegExp(`^  (?:'${importerKey}'|${importerKey.replace(/[/\\]/g, '\\$&')}):$`);
+
+  let inTargetImporter = false;
+  let inDepsSection = false;
+  let currentPkg = null;
+
+  for (const rawLine of lines) {
+    const stripped = rawLine.trimEnd();
+
+    // Detect the start of a new top-level section (0 indent), e.g. "packages:"
+    if (stripped.length > 0 && stripped[0] !== ' ' && stripped !== 'importers:') {
+      if (inTargetImporter) break; // left the importers block
+      continue;
+    }
+
+    // Detect the target importer key (2-space indent).
+    if (keyPattern.test(stripped)) {
+      inTargetImporter = true;
+      inDepsSection = false;
+      currentPkg = null;
+      continue;
+    }
+
+    if (!inTargetImporter) continue;
+
+    // Another importer at the same level (2-space indent) — we're done.
+    if (/^  \S/.test(stripped) && !keyPattern.test(stripped)) {
+      break;
+    }
+
+    // Enter a dep section (4-space indent): "    dependencies:" or "    devDependencies:"
+    if (/^    (dependencies|devDependencies):$/.test(stripped)) {
+      inDepsSection = true;
+      currentPkg = null;
+      continue;
+    }
+
+    // Leave dep sections when we hit another 4-space-indented key that is not deps.
+    if (/^    \S/.test(stripped)) {
+      inDepsSection = false;
+      currentPkg = null;
+      continue;
+    }
+
+    if (!inDepsSection) continue;
+
+    // Package name entry (6-space indent): "      pkg-name:"
+    const pkgMatch = stripped.match(/^      ([^: ]+):$/);
+    if (pkgMatch) {
+      currentPkg = pkgMatch[1];
+      continue;
+    }
+
+    // Resolved version line (8-space indent): "        version: <resolved>"
+    if (currentPkg) {
+      const versionMatch = stripped.match(/^        version: (.+)$/);
+      if (versionMatch) {
+        deps.set(currentPkg, versionMatch[1].trim());
+        continue;
+      }
+    }
+  }
+
+  return deps;
+}
+
+// ---------------------------------------------------------------------------
+// Load both lockfiles.
+// ---------------------------------------------------------------------------
+let rootContent, standaloneContent;
+try { rootContent = fs.readFileSync(rootLockPath, 'utf8'); }
+catch (e) { console.error(`Cannot read root lockfile (${rootLockPath}): ${e.message}`); process.exit(1); }
+try { standaloneContent = fs.readFileSync(standaloneLockPath, 'utf8'); }
+catch (e) { console.error(`Cannot read standalone lockfile (${standaloneLockPath}): ${e.message}`); process.exit(1); }
+
+const monorepoKey  = 'artifacts/travel-buddy';
+const standaloneKey = '.';
+
+const monorepoDeps   = parseImporterDeps(rootContent, monorepoKey);
+const standaloneDeps = parseImporterDeps(standaloneContent, standaloneKey);
+
+if (monorepoDeps.size === 0) {
+  console.error(`No deps found for importer "${monorepoKey}" in ${rootLockPath}.`);
+  console.error('Check that the lockfile is pnpm v9 format and the importer key is correct.');
+  process.exit(1);
+}
+if (standaloneDeps.size === 0) {
+  console.error(`No deps found for importer "${standaloneKey}" in ${standaloneLockPath}.`);
+  console.error('Check that the standalone lockfile is pnpm v9 format.');
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Compare resolved versions for shared direct dependencies.
+// ---------------------------------------------------------------------------
+const mismatches = [];
+const standaloneOnly = [];
+
+for (const [pkg, standaloneVer] of standaloneDeps) {
+  if (!monorepoDeps.has(pkg)) {
+    standaloneOnly.push({ pkg, standaloneVer });
+  }
+}
+
+for (const [pkg, monoVer] of monorepoDeps) {
+  if (!standaloneDeps.has(pkg)) {
+    mismatches.push({ type: 'missing', pkg, monoVer });
+  } else if (standaloneDeps.get(pkg) !== monoVer) {
+    mismatches.push({ type: 'mismatch', pkg, monoVer, standaloneVer: standaloneDeps.get(pkg) });
+  }
+}
+
+// Standalone-only: informational only, never a failure.
+for (const { pkg, standaloneVer } of standaloneOnly) {
+  console.log(`  [standalone-only] ${pkg}: ${standaloneVer} (no action required)`);
+}
+
+if (mismatches.length === 0) {
+  console.log('');
+  console.log('PASS: No lockfile drift — resolved versions match for all shared direct dependencies.');
+  process.exit(0);
+}
+
+console.log('');
+for (const m of mismatches) {
+  if (m.type === 'missing') {
+    console.log(`  MISSING  ${m.pkg}`);
+    console.log(`           monorepo resolved: ${m.monoVer}`);
+    console.log(`           standalone: not found in lockfile`);
+    console.log(`           → Run: bash scripts/sync-standalone.sh --apply-deps && cd travel-buddy-standalone && pnpm install`);
+  } else {
+    console.log(`  MISMATCH ${m.pkg}`);
+    console.log(`           monorepo resolved:   ${m.monoVer}`);
+    console.log(`           standalone resolved: ${m.standaloneVer}`);
+    console.log(`           → Run: cd travel-buddy-standalone && pnpm install to re-resolve`);
+  }
+  console.log('');
+}
+
+console.log(`FAIL: ${mismatches.length} lockfile drift(s) found.`);
+console.log('');
+console.log('Direct dependency resolved versions differ between the monorepo app and standalone.');
+console.log('This can cause native-module build failures on EAS that are hard to trace.');
+console.log('');
+console.log('To fix:');
+console.log('  1. bash scripts/sync-standalone.sh --apply-deps   # sync package.json versions');
+console.log('  2. cd travel-buddy-standalone && pnpm install      # re-resolve the lockfile');
+console.log('  3. bash scripts/sync-standalone.sh --check-lockfile  # verify');
 process.exit(1);
 NODEEOF
 

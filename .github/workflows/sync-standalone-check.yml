@@ -114,6 +114,23 @@ jobs:
       - name: Check standalone dependency and config sync
         run: bash scripts/sync-standalone.sh --dry-run
 
+  lockfile-drift-check:
+    name: Check standalone lockfile resolved-version drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check lockfile resolved-version drift
+        run: bash scripts/sync-standalone.sh --check-lockfile
+
   source-drift-check:
     name: Check standalone source sync (src/ app/ assets/ components/ constants/ hooks/ docs/ migrations/ scripts/ server/)
     runs-on: ubuntu-latest
