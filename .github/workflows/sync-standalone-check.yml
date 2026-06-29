@@ -44,6 +44,7 @@ on:
       - "travel-buddy-standalone/server/**"
       - "scripts/sync-standalone.sh"
       - "scripts/src/sync-standalone-check.test.ts"
+      - ".github/workflows/sync-standalone-check.yml"
   pull_request:
     branches: ["**"]
     paths:
@@ -87,6 +88,7 @@ on:
       - "travel-buddy-standalone/server/**"
       - "scripts/sync-standalone.sh"
       - "scripts/src/sync-standalone-check.test.ts"
+      - ".github/workflows/sync-standalone-check.yml"
 
 jobs:
   sync-standalone-check:
