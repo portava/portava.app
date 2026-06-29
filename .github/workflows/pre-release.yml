@@ -1,0 +1,47 @@
+name: Pre-release checks
+
+# Run the full pre-release validation suite on every push/PR to main or
+# release branches. Failures block the build with a clear summary in the log.
+#
+# CONVENTION: always keep `.github/workflows/pre-release.yml` in every `paths`
+# list below. Without it, editing this file alone would not re-trigger the
+# workflow, silently skipping the new logic on the very commit that introduced it.
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+      - "release-*"
+  pull_request:
+    branches:
+      - main
+      - "release/**"
+      - "release-*"
+
+jobs:
+  pre-release-checks:
+    name: Pre-release checks (typecheck + drift)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install monorepo dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install standalone dependencies
+        working-directory: travel-buddy-standalone
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pre-release checks
+        run: bash scripts/pre-release-check.sh
