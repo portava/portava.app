@@ -10,7 +10,9 @@ on:
       # re-trigger the workflow, silently skipping the new logic on the very
       # commit that introduced it.
       - "artifacts/travel-buddy/package.json"
+      - "artifacts/travel-buddy/pnpm-lock.yaml"
       - "travel-buddy-standalone/package.json"
+      - "travel-buddy-standalone/pnpm-lock.yaml"
       - "scripts/sync-standalone.sh"
       - "scripts/src/sync-standalone-check.test.ts"
       - "scripts/src/workflow-paths.test.ts"
@@ -53,7 +55,9 @@ on:
       # CONVENTION: keep `.github/workflows/sync-standalone-check.yml` here
       # (same reason as the push block above).
       - "artifacts/travel-buddy/package.json"
+      - "artifacts/travel-buddy/pnpm-lock.yaml"
       - "travel-buddy-standalone/package.json"
+      - "travel-buddy-standalone/pnpm-lock.yaml"
       - "scripts/sync-standalone.sh"
       - "scripts/src/sync-standalone-check.test.ts"
       - "scripts/src/workflow-paths.test.ts"

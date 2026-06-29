@@ -383,4 +383,40 @@ describe('sync-standalone-check.yml — additional boundary cases', () => {
       patterns,
     );
   });
+
+  test('TRIGGERS: travel-buddy-standalone/app/ change', () => {
+    patterns ??= loadPatterns('sync-standalone-check.yml');
+    assertTriggers(
+      'standalone app dir change',
+      'travel-buddy-standalone/app/(tabs)/index.tsx',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/assets/ change', () => {
+    patterns ??= loadPatterns('sync-standalone-check.yml');
+    assertTriggers(
+      'standalone assets change',
+      'travel-buddy-standalone/assets/icon.png',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/app.json change', () => {
+    patterns ??= loadPatterns('sync-standalone-check.yml');
+    assertTriggers(
+      'standalone app.json change',
+      'travel-buddy-standalone/app.json',
+      patterns,
+    );
+  });
+
+  test('TRIGGERS: travel-buddy-standalone/pnpm-lock.yaml change', () => {
+    patterns ??= loadPatterns('sync-standalone-check.yml');
+    assertTriggers(
+      'standalone lockfile change',
+      'travel-buddy-standalone/pnpm-lock.yaml',
+      patterns,
+    );
+  });
 });
