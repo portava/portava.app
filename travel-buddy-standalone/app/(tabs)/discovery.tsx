@@ -130,6 +130,14 @@ export default function DiscoveryHub() {
     setRouteBuilderOpen(true);
   }, []);
 
+  // Debug: log Discovery screen mount (dev only).
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('[TravelBuddyMapDebug] Discovery opened');
+      console.log('[TravelBuddyMapDebug] initial mode: list');
+    }
+  }, []);
+
   // Keep destination in sync when location city changes (GPS capture / manual set).
   useEffect(() => {
     if (locationState.place.city) {
@@ -412,7 +420,11 @@ export default function DiscoveryHub() {
           <View style={styles.viewToggle}>
             <Pressable
               style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('list')}
+              onPress={() => {
+                if (__DEV__) console.log('[TravelBuddyMapDebug] user tapped List');
+                setViewMode('list');
+                if (__DEV__) console.log('[TravelBuddyMapDebug] selected mode after tap: list');
+              }}
             >
               <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>
                 List
@@ -420,7 +432,11 @@ export default function DiscoveryHub() {
             </Pressable>
             <Pressable
               style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('map')}
+              onPress={() => {
+                if (__DEV__) console.log('[TravelBuddyMapDebug] user tapped Map');
+                setViewMode('map');
+                if (__DEV__) console.log('[TravelBuddyMapDebug] selected mode after tap: map');
+              }}
             >
               <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
               <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>
