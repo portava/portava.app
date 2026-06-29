@@ -98,6 +98,10 @@ sync_dir() {
   fi
 }
 
+# Tracks whether any synced config file has drifted in dry-run mode.
+# Set to 1 by sync_file when a difference is detected so CI can fail.
+CONFIG_DRIFT_EXIT=0
+
 # ---------------------------------------------------------------------------
 # Helper: sync a single file
 # ---------------------------------------------------------------------------
@@ -114,8 +118,10 @@ sync_file() {
   if $DRY_RUN; then
     if [[ ! -f "$to" ]]; then
       echo "    [dry] + $name (new)"
+      CONFIG_DRIFT_EXIT=1
     elif ! diff -q "$from" "$to" &>/dev/null; then
       echo "    [dry] ~ $name (changed)"
+      CONFIG_DRIFT_EXIT=1
     else
       echo "    [dry] = $name (unchanged)"
     fi
@@ -243,6 +249,42 @@ console.log('  Next: cd travel-buddy-standalone && pnpm install');
 NODEEOF
 }
 
+# ---------------------------------------------------------------------------
+# 3a. Diff-only check for preserved files that must stay in sync
+#
+# These files are never overwritten by this script (they have standalone-
+# specific content), but they should still be kept in sync manually.
+# CI exits non-zero when they diverge so the drift is caught early.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Preserved-file diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
+
+PRESERVED_DIFF_EXIT=0
+PRESERVED_FILES=(.env.example)
+
+for f in "${PRESERVED_FILES[@]}"; do
+  src_file="$SRC/$f"
+  dst_file="$DST/$f"
+
+  if [[ ! -f "$src_file" ]]; then
+    echo "  (skipping $f — not present in source)"
+    continue
+  fi
+  if [[ ! -f "$dst_file" ]]; then
+    echo "  DRIFT: $f exists in source but is missing in travel-buddy-standalone/"
+    PRESERVED_DIFF_EXIT=1
+    continue
+  fi
+
+  if diff -q "$src_file" "$dst_file" &>/dev/null; then
+    echo "  = $f (in sync)"
+  else
+    echo "  ~ $f (DIFFERS — update travel-buddy-standalone/$f to match artifacts/travel-buddy/$f)"
+    diff --unified=3 "$dst_file" "$src_file" || true
+    PRESERVED_DIFF_EXIT=1
+  fi
+done
+
 echo ""
 echo "=== Dependency diff: artifacts/travel-buddy vs travel-buddy-standalone ==="
 
@@ -260,10 +302,19 @@ if [[ $DIFF_EXIT -ne 0 ]]; then
 else
   echo "  1. Dependencies are in sync — no pnpm install needed."
 fi
+if [[ $CONFIG_DRIFT_EXIT -ne 0 ]]; then
+  echo "  *. Config files are out of sync (app.json or similar — see [dry] output above)."
+  echo "     Run without --dry-run to apply: bash scripts/sync-standalone.sh"
+fi
+if [[ $PRESERVED_DIFF_EXIT -ne 0 ]]; then
+  echo "  *. Preserved files are out of sync (see diff above)."
+  echo "     Manually update travel-buddy-standalone/ to match artifacts/travel-buddy/."
+fi
 echo "  2. If tsconfig.json changed in the monorepo app, apply the same change to"
 echo "     travel-buddy-standalone/tsconfig.json (keep the 'references' array removed)."
 echo "  3. Run typecheck to verify:  cd travel-buddy-standalone && pnpm typecheck"
 echo ""
 
-# Exit with the dependency diff code so CI can detect drift.
-exit $DIFF_EXIT
+# Exit non-zero if config-file drift, preserved-file drift, or dep drift was detected.
+FINAL_EXIT=$(( DIFF_EXIT | CONFIG_DRIFT_EXIT | PRESERVED_DIFF_EXIT ))
+exit $FINAL_EXIT

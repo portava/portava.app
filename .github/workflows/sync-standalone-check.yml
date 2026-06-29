@@ -14,6 +14,10 @@ on:
       - "travel-buddy-standalone/babel.config.js"
       - "artifacts/travel-buddy/metro.config.js"
       - "travel-buddy-standalone/metro.config.js"
+      - "artifacts/travel-buddy/app.json"
+      - "travel-buddy-standalone/app.json"
+      - "artifacts/travel-buddy/.env.example"
+      - "travel-buddy-standalone/.env.example"
   pull_request:
     branches: ["**"]
     paths:
@@ -27,6 +31,10 @@ on:
       - "travel-buddy-standalone/babel.config.js"
       - "artifacts/travel-buddy/metro.config.js"
       - "travel-buddy-standalone/metro.config.js"
+      - "artifacts/travel-buddy/app.json"
+      - "travel-buddy-standalone/app.json"
+      - "artifacts/travel-buddy/.env.example"
+      - "travel-buddy-standalone/.env.example"
 
 jobs:
   sync-standalone-check:
