@@ -85,12 +85,12 @@ At the prompt, choose **"Expo Go / Managed workflow"** and then **"Build credent
 
 1. Ask you to sign in to your Apple Developer account (opens a browser or prompts for Apple ID + password).
 2. Generate a Distribution Certificate (or reuse an existing one).
-3. Generate a Provisioning Profile for the `com.travelbuddy.app` bundle ID.
+3. Generate a Provisioning Profile for the `com.passporttravelbuddy.app` bundle ID.
 4. Upload both to EAS cloud storage — they are encrypted and tied to your Expo project.
 
 You do **not** need to store any `.p12` or `.mobileprovision` files yourself; EAS holds them.
 
-> **Bundle ID note:** `com.travelbuddy.app` is the current value in `travel-buddy-standalone/app.json → ios.bundleIdentifier`. If you change it before running `eas credentials`, make sure the bundle ID matches what is registered in App Store Connect, otherwise Apple will reject the provisioning profile request.
+> **Bundle ID note:** `com.passporttravelbuddy.app` is the bundle ID in `travel-buddy-standalone/app.json → ios.bundleIdentifier`. Make sure this matches what is registered in App Store Connect before running `eas credentials`, otherwise Apple will reject the provisioning profile request.
 
 ### Step 3 — Create an EXPO_TOKEN for GitHub Actions
 
@@ -129,14 +129,15 @@ git push origin --delete release-v1.0.0-test
 
 | Item | What to do |
 |------|-----------|
-| **Bundle ID / package name** | `com.travelbuddy.app` is a placeholder in `app.json`. Replace with your actual Apple App Store / Google Play identifier. |
-| **`version`, `buildNumber`, `versionCode`** | Currently `1.0.0` / `1` / `1`. Bump as needed for each release. |
-| **Apple / Google store setup** | Register the app on App Store Connect and Google Play Console before a production build. |
+| **Apple / Google store setup** | Register `com.passporttravelbuddy.app` on App Store Connect and Google Play Console before a production build. |
 | **`eas login`** | Run `eas login` with the Expo account that owns the project. |
 | **`eas init`** | Run `eas init` in `travel-buddy-standalone/` to link this project to your EAS project ID and write `extra.eas.projectId` into `app.json`. |
 | **MapTiler API key** | Create a free account at https://www.maptiler.com/, generate an API key, and set `EXPO_PUBLIC_MAPTILER_KEY` in `travel-buddy-standalone/.env` (dev) and as an EAS secret (CI builds). |
-| **iOS permission copy** | Review all `infoPlist` usage description strings in `app.json` and replace placeholder copy with your final wording before App Store submission. |
 | **Apple credentials for CI** | See "iOS credentials setup for CI" section above. |
+
+> **Bundle ID:** `com.passporttravelbuddy.app` is set in `app.json` for both iOS (`ios.bundleIdentifier`) and Android (`android.package`). The pre-release check (`bundle-id-placeholder`) will fail CI if the old placeholder `com.travelbuddy.app` is ever restored. If you need to change the bundle ID again, update `app.json` and re-run `eas credentials --platform ios` to re-provision.
+
+> **Version / build numbers:** `version` is `1.0.1`, `buildNumber` is `2`, `versionCode` is `2`. Increment `buildNumber` (iOS) and `versionCode` (Android) for every binary uploaded to the stores; bump `version` for user-facing releases.
 
 ## EAS build commands (after completing the above)
 

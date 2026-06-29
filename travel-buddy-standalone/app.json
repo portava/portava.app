@@ -2,7 +2,7 @@
   "expo": {
     "name": "Travel Buddy",
     "slug": "travel-buddy",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "travelbuddy",
@@ -15,8 +15,8 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.travelbuddy.app",
-      "buildNumber": "1",
+      "bundleIdentifier": "com.passporttravelbuddy.app",
+      "buildNumber": "2",
       "associatedDomains": [
         "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
       ],
@@ -34,8 +34,8 @@
       }
     },
     "android": {
-      "package": "com.travelbuddy.app",
-      "versionCode": 1,
+      "package": "com.passporttravelbuddy.app",
+      "versionCode": 2,
       "permissions": [
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",

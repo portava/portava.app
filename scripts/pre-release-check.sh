@@ -124,6 +124,41 @@ run_check "lockfile-drift" \
   "Lockfile drift (resolved versions: monorepo vs standalone)" \
   bash scripts/sync-standalone.sh --check-lockfile
 
+# ── 7. Placeholder bundle ID guard ───────────────────────────────────────────
+# Fails if travel-buddy-standalone/app.json still contains the placeholder
+# bundle identifier com.travelbuddy.app. A release build submitted with this
+# value will be rejected by Apple (and Google) review.
+run_check "bundle-id-placeholder" \
+  "Placeholder bundle ID guard (app.json must not use com.travelbuddy.app)" \
+  bash -c '
+    BUNDLE_ID=$(node -e "
+      const fs = require(\"fs\");
+      const app = JSON.parse(fs.readFileSync(\"travel-buddy-standalone/app.json\", \"utf8\"));
+      process.stdout.write(app.expo.ios.bundleIdentifier);
+    ")
+    ANDROID_PKG=$(node -e "
+      const fs = require(\"fs\");
+      const app = JSON.parse(fs.readFileSync(\"travel-buddy-standalone/app.json\", \"utf8\"));
+      process.stdout.write(app.expo.android.package);
+    ")
+    PLACEHOLDER="com.travelbuddy.app"
+    ok=0
+    if [ "$BUNDLE_ID" = "$PLACEHOLDER" ]; then
+      printf "  ✘  ios.bundleIdentifier is still the placeholder: %s\n" "$BUNDLE_ID"
+      printf "     Replace it with your registered Apple App Store bundle ID before submitting.\n"
+      ok=1
+    fi
+    if [ "$ANDROID_PKG" = "$PLACEHOLDER" ]; then
+      printf "  ✘  android.package is still the placeholder: %s\n" "$ANDROID_PKG"
+      printf "     Replace it with your registered Google Play package name before submitting.\n"
+      ok=1
+    fi
+    if [ $ok -eq 0 ]; then
+      printf "  ✔  Bundle ID / package: %s\n" "$BUNDLE_ID"
+    fi
+    exit $ok
+  '
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf '\n'
 sep
@@ -156,6 +191,9 @@ for entry in "${results[@]}"; do
         ;;
       lockfile-drift)
         printf '     fix: bash scripts/sync-standalone.sh --fix-lockfile\n'
+        ;;
+      bundle-id-placeholder)
+        printf '     fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json\n'
         ;;
     esac
   fi
