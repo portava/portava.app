@@ -4,6 +4,11 @@ on:
   push:
     branches: ["**"]
     paths:
+      # CONVENTION: always keep `.github/workflows/sync-standalone-check.yml`
+      # in every `paths` list below. Without it, editing this file alone
+      # (adding a new job, fixing a step, changing env vars) would not
+      # re-trigger the workflow, silently skipping the new logic on the very
+      # commit that introduced it.
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
       - "scripts/sync-standalone.sh"
@@ -48,6 +53,8 @@ on:
   pull_request:
     branches: ["**"]
     paths:
+      # CONVENTION: keep `.github/workflows/sync-standalone-check.yml` here
+      # (same reason as the push block above).
       - "artifacts/travel-buddy/package.json"
       - "travel-buddy-standalone/package.json"
       - "scripts/sync-standalone.sh"
