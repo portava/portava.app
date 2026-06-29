@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-release-check.sh — run all four CI validation steps before cutting an EAS build.
+# pre-release-check.sh — run all five CI validation steps before cutting an EAS build.
 #
 # Usage (from the workspace root):
 #   bash scripts/pre-release-check.sh
