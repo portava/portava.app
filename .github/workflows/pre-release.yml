@@ -53,7 +53,7 @@ jobs:
         run: bash scripts/pre-release-check.sh
 
   eas-build:
-    name: EAS Android preview build
+    name: EAS preview build (Android + iOS)
     runs-on: ubuntu-latest
     # Only run on direct pushes to release branches (release/** or release-*),
     # not on pushes to main and not on PRs, to keep CI fast and avoid burning
@@ -102,3 +102,18 @@ jobs:
           --platform android
           --profile preview
           --non-interactive
+
+      - name: Trigger EAS iOS preview build
+        working-directory: travel-buddy-standalone
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        # --non-interactive  suppress interactive prompts (required in CI)
+        # --no-wait          submit the build and move on; the EAS dashboard
+        #                    tracks completion so the job does not block on the
+        #                    longer iOS cloud queue (m-medium resource class).
+        run: >
+          eas build
+          --platform ios
+          --profile preview
+          --non-interactive
+          --no-wait

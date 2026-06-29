@@ -65,6 +65,7 @@ Four fixes are applied so EAS cloud builds detect pnpm and use the correct node-
 | **`eas init`** | Run `eas init` in `artifacts/travel-buddy/` to link this project to your EAS project ID and write `extra.eas.projectId` into `app.json`. |
 | **MapTiler API key** | Create a free account at https://www.maptiler.com/, generate an API key, and set `EXPO_PUBLIC_MAPTILER_KEY` in `artifacts/travel-buddy/.env` (dev) and as an EAS secret (CI builds). |
 | **iOS permission copy** | Review all `infoPlist` usage description strings in `app.json` and replace placeholder copy with your final wording before App Store submission. |
+| **Apple credentials for CI** | The `eas-build` CI job triggers an iOS preview build on every release branch push. EAS manages Apple certificates and provisioning profiles automatically, but the Expo account must be linked to an Apple Developer account (`eas credentials`) before the first iOS CI run succeeds. Store the `EXPO_TOKEN` secret in GitHub → Settings → Secrets and variables → Actions. |
 
 ## EAS build commands (after completing the above)
 
