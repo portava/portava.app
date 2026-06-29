@@ -7,6 +7,25 @@ on:
     branches: ["**"]
 
 jobs:
+  check-appjson-drift:
+    name: Check standalone app.json drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Diff app.json between monorepo and standalone
+        run: |
+          if ! diff -u artifacts/travel-buddy/app.json travel-buddy-standalone/app.json; then
+            echo ""
+            echo "ACTION REQUIRED: app.json has drifted between artifacts/travel-buddy and travel-buddy-standalone."
+            echo "Standalone EAS builds will use outdated config (wrong SDK version, missing plugin, etc.)."
+            echo ""
+            echo "Fix:"
+            echo "  bash scripts/sync-standalone.sh"
+            echo "  git add travel-buddy-standalone/app.json && git commit -m 'chore: sync standalone app.json'"
+            exit 1
+          fi
+
   check-source-drift:
     name: Check standalone source drift
     runs-on: ubuntu-latest
