@@ -3,8 +3,55 @@ name: Standalone drift check
 on:
   push:
     branches: ["**"]
+    paths:
+      # CONVENTION: always keep `.github/workflows/standalone-drift.yml`
+      # in every `paths` list below. Without it, editing this file alone
+      # (adding a new job, fixing a step, changing env vars) would not
+      # re-trigger the workflow, silently skipping the new logic on the very
+      # commit that introduced it.
+      - "artifacts/travel-buddy/app.json"
+      - "travel-buddy-standalone/app.json"
+      - "artifacts/travel-buddy/package.json"
+      - "travel-buddy-standalone/package.json"
+      - "travel-buddy-standalone/pnpm-lock.yaml"
+      - "scripts/sync-standalone.sh"
+      - "artifacts/travel-buddy/src/**"
+      - "travel-buddy-standalone/src/**"
+      - "artifacts/travel-buddy/app/**"
+      - "travel-buddy-standalone/app/**"
+      - "artifacts/travel-buddy/assets/**"
+      - "travel-buddy-standalone/assets/**"
+      - "artifacts/travel-buddy/components/**"
+      - "travel-buddy-standalone/components/**"
+      - "artifacts/travel-buddy/constants/**"
+      - "travel-buddy-standalone/constants/**"
+      - "artifacts/travel-buddy/hooks/**"
+      - "travel-buddy-standalone/hooks/**"
+      - ".github/workflows/standalone-drift.yml"
   pull_request:
     branches: ["**"]
+    paths:
+      # CONVENTION: keep `.github/workflows/standalone-drift.yml` here
+      # (same reason as the push block above).
+      - "artifacts/travel-buddy/app.json"
+      - "travel-buddy-standalone/app.json"
+      - "artifacts/travel-buddy/package.json"
+      - "travel-buddy-standalone/package.json"
+      - "travel-buddy-standalone/pnpm-lock.yaml"
+      - "scripts/sync-standalone.sh"
+      - "artifacts/travel-buddy/src/**"
+      - "travel-buddy-standalone/src/**"
+      - "artifacts/travel-buddy/app/**"
+      - "travel-buddy-standalone/app/**"
+      - "artifacts/travel-buddy/assets/**"
+      - "travel-buddy-standalone/assets/**"
+      - "artifacts/travel-buddy/components/**"
+      - "travel-buddy-standalone/components/**"
+      - "artifacts/travel-buddy/constants/**"
+      - "travel-buddy-standalone/constants/**"
+      - "artifacts/travel-buddy/hooks/**"
+      - "travel-buddy-standalone/hooks/**"
+      - ".github/workflows/standalone-drift.yml"
 
 jobs:
   check-appjson-drift:
