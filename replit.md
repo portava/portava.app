@@ -40,22 +40,25 @@ DiscoveryMapView.web.tsx instead.
 Before cutting a release or syncing the standalone EAS build target, run these
 CI-style checks (registered as named validation steps in the project):
 
-| Validation name    | Command                                             | What it checks |
-|--------------------|-----------------------------------------------------|----------------|
-| `typecheck`        | `pnpm run typecheck`                                | Full TypeScript typecheck across all monorepo workspace packages (libs + API server + web artifacts). Fails on any type error. |
-| `dependency-drift` | `bash scripts/sync-standalone.sh --check-deps`      | Any package added to `artifacts/travel-buddy` that is missing or version-mismatched in `travel-buddy-standalone`. Fails on any mismatch. |
-| `source-drift`     | `bash scripts/sync-standalone.sh --check-source`    | Any source file in the synced directories (`src/`, `app/`, `assets/`, etc.) that differs between the monorepo app and standalone. Fails when differing-file count exceeds `SOURCE_DRIFT_THRESHOLD` (default: 0). |
+| Validation name         | Command                                             | What it checks |
+|-------------------------|-----------------------------------------------------|----------------|
+| `typecheck`             | `pnpm run typecheck`                                | Full TypeScript typecheck across all monorepo workspace packages (libs + API server + web artifacts). Fails on any type error. |
+| `typecheck-standalone`  | `cd travel-buddy-standalone && pnpm typecheck`      | TypeScript typecheck for `travel-buddy-standalone/`, which has its own separate tsconfig and is NOT covered by the monorepo `typecheck` step. Fails on any type error in the standalone app. |
+| `dependency-drift`      | `bash scripts/sync-standalone.sh --check-deps`      | Any package added to `artifacts/travel-buddy` that is missing or version-mismatched in `travel-buddy-standalone`. Fails on any mismatch. |
+| `source-drift`          | `bash scripts/sync-standalone.sh --check-source`    | Any source file in the synced directories (`src/`, `app/`, `assets/`, etc.) that differs between the monorepo app and standalone. Fails when differing-file count exceeds `SOURCE_DRIFT_THRESHOLD` (default: 0). |
 
-Run all three from the workspace root:
+Run all four from the workspace root:
 
 ```bash
 pnpm run typecheck
+cd travel-buddy-standalone && pnpm typecheck && cd ..
 bash scripts/sync-standalone.sh --check-deps
 bash scripts/sync-standalone.sh --check-source
 ```
 
 Fix any reported issues before building a release:
-- **Type errors** → fix failing TypeScript errors in the relevant workspace package.
+- **Type errors (monorepo)** → fix failing TypeScript errors in the relevant workspace package.
+- **Type errors (standalone)** → fix failing TypeScript errors in `travel-buddy-standalone/`.
 - **Dependency drift** → run `bash scripts/sync-standalone.sh --apply-deps` then `pnpm install` inside `travel-buddy-standalone/`.
 - **Source drift** → run `bash scripts/sync-standalone.sh --fix-source` to re-sync only the drifted directories.
 
