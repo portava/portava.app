@@ -16,8 +16,12 @@
  */
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import type { NotificationResponse } from 'expo-notifications';
 import { router } from 'expo-router';
+import {
+  getLastNotificationResponseAsync,
+  addNotificationResponseReceivedListener,
+} from '../lib/safeNotifications';
 
 type NotifData = Record<string, unknown> | null | undefined;
 
@@ -38,7 +42,7 @@ function resolveRoute(data: NotifData): string | null {
   return null;
 }
 
-function handleResponse(response: Notifications.NotificationResponse): void {
+function handleResponse(response: NotificationResponse): void {
   const data = response.notification.request.content.data as NotifData;
   const route = resolveRoute(data);
   if (route) {
@@ -55,7 +59,7 @@ export function useNotificationHandler(): void {
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
 
-    Notifications.getLastNotificationResponseAsync()
+    getLastNotificationResponseAsync()
       .then((response) => {
         if (response) handleResponse(response);
       })
@@ -63,7 +67,7 @@ export function useNotificationHandler(): void {
   }, []);
 
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(handleResponse);
+    const sub = addNotificationResponseReceivedListener(handleResponse);
     return () => sub.remove();
   }, []);
 }
