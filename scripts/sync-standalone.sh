@@ -11,9 +11,10 @@
 #                   Standalone-only packages are never removed. Prints a summary then
 #                   reminds you to run `pnpm install` inside the standalone.
 #                   --dry-run takes precedence: if both flags are set, nothing is written.
-#   --check-source  Diff source directories (src/ and app/) between the main app and
-#                   standalone. Exits non-zero when the number of differing files exceeds
+#   --check-source  Diff source directories between the main app and standalone.
+#                   Exits non-zero when the number of differing files exceeds
 #                   SOURCE_DRIFT_THRESHOLD (default: 0, i.e. any drift fails).
+#                   Directories checked are controlled by SOURCE_DRIFT_DIRS (see below).
 #                   This flag is read-only — no files are written. It runs independently
 #                   of --dry-run and --apply-deps; when used alone only the source diff
 #                   is executed.
@@ -22,6 +23,11 @@
 #   SOURCE_DRIFT_THRESHOLD  Maximum number of differing source files before --check-source
 #                           fails. Default: 0 (any drift fails). Set to a positive integer
 #                           to allow a grace margin during a large-batch sync.
+#   SOURCE_DRIFT_DIRS       Space-separated list of directories to compare when
+#                           --check-source is used. Defaults to all directories that
+#                           this script syncs: "src app assets components constants hooks".
+#                           Override to restrict or expand the checked set, e.g.:
+#                             SOURCE_DRIFT_DIRS="src app" bash scripts/sync-standalone.sh --check-source
 #
 # What it syncs:
 #   Directories: app/ src/ assets/ components/ constants/ hooks/ docs/ migrations/ scripts/ server/
@@ -49,6 +55,9 @@ DRY_RUN=false
 APPLY_DEPS=false
 CHECK_SOURCE=false
 SOURCE_DRIFT_THRESHOLD="${SOURCE_DRIFT_THRESHOLD:-0}"
+# Default: all directories that the sync step copies (docs/migrations/scripts/server are
+# lower-churn; include them anyway so no directory silently escapes the check).
+SOURCE_DRIFT_DIRS="${SOURCE_DRIFT_DIRS:-src app assets components constants hooks}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -64,13 +73,15 @@ done
 # Runs independently of --dry-run and --apply-deps.
 # ---------------------------------------------------------------------------
 if $CHECK_SOURCE; then
+  # Build the array from the (possibly overridden) SOURCE_DRIFT_DIRS env var.
+  read -r -a SOURCE_CHECK_DIRS <<< "$SOURCE_DRIFT_DIRS"
+
   echo "=== Source drift check: artifacts/travel-buddy vs travel-buddy-standalone ==="
-  echo "    Directories: src/  app/"
+  echo "    Directories: ${SOURCE_CHECK_DIRS[*]}"
   echo "    Threshold:   ${SOURCE_DRIFT_THRESHOLD} file(s)"
   echo ""
 
   SOURCE_DRIFT_COUNT=0
-  SOURCE_CHECK_DIRS=(src app)
 
   for dir in "${SOURCE_CHECK_DIRS[@]}"; do
     from="$SRC/$dir"
