@@ -138,9 +138,26 @@ for entry in "${results[@]}"; do
   else
     detail="${rest#*|}"
     printf '  ✘  %-30s FAIL  (%s)\n' "$name" "$detail"
-    if [[ "$name" == "lockfile-drift" ]]; then
-      printf '     fix: bash scripts/sync-standalone.sh --fix-lockfile\n'
-    fi
+    case "$name" in
+      typecheck)
+        printf '     fix: pnpm run typecheck\n'
+        ;;
+      typecheck-standalone)
+        printf '     fix: cd travel-buddy-standalone && pnpm typecheck\n'
+        ;;
+      dependency-drift)
+        printf '     fix: bash scripts/sync-standalone.sh --apply-deps && pnpm install\n'
+        ;;
+      source-drift)
+        printf '     fix: bash scripts/sync-standalone.sh --fix-source\n'
+        ;;
+      api-server-build)
+        printf '     fix: pnpm --filter @workspace/api-server run build\n'
+        ;;
+      lockfile-drift)
+        printf '     fix: bash scripts/sync-standalone.sh --fix-lockfile\n'
+        ;;
+    esac
   fi
 done
 sep
