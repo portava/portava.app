@@ -171,7 +171,11 @@ else
   # run_check names that have no entry in EXPECTED_HINTS → missing hint
   for name in "${SCRIPT_NAMES[@]}"; do
     if [[ -z "${EXPECTED_HINTS[$name]+set}" ]]; then
-      printf '  ✘  run_check "%s" has no entry in EXPECTED_HINTS\n' "$name"
+      printf '  ✘  Missing hint entry for run_check "%s"\n' "$name"
+      printf '       Defined in : scripts/pre-release-check.sh\n'
+      printf '       Fix        : add ["%s"]="<fix hint>" to EXPECTED_HINTS\n' "$name"
+      printf '                    in scripts/test-pre-release-hints.sh\n'
+      FAILED_NAMES+=("xref:$name")
       FAIL_COUNT=$((FAIL_COUNT + 1))
       xref_ok=0
     fi
@@ -183,6 +187,15 @@ else
 fi
 
 sep
+
+if [[ $xref_ok -eq 0 ]]; then
+  printf '\n'
+  printf 'Cross-reference failed — fix EXPECTED_HINTS in scripts/test-pre-release-hints.sh\n'
+  printf 'before re-running, then re-run the assertions.\n\n'
+  printf '%d of %d pre-checks failed: %s\n\n' \
+    "$FAIL_COUNT" "$((PASS_COUNT + FAIL_COUNT))" "${FAILED_NAMES[*]}"
+  exit 1
+fi
 
 # ── run assertions ────────────────────────────────────────────────────────────
 
