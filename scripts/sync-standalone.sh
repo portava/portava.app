@@ -61,6 +61,9 @@ DRY_RUN=false
 APPLY_DEPS=false
 CHECK_SOURCE=false
 FIX_SOURCE=false
+TOTAL_ADDED=0
+TOTAL_UPDATED=0
+TOTAL_REMOVED=0
 SOURCE_DRIFT_THRESHOLD="${SOURCE_DRIFT_THRESHOLD:-0}"
 # Default: all directories that the sync step copies (docs/migrations/scripts/server are
 # lower-churn; include them anyway so no directory silently escapes the check).
@@ -115,10 +118,37 @@ sync_dir() {
       done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
     fi
   else
+    # Count what will change before syncing so we can print a meaningful summary
+    local added=0 updated=0 removed=0
+
+    while IFS= read -r -d '' f; do
+      rel="${f#$from/}"
+      dst_file="$to/$rel"
+      if [[ ! -f "$dst_file" ]]; then
+        added=$(( added + 1 ))
+      elif ! diff -q "$f" "$dst_file" &>/dev/null; then
+        updated=$(( updated + 1 ))
+      fi
+    done < <(find "$from" -type f -not -path "*/node_modules/*" -print0)
+
+    if [[ -d "$to" ]]; then
+      while IFS= read -r -d '' f; do
+        rel="${f#$to/}"
+        src_file="$from/$rel"
+        if [[ ! -f "$src_file" ]]; then
+          removed=$(( removed + 1 ))
+        fi
+      done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
+    fi
+
     # Remove the destination dir and replace it cleanly (preserves no stale files)
     rm -rf "$to"
     cp -a "$from" "$to"
-    echo "    synced"
+    echo "    ${added} added, ${updated} updated, ${removed} removed"
+
+    TOTAL_ADDED=$(( TOTAL_ADDED + added ))
+    TOTAL_UPDATED=$(( TOTAL_UPDATED + updated ))
+    TOTAL_REMOVED=$(( TOTAL_REMOVED + removed ))
   fi
 }
 
@@ -275,6 +305,7 @@ if $FIX_SOURCE; then
     echo "  bash scripts/sync-standalone.sh --fix-source"
   else
     echo "=== Fix-source complete ==="
+    echo "    Total: ${TOTAL_ADDED} added, ${TOTAL_UPDATED} updated, ${TOTAL_REMOVED} removed"
     echo ""
     echo "Next: run typecheck to verify the standalone is healthy:"
     echo "  cd travel-buddy-standalone && pnpm typecheck"
