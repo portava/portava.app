@@ -15,3 +15,16 @@ jobs:
 
       - name: Run standalone drift check
         run: bash scripts/sync-standalone.sh --check-source
+
+  check-dep-drift:
+    name: Check standalone dependency drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check package.json dependency drift
+        run: bash scripts/sync-standalone.sh --check-deps

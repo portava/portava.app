@@ -18,6 +18,12 @@
 #                   This flag is read-only — no files are written. It runs independently
 #                   of --dry-run and --apply-deps; when used alone only the source diff
 #                   is executed.
+#   --check-deps    Compare package.json dependencies between artifacts/travel-buddy
+#                   and travel-buddy-standalone. Exits non-zero when any dependency
+#                   is added or has a version mismatch. Standalone-only packages are
+#                   reported but never cause a failure (they may be intentional).
+#                   This flag is read-only — no files are written. Runs independently
+#                   of --dry-run, --apply-deps, and --check-source.
 #   --fix-source    Re-sync only the source directories reported by --check-source
 #                   (controlled by SOURCE_DRIFT_DIRS). Package.json, tsconfig.json,
 #                   babel.config.js, metro.config.js, and other preserved files are
@@ -62,6 +68,7 @@ DST="$REPO_ROOT/travel-buddy-standalone"
 DRY_RUN=false
 APPLY_DEPS=false
 CHECK_SOURCE=false
+CHECK_DEPS=false
 FIX_SOURCE=false
 TOTAL_ADDED=0
 TOTAL_UPDATED=0
@@ -76,6 +83,7 @@ for arg in "$@"; do
     --dry-run)       DRY_RUN=true ;;
     --apply-deps)    APPLY_DEPS=true ;;
     --check-source)  CHECK_SOURCE=true ;;
+    --check-deps)    CHECK_DEPS=true ;;
     --fix-source)    FIX_SOURCE=true ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
@@ -278,6 +286,84 @@ if $CHECK_SOURCE; then
 fi
 
 # ---------------------------------------------------------------------------
+# --check-deps mode: compare package.json deps, then exit.
+# Read-only — never writes files. Runs independently of all other flags.
+# ---------------------------------------------------------------------------
+if $CHECK_DEPS; then
+  echo "=== Dependency drift check: artifacts/travel-buddy vs travel-buddy-standalone ==="
+  echo ""
+
+  node - "$SRC/package.json" "$DST/package.json" <<'NODEEOF'
+const fs = require('fs');
+const [,, srcPath, dstPath] = process.argv;
+
+let srcPkg, dstPkg;
+try { srcPkg = JSON.parse(fs.readFileSync(srcPath, 'utf8')); }
+catch (e) { console.error('Cannot read source package.json:', e.message); process.exit(1); }
+try { dstPkg = JSON.parse(fs.readFileSync(dstPath, 'utf8')); }
+catch (e) { console.error('Cannot read standalone package.json:', e.message); process.exit(1); }
+
+const sections = ['dependencies', 'devDependencies'];
+const changes = { dependencies: [], devDependencies: [] };
+let totalChanges = 0;
+
+for (const section of sections) {
+  const src = srcPkg[section] || {};
+  const dst = dstPkg[section] || {};
+
+  for (const pkg of Object.keys(src).sort()) {
+    if (dst[pkg] === undefined) {
+      changes[section].push({ type: 'add', pkg, version: src[pkg] });
+      totalChanges++;
+    } else if (dst[pkg] !== src[pkg]) {
+      changes[section].push({ type: 'update', pkg, from: dst[pkg], version: src[pkg] });
+      totalChanges++;
+    }
+  }
+
+  // Standalone-only packages: reported but do not count toward failure — intentional divergence.
+  for (const pkg of Object.keys(dst).sort()) {
+    if (src[pkg] === undefined) {
+      console.log(`  [standalone-only] ${section}/${pkg}: ${dst[pkg]} (preserved — no action required)`);
+    }
+  }
+}
+
+if (totalChanges === 0) {
+  console.log('');
+  console.log('PASS: No dependency drift — standalone is in sync with the monorepo app.');
+  process.exit(0);
+}
+
+// Print drift summary
+for (const section of sections) {
+  if (changes[section].length === 0) continue;
+  console.log(`\n[${section}]`);
+  for (const c of changes[section]) {
+    if (c.type === 'add')
+      console.log(`  + ${c.pkg}: ${c.version}  (present in monorepo app — missing from standalone)`);
+    else
+      console.log(`  ~ ${c.pkg}: ${c.from} → ${c.version}  (version mismatch)`);
+  }
+}
+
+console.log('');
+console.log(`FAIL: ${totalChanges} dependency difference(s) found.`);
+console.log('');
+console.log('To apply these changes automatically, run:');
+console.log('  bash scripts/sync-standalone.sh --apply-deps');
+console.log('Then reinstall standalone deps:');
+console.log('  cd travel-buddy-standalone && pnpm install');
+console.log('');
+console.log('To preview what --apply-deps would change without writing files:');
+console.log('  bash scripts/sync-standalone.sh --dry-run --apply-deps');
+process.exit(1);
+NODEEOF
+
+  exit $?
+fi
+
+# ---------------------------------------------------------------------------
 # --fix-source mode: re-sync only the SOURCE_DRIFT_DIRS directories, then exit.
 # Respects --dry-run. Does not touch package.json, tsconfig.json, babel.config.js,
 # metro.config.js, or any other preserved file.
@@ -419,6 +505,10 @@ if (!shouldApply) {
   if (isDryRun) {
     console.log(`\n  [dry] would apply ${totalChanges} change(s) to travel-buddy-standalone/package.json`);
     console.log('  (no files written — dry run)');
+    console.log('');
+    console.log('  ACTION REQUIRED: dependencies are out of sync.');
+    console.log('  To apply:  bash scripts/sync-standalone.sh --apply-deps');
+    console.log('  Then:      cd travel-buddy-standalone && pnpm install');
   } else {
     console.log('\n  ACTION REQUIRED: dependencies are out of sync.');
     console.log('  Run:  bash scripts/sync-standalone.sh --apply-deps');
