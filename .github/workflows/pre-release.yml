@@ -44,6 +44,9 @@ jobs:
         working-directory: travel-buddy-standalone
         run: pnpm install --frozen-lockfile
 
+      - name: Test pre-release fix hints
+        run: bash scripts/test-pre-release-hints.sh
+
       - name: Run pre-release checks
         env:
           SKIP_EAS_PREFLIGHT: "1"
