@@ -35,6 +35,27 @@ DiscoveryMapView.web.tsx instead.
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
 - Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
+## Release checklist — standalone drift checks
+
+Before cutting a release or syncing the standalone EAS build target, run these two
+CI-style checks (registered as named validation steps in the project):
+
+| Validation name    | Command                                             | What it checks |
+|--------------------|-----------------------------------------------------|----------------|
+| `dependency-drift` | `bash scripts/sync-standalone.sh --check-deps`      | Any package added to `artifacts/travel-buddy` that is missing or version-mismatched in `travel-buddy-standalone`. Fails on any mismatch. |
+| `source-drift`     | `bash scripts/sync-standalone.sh --check-source`    | Any source file in the synced directories (`src/`, `app/`, `assets/`, etc.) that differs between the monorepo app and standalone. Fails when differing-file count exceeds `SOURCE_DRIFT_THRESHOLD` (default: 0). |
+
+Run both from the workspace root:
+
+```bash
+bash scripts/sync-standalone.sh --check-deps
+bash scripts/sync-standalone.sh --check-source
+```
+
+Fix any reported drift before building a release:
+- **Dependency drift** → run `bash scripts/sync-standalone.sh --apply-deps` then `pnpm install` inside `travel-buddy-standalone/`.
+- **Source drift** → run `bash scripts/sync-standalone.sh --fix-source` to re-sync only the drifted directories.
+
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
