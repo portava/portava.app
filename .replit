@@ -44,6 +44,10 @@ args = "dependency-drift"
 task = "workflow.run"
 args = "source-drift"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "sync-standalone-tests"
+
 [[workflows.workflow]]
 name = "routes-guard"
 author = "agent"
@@ -117,6 +121,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash scripts/sync-standalone.sh --check-source"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "sync-standalone-tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/test-sync-standalone.sh"
 
 [workflows.workflow.metadata]
 isValidation = true
