@@ -2,12 +2,38 @@
 
 A social travel passport mobile app — log trips, track destinations, and share your travel story.
 
+## Active mobile development target
+
+```
+~/workspace/travel-buddy-standalone      ← ALL mobile dev work goes here
+~/workspace/artifacts/travel-buddy       ← BACKUP / reference only (do not run)
+```
+
+**Important:** The Replit preview pane runs the `artifacts/travel-buddy` Expo workflow
+(managed by the artifact system). That slot cannot be redirected to standalone from within
+Replit — the two artifact registrations conflict. Standalone development happens via the
+command line or a physical device, not the Replit preview:
+
+```bash
+# Start the standalone Expo dev server (dev-client build on a real device)
+cd ~/workspace/travel-buddy-standalone
+npx expo start --dev-client --clear
+
+# Or use the npm script (includes all required Replit env vars):
+cd ~/workspace/travel-buddy-standalone
+pnpm run dev
+```
+
+The Replit web preview shows the web (non-native) build — it is NOT proof of native
+MapLibre rendering. MapLibre requires iOS or Android runtime; the web preview renders
+DiscoveryMapView.web.tsx instead.
+
 ## Run & Operate
 
-- Workflows auto-start: `expo` (port 20682), `api-server` (port 8080)
+- API server auto-starts: port 8080
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm --filter @workspace/travel-buddy run dev` — run Expo app manually
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
+- Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
 ## Stack
 
@@ -19,12 +45,14 @@ A social travel passport mobile app — log trips, track destinations, and share
 
 ## Where things live
 
-- `artifacts/travel-buddy/` — Expo mobile app
+- `travel-buddy-standalone/` — **active Expo mobile app** (all new mobile work goes here)
   - `app/` — Expo Router screens
   - `src/services/` — Supabase service layer (trips, auth, profiles)
   - `src/lib/supabase.ts` — Supabase client
   - `src/context/SessionContext.tsx` — auth session context
   - `metro.config.js` — Metro bundler config (includes `_tmp` watcher blocklist fix)
+  - `package.json` `dev` script — full Expo start with Replit env vars
+- `artifacts/travel-buddy/` — **BACKUP / reference only** — do not edit or run
 - `artifacts/api-server/` — Express API server
   - `src/routes/trips.ts` — POST /api/trips (server-side trip creation)
   - `src/lib/supabase.ts` — service role client

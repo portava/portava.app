@@ -1,0 +1,76 @@
+Good clarification. Do not mark the Discovery Map as fully complete yet.
+
+I accept that Replit web preview cannot prove native MapLibre rendering because:
+- Replit is a Linux cloud container
+- MapLibre is a native iOS/Android module
+- web preview uses DiscoveryMapView.web.tsx
+- device/dev-client proof must happen on a real phone
+
+But there is still one repo/workflow issue to fix now:
+
+The active Replit Expo workflow is running:
+
+artifacts/travel-buddy
+
+instead of:
+
+travel-buddy-standalone
+
+That means the preview/dev workflow is pointed at the backup app, not the standalone mobile app we are now targeting.
+
+Please do this:
+
+1. Update the Replit workflow/dev instructions so the Travel Buddy mobile target is clearly:
+
+~/workspace/travel-buddy-standalone
+
+2. Do not destructively delete or modify artifacts/travel-buddy.
+Keep it as backup/reference only.
+
+3. Add/update docs so there is no ambiguity:
+- old backup path: ~/workspace/artifacts/travel-buddy
+- current mobile beta target: ~/workspace/travel-buddy-standalone
+- all future Expo/dev-client/EAS commands should run from standalone
+- Replit web preview is not native MapLibre proof
+
+4. Add a clear manual device verification section:
+
+bash id="ai2jsq" cd ~/workspace/travel-buddy-standalone npx expo start --dev-client --clear 
+
+Then on the physical phone/dev build:
+- open Travel Buddy
+- open Discovery
+- confirm List mode shows normal list
+- tap Map
+- confirm Map mode selected
+- capture screenshot of debug overlay
+- paste Metro logs with [TravelBuddyMapDebug]
+
+5. Completion language must be honest:
+
+Allowed:
+“Code-side Discovery Map diagnostics are implemented and typecheck clean. Native runtime proof is pending owner/device validation.”
+
+Not allowed:
+“Map is fixed”
+“Map renders”
+“Discovery Map complete”
+unless a real phone/dev build screenshot or logs prove:
+- Map toggle selected
+- MapLibre mounted
+- container width/height usable
+- styleURL exists
+- MapTiler key present
+- mapLoaded/styleLoaded fired
+- map visibly renders, or exact native blocker is shown
+
+6. Final report should include:
+- whether workflow/docs now point to standalone
+- files changed
+- exact command owner must run
+- code-side validation results
+- what remains device-only
+- exact pass/fail counts
+
+Acceptance for this step:
+The standalone app is the clear active mobile target, the backup path is documented as backup, the debug overlay is present in standalone, and native map completion is explicitly marked pending real-device verification.
