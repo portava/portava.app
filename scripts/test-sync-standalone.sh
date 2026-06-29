@@ -777,6 +777,64 @@ assert_not_contains "19e: no FAIL in output"                                    
 rm -rf "$T19"
 
 # ---------------------------------------------------------------------------
+# Test 20: --apply-deps --dry-run exits 1 when ONLY devDependencies differ
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 20: --apply-deps --dry-run catches devDependency-only drift ==="
+
+T20="$(setup_workspace)"
+src20="$T20/artifacts/travel-buddy"
+dst20="$T20/travel-buddy-standalone"
+
+# Source: regular deps identical to standalone defaults; bump only a devDep
+cat > "$src20/package.json" <<'EOF'
+{
+  "name": "travel-buddy",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.1"
+  }
+}
+EOF
+
+# Standalone: same regular deps, but typescript devDep is at old version
+cat > "$dst20/package.json" <<'EOF'
+{
+  "name": "travel-buddy-standalone",
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~54.0.0",
+    "react": "18.3.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  }
+}
+EOF
+
+dst20_before="$(cat "$dst20/package.json")"
+
+ec20=0
+out20="$(run_sync "$T20" --apply-deps --dry-run 2>&1)" || ec20=$?
+
+assert_exit     "20a: exits 1 in dry-run (devDep-only drift is action required)"  1  "$ec20"
+assert_contains "20b: drifted devDep name reported in output"                      "typescript"  "$out20"
+assert_contains "20c: dry-run indicator present in output"                         "dry"         "$out20"
+
+dst20_after="$(cat "$dst20/package.json")"
+if [[ "$dst20_before" == "$dst20_after" ]]; then
+  pass "20d: standalone package.json not written during dry-run"
+else
+  fail "20d: standalone package.json was modified during dry-run (should be read-only)"
+fi
+
+rm -rf "$T20"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
