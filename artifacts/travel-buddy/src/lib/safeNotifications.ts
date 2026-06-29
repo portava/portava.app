@@ -2,20 +2,20 @@
  * safeNotifications — guarded wrappers around expo-notifications.
  *
  * ExpoTopicSubscriptionModule (and other expo-notifications native modules)
- * may not be registered in the native runtime when running on a dev client
- * that was built before expo-notifications was installed, or when the native
- * rebuild hasn't happened yet. Calling any API on the module in that state
- * crashes the app before any JS error boundary can catch it.
+ * may not be registered when running in Expo Go or a dev client built before
+ * expo-notifications was installed.
  *
- * Every function here uses a lazy require() inside try/catch so the native
- * module is only accessed after mount, inside a controlled error boundary.
+ * IMPORTANT: In Hermes on Android, "Cannot find native module" errors thrown
+ * by TurboModuleRegistry.getEnforcing() inside a module's JS shim fire during
+ * the Metro module-factory evaluation phase, which happens BEFORE the try{}
+ * frame on the caller side is active. That means try/catch around require()
+ * cannot intercept them. We guard with a NativeModules pre-check instead.
+ *
  * Import from this file instead of 'expo-notifications' directly in files
- * that are evaluated at app startup (e.g. _layout.tsx, root hooks).
- *
- * Type-only imports from expo-notifications are safe: they generate no
- * runtime code and do not trigger native module access.
+ * evaluated at app startup (_layout.tsx, root hooks, etc.).
+ * Type-only imports from expo-notifications are safe — they produce no runtime code.
  */
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import type {
   NotificationHandler,
   NotificationResponse,
@@ -27,16 +27,28 @@ let _module: any = undefined;
 function getModule(): any | null {
   if (Platform.OS === 'web') return null;
   if (_module !== undefined) return _module;
+
+  // Pre-guard: NativeModules is populated synchronously at startup.
+  // If ExpoTopicSubscriptionModule is absent the require() would throw an
+  // uncatchable error in Hermes. Skip the require entirely in that case.
+  const nm = NativeModules as Record<string, unknown>;
+  if (!nm['ExpoTopicSubscriptionModule'] && !nm['ExpoNotifications']) {
+    _module = null;
+    if (__DEV__) {
+      console.warn(
+        '[safeNotifications] ExpoTopicSubscriptionModule not found — ' +
+          'notifications disabled. Rebuild your dev client to enable push notifications.',
+      );
+    }
+    return null;
+  }
+
   try {
     _module = require('expo-notifications');
   } catch (e) {
     _module = null;
     if (__DEV__) {
-      console.warn(
-        '[safeNotifications] expo-notifications native module unavailable. ' +
-          'Rebuild your dev client to enable push notifications.',
-        e,
-      );
+      console.warn('[safeNotifications] expo-notifications require failed:', e);
     }
   }
   return _module;
