@@ -26,5 +26,23 @@ jobs:
         with:
           node-version: 24
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Check package.json dependency drift
         run: bash scripts/sync-standalone.sh --check-deps
+
+      - name: Check standalone lockfile consistency
+        run: |
+          cd travel-buddy-standalone
+          pnpm install --frozen-lockfile || {
+            echo ""
+            echo "ACTION REQUIRED: travel-buddy-standalone/pnpm-lock.yaml is out of sync with package.json."
+            echo "This usually happens when --apply-deps was run without a follow-up pnpm install."
+            echo ""
+            echo "Fix:"
+            echo "  cd travel-buddy-standalone && pnpm install"
+            echo "  git add travel-buddy-standalone/pnpm-lock.yaml && git commit -m 'chore: sync standalone lockfile'"
+            exit 1
+          }
