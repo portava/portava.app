@@ -451,3 +451,135 @@ describe('sync-standalone.sh --check-lockfile', () => {
     );
   });
 });
+
+// ── sync-standalone.sh --fix-lockfile ────────────────────────────────────────
+
+describe('sync-standalone.sh --fix-lockfile', () => {
+  let tmpBase: string;
+
+  before(() => {
+    tmpBase = join(tmpdir(), `fix-lockfile-test-${Date.now()}`);
+    mkdirSync(tmpBase, { recursive: true });
+  });
+
+  after(() => {
+    rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  const MINIMAL_TSCONFIG = JSON.stringify({ compilerOptions: { strict: true } }, null, 2) + '\n';
+  // babel.config.js: must be a valid CJS module exporting an api-function.
+  const MINIMAL_BABEL = `module.exports = (api) => { api.cache(true); return { presets: [], plugins: [] }; };\n`;
+  // metro.config.js: read as plain text; regex extracts config.<key> references.
+  const MINIMAL_METRO = `// minimal metro stub\nconst { getDefaultConfig } = require('expo/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;\n`;
+
+  function writeConfigStubs(dir: string): void {
+    writeFileSync(join(dir, 'tsconfig.json'), MINIMAL_TSCONFIG);
+    writeFileSync(join(dir, 'babel.config.js'), MINIMAL_BABEL);
+    writeFileSync(join(dir, 'metro.config.js'), MINIMAL_METRO);
+  }
+
+  function makeCase(name: string): { root: string; srcDir: string; standaloneDir: string } {
+    const root = join(tmpBase, name);
+    const srcDir = join(root, 'artifacts', 'travel-buddy');
+    const standaloneDir = join(root, 'travel-buddy-standalone');
+    mkdirSync(srcDir, { recursive: true });
+    mkdirSync(standaloneDir, { recursive: true });
+    // The main sync flow hard-exits if any of these config files are missing.
+    writeConfigStubs(srcDir);
+    writeConfigStubs(standaloneDir);
+    return { root, srcDir, standaloneDir };
+  }
+
+  function runFixLockfile(repoRoot: string): { status: number; stdout: string; stderr: string } {
+    const r = spawnSync('bash', [SYNC_SCRIPT, '--fix-lockfile'], {
+      encoding: 'utf8',
+      env: { ...process.env, SYNC_STANDALONE_REPO_ROOT: repoRoot },
+      timeout: 60_000,
+    });
+    return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  }
+
+  function writeMinimalPkg(dir: string, name: string): void {
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name, version: '1.0.0', private: true }, null, 2) + '\n',
+    );
+  }
+
+  function writePnpmWorkspace(dir: string): void {
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages: []\n');
+  }
+
+  // Green path: run against the real already-synced repo (no SYNC_STANDALONE_REPO_ROOT override).
+  // pnpm install will be a no-op ("Already up to date") and --check-lockfile will pass.
+  test('exits 0 and prints completion message on the already-synced real repository', () => {
+    const r = spawnSync('bash', [SYNC_SCRIPT, '--fix-lockfile'], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    const stdout = r.stdout ?? '';
+    const stderr = r.stderr ?? '';
+
+    assert.equal(
+      r.status ?? 1,
+      0,
+      `Expected exit 0 (repo already in sync) but got ${r.status}.\nStdout:\n${stdout}\nStderr:\n${stderr}`,
+    );
+    assert.ok(
+      stdout.includes('Fix-lockfile complete'),
+      `Expected "Fix-lockfile complete" in stdout.\nStdout:\n${stdout}`,
+    );
+  });
+
+  test('prints all three step labels in output', () => {
+    const { root, srcDir, standaloneDir } = makeCase('fl-three-steps');
+    writeMinimalPkg(srcDir, 'test-app');
+    writeMinimalPkg(standaloneDir, 'test-standalone');
+    writePnpmWorkspace(standaloneDir);
+    writeFileSync(join(root, 'pnpm-lock.yaml'), buildLockfile('artifacts/travel-buddy', {}, {}));
+    writeFileSync(join(standaloneDir, 'pnpm-lock.yaml'), buildLockfile('.', {}, {}));
+
+    // Step 2 (pnpm install) overwrites the fake standalone lockfile, which causes Step 3
+    // to report drift on the fixture. We only assert the three step labels are present,
+    // not the final exit code, so the fixture is sufficient.
+    const result = runFixLockfile(root);
+
+    assert.ok(result.stdout.includes('Step 1'), `Step 1 label missing.\nStdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('Step 2'), `Step 2 label missing.\nStdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('Step 3'), `Step 3 label missing.\nStdout:\n${result.stdout}`);
+  });
+
+  test('exits 1 and prints pnpm-update guidance when drift persists after reinstall', () => {
+    const { root, srcDir, standaloneDir } = makeCase('fl-persistent-drift');
+    writeMinimalPkg(srcDir, 'test-app');
+    writeMinimalPkg(standaloneDir, 'test-standalone');
+    writePnpmWorkspace(standaloneDir);
+    // Monorepo lockfile has expo@54.0.35; standalone has expo@54.0.10.
+    // pnpm install on the empty package.json won't touch the standalone lockfile,
+    // so drift persists → --fix-lockfile must exit 1 with guidance.
+    writeFileSync(
+      join(root, 'pnpm-lock.yaml'),
+      buildLockfile('artifacts/travel-buddy', { expo: '54.0.35' }, {}),
+    );
+    writeFileSync(
+      join(standaloneDir, 'pnpm-lock.yaml'),
+      buildLockfile('.', { expo: '54.0.10' }, {}),
+    );
+
+    const result = runFixLockfile(root);
+
+    assert.notEqual(
+      result.status,
+      0,
+      `Expected non-zero exit when drift persists but got 0.\nStdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      result.stdout.includes('drift remains'),
+      `Expected "drift remains" in stdout.\nStdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      result.stdout.includes('pnpm --filter @workspace/travel-buddy update'),
+      `Expected pnpm update guidance in stdout.\nStdout:\n${result.stdout}`,
+    );
+  });
+});

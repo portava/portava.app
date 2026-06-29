@@ -33,6 +33,14 @@
 #                   transitive-dep build failures on EAS. Standalone-only packages are
 #                   informational and never cause a failure. This flag is read-only.
 #                   Runs independently of all other flags.
+#   --fix-lockfile  Automatically eliminate lockfile drift in three steps:
+#                     1. --apply-deps: sync package.json specifiers
+#                     2. pnpm install inside travel-buddy-standalone (re-resolve lockfile)
+#                     3. --check-lockfile: verify drift is resolved
+#                   Exits 0 only when all drift is cleared. If drift remains after
+#                   reinstall (same semver range resolves different versions), prints
+#                   guidance for manual alignment with pnpm update. This flag is not
+#                   compatible with --dry-run; it always writes files and runs installs.
 #   --fix-source    Re-sync only the source directories reported by --check-source
 #                   (controlled by SOURCE_DRIFT_DIRS). Package.json, tsconfig.json,
 #                   babel.config.js, metro.config.js, and other preserved files are
@@ -79,6 +87,7 @@ APPLY_DEPS=false
 CHECK_SOURCE=false
 CHECK_DEPS=false
 CHECK_LOCKFILE=false
+FIX_LOCKFILE=false
 FIX_SOURCE=false
 TOTAL_ADDED=0
 TOTAL_UPDATED=0
@@ -95,6 +104,7 @@ for arg in "$@"; do
     --check-source)     CHECK_SOURCE=true ;;
     --check-deps)       CHECK_DEPS=true ;;
     --check-lockfile)   CHECK_LOCKFILE=true ;;
+    --fix-lockfile)     FIX_LOCKFILE=true ;;
     --fix-source)       FIX_SOURCE=true ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
@@ -570,6 +580,61 @@ process.exit(1);
 NODEEOF
 
   exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# --fix-lockfile mode: apply deps + reinstall standalone to eliminate drift.
+#
+# Three steps:
+#   1. --apply-deps  — sync package.json specifiers (self-call)
+#   2. pnpm install  — re-resolve the standalone lockfile
+#   3. --check-lockfile — verify drift is cleared (self-call)
+#
+# If drift persists after reinstall (same semver range, different resolution),
+# prints guidance for manual alignment via pnpm update in the monorepo.
+# Not compatible with --dry-run — always writes files.
+# ---------------------------------------------------------------------------
+if $FIX_LOCKFILE; then
+  echo "=== Fix lockfile: syncing standalone resolved versions with monorepo ==="
+  echo "    Source : $SRC"
+  echo "    Target : $DST"
+  echo ""
+
+  echo "--- Step 1: sync package.json dependency specifiers ---"
+  SYNC_STANDALONE_REPO_ROOT="$REPO_ROOT" bash "${BASH_SOURCE[0]}" --apply-deps
+  echo ""
+
+  echo "--- Step 2: reinstall standalone to re-resolve lockfile ---"
+  if ! command -v pnpm &>/dev/null; then
+    echo "ERROR: pnpm not found in PATH. Install pnpm and re-run."
+    exit 1
+  fi
+  ( cd "$DST" && pnpm install )
+  echo ""
+
+  echo "--- Step 3: verify lockfile drift is resolved ---"
+  if SYNC_STANDALONE_REPO_ROOT="$REPO_ROOT" bash "${BASH_SOURCE[0]}" --check-lockfile; then
+    echo ""
+    echo "=== Fix-lockfile complete — no drift remaining ==="
+    echo ""
+    echo "Next: run typecheck to verify the standalone is healthy:"
+    echo "  cd travel-buddy-standalone && pnpm typecheck"
+  else
+    echo ""
+    echo "=== Fix-lockfile: drift remains after reinstall ==="
+    echo ""
+    echo "Both lockfiles are internally valid for their semver ranges but resolved"
+    echo "to different patch versions. Force the monorepo to the newer resolution:"
+    echo ""
+    echo "  pnpm --filter @workspace/travel-buddy update <package-name>"
+    echo "  bash scripts/sync-standalone.sh --fix-lockfile"
+    echo ""
+    echo "If the monorepo uses 'catalog:' for the package, also update the catalog"
+    echo "entry in pnpm-workspace.yaml and revert package.json to a concrete version."
+    exit 1
+  fi
+  echo ""
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
