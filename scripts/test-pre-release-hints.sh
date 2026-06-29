@@ -81,6 +81,58 @@ declare -A EXPECTED_HINTS=(
   [lockfile-drift]="fix: bash scripts/sync-standalone.sh --fix-lockfile"
 )
 
+# ── cross-reference: EXPECTED_HINTS keys vs run_check names ──────────────────
+# Guard against a check being renamed in pre-release-check.sh without updating
+# EXPECTED_HINTS here, or vice-versa.  Both directions are checked so neither
+# side can silently go stale.
+
+printf '\n'
+sep
+printf '  Cross-reference: EXPECTED_HINTS ↔ run_check names\n'
+sep
+
+# Extract the first argument of every `run_check "…"` call in the real script.
+mapfile -t SCRIPT_NAMES < <(
+  grep -E '^run_check "' scripts/pre-release-check.sh \
+    | sed 's/^run_check "\([^"]*\)".*/\1/'
+)
+
+if [[ ${#SCRIPT_NAMES[@]} -eq 0 ]]; then
+  printf '  ✘  Could not extract any run_check names from pre-release-check.sh.\n'
+  printf '     Has the call style changed? Update the grep pattern in this test.\n'
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+  xref_ok=1
+
+  # Keys in EXPECTED_HINTS that have no matching run_check call → stale hint entry
+  for name in "${!EXPECTED_HINTS[@]}"; do
+    found=0
+    for sname in "${SCRIPT_NAMES[@]}"; do
+      [[ "$sname" == "$name" ]] && found=1 && break
+    done
+    if [[ $found -eq 0 ]]; then
+      printf '  ✘  EXPECTED_HINTS["%s"] has no matching run_check call in pre-release-check.sh\n' "$name"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      xref_ok=0
+    fi
+  done
+
+  # run_check names that have no entry in EXPECTED_HINTS → missing hint
+  for name in "${SCRIPT_NAMES[@]}"; do
+    if [[ -z "${EXPECTED_HINTS[$name]+set}" ]]; then
+      printf '  ✘  run_check "%s" has no entry in EXPECTED_HINTS\n' "$name"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      xref_ok=0
+    fi
+  done
+
+  if [[ $xref_ok -eq 1 ]]; then
+    printf '  ✔  All %d check names are in sync\n' "${#SCRIPT_NAMES[@]}"
+  fi
+fi
+
+sep
+
 # ── run assertions ────────────────────────────────────────────────────────────
 
 printf '\n'
