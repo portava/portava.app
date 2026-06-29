@@ -10,6 +10,10 @@ on:
       - "pnpm-workspace.yaml"
       - "artifacts/travel-buddy/tsconfig.json"
       - "travel-buddy-standalone/tsconfig.json"
+      - "artifacts/travel-buddy/babel.config.js"
+      - "travel-buddy-standalone/babel.config.js"
+      - "artifacts/travel-buddy/metro.config.js"
+      - "travel-buddy-standalone/metro.config.js"
   pull_request:
     branches: ["**"]
     paths:
@@ -19,6 +23,10 @@ on:
       - "pnpm-workspace.yaml"
       - "artifacts/travel-buddy/tsconfig.json"
       - "travel-buddy-standalone/tsconfig.json"
+      - "artifacts/travel-buddy/babel.config.js"
+      - "travel-buddy-standalone/babel.config.js"
+      - "artifacts/travel-buddy/metro.config.js"
+      - "travel-buddy-standalone/metro.config.js"
 
 jobs:
   sync-standalone-check:
