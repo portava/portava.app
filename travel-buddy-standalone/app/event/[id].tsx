@@ -21,6 +21,7 @@ import {
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
+import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { Avatar } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -326,6 +327,16 @@ export default function EventDetailScreen() {
                 <Text style={styles.descText}>{event.description}</Text>
               </View>
             ) : null}
+
+            {/* Reviews — shown once event is completed */}
+            {event.state === 'completed' && (
+              <ReviewsSection
+                entityType="event"
+                entityId={event.id}
+                entityName={event.title}
+                canReview={!!userId && event.myRsvp === 'going'}
+              />
+            )}
           </View>
         </ScrollView>
       ) : null}

@@ -1842,8 +1842,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
   return res.status(201).json({ ok: true });
 });
 
-// ── Dispute stubs (payment module not yet implemented) ───────────────────────
-// TODO: implement when payment module is ready
+// ── Dispute / payment stubs (payment module not yet implemented) ─────────────
+// NOTE: POST /api/rent-a-buddy/bookings/:bookingId/cancel is FULLY IMPLEMENTED
+//       above (handles status transition to "cancelled" + emit + compass invalidation).
+//       The routes below are stubs for features pending payment-module integration.
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res) => {
   res.status(501).json({

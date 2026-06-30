@@ -51,7 +51,9 @@ const CreateAppealSchema = z.object({
     "account_warning",
     "trust_score_event",
     "no_show",
+    "event",
     "event_membership",
+    "trip",
     "trip_membership",
     "review",
   ]),
@@ -234,9 +236,18 @@ router.patch("/appeals/:id", async (req, res) => {
 
   const current = (appeal as any).state as string;
 
-  // Prevent re-approving or re-denying a terminal appeal
-  if (["approved", "denied"].includes(current) && state !== "under_review") {
-    sendError(res, "invalid_state_transition", `Appeal is already ${current}`);
+  // Enforce strict state machine: submitted → under_review → approved | denied
+  // Terminal states (approved, denied) cannot be reopened or re-resolved.
+  const ALLOWED: Record<string, string[]> = {
+    submitted:    ["under_review"],
+    under_review: ["approved", "denied"],
+    approved:     [],
+    denied:       [],
+  };
+  const allowed = ALLOWED[current] ?? [];
+  if (!allowed.includes(state)) {
+    const hint = allowed.length > 0 ? `Allowed next states: ${allowed.join(", ")}` : "This appeal is in a terminal state";
+    sendError(res, "invalid_state_transition", `Cannot transition from '${current}' to '${state}'. ${hint}`);
     return;
   }
 
