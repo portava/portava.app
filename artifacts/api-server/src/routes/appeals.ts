@@ -285,6 +285,12 @@ router.patch("/appeals/:id", async (req, res) => {
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       notification_type: "appeal_approved",
+      category:          "admin",
+      title:             "Appeal approved",
+      body:              resolutionNote
+        ? `Your appeal was approved. ${resolutionNote}`
+        : "Your appeal was approved and the action has been reversed.",
+      action_url:        "/appeals",
       content: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
@@ -301,6 +307,12 @@ router.patch("/appeals/:id", async (req, res) => {
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       notification_type: "appeal_denied",
+      category:          "admin",
+      title:             "Appeal denied",
+      body:              resolutionNote
+        ? `Your appeal was denied. ${resolutionNote}`
+        : "Your appeal was reviewed and denied.",
+      action_url:        "/appeals",
       content: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
