@@ -1331,6 +1331,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
     .from("posts_comments")
     .select("id, post_id, user_id, body, created_at, updated_at")
     .eq("post_id", postId)
+    .is("parent_comment_id", null)
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
   if (listErr) { sendError(res, "db_error", listErr.message); return; }
