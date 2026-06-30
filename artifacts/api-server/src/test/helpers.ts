@@ -1,6 +1,5 @@
+import http from "node:http";
 import express from "express";
-import type { Express } from "express";
-import { vi } from "vitest";
 import { _setTestClient } from "../lib/http.js";
 import postsRouter from "../routes/posts.js";
 
@@ -23,11 +22,9 @@ export interface FakeState {
 }
 
 export function makeFakeClient(state: FakeState) {
-  // capture inserts for assertions
   const inserted: Array<{ table: string; row: Record<string, any> }> = [];
 
   function from(table: string) {
-    // builder accumulates filters; terminal methods resolve
     const filters: Array<(r: any) => boolean> = [];
     let pendingInsert: Record<string, any> | null = null;
     let pendingUpdate: Record<string, any> | null = null;
@@ -53,7 +50,6 @@ export function makeFakeClient(state: FakeState) {
       limit() { return builder; },
       maybeSingle() { return resolveSingle(true); },
       single() { return resolveSingle(false); },
-      // Awaitable (list) path — returns { data: row[], error } matching supabase-js
       then(onF: any, onR: any) { return resolveList().then(onF, onR); },
     };
 
@@ -65,7 +61,6 @@ export function makeFakeClient(state: FakeState) {
       return source.filter((r) => filters.every((f) => f(r)));
     }
 
-    /** .maybeSingle() / .single() — return one row or null. */
     async function resolveSingle(maybe: boolean) {
       if (pendingInsert) {
         const row = { id: "post-new", ...pendingInsert };
@@ -82,7 +77,6 @@ export function makeFakeClient(state: FakeState) {
       return { data: matched[0] ?? null, error: null };
     }
 
-    /** Awaitable (no .single()) — return array of rows matching supabase-js list shape. */
     async function resolveList() {
       if (pendingInsert) {
         const row = { id: "post-new", ...pendingInsert };
@@ -102,38 +96,57 @@ export function makeFakeClient(state: FakeState) {
   const client: any = {
     from,
     auth: {
-      getUser: vi.fn(async (token: string) => {
+      getUser: async (token: string) => {
         const u = state.users[token];
         if (!u) return { data: { user: null }, error: { message: "invalid" } };
         return { data: { user: u }, error: null };
-      }),
+      },
     },
     __inserted: inserted,
   };
   return client;
 }
 
-/**
- * Build an Express app with the posts routes, wired to a fake client.
- * Injects the fake client into http.ts's test slot so requireUser() uses it
- * instead of the real Supabase service-role client.
- */
-export async function makeApp(state: FakeState): Promise<{ app: Express; client: any }> {
-  const client = makeFakeClient(state);
+export interface TestApp {
+  baseUrl: string;
+  client: any;
+  close: () => Promise<void>;
+}
 
-  // Inject fake client into the http module's test slot.
-  // requireUser() will use this instead of the real service-role client.
+/**
+ * Build an Express app with the posts routes, wired to a fake client,
+ * start an HTTP server on a random port, and return helpers to make
+ * requests and shut down cleanly. Each test should call close() when done.
+ */
+export async function startApp(state: FakeState): Promise<TestApp> {
+  const client = makeFakeClient(state);
   _setTestClient(client, true);
 
   const app = express();
   app.use(express.json());
-  // minimal req.log so route error logging doesn't throw
-  app.use((req, _res, next) => {
-    (req as any).log = { error: () => {}, info: () => {}, warn: () => {} };
+  app.use((req: any, _res: any, next: any) => {
+    req.log = { error: () => {}, info: () => {}, warn: () => {} };
     next();
   });
   app.use("/api", postsRouter);
-  return { app, client };
+
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer(app);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as { port: number };
+      srv.unref();
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        client,
+        close: () =>
+          new Promise<void>((res, rej) => {
+            srv.closeAllConnections();
+            srv.close((e) => (e ? rej(e) : res()));
+          }),
+      });
+    });
+    srv.on("error", reject);
+  });
 }
 
-export const BEARER = (t: string) => ({ Authorization: `Bearer ${t}` });
+export const BEARER = (t: string): string => `Bearer ${t}`;
