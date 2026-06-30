@@ -1374,9 +1374,37 @@ router.post("/posts/:postId/comments", async (req, res) => {
 
   // Enforce comments_setting (fail-open if column not yet migrated)
   const commentsSetting = (post as any).comments_setting ?? "everyone";
-  if (commentsSetting === "disabled") {
-    sendError(res, "comments_disabled", "Comments are disabled on this post");
-    return;
+  const callerId = user.id;
+  const authorId = (post as any).author_id as string;
+  // Post owner can always comment on their own post
+  if (callerId !== authorId && commentsSetting !== "everyone") {
+    if (commentsSetting === "disabled") {
+      sendError(res, "comments_disabled", "Comments are disabled on this post");
+      return;
+    }
+    if (commentsSetting === "friends") {
+      const { data: fr } = await sc
+        .from("friend_requests").select("id").eq("status", "accepted")
+        .or(`and(requester_id.eq.${callerId},recipient_id.eq.${authorId}),and(requester_id.eq.${authorId},recipient_id.eq.${callerId})`)
+        .maybeSingle();
+      if (!fr) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
+    }
+    if (commentsSetting === "circle") {
+      const { data: mem } = await sc
+        .from("circle_memberships").select("member_id").eq("owner_id", authorId).eq("member_id", callerId).maybeSingle();
+      if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
+    }
+    if (commentsSetting === "trip_crew") {
+      const tripId = (post as any).trip_id as string | null;
+      if (!tripId || !(await isAcceptedTripMember(client, tripId, callerId))) {
+        sendError(res, "comments_limited", "Only trip crew can comment on this post");
+        return;
+      }
+    }
+    if (commentsSetting === "verified") {
+      const { data: profile } = await sc.from("profiles").select("is_verified").eq("id", callerId).maybeSingle();
+      if (!(profile as any)?.is_verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+    }
   }
 
   const { data: comment, error: insertErr } = await sc
@@ -1493,12 +1521,16 @@ const VALID_REACTION_EMOJIS = new Set(["❤️", "😂", "😮", "😢", "😡",
 router.get("/posts/:postId/reactions", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   const { data: rows, error } = await sc
     .from("post_reactions").select("emoji, user_id").eq("post_id", postId);
@@ -1568,12 +1600,16 @@ router.post("/posts/:postId/reactions", async (req, res) => {
 router.delete("/posts/:postId/reactions", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   await sc.from("post_reactions").delete().eq("post_id", postId).eq("user_id", user.id);
 
@@ -1720,16 +1756,22 @@ router.post("/posts/:postId/share", async (req, res) => {
 router.post("/posts/:postId/comments/:commentId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-  const { commentId } = req.params;
+  const { user, client } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
   if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
   const { data: comment } = await sc
-    .from("posts_comments").select("id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+    .from("posts_comments").select("id, post_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
   if (!comment) { sendError(res, "not_found", "Comment not found"); return; }
+  if ((comment as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
 
   const { error } = await sc
     .from("comment_likes")
@@ -1750,12 +1792,22 @@ router.post("/posts/:postId/comments/:commentId/like", async (req, res) => {
 router.delete("/posts/:postId/comments/:commentId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-  const { commentId } = req.params;
+  const { user, client } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
   if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  const { data: comment } = await sc
+    .from("posts_comments").select("id, post_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (!comment) { sendError(res, "not_found", "Comment not found"); return; }
+  if ((comment as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
 
   await sc.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", user.id);
 

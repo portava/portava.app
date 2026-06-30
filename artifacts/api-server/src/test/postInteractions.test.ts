@@ -95,6 +95,7 @@ function buildFakeClient(callerId: string) {
         filtered = filtered.filter((r) => vals.includes(r[col]));
         return b;
       },
+      or(_filter: string) { return b; },
       order() { return b; },
       limit(n: number) { filtered = filtered.slice(0, n); return b; },
       insert(data: any) { insertData = data; return b; },
@@ -492,5 +493,66 @@ describe('POST /api/posts/:id/comments — comments_setting enforcement', () => 
       { body: 'Hello!' },
     );
     assert.notEqual(status, 400);
+  });
+
+  it('rejects non-friend comment when comments_setting=friends', async () => {
+    posts[POST_ID].comments_setting = 'friends';
+    _setTestClient(buildFakeClient(OTHER_ID) as any, true);
+    const { status, data } = await json(
+      'POST',
+      `/api/posts/${POST_ID}/comments`,
+      TOKEN_OTHER,
+      { body: 'Hello!' },
+    );
+    assert.equal(status, 403);
+    assert.match(data.error, /comments_limited/i);
+  });
+
+  it('allows post owner to comment on their own post regardless of comments_setting', async () => {
+    posts[POST_ID].comments_setting = 'disabled';
+    const { status } = await json(
+      'POST',
+      `/api/posts/${POST_ID}/comments`,
+      TOKEN_AUTHOR,
+      { body: 'My own post, I can still comment.' },
+    );
+    assert.equal(status, 201);
+  });
+});
+
+describe('GET /api/posts/:id/reactions — access control', () => {
+  it('returns 404 when post does not exist', async () => {
+    const { status } = await json('GET', `/api/posts/99999999-0000-0000-0000-000000000001/reactions`, TOKEN_AUTHOR);
+    assert.equal(status, 404);
+  });
+
+  it('returns reactions for a valid accessible post', async () => {
+    const { status, data } = await json('GET', `/api/posts/${POST_ID}/reactions`, TOKEN_AUTHOR);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.reactions));
+  });
+});
+
+describe('POST/DELETE /api/posts/:id/comments/:commentId/like — cross-post binding', () => {
+  const OTHER_POST_ID = '10000000-0000-0000-0000-000000000002';
+
+  it('rejects like when commentId belongs to a different post', async () => {
+    posts[OTHER_POST_ID] = { ...posts[POST_ID], id: OTHER_POST_ID };
+    const { status } = await json(
+      'POST',
+      `/api/posts/${OTHER_POST_ID}/comments/${COMMENT_ID}/like`,
+      TOKEN_AUTHOR,
+    );
+    assert.equal(status, 404);
+  });
+
+  it('rejects unlike when commentId belongs to a different post', async () => {
+    posts[OTHER_POST_ID] = { ...posts[POST_ID], id: OTHER_POST_ID };
+    const { status } = await json(
+      'DELETE',
+      `/api/posts/${OTHER_POST_ID}/comments/${COMMENT_ID}/like`,
+      TOKEN_AUTHOR,
+    );
+    assert.equal(status, 404);
   });
 });
