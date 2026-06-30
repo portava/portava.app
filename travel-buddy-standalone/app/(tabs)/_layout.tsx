@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
+import { Activity, CalendarDays, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
@@ -14,6 +14,7 @@ import { getPendingTripInvites } from '../../src/services/trips';
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
+  { href: '/(tabs)/events', label: 'Events', icon: CalendarDays, match: ['/(tabs)/events'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
@@ -147,6 +148,13 @@ export default function TabLayout() {
           ),
         }}
         listeners={{ focus: refreshUnread }}
+      />
+      <Tabs.Screen
+        name="events"
+        options={{
+          title: 'Events',
+          tabBarIcon: ({ color: c }) => <CalendarDays size={22} color={c} />,
+        }}
       />
       <Tabs.Screen
         name="create-tab"
