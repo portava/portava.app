@@ -260,29 +260,20 @@ router.get("/users/search", async (req, res) => {
 
   const ids = rows.map((p: any) => p.id as string);
 
-  // Resolve blocked-user IDs.
-  // user_blocks may not exist yet; check .error explicitly (Supabase returns
-  // errors in the response object, not as thrown exceptions).
-  // If the query errors for any reason, fail safe by excluding ALL result users
-  // — we'd rather show no results than leak a blocked user's profile.
+  // Resolve blocked-user IDs (both directions: users I blocked + users who blocked me).
+  // Fail safe: any DB error suppresses all results rather than leaking a blocked
+  // user's profile to the caller.
   let blockedSet = new Set<string>();
   let blockQueryFailed = false;
   try {
     const { data: blockRows, error: blockErr } = await sc
-      .from("user_blocks")
+      .from("blocks")
       .select("blocked_id, blocker_id")
       .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
     if (blockErr) {
-      // Table missing (PGRST204 / 42P01) is expected — treat as no blocks.
-      // Any other DB error: fail safe (return empty set, filter will remove all).
-      const isTableMissing =
-        blockErr.code === "42P01" ||
-        blockErr.code === "PGRST204" ||
-        (blockErr.message ?? "").toLowerCase().includes("does not exist");
-      if (!isTableMissing) {
-        blockQueryFailed = true;
-        req.log.warn({ err: blockErr }, "user_blocks query failed; suppressing results");
-      }
+      // Any DB error: fail safe (return empty set, filter will remove all).
+      blockQueryFailed = true;
+      req.log.warn({ err: blockErr }, "blocks query failed; suppressing results");
     } else {
       for (const b of (blockRows ?? [])) {
         if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
@@ -292,7 +283,7 @@ router.get("/users/search", async (req, res) => {
   } catch (e) {
     // Network-level or unexpected error — fail safe.
     blockQueryFailed = true;
-    req.log.warn({ err: e }, "user_blocks query threw; suppressing results");
+    req.log.warn({ err: e }, "blocks query threw; suppressing results");
   }
 
   if (blockQueryFailed) { res.status(200).json({ users: [] }); return; }
@@ -446,11 +437,11 @@ router.get("/users/suggestions", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // 1. Resolve blocks up-front (fail-safe: on error continue with empty set)
+  // 1. Resolve blocks up-front — both directions (fail-safe: on error continue with empty set)
   let blockedSet = new Set<string>();
   try {
     const { data: blockRows, error: blockErr } = await sc
-      .from("user_blocks")
+      .from("blocks")
       .select("blocked_id, blocker_id")
       .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
     if (!blockErr) {

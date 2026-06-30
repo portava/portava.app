@@ -469,11 +469,18 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
-  const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+  const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
     sc.from("circle_memberships").select("member_id").eq("owner_id", circleOwnerId),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
+    sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
   ]);
+
+  const blockedSet = new Set<string>();
+  for (const b of (blockResult.data ?? [])) {
+    if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
+    else blockedSet.add((b as any).blocker_id);
+  }
 
   const groupMemberIds = (memberships ?? [])
     .map((m: any) => m.member_id as string)
@@ -484,7 +491,7 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
   const otherFollowerIds = [
     ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
-  ].filter((id) => id !== user.id && !groupMemberSet.has(id));
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !blockedSet.has(id));
 
   const allIds = [...groupMemberIds, ...otherFollowerIds];
   const profileMap: Record<string, any> = {};

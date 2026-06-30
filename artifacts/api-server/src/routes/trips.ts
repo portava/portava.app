@@ -171,11 +171,18 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
-  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
     sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
+    sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
   ]);
+
+  const blockedSet = new Set<string>();
+  for (const b of (blockResult.data ?? [])) {
+    if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
+    else blockedSet.add((b as any).blocker_id);
+  }
 
   const groupMemberIds = (memberRows ?? [])
     .map((r: any) => r.user_id as string)
@@ -185,7 +192,7 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const otherFollowerIds = [
     ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
-  ].filter((id) => id !== user.id && !groupMemberSet.has(id));
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !blockedSet.has(id));
 
   const allIds = [...groupMemberIds, ...otherFollowerIds];
   const profileMap: Record<string, any> = {};

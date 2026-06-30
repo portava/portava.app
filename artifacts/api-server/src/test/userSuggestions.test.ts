@@ -88,7 +88,7 @@ function makeFakeClient(state: {
       function source(): any[] {
         if (table === "user_follows")  return state.follows;
         if (table === "profiles")      return state.profiles;
-        if (table === "user_blocks")   return state.blocks;
+        if (table === "blocks")         return state.blocks;
         if (table === "trips")         return state.trips ?? [];
         if (table === "trip_members")  return state.trip_members ?? [];
         if (table === "message_thread_members") return state.message_thread_members ?? [];
