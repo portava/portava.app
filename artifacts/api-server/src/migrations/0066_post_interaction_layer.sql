@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS post_shares (
   post_id     UUID        NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   target      TEXT        NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT post_shares_dedup_unique UNIQUE (post_id, user_id, target)
 );
 CREATE INDEX IF NOT EXISTS idx_post_shares_post_id ON post_shares(post_id);
 

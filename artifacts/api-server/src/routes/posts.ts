@@ -23,6 +23,7 @@ import {
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
 import { getServiceClient } from "../lib/supabase";
+import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
 import { processTagging } from "../services/tagging/TaggingService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
@@ -1328,11 +1329,25 @@ router.get("/posts/:postId/comments", async (req, res) => {
     for (const p of profiles ?? []) profileMap[p.id] = p;
   }
 
-  const commentSpansMap = await enrichSpans(
-    sc, 'comment',
-    commentRows.map((c) => ({ id: c.id as string, content: (c.body ?? '') as string })),
-    user.id,
-  );
+  const commentIds = commentRows.map((c) => c.id as string);
+
+  const [commentSpansMap, commentLikeRows] = await Promise.all([
+    enrichSpans(
+      sc, 'comment',
+      commentRows.map((c) => ({ id: c.id as string, content: (c.body ?? '') as string })),
+      user.id,
+    ),
+    commentIds.length > 0
+      ? sc.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds).then((r: any) => r.data ?? [])
+      : Promise.resolve([]),
+  ]);
+
+  const likeCountMap: Record<string, number> = {};
+  const likedByMeSet = new Set<string>();
+  for (const row of commentLikeRows as any[]) {
+    likeCountMap[row.comment_id] = (likeCountMap[row.comment_id] ?? 0) + 1;
+    if (row.user_id === user.id) likedByMeSet.add(row.comment_id);
+  }
 
   const comments = commentRows.map((c) => {
     const pr    = profileMap[c.user_id];
@@ -1343,6 +1358,8 @@ router.get("/posts/:postId/comments", async (req, res) => {
       createdAt: c.created_at,
       updatedAt: c.updated_at ?? null,
       canDelete: c.user_id === user.id || isPostAuthor,
+      likeCount: likeCountMap[c.id] ?? 0,
+      likedByMe: likedByMeSet.has(c.id),
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
       author: pr
@@ -1360,6 +1377,12 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const rl = checkRateLimit("comment", user.id, 30, 60_000);
+  if (!rl.allowed) {
+    sendError(res, "rate_limited", `Too many comments — retry in ${Math.ceil(rl.retryAfterMs / 1000)}s`);
+    return;
+  }
 
   const body = String(req.body?.body ?? "").trim();
   if (!body) { sendError(res, "invalid_payload", "Comment body is required"); return; }
@@ -1562,6 +1585,12 @@ router.post("/posts/:postId/reactions", async (req, res) => {
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
+  const rl = checkRateLimit("reaction", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    sendError(res, "rate_limited", `Too many reactions — retry in ${Math.ceil(rl.retryAfterMs / 1000)}s`);
+    return;
+  }
+
   const emoji = String(req.body?.emoji ?? "").trim();
   if (!emoji || !VALID_REACTION_EMOJIS.has(emoji)) {
     sendError(res, "invalid_payload", "Invalid or unsupported emoji");
@@ -1741,9 +1770,20 @@ router.post("/posts/:postId/share", async (req, res) => {
 
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
-  try {
-    await sc.from("post_shares").insert({ post_id: postId, user_id: user.id, target });
-  } catch { /* non-fatal — table may not exist before migration runs */ }
+  const rl = checkRateLimit("share", user.id, 10, 60_000);
+  if (!rl.allowed) {
+    sendError(res, "rate_limited", `Too many share actions — retry in ${Math.ceil(rl.retryAfterMs / 1000)}s`);
+    return;
+  }
+
+  const { error: shareErr } = await sc
+    .from("post_shares")
+    .upsert({ post_id: postId, user_id: user.id, target }, { onConflict: "post_id,user_id,target", ignoreDuplicates: true });
+  if (shareErr) {
+    req.log.error({ err: shareErr }, "post share record failed");
+    sendError(res, "db_error", shareErr.message);
+    return;
+  }
 
   res.status(200).json({ ok: true, target });
 });
@@ -1760,6 +1800,12 @@ router.post("/posts/:postId/comments/:commentId/like", async (req, res) => {
   const { postId, commentId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
   if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
+
+  const rl = checkRateLimit("comment_like", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    sendError(res, "rate_limited", `Too many likes — retry in ${Math.ceil(rl.retryAfterMs / 1000)}s`);
+    return;
+  }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
