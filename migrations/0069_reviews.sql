@@ -5,7 +5,7 @@
 -- ── Entity type & visibility enums ────────────────────────────────────────────
 
 DO $$ BEGIN
-  CREATE TYPE review_entity_type AS ENUM ('event', 'trip', 'rent_buddy_booking');
+  CREATE TYPE review_entity_type AS ENUM ('trip', 'rent_buddy_booking');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN

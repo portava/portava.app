@@ -1866,6 +1866,20 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => 
   });
 });
 
+router.get("/api/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (req, res) => {
+  res.status(501).json({
+    error:  "pending_implementation",
+    message: "Refund eligibility check is not yet implemented. See cancellation policy for manual refund guidance.",
+  });
+});
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
+  res.status(501).json({
+    error:  "pending_implementation",
+    message: "No-show reporting via this endpoint is not yet implemented. Use POST /api/rent-a-buddy/bookings/:bookingId/report with reportType=buddy_no_show or reportType=traveler_no_show.",
+  });
+});
+
 // ── Safety routes ─────────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res) => {

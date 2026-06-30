@@ -60,13 +60,20 @@ async function checkEligibility(
 ): Promise<boolean> {
   switch (entityType) {
     case "trip": {
-      const { data } = await sc
+      const { data: membership } = await sc
         .from("trip_members")
         .select("id")
         .eq("trip_id", entityId)
         .eq("user_id", userId)
         .maybeSingle();
-      return !!data;
+      if (!membership) return false;
+      // Only allow reviews once the trip is marked completed
+      const { data: tripRow } = await sc
+        .from("trips")
+        .select("status")
+        .eq("id", entityId)
+        .maybeSingle();
+      return (tripRow as any)?.status === "completed";
     }
     case "rent_buddy_booking": {
       const { data } = await sc
@@ -189,8 +196,19 @@ router.get("/trips/:id/reviews", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get trip reviews"); sendError(res, "db_error", error.message); return; }
 
   const rows = (reviews as any[]) ?? [];
-  const avgRating = rows.length > 0
-    ? Math.round((rows.reduce((s: number, r: any) => s + r.rating, 0) / rows.length) * 10) / 10
+
+  // Aggregate across all reviews for this trip (not just the current page)
+  const { data: allForCount } = await sc
+    .from("reviews")
+    .select("rating")
+    .eq("entity_type", "trip")
+    .eq("entity_id", id)
+    .eq("state", "published");
+
+  const allRows = (allForCount as any[]) ?? [];
+  const totalCount = allRows.length;
+  const avgRating = totalCount > 0
+    ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
     : null;
 
   res.json({
@@ -209,7 +227,7 @@ router.get("/trips/:id/reviews", async (req, res) => {
       },
     })),
     avgRating,
-    total: rows.length,
+    total: totalCount,
     page,
     limit,
   });
@@ -256,9 +274,23 @@ router.get("/users/:id/reviews", async (req, res) => {
   if (tripIds.length > 0)  orParts.push(`and(entity_type.eq.trip,entity_id.in.(${tripIds.join(",")}))`);
   if (eventIds.length > 0) orParts.push(`and(entity_type.eq.event,entity_id.in.(${eventIds.join(",")}))`);
 
+  // Aggregate over ALL reviews for this host (not page-limited)
+  const { data: allForAggregate } = await sc
+    .from("reviews")
+    .select("rating")
+    .or(orParts.join(","))
+    .eq("state", "published");
+
+  const allRows = (allForAggregate as any[]) ?? [];
+  const reviewCount = allRows.length;
+  const avgRating = reviewCount > 0
+    ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / reviewCount) * 10) / 10
+    : null;
+
+  // Paginated list for display — includes entity_type, entity_id
   const { data: reviews, error } = await sc
     .from("reviews")
-    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
     .or(orParts.join(","))
     .eq("state", "published")
     .order("created_at", { ascending: false })
@@ -267,13 +299,10 @@ router.get("/users/:id/reviews", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get user reviews"); sendError(res, "db_error", error.message); return; }
 
   const rows = (reviews as any[]) ?? [];
-  const avgRating = rows.length > 0
-    ? Math.round((rows.reduce((s: number, r: any) => s + r.rating, 0) / rows.length) * 10) / 10
-    : null;
 
   res.json({
     avgRating,
-    reviewCount: rows.length,
+    reviewCount,
     reviews: rows.map((r: any) => ({
       id:          r.id,
       rating:      r.rating,
