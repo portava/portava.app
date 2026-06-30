@@ -11,7 +11,7 @@
  * Pattern: node:test + _setTestClient(client, true)
  * Reference: src/test/collections.test.ts
  */
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import app from "../app.js";
@@ -257,7 +257,7 @@ describe("POST /api/appeals", () => {
     assert.equal(body.state, "submitted");
   });
 
-  it("400 appeal_already_active on duplicate (23505)", async () => {
+  it("409 appeal_already_active on duplicate (23505)", async () => {
     const tables = {
       appeals: {
         rows: [],
