@@ -1,0 +1,23 @@
+Question first — do NOT change any files yet, just report.
+Tonight a set of direct edits to these files were reverted/overwritten, and the .bak backups were also removed:
+
+src/components/discovery/DiscoveryMapView.tsx (reverted to a Jun 28 version — lost: fallback viewport rendering, fallbackLat/fallbackLng/fallbackZoom/userLat/userLng props, a "me" location dot marker, a re-center button + camera ref, a camera-update useEffect, and the meDot/meDotOuter/recenterBtn styles)
+app/(tabs)/discovery.tsx (lost: a MapTiler geocode-on-load effect, country-level fallback with destinationZoom, removal of the hardcoded 'Paris' default)
+The two discovery tabs (DiscoveryCategoryTab.tsx, ForYouTab.tsx) lost the forwarding of those map props
+app/(tabs)/index.tsx (Pulse) had fixture content removed
+
+I believe a sync from artifacts/travel-buddy over travel-buddy-standalone overwrote these. Before doing anything:
+
+Is there a Replit checkpoint or git history from earlier today (roughly the last 12 hours) that contains these changes? List the available checkpoints/commits with timestamps.
+Can you restore these specific files from a checkpoint without reverting OTHER work (like the backend display_name fix and the seed script)?
+What exactly caused the overwrite — did a sync run? If so, what triggered it, and how do we prevent it from wiping direct edits to the standalone again?
+
+Report findings only. Do NOT restore, sync, or edit anything yet — I want to see the options first and choose.
+
+Key things when you send this:
+
+The "report only, don't act yet" framing is deliberate. The agent acting on its own is what caused this. We want it to show you the options (checkpoints, git history) so you choose, rather than it deciding and possibly making it worse.
+What we're hoping for: Replit auto-saves checkpoints. If there's a checkpoint from earlier today after we made these edits, the agent can restore the files from it — cleaner than re-applying scripts. That's the best case.
+What to watch for: if the agent says "I'll just re-sync" or "let me regenerate them" — pause. We don't want it overwriting again. And if it offers to restore, make sure it restores only the reverted files, not everything (we don't want to lose the backend display_name fix or the seed work).
+The honest fallback: if the agent has no useful checkpoint, we still have everything in this conversation as exact scripts. So either way your work is recoverable — the question is just whether the agent's checkpoint is faster/cleaner than us re-applying.
+
