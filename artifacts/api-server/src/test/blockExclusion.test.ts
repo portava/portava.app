@@ -235,6 +235,51 @@ describe("GET /api/circles/:id/invitable-users — block exclusion", () => {
     assert.ok(otherIds.includes(ALICE), "ALICE should appear");
     assert.ok(!otherIds.includes(CARL), "CARL (who blocked ME) must not appear");
   });
+
+  it("excludes a blocked user from groupMembers even when they are an existing circle member", async () => {
+    // BOB is already a circle member — but ME blocked BOB, so BOB must not appear
+    // in groupMembers either.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null },
+        { id: BOB,   handle: "bob",   name: "Bob",   avatar_url: null },
+      ],
+      blocks: [{ blocker_id: ME, blocked_id: BOB }],
+      circle_memberships: [
+        { owner_id: ME, member_id: ALICE },
+        { owner_id: ME, member_id: BOB  },
+      ],
+      user_friendships: [],
+    });
+    const r = await req(`/circles/${ME}/invitable-users`);
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const groupIds = (body.groupMembers ?? []).map((u: any) => u.id);
+    assert.ok(groupIds.includes(ALICE), "ALICE should appear in groupMembers");
+    assert.ok(!groupIds.includes(BOB),  "BOB (blocked by ME) must not appear in groupMembers");
+  });
+
+  it("excludes a user who blocked the caller from groupMembers", async () => {
+    // CARL is a circle member AND blocked ME — must not appear in groupMembers.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null },
+        { id: CARL,  handle: "carl",  name: "Carl",  avatar_url: null },
+      ],
+      blocks: [{ blocker_id: CARL, blocked_id: ME }],
+      circle_memberships: [
+        { owner_id: ME, member_id: ALICE },
+        { owner_id: ME, member_id: CARL  },
+      ],
+      user_friendships: [],
+    });
+    const r = await req(`/circles/${ME}/invitable-users`);
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const groupIds = (body.groupMembers ?? []).map((u: any) => u.id);
+    assert.ok(groupIds.includes(ALICE), "ALICE should appear");
+    assert.ok(!groupIds.includes(CARL), "CARL (who blocked ME) must not appear in groupMembers");
+  });
 });
 
 // ── 3. GET /trips/:tripId/invitable-users ────────────────────────────────────
@@ -282,5 +327,52 @@ describe("GET /api/trips/:id/invitable-users — block exclusion", () => {
     const otherIds = (body.otherFollowers ?? []).map((u: any) => u.id);
     assert.ok(otherIds.includes(ALICE), "ALICE should appear");
     assert.ok(!otherIds.includes(CARL), "CARL (who blocked ME) must not appear");
+  });
+
+  it("excludes a blocked user from groupMembers even when they are an existing trip member", async () => {
+    // BOB is already an accepted trip member — but ME blocked BOB, so BOB
+    // must not appear in groupMembers.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null },
+        { id: BOB,   handle: "bob",   name: "Bob",   avatar_url: null },
+      ],
+      blocks: [{ blocker_id: ME, blocked_id: BOB }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ME,   role: "owner"  },
+        { trip_id: TRIP_ID, user_id: ALICE, role: "member" },
+        { trip_id: TRIP_ID, user_id: BOB,   role: "member" },
+      ],
+      user_friendships: [],
+    });
+    const r = await req(`/trips/${TRIP_ID}/invitable-users`);
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const groupIds = (body.groupMembers ?? []).map((u: any) => u.id);
+    assert.ok(groupIds.includes(ALICE), "ALICE should appear in groupMembers");
+    assert.ok(!groupIds.includes(BOB),  "BOB (blocked by ME) must not appear in groupMembers");
+  });
+
+  it("excludes a user who blocked the caller from groupMembers", async () => {
+    // CARL blocked ME and is a trip member — must not appear in groupMembers.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null },
+        { id: CARL,  handle: "carl",  name: "Carl",  avatar_url: null },
+      ],
+      blocks: [{ blocker_id: CARL, blocked_id: ME }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ME,   role: "owner"  },
+        { trip_id: TRIP_ID, user_id: ALICE, role: "member" },
+        { trip_id: TRIP_ID, user_id: CARL,  role: "member" },
+      ],
+      user_friendships: [],
+    });
+    const r = await req(`/trips/${TRIP_ID}/invitable-users`);
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const groupIds = (body.groupMembers ?? []).map((u: any) => u.id);
+    assert.ok(groupIds.includes(ALICE), "ALICE should appear");
+    assert.ok(!groupIds.includes(CARL), "CARL (who blocked ME) must not appear in groupMembers");
   });
 });

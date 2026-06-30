@@ -186,7 +186,7 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
 
   const groupMemberIds = (memberRows ?? [])
     .map((r: any) => r.user_id as string)
-    .filter((id) => id !== user.id);
+    .filter((id) => id !== user.id && !blockedSet.has(id));
 
   const groupMemberSet = new Set(groupMemberIds);
   const otherFollowerIds = [

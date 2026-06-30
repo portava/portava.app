@@ -485,7 +485,7 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
   const groupMemberIds = (memberships ?? [])
     .map((m: any) => m.member_id as string)
     .concat(!isOwner ? [circleOwnerId] : [])
-    .filter((id) => id !== user.id);
+    .filter((id) => id !== user.id && !blockedSet.has(id));
 
   const groupMemberSet = new Set(groupMemberIds);
   const otherFollowerIds = [
