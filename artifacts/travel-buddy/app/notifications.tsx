@@ -12,8 +12,10 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator,
-  RefreshControl, ScrollView, Alert, Image,
+  RefreshControl, ScrollView, Alert,
 } from 'react-native';
+import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton';
+import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
@@ -384,19 +386,24 @@ function SocialRequestsPane({
       }
       renderItem={({ item }) => {
         const isBusy = busy === item.id;
-        const initial = (item.actor?.name?.[0] ?? '?').toUpperCase();
         return (
           <View style={srStyles.card}>
             <View style={srStyles.headerRow}>
-              {item.actor?.avatarUrl ? (
-                <Image source={{ uri: item.actor.avatarUrl }} style={srStyles.avatar} />
-              ) : (
-                <View style={[srStyles.avatar, srStyles.avatarFallback]}>
-                  <Text style={srStyles.avatarInitial}>{initial}</Text>
-                </View>
-              )}
+              <UserAvatarButton
+                userId={item.actor?.id ?? ''}
+                handle={item.actor?.handle}
+                avatarUrl={item.actor?.avatarUrl}
+                size={44}
+                disabled={!item.actor?.id}
+              />
               <View style={{ flex: 1 }}>
-                <Text style={srStyles.name}>{item.actor?.name ?? 'Someone'}</Text>
+                <UserNameButton
+                  userId={item.actor?.id ?? ''}
+                  handle={item.actor?.handle}
+                  displayName={item.actor?.name}
+                  style={srStyles.name}
+                  disabled={!item.actor?.id}
+                />
                 {item.actor?.handle ? (
                   <Text style={srStyles.handle}>@{item.actor.handle}</Text>
                 ) : null}
@@ -450,9 +457,6 @@ const srStyles = StyleSheet.create({
     gap: space.sm,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze, flexShrink: 0 },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
-  avatarInitial: { ...t.bodyStrong, color: color.ink, fontSize: 16 } as any,
   name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' } as any,
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 } as any,
   typeChip: {

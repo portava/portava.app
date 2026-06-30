@@ -47,6 +47,47 @@ export interface ReportResult {
   error?: string;
 }
 
+export type ReasonCode =
+  | 'harassment'
+  | 'spam'
+  | 'hate_speech'
+  | 'violence'
+  | 'impersonation'
+  | 'nudity'
+  | 'misinformation'
+  | 'other';
+
+export interface ReportContentPayload {
+  target_type: 'post' | 'message';
+  target_id: string;
+  reason_code: ReasonCode;
+  reason_detail?: string;
+}
+
+export async function reportContent(payload: ReportContentPayload): Promise<ReportResult> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/reports`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: (body as any).message ?? 'Failed to submit report' };
+    }
+    const body = await res.json();
+    return { ok: true, data: { reportId: body.reportId } };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export async function submitReport(payload: SubmitReportPayload): Promise<ReportResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
