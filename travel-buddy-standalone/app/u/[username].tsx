@@ -9,6 +9,7 @@ import {
   ArrowLeft, Users, UserCheck, UserPlus, Clock,
   MessageCircle, X, MoreVertical, ShieldAlert,
   Image as ImageIcon, Tag, Map as MapIcon, Info,
+  Bookmark, BookmarkCheck, BellOff, Bell, Flag,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
@@ -25,6 +26,9 @@ import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import { getProfileByHandle, getProfileById } from '../../src/services/friends';
 import { blockUser, getBlockStatus } from '../../src/services/blocks';
+import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
+import { saveUser, unsaveUser, getSaveStatus } from '../../src/services/saves';
+import { reportContent, type ReasonCode } from '../../src/services/reports';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
@@ -207,13 +211,46 @@ function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   return null;
 }
 
-// ── Kebab / block menu ───────────────────────────────────────────────────────
+// ── Kebab / action menu ───────────────────────────────────────────────────────
+
+const REPORT_REASONS: { code: ReasonCode; label: string }[] = [
+  { code: 'harassment',     label: 'Harassment or bullying' },
+  { code: 'spam',           label: 'Spam' },
+  { code: 'hate_speech',    label: 'Hate speech' },
+  { code: 'violence',       label: 'Violence or dangerous content' },
+  { code: 'impersonation',  label: 'Impersonation' },
+  { code: 'nudity',         label: 'Nudity or explicit content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other',          label: 'Other' },
+];
 
 function KebabMenu({
   userId, name, handle, onBlocked,
 }: { userId: string; name: string | null; handle: string | null; onBlocked: () => void }) {
   const [open, setOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
+  const [reportDetail, setReportDetail] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setStatusLoading(true);
+    Promise.all([getMuteStatus(userId), getSaveStatus(userId)])
+      .then(([muteRes, saveRes]) => {
+        if (muteRes.ok && muteRes.data) setIsMuted(muteRes.data.muted);
+        if (saveRes.ok && saveRes.data) setIsSaved(saveRes.data.saved);
+      })
+      .catch(() => {})
+      .finally(() => setStatusLoading(false));
+  }, [open, userId]);
 
   function handleBlock() {
     setOpen(false);
@@ -240,6 +277,60 @@ function KebabMenu({
     );
   }
 
+  async function handleMuteToggle() {
+    setOpen(false);
+    setBusy('mute');
+    const wasMuted = isMuted;
+    setIsMuted(!wasMuted);
+    const res = wasMuted ? await unmuteUser(userId) : await muteUser(userId);
+    setBusy(null);
+    if (!res.ok) {
+      setIsMuted(wasMuted);
+      Alert.alert('Error', res.error ?? `Could not ${wasMuted ? 'unmute' : 'mute'} user`);
+    }
+  }
+
+  async function handleSaveToggle() {
+    setOpen(false);
+    setBusy('save');
+    const wasSaved = isSaved;
+    setIsSaved(!wasSaved);
+    const res = wasSaved ? await unsaveUser(userId) : await saveUser(userId);
+    setBusy(null);
+    if (!res.ok) {
+      setIsSaved(wasSaved);
+      Alert.alert('Error', res.error ?? `Could not ${wasSaved ? 'unsave' : 'save'} profile`);
+    }
+  }
+
+  function handleReport() {
+    setOpen(false);
+    setReportReason(null);
+    setReportDetail('');
+    setReportDone(false);
+    setReportOpen(true);
+  }
+
+  async function handleSubmitReport() {
+    if (!reportReason) return;
+    setReportSubmitting(true);
+    const res = await reportContent({
+      target_type: 'user',
+      target_id: userId,
+      reason_code: reportReason,
+      reason_detail: reportDetail.trim() || undefined,
+    });
+    setReportSubmitting(false);
+    if (res.ok) {
+      setReportDone(true);
+      setTimeout(() => setReportOpen(false), 2500);
+    } else {
+      Alert.alert('Error', res.error ?? 'Could not submit report');
+    }
+  }
+
+  const displayName = name ?? `@${handle}`;
+
   return (
     <>
       <Pressable hitSlop={12} onPress={() => setOpen(true)} style={{ padding: 4 }} disabled={blocking}>
@@ -248,15 +339,107 @@ function KebabMenu({
           : <MoreVertical size={20} color={color.mute} />}
       </Pressable>
 
+      {/* Dropdown menu */}
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={st.menuOverlay} onPress={() => setOpen(false)}>
           <View style={st.menuCard}>
-            <Pressable style={st.menuItem} onPress={handleBlock}>
+            <Pressable
+              style={st.menuItem}
+              onPress={handleSaveToggle}
+              disabled={statusLoading || busy === 'save'}
+            >
+              {isSaved
+                ? <BookmarkCheck size={16} color={color.signal} />
+                : <Bookmark size={16} color={color.mute} />}
+              <Text style={[st.menuItemText, isSaved && { color: color.signal }]}>
+                {isSaved ? 'Saved' : 'Save profile'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[st.menuItem, st.menuItemBorder]}
+              onPress={handleMuteToggle}
+              disabled={statusLoading || busy === 'mute'}
+            >
+              {isMuted
+                ? <Bell size={16} color={color.mute} />
+                : <BellOff size={16} color={color.mute} />}
+              <Text style={st.menuItemText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+            </Pressable>
+            <Pressable style={[st.menuItem, st.menuItemBorder]} onPress={handleReport}>
+              <Flag size={16} color={color.warn} />
+              <Text style={[st.menuItemText, { color: color.warn }]}>Report</Text>
+            </Pressable>
+            <Pressable style={[st.menuItem, st.menuItemBorder]} onPress={handleBlock}>
               <ShieldAlert size={16} color={color.signal} />
               <Text style={[st.menuItemText, { color: color.signal }]}>Block user</Text>
             </Pressable>
           </View>
         </Pressable>
+      </Modal>
+
+      {/* Report sub-modal */}
+      <Modal visible={reportOpen} transparent animationType="slide" onRequestClose={() => setReportOpen(false)}>
+        <View style={st.modalOverlay}>
+          <View style={[st.modalCard, { maxHeight: '80%' }]}>
+            <View style={st.modalHeader}>
+              <Text style={st.modalTitle}>Report {displayName}</Text>
+              <Pressable onPress={() => setReportOpen(false)} hitSlop={8}>
+                <X size={20} color={color.ink} />
+              </Pressable>
+            </View>
+
+            {reportDone ? (
+              <View style={st.reportDoneWrap}>
+                <Text style={st.reportDoneIcon}>✓</Text>
+                <Text style={st.reportDoneTitle}>Report submitted</Text>
+                <Text style={st.reportDoneSub}>
+                  Thank you — our team will review this shortly.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={st.reportSubLabel}>Why are you reporting this account?</Text>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {REPORT_REASONS.map((r) => (
+                    <Pressable
+                      key={r.code}
+                      style={[
+                        st.reasonRow,
+                        reportReason === r.code && { backgroundColor: `${color.signal}08` },
+                      ]}
+                      onPress={() => setReportReason(r.code)}
+                    >
+                      <View style={[st.reasonRadio, reportReason === r.code && st.reasonRadioSelected]} />
+                      <Text style={st.reasonLabel}>{r.label}</Text>
+                    </Pressable>
+                  ))}
+                  <TextInput
+                    style={[st.composerInput, { marginTop: space.md }]}
+                    placeholder="Additional details (optional)"
+                    placeholderTextColor={color.faint}
+                    value={reportDetail}
+                    onChangeText={setReportDetail}
+                    maxLength={500}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </ScrollView>
+                <Pressable
+                  style={[
+                    st.actionBtn, st.addFriendBtnStyle,
+                    { marginTop: space.md, opacity: reportReason ? 1 : 0.45 },
+                  ]}
+                  disabled={!reportReason || reportSubmitting}
+                  onPress={handleSubmitReport}
+                >
+                  <Text style={[st.btnText, { color: '#fff' }]}>
+                    {reportSubmitting ? 'Submitting…' : 'Submit Report'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
       </Modal>
     </>
   );
@@ -740,6 +923,19 @@ const styles = StyleSheet.create({
   },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
   menuItemText: { ...t.body, fontSize: 14, fontWeight: '600' },
+  menuItemBorder: { borderTopWidth: 1, borderTopColor: color.haze },
+  reportSubLabel: { ...t.small, color: color.mute, marginBottom: space.sm },
+  reasonRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.haze,
+  },
+  reasonRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: color.haze },
+  reasonRadioSelected: { borderColor: color.signal, backgroundColor: color.signal },
+  reasonLabel: { ...t.body, color: color.ink, fontSize: 14, flex: 1 },
+  reportDoneWrap: { alignItems: 'center', gap: space.md, paddingVertical: space.xl },
+  reportDoneIcon: { fontSize: 48, color: color.success },
+  reportDoneTitle: { ...t.heading, color: color.ink },
+  reportDoneSub: { ...t.body, color: color.mute, textAlign: 'center' },
 });
 
 // Alias so st.* works in sub-components above
