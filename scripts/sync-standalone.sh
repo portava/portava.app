@@ -111,7 +111,32 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
-# Helper: sync a directory using cp -a + remove stale files
+# Files that are edited directly in travel-buddy-standalone and must NEVER be
+# overwritten by --fix-source or the full sync.
+# Paths are relative to the standalone root (same shape as paths inside $DST),
+# e.g. "app/(tabs)/discovery.tsx".
+# Add any file here that you intend to maintain exclusively in standalone.
+# ---------------------------------------------------------------------------
+STANDALONE_OWNED_FILES=(
+  "app/(tabs)/discovery.tsx"
+  "app/(tabs)/index.tsx"
+  "src/components/discovery/DiscoveryMapView.tsx"
+  "src/components/discovery/DiscoveryCategoryTab.tsx"
+  "src/components/discovery/ForYouTab.tsx"
+)
+
+# Returns 0 (success/true) if the given standalone-relative path is protected.
+is_standalone_owned() {
+  local rel_path="$1"
+  if [[ ${#STANDALONE_OWNED_FILES[@]} -eq 0 ]]; then return 1; fi
+  for owned in "${STANDALONE_OWNED_FILES[@]}"; do
+    [[ "$rel_path" == "$owned" ]] && return 0
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Helper: sync a directory — file-by-file, respecting STANDALONE_OWNED_FILES.
 # Defined early so both --fix-source and the main sync path can call it.
 # ---------------------------------------------------------------------------
 sync_dir() {
@@ -131,6 +156,10 @@ sync_dir() {
     while IFS= read -r -d '' f; do
       rel="${f#$from/}"
       dst_file="$to/$rel"
+      if is_standalone_owned "$name/$rel"; then
+        echo "    [dry] [protected] $name/$rel (standalone-owned — would skip)"
+        continue
+      fi
       if [[ ! -f "$dst_file" ]]; then
         echo "    [dry] + $name/$rel (new)"
       elif ! diff -q "$f" "$dst_file" &>/dev/null; then
@@ -142,40 +171,60 @@ sync_dir() {
     if [[ -d "$to" ]]; then
       while IFS= read -r -d '' f; do
         rel="${f#$to/}"
-        src_file="$from/$rel"
-        if [[ ! -f "$src_file" ]]; then
-          echo "    [dry] - $name/$rel (removed from source)"
+        if [[ ! -f "$from/$rel" ]]; then
+          if is_standalone_owned "$name/$rel"; then
+            echo "    [dry] [protected] $name/$rel (standalone-owned — would keep)"
+          else
+            echo "    [dry] - $name/$rel (removed from source)"
+          fi
         fi
       done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
     fi
   else
-    # Count what will change before syncing so we can print a meaningful summary
-    local added=0 updated=0 removed=0
+    local added=0 updated=0 removed=0 protected=0
 
+    # ── Copy source → destination, file-by-file, skipping protected files ────
+    mkdir -p "$to"
     while IFS= read -r -d '' f; do
-      rel="${f#$from/}"
-      dst_file="$to/$rel"
+      local rel="${f#$from/}"
+      local dst_file="$to/$rel"
+
+      if is_standalone_owned "$name/$rel"; then
+        echo "    [protected] $name/$rel (standalone-owned — not overwritten)"
+        protected=$(( protected + 1 ))
+        continue
+      fi
+
       if [[ ! -f "$dst_file" ]]; then
+        mkdir -p "$(dirname "$dst_file")"
+        cp -p "$f" "$dst_file"
         added=$(( added + 1 ))
       elif ! diff -q "$f" "$dst_file" &>/dev/null; then
+        cp -p "$f" "$dst_file"
         updated=$(( updated + 1 ))
       fi
     done < <(find "$from" -type f -not -path "*/node_modules/*" -print0)
 
+    # ── Remove stale files (in destination but gone from source) ─────────────
     if [[ -d "$to" ]]; then
       while IFS= read -r -d '' f; do
-        rel="${f#$to/}"
-        src_file="$from/$rel"
-        if [[ ! -f "$src_file" ]]; then
-          removed=$(( removed + 1 ))
+        local rel="${f#$to/}"
+        if [[ ! -f "$from/$rel" ]]; then
+          if is_standalone_owned "$name/$rel"; then
+            echo "    [protected] $name/$rel (standalone-owned — kept despite removal from source)"
+          else
+            rm -f "$f"
+            removed=$(( removed + 1 ))
+          fi
         fi
       done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
     fi
 
-    # Remove the destination dir and replace it cleanly (preserves no stale files)
-    rm -rf "$to"
-    cp -a "$from" "$to"
-    echo "    ${added} added, ${updated} updated, ${removed} removed"
+    if [[ $protected -gt 0 ]]; then
+      echo "    ${added} added, ${updated} updated, ${removed} removed (${protected} standalone-owned file(s) protected)"
+    else
+      echo "    ${added} added, ${updated} updated, ${removed} removed"
+    fi
 
     TOTAL_ADDED=$(( TOTAL_ADDED + added ))
     TOTAL_UPDATED=$(( TOTAL_UPDATED + updated ))
