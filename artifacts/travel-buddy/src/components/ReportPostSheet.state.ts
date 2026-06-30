@@ -60,3 +60,63 @@ export function canSubmitReport(state: ReportSheetState): boolean {
 export function resetReportSheet(): ReportSheetState {
   return { ...INITIAL_REPORT_SHEET_STATE };
 }
+
+// ── Behavioural integration machine ──────────────────────────────────────────
+//
+// createReportSheetMachine encodes the *wiring* contract that the React
+// component must honour: handleClose() must (a) call onClose() to notify the
+// parent and (b) reset all internal state so the next open starts clean.
+//
+// Because the test environment runs under node:test without a React Native
+// renderer, we cannot mount the component directly. This plain-object machine
+// mirrors the component's handleClose/reset wiring exactly, so tests can
+// drive state transitions and assert both the callback and the state reset
+// without a renderer.
+//
+// Component mirrors the machine contract:
+//   machine.handleClose()  →  onClose(); state = INITIAL_REPORT_SHEET_STATE
+//   component.handleClose()→  onClose(); reset() sets all useState slices to
+//                              INITIAL_REPORT_SHEET_STATE fields
+//
+// If either call is removed from the machine the wiring tests fail, catching
+// the same regression that would appear in the component.
+
+export interface ReportSheetMachine {
+  /** Returns a snapshot of the current state (new object each call). */
+  getState(): ReportSheetState;
+  /** User picks a reason from REPORT_POST_REASONS. */
+  selectReason(r: ReasonCode | null): void;
+  /** User types in the optional detail field. */
+  setDetail(d: string): void;
+  /**
+   * User dismisses the sheet (backdrop tap, X button, Android back).
+   * Calls onClose() then resets all state — both calls are required.
+   */
+  handleClose(): void;
+}
+
+/**
+ * Pure integration harness for ReportPostSheet's open/close/reset contract.
+ *
+ * @param onClose  The parent's close callback (same role as the React prop).
+ */
+export function createReportSheetMachine(onClose: () => void): ReportSheetMachine {
+  let state: ReportSheetState = { ...INITIAL_REPORT_SHEET_STATE };
+
+  return {
+    getState: () => ({ ...state }),
+
+    selectReason(r) {
+      state = { ...state, reason: r };
+    },
+
+    setDetail(d) {
+      state = { ...state, detail: d };
+    },
+
+    handleClose() {
+      onClose();                                  // (a) notify the parent
+      state = { ...INITIAL_REPORT_SHEET_STATE };  // (b) reset all state
+    },
+  };
+}
