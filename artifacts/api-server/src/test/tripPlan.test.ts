@@ -55,9 +55,12 @@ interface Item { id: string; trip_id: string; creator_id: string; title: string;
 interface Meetup { id: string; title: string; starts_at: string | null; location_name: string | null }
 interface Place  { id: string; name: string; category: string; location_name: string | null;
                    approximate_lat?: number; approximate_lng?: number }
+interface Trip   { id: string; owner_id: string; plan_edit_permission?: string;
+                   start_date?: string | null; end_date?: string | null }
 
 interface State {
   users:           Record<string, { id: string } | null>;
+  trips:           Trip[];
   trip_members:    TM[];
   trip_plan_items: Item[];
   meetups:         Meetup[];
@@ -71,6 +74,10 @@ function baseState(): State {
       "bob-tok":   { id: BOB_ID },
       "carol-tok": { id: CAROL_ID },
     },
+    trips: [
+      { id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members",
+        start_date: null, end_date: null },
+    ],
     trip_members:    [],
     trip_plan_items: [],
     meetups: [
@@ -225,21 +232,22 @@ async function startServer(state: State): Promise<TestServer> {
     const srv = createServer(app);
     srv.listen(0, "127.0.0.1", () => {
       const { port } = srv.address() as { port: number };
-      resolve({ port, state, close: () => new Promise<void>((res, rej) => srv.close((e) => e ? rej(e) : res())) });
+      srv.unref();
+      resolve({ port, state, close: () => new Promise<void>((res, rej) => { srv.closeAllConnections(); srv.close((e) => e ? rej(e) : res()); }) });
     });
     srv.on("error", reject);
   });
 }
 
 async function get(port: number, path: string, token?: string) {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { connection: "close" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
 async function post(port: number, path: string, token?: string, body?: unknown) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", connection: "close" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST", headers,
@@ -249,7 +257,7 @@ async function post(port: number, path: string, token?: string, body?: unknown) 
 }
 
 async function patch(port: number, path: string, token?: string, body?: unknown) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", connection: "close" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "PATCH", headers,
@@ -259,7 +267,7 @@ async function patch(port: number, path: string, token?: string, body?: unknown)
 }
 
 async function del(port: number, path: string, token?: string) {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { connection: "close" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "DELETE", headers });
   const text = await res.text();

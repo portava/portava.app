@@ -989,10 +989,10 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const parsed = ReorderSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "sortOrder must be an integer"); return; }
 
-  // Reorder requires trip-level plan edit permission (same as add/edit/delete)
-  const permitted = await canEditPlan(client, tripId, user.id);
-  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to reorder plan items"); return; }
+  // Reorder is owner-only: any accepted member can view/add/edit, but only
+  // the trip owner may change the global sort order.
+  const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
   const { data: updated, error } = await client
     .from("trip_plan_items")
