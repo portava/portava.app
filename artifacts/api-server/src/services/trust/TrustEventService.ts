@@ -284,4 +284,7 @@ export const TRUST_EVENT_TYPES = {
   // Passport
   STAMP_VERIFIED:           { category: "passport_authenticity" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },
   STAMP_DISPUTED:           { category: "passport_authenticity" as TrustCategory, delta: -6, severity: "moderate" as TrustSeverity },
+  // Reviews & Appeals
+  REVIEW_SUBMITTED:         { category: "community_value" as TrustCategory,  delta: 2,  severity: "minor" as TrustSeverity },
+  APPEAL_APPROVED_REVERSAL: { category: "community_value" as TrustCategory,  delta: 2,  severity: "minor" as TrustSeverity },
 } as const;

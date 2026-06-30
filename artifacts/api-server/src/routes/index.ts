@@ -55,6 +55,8 @@ import eventsRouter from "./events";
 import memoriesRouter from "./memories";
 import storiesRouter from "./stories";
 import closeFriendsRouter from "./closeFriends";
+import reviewsRouter from "./reviews";
+import appealsRouter from "./appeals";
 
 const router: IRouter = Router();
 
@@ -114,5 +116,7 @@ router.use(eventsRouter);
 router.use(memoriesRouter);
 router.use(storiesRouter);
 router.use(closeFriendsRouter);
+router.use(reviewsRouter);
+router.use(appealsRouter);
 
 export default router;

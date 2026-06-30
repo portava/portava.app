@@ -654,6 +654,57 @@ router.patch("/events/:id", async (req, res) => {
     await createEventChatThread(sc, id, (updated as any).title, user.id);
   }
 
+  // Post-attendance review notification — fire-and-forget
+  if (b.state === "completed" && (current as any).state !== "completed") {
+    void (async () => {
+      try {
+        const { data: confirmed } = await sc
+          .from("event_attendee_states")
+          .select("user_id, profiles!user_id(expo_push_token)")
+          .eq("event_id", id)
+          .not("confirmed_at", "is", null);
+
+        if (confirmed && (confirmed as any[]).length > 0) {
+          const tokens: string[] = (confirmed as any[])
+            .map((r: any) => r.profiles?.expo_push_token)
+            .filter(Boolean);
+
+          const eventTitle = (updated as any).title ?? "your event";
+
+          if (tokens.length > 0) {
+            await sendPushNotification(tokens, {
+              title: "How was the event?",
+              body: `Leave a review for "${eventTitle}" — your feedback helps the community.`,
+              data: {
+                type:       "review_prompt",
+                entityType: "event",
+                entityId:   id,
+                entityName: eventTitle,
+              },
+            });
+          }
+
+          // Insert in-app notifications (fire and forget each)
+          await Promise.allSettled(
+            (confirmed as any[]).map((r: any) =>
+              sc.from("notifications").insert({
+                user_id:           r.user_id,
+                actor_id:          user.id,
+                notification_type: "review_prompt",
+                content: {
+                  entityType: "event",
+                  entityId:   id,
+                  entityName: eventTitle,
+                },
+                read: false,
+              }),
+            ),
+          );
+        }
+      } catch {}
+    })();
+  }
+
   res.json(formatEvent(updated as any, user.id));
 });
 

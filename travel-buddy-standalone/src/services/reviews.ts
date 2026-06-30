@@ -1,0 +1,136 @@
+import { supabase } from '../lib/supabase';
+
+export type ReviewEntityType = 'event' | 'trip' | 'rent_buddy_booking';
+
+export interface ReviewTag {
+  label: string;
+  value: string;
+}
+
+export const REVIEW_TAGS: ReviewTag[] = [
+  { value: 'safe',         label: 'Safe' },
+  { value: 'friendly',     label: 'Friendly' },
+  { value: 'on_time',      label: 'On Time' },
+  { value: 'great_host',   label: 'Great Host' },
+  { value: 'well_planned', label: 'Well Planned' },
+  { value: 'inclusive',    label: 'Inclusive' },
+  { value: 'misleading',   label: 'Misleading' },
+  { value: 'disorganized', label: 'Disorganized' },
+  { value: 'no_show',      label: 'No Show' },
+];
+
+export interface ReviewAuthor {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+export interface Review {
+  id: string;
+  rating: number;
+  body: string | null;
+  tags: string[];
+  anonymous: boolean;
+  createdAt: string;
+  reviewer: ReviewAuthor | null;
+}
+
+export interface ReviewsResponse {
+  reviews: Review[];
+  avgRating: number | null;
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface UserReviewsResponse {
+  avgRating: number | null;
+  reviewCount: number;
+  reviews: Array<Review & { entityType: ReviewEntityType; entityId: string }>;
+}
+
+async function freshToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await freshToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+const api = (path: string) => `${apiBase}/api/${path}`;
+
+export async function createReview(params: {
+  entityType: ReviewEntityType;
+  entityId: string;
+  rating: number;
+  body?: string;
+  tags?: string[];
+  anonymous?: boolean;
+}): Promise<Review> {
+  const res = await fetch(api('reviews'), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      entityType: params.entityType,
+      entityId:   params.entityId,
+      rating:     params.rating,
+      body:       params.body,
+      tags:       params.tags ?? [],
+      anonymous:  params.anonymous ?? false,
+    }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw Object.assign(new Error((json as any).message ?? 'Failed to create review'), {
+      code: (json as any).error,
+    });
+  }
+  return res.json();
+}
+
+export async function getTripReviews(
+  tripId: string,
+  page = 1,
+  limit = 20,
+): Promise<ReviewsResponse> {
+  const res = await fetch(api(`trips/${tripId}/reviews?page=${page}&limit=${limit}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to load trip reviews');
+  return res.json();
+}
+
+export async function getUserReviews(userId: string, limit = 10): Promise<UserReviewsResponse> {
+  const res = await fetch(api(`users/${userId}/reviews?limit=${limit}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to load user reviews');
+  return res.json();
+}
+
+export async function reportReview(reviewId: string, reason: string): Promise<void> {
+  const res = await fetch(api(`reviews/${reviewId}/report`), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error((json as any).message ?? 'Failed to report review');
+  }
+}
+
+export async function deleteReview(reviewId: string): Promise<void> {
+  const res = await fetch(api(`reviews/${reviewId}`), {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to delete review');
+}

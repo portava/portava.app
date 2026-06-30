@@ -45,7 +45,12 @@ export type ApiErrorCode =
   | "comments_disabled"
   | "comments_limited"
   | "sharing_disabled"
-  | "blocked_user";
+  | "blocked_user"
+  | "review_not_eligible"
+  | "duplicate_review"
+  | "duplicate_report"
+  | "appeal_already_active"
+  | "invalid_state_transition";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -61,6 +66,11 @@ const STATUS: Record<ApiErrorCode, number> = {
   comments_limited: 403,
   sharing_disabled: 403,
   blocked_user: 403,
+  review_not_eligible: 403,
+  duplicate_review: 409,
+  duplicate_report: 409,
+  appeal_already_active: 409,
+  invalid_state_transition: 409,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {

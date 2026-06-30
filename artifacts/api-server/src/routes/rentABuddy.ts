@@ -1842,6 +1842,30 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
   return res.status(201).json({ ok: true });
 });
 
+// ── Dispute stubs (payment module not yet implemented) ───────────────────────
+// TODO: implement when payment module is ready
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res) => {
+  res.status(501).json({
+    error:  "pending_implementation",
+    message: "Reschedule requests are not yet implemented. Please contact support.",
+  });
+});
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
+  res.status(501).json({
+    error:  "pending_implementation",
+    message: "Dispute filing via this endpoint is not yet implemented. Use POST /api/rent-a-buddy/bookings/:bookingId/report to flag an issue.",
+  });
+});
+
+router.get("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
+  res.status(501).json({
+    error:  "pending_implementation",
+    message: "Dispute status retrieval is not yet implemented.",
+  });
+});
+
 // ── Safety routes ─────────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res) => {
