@@ -7,43 +7,43 @@ settings:
 catalogs:
   default:
     '@replit/vite-plugin-cartographer':
-      specifier: ^0.2.6
+      specifier: 0.2.8
       version: 0.2.8
     '@replit/vite-plugin-runtime-error-modal':
-      specifier: ^0.0.3
+      specifier: 0.0.3
       version: 0.0.3
     '@tailwindcss/vite':
-      specifier: ^4.1.8
+      specifier: 4.3.1
       version: 4.3.1
     '@tanstack/react-query':
-      specifier: ^5.101.2
-      version: 5.101.0
+      specifier: 5.101.2
+      version: 5.101.2
     '@types/node':
       specifier: 22.20.0
       version: 22.20.0
     '@types/react':
-      specifier: ^19.1.0
+      specifier: 19.1.17
       version: 19.1.17
     '@types/react-dom':
-      specifier: ^19.1.0
+      specifier: 19.1.11
       version: 19.1.11
     '@vitejs/plugin-react':
-      specifier: ^4.5.0
+      specifier: 4.7.0
       version: 4.7.0
     class-variance-authority:
-      specifier: ^0.7.1
+      specifier: 0.7.1
       version: 0.7.1
     clsx:
-      specifier: ^2.1.1
+      specifier: 2.1.1
       version: 2.1.1
     drizzle-orm:
-      specifier: ^0.41.0
+      specifier: 0.41.0
       version: 0.41.0
     framer-motion:
-      specifier: ^12.15.0
+      specifier: 12.40.0
       version: 12.40.0
     lucide-react:
-      specifier: ^0.511.0
+      specifier: 0.511.0
       version: 0.511.0
     react:
       specifier: 19.1.0
@@ -52,19 +52,19 @@ catalogs:
       specifier: 19.1.0
       version: 19.1.0
     tailwind-merge:
-      specifier: ^3.3.0
+      specifier: 3.6.0
       version: 3.6.0
     tailwindcss:
-      specifier: ^4.1.8
+      specifier: 4.3.1
       version: 4.3.1
     tsx:
       specifier: 4.22.4
       version: 4.22.4
     vite:
-      specifier: ^6.3.5
+      specifier: 6.4.3
       version: 6.4.3
     zod:
-      specifier: ^3.24.2
+      specifier: 3.25.76
       version: 3.25.76
 
 importers:
@@ -537,7 +537,7 @@ importers:
     dependencies:
       '@tanstack/react-query':
         specifier: 'catalog:'
-        version: 5.101.0(react@19.1.0)
+        version: 5.101.2(react@19.1.0)
       react:
         specifier: '>=18'
         version: 19.1.0
@@ -3327,16 +3327,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/query-core@5.101.0':
-    resolution: {integrity: sha512-cQetA74EB+seWySv1TTKr828TnP0u39m6LykwDXIo84SNortpDkp30TMEjkqtYCNP9c40uT/iwl6MLiufEt0Ow==}
-
   '@tanstack/query-core@5.101.2':
     resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
-
-  '@tanstack/react-query@5.101.0':
-    resolution: {integrity: sha512-rLlJXSpkqfizLWgkR5+eLeIk0MvTx/meEIR7LRjxic+qxiQP8zVjq7BqQkiCMNLQBlLfuOLqqr6KO5GtrDlmSg==}
-    peerDependencies:
-      react: ^18 || ^19
 
   '@tanstack/react-query@5.101.2':
     resolution: {integrity: sha512-seDkr6kzGzX1okaaTtZPtgA688CDPlXUz1C6xSg0ESqn04Vuc8tlrYms1s3de+znBqhPVxFRfpAfUf+6XvfPWg==}
@@ -10765,14 +10757,7 @@ snapshots:
       tailwindcss: 4.3.1
       vite: 6.4.3(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  '@tanstack/query-core@5.101.0': {}
-
   '@tanstack/query-core@5.101.2': {}
-
-  '@tanstack/react-query@5.101.0(react@19.1.0)':
-    dependencies:
-      '@tanstack/query-core': 5.101.0
-      react: 19.1.0
 
   '@tanstack/react-query@5.101.2(react@19.1.0)':
     dependencies:
