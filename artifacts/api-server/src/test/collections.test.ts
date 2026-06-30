@@ -627,6 +627,52 @@ describe("Collections & Saves", () => {
     assert.ok(saved, "GET /users/me/saves should report saved:true after fallback save");
   });
 
+  // ── Transient DB hiccup on collection_items upsert → db_error, not collection_create_failed ──
+  it("POST /saves returns db_error (not collection_create_failed) when collection_items upsert fails", async () => {
+    // Phase 1 (ensureDefaultCollection) will succeed because the collection already exists.
+    // Phase 2 (collection_items upsert) will fail due to a simulated transient DB timeout.
+    const tables: Record<string, FakeTable> = {
+      collections: {
+        rows: [{
+          id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+          is_default: true, position: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }],
+      },
+      collection_items: {
+        rows: [],
+        nextInsertError: "connection timeout — please retry",
+      },
+    };
+    ({ url, close } = await startServer(tables));
+
+    const res = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "post", entity_id: ENTITY_ID }),
+    });
+    assert.notEqual(res.status, 200, "should not succeed when collection_items upsert fails");
+    const body = await res.json();
+    assert.equal(body.error, "db_error",
+      "error code must be db_error (phase 2), not collection_create_failed (phase 1)");
+    assert.ok(
+      typeof body.message === "string" && body.message.length > 0,
+      "should include a human-readable message",
+    );
+
+    // Follow-up check: item must not appear as saved
+    assert.equal(tables.collection_items.rows.length, 0, "collection_items should remain empty after failed upsert");
+
+    const checkRes = await fetch(
+      `${url}/api/users/me/saves?entity_type=post&entity_id=${ENTITY_ID}`,
+      { headers: auth("owner-token") },
+    );
+    assert.equal(checkRes.status, 200);
+    const { saved } = await checkRes.json();
+    assert.ok(!saved, "GET /users/me/saves should report saved:false after a failed collection_items upsert");
+  });
+
   // ── isSaved hydration: check is scoped by entity_type ────────────────────
   it("saved:true for post entity does not bleed into event check", async () => {
     const POST_ID = "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
