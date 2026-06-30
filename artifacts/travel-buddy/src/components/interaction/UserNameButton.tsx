@@ -14,8 +14,8 @@ interface Props {
 }
 
 export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled }: Props) {
-  const { blockedIds, isLoading } = useBlockedIds();
-  const isBlocked = blockedIds.has(userId);
+  const { blockedIds, blockerIds, isLoading } = useBlockedIds();
+  const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
   function handlePress() {
     if (disabled || isBlocked || isLoading || !handle) return;

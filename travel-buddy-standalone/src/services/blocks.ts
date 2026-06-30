@@ -90,6 +90,25 @@ export async function getBlockList(): Promise<BlockResult<BlockedUser[]>> {
   }
 }
 
+export async function getBlockerIds(): Promise<BlockResult<string[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/me/blocker-ids`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: (body as any).message ?? 'Failed to load blocker ids' };
+    }
+    const body = await res.json();
+    return { ok: true, data: body.ids ?? [] };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export async function getBlockStatus(userId: string): Promise<BlockResult<BlockStatus>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();

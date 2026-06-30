@@ -199,6 +199,33 @@ router.get("/me/blocks", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /me/blocker-ids  — IDs of users who have blocked me (privacy-safe, IDs only)
+ * ===========================================================================
+ * Used by the client BlockedIdsContext to suppress navigation to profiles that
+ * have blocked the viewer — guards the "they blocked me" direction in addition
+ * to the "I blocked them" direction already tracked by /me/blocks.
+ */
+router.get("/me/blocker-ids", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data: rows, error } = await client
+    .from("blocks")
+    .select("blocker_id")
+    .eq("blocked_id", user.id)
+    .limit(500);
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to fetch blocker-ids");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(200).json({ ids: (rows ?? []).map((r: any) => r.blocker_id as string) });
+});
+
+/* ===========================================================================
  * GET /users/:userId/block-status  — am I blocking or blocked by this user?
  * ===========================================================================
  */

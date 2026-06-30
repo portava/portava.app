@@ -14,8 +14,8 @@ interface Props {
 }
 
 export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, children, disabled }: Props) {
-  const { blockedIds, isLoading } = useBlockedIds();
-  const isBlocked = blockedIds.has(userId);
+  const { blockedIds, blockerIds, isLoading } = useBlockedIds();
+  const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
   function handlePress() {
     if (disabled || isBlocked || isLoading || !handle) return;
