@@ -1,0 +1,34 @@
+Travel Buddy - Replit
+
+Pasted-AUDIT-ONLY-do-not-build-migrate-or-change-any-code-Read_1782796410606.txt
+AUDIT ONLY — do not build, migrate, or change any code. Read and report only.
+Inspect the existing codebase and Supabase database for what already exists to support a real-place data pipeline. No new tables, no migrations, no code edits — this is reconnaissance.
+For each item below, report: does it exist, the table name / file path, its columns/shape, whether it's currently populated or empty (run COUNT on key tables — read-only), and whether it can be reused.
+Database tables (check the migrations folder + Supabase schema):
+
+places
+discovery_places (community places)
+map_pins / location pins
+saved places (server-side, not the local AsyncStorage one)
+trips / trip stops
+events with location
+posts with geotags
+check-ins
+recommendations
+reviews / reactions
+
+Code data-sources (which hook/service/endpoint feeds each surface):
+
+Pulse feed (useGlobalFeed, useCityPulse, /api/posts)
+Discovery search (/api/places/search → Nominatim, /api/discovery)
+Discovery Map pins
+Trip planning suggestions
+Compass recommendations
+
+Output: a table of existing-vs-missing, with COUNT of rows for any places/posts/discovery tables that exist, plus a recommendation on what to reuse vs build new. Do NOT propose or apply any migration — just report what's there.
+
+Paste that to the agent. Watch that it stays read-only — if it starts saying "I'll create..." or "applying migration," stop it. It should only read and report.
+A couple of practical notes:
+
+The audit needs the agent to query the database. It can do this read-only via your backend or the Supabase connection it has configured. It does not need the service role key or any new credentials for a read-only audit — it can use existing read access. If it asks for DB credentials, that's a flag — it shouldn't need them just to inspect/count.
+This is genuinely the right first step. We keep hitting "everything's empty" — the audit tells us why: empty tables that exist (small fix, just seed them) vs. no tables at all (bigger build). Don't skip it.
