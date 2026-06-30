@@ -63,11 +63,11 @@ export function ReportPostSheet({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
       <View style={rps.overlay}>
-        <Pressable style={{ flex: 1 }} onPress={handleClose} />
+        <Pressable testID="report-post-backdrop" style={{ flex: 1 }} onPress={handleClose} />
         <View style={rps.sheet}>
           <View style={rps.handle} />
           {done ? (
-            <View style={rps.doneWrap}>
+            <View testID="report-post-done" style={rps.doneWrap}>
               <Text style={rps.doneIcon}>✓</Text>
               <Text style={rps.doneTitle}>Report submitted</Text>
               <Text style={rps.doneSub}>Thank you — our team will review this shortly.</Text>
@@ -76,7 +76,7 @@ export function ReportPostSheet({
             <>
               <View style={rps.header}>
                 <Text style={rps.title}>Report post</Text>
-                <Pressable onPress={handleClose} hitSlop={8}>
+                <Pressable testID="report-post-close" onPress={handleClose} hitSlop={8}>
                   <X size={20} color={color.ink} />
                 </Pressable>
               </View>
@@ -85,6 +85,7 @@ export function ReportPostSheet({
                 {REPORT_POST_REASONS.map((r) => (
                   <Pressable
                     key={r.code}
+                    testID={`reason-${r.code}`}
                     style={[rps.reasonRow, reason === r.code && rps.reasonRowSelected]}
                     onPress={() => setReason(r.code)}
                   >
@@ -107,6 +108,7 @@ export function ReportPostSheet({
                 )}
               </ScrollView>
               <Pressable
+                testID="report-post-submit"
                 style={[rps.submitBtn, !canSubmitReport({ reason, detail, submitting, done }) && rps.submitBtnDisabled]}
                 onPress={submit}
                 disabled={!canSubmitReport({ reason, detail, submitting, done })}
