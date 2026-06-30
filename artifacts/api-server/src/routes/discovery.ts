@@ -767,7 +767,7 @@ router.get("/discovery/community", async (req, res) => {
         created_at,
         lat,
         lng,
-        profiles:submitted_by ( id, display_name, name, avatar_url )
+        profiles:submitted_by ( id, name, avatar_url )
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
@@ -814,7 +814,7 @@ router.get("/discovery/community", async (req, res) => {
         submittedBy:  profile
           ? {
               id:        profile.id as string,
-              name:      (profile.display_name ?? profile.name ?? "Traveler") as string,
+              name:      (profile.name ?? "Traveler") as string,
               avatarUrl: (profile.avatar_url ?? null) as string | null,
             }
           : null,
