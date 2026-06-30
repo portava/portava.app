@@ -576,6 +576,57 @@ describe("Collections & Saves", () => {
     assert.ok(!saved, "GET /users/me/saves should report saved:false after a failed POST /saves");
   });
 
+  // ── collection_id not found → retryWithDefault hint + fallback succeeds ─────
+  it("POST /saves with unknown collection_id returns retryWithDefault:true", async () => {
+    const UNKNOWN_COL = "99999999-9999-9999-9999-999999999999";
+    ({ url, close } = await startServer());
+
+    const res = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "post", entity_id: ENTITY_ID, collection_id: UNKNOWN_COL }),
+    });
+    assert.equal(res.status, 404, "unknown collection should be 404");
+    const body = await res.json();
+    assert.equal(body.error, "not_found");
+    assert.equal(body.retryWithDefault, true, "hint should be present so client can retry");
+  });
+
+  it("POST /saves fallback — retryWithDefault round-trip saves to default collection", async () => {
+    const UNKNOWN_COL = "99999999-9999-9999-9999-999999999999";
+    ({ url, close } = await startServer());
+
+    // First request: unknown collection → 404 with retryWithDefault
+    const firstRes = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "trip", entity_id: ENTITY_ID, collection_id: UNKNOWN_COL }),
+    });
+    assert.equal(firstRes.status, 404);
+    const firstBody = await firstRes.json();
+    assert.equal(firstBody.retryWithDefault, true);
+
+    // Retry without collection_id (simulating what the mobile client does)
+    const retryRes = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "trip", entity_id: ENTITY_ID }),
+    });
+    assert.equal(retryRes.status, 200, "retry to default collection should succeed");
+    const retryBody = await retryRes.json();
+    assert.equal(retryBody.saved, true, "item should be saved after fallback");
+    assert.ok(retryBody.collectionId, "should return a collectionId from default collection");
+
+    // Confirm the item is now findable
+    const checkRes = await fetch(
+      `${url}/api/users/me/saves?entity_type=trip&entity_id=${ENTITY_ID}`,
+      { headers: auth("owner-token") },
+    );
+    assert.equal(checkRes.status, 200);
+    const { saved } = await checkRes.json();
+    assert.ok(saved, "GET /users/me/saves should report saved:true after fallback save");
+  });
+
   // ── isSaved hydration: check is scoped by entity_type ────────────────────
   it("saved:true for post entity does not bleed into event check", async () => {
     const POST_ID = "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb";

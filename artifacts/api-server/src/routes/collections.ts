@@ -481,7 +481,14 @@ router.post("/saves", async (req, res) => {
       .eq("owner_id", user.id)
       .maybeSingle();
 
-    if (!col) { sendError(res, "not_found", "Collection not found"); return; }
+    if (!col) {
+      res.status(404).json({
+        error: "not_found",
+        message: "Collection not found",
+        retryWithDefault: true,
+      });
+      return;
+    }
     colId = (col as any).id as string;
   } else {
     // Auto-create or find default collection
