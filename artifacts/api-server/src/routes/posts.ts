@@ -1414,6 +1414,15 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const commentsSetting = (post as any).comments_setting ?? "everyone";
   const callerId = user.id;
   const authorId = (post as any).author_id as string;
+
+  // Block check: reject if either party has blocked the other
+  if (callerId !== authorId) {
+    const { data: block } = await sc.from("blocks").select("blocker_id")
+      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`)
+      .maybeSingle();
+    if (block) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+  }
+
   // Post owner can always comment on their own post
   if (callerId !== authorId && commentsSetting !== "everyone") {
     if (commentsSetting === "disabled") {
@@ -1960,9 +1969,16 @@ router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   }
 
   const replyIds = replyRows.map((r) => r.id as string);
-  const likeRows = replyIds.length > 0
-    ? ((await sc.from("comment_likes").select("comment_id, user_id").in("comment_id", replyIds)).data ?? [])
-    : [];
+  const [replySpansMap, likeRows] = await Promise.all([
+    enrichSpans(
+      sc, 'comment',
+      replyRows.map((r) => ({ id: r.id as string, content: (r.body ?? '') as string })),
+      user.id,
+    ),
+    replyIds.length > 0
+      ? sc.from("comment_likes").select("comment_id, user_id").in("comment_id", replyIds).then((r: any) => r.data ?? [])
+      : Promise.resolve([]),
+  ]);
 
   const likeCountMap: Record<string, number> = {};
   const likedByMeSet = new Set<string>();
@@ -1972,7 +1988,8 @@ router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   }
 
   const replies = replyRows.map((r) => {
-    const pr = profileMap[r.user_id];
+    const pr    = profileMap[r.user_id];
+    const spans = replySpansMap[r.id] ?? { tags: [], hashtagUsages: [] };
     return {
       id: r.id,
       body: r.body,
@@ -1982,8 +1999,8 @@ router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
       canDelete: r.user_id === user.id || isPostAuthor,
       likeCount: likeCountMap[r.id] ?? 0,
       likedByMe: likedByMeSet.has(r.id),
-      tags: [],
-      hashtagUsages: [],
+      tags: spans.tags,
+      hashtagUsages: spans.hashtagUsages,
       author: pr
         ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
         : { id: r.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },
@@ -2018,14 +2035,24 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
-  // Verify parent comment belongs to the post
-  const { data: parent } = await sc.from("posts_comments").select("id, post_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  // Verify parent comment belongs to the post and is a root comment (one-level depth guard)
+  const { data: parent } = await sc.from("posts_comments").select("id, post_id, parent_comment_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
   if (!parent || (parent as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
+  if ((parent as any).parent_comment_id !== null) { sendError(res, "invalid_payload", "Cannot reply to a reply — only one level of nesting is supported"); return; }
 
   // Enforce comments_setting (same rules as top-level comments)
   const commentsSetting = (post as any).comments_setting ?? "everyone";
   const callerId = user.id;
   const authorId = (post as any).author_id as string;
+
+  // Block check: reject if either party has blocked the other
+  if (callerId !== authorId) {
+    const { data: block } = await sc.from("blocks").select("blocker_id")
+      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`)
+      .maybeSingle();
+    if (block) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+  }
+
   if (callerId !== authorId && commentsSetting !== "everyone") {
     if (commentsSetting === "disabled") { sendError(res, "comments_disabled", "Comments are disabled on this post"); return; }
     if (commentsSetting === "friends") {
@@ -2057,6 +2084,53 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
 
   const { data: profile } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id).single();
 
+  // Write-time tagging for replies — same as top-level comments
+  {
+    const scTagging = getServiceClient();
+    const replyBody = (reply as any).body as string;
+    if (scTagging && replyBody.trim().length > 0) {
+      try {
+        const taggedIds = await processTagging({
+          db: scTagging,
+          authorId: user.id,
+          sourceType: 'comment',
+          sourceId: (reply as any).id,
+          content: replyBody,
+          logger: req.log,
+        });
+        if (taggedIds.length > 0) {
+          const { data: taggerProfile } = await scTagging.from('profiles').select('handle').eq('id', user.id).single();
+          const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+          const notifSvc   = new NotificationService(scTagging);
+          const notifRouter = new NotificationRouter(scTagging);
+          await Promise.allSettled(
+            taggedIds.map(async (taggedId) => {
+              const row = await notifSvc.create({
+                userId: taggedId,
+                eventType: 'pulse.user_tagged',
+                actorId: user.id,
+                sourceType: 'comment',
+                sourceId: (reply as any).id,
+                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a reply.` },
+              });
+              if (row) await notifRouter.route(row);
+            }),
+          );
+        }
+      } catch (err) {
+        req.log.warn({ err }, 'reply tagging side-effect failed (non-fatal)');
+      }
+    }
+  }
+
+  // Build enriched spans for response (so the client sees real tags/hashtagUsages immediately)
+  const replySpans = await enrichSpans(
+    sc, 'comment',
+    [{ id: (reply as any).id, content: (reply as any).body }],
+    user.id,
+  ).catch(() => ({} as Record<string, any>));
+  const spans = replySpans[(reply as any).id] ?? { tags: [], hashtagUsages: [] };
+
   res.status(201).json({
     ok: true,
     reply: {
@@ -2068,8 +2142,8 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
       canDelete: true,
       likeCount: 0,
       likedByMe: false,
-      tags: [],
-      hashtagUsages: [],
+      tags: spans.tags,
+      hashtagUsages: spans.hashtagUsages,
       author: profile
         ? { id: profile.id, handle: profile.handle, name: profile.name, avatarUrl: profile.avatar_url ?? null }
         : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },

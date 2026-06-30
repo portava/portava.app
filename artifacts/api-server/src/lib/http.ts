@@ -43,7 +43,8 @@ export type ApiErrorCode =
   | "rate_limited"
   | "comments_disabled"
   | "comments_limited"
-  | "sharing_disabled";
+  | "sharing_disabled"
+  | "blocked_user";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -58,6 +59,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   comments_disabled: 403,
   comments_limited: 403,
   sharing_disabled: 403,
+  blocked_user: 403,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {
