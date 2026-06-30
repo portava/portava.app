@@ -46,6 +46,7 @@ import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import compassRouter from "./compass";
 import adminCompassRouter from "./adminCompass";
 import routePlanRouter from "./routePlan";
+import interactionContextRouter from "./interactionContext";
 
 const router: IRouter = Router();
 
@@ -96,5 +97,6 @@ router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(adminCompassRouter);
 router.use(routePlanRouter);
+router.use(interactionContextRouter);
 
 export default router;
