@@ -975,3 +975,137 @@ describe("Follow cooldown — active follow cooldown blocks follow attempt", () 
     assert.ok(body.error, "error body must have an error code");
   });
 });
+
+// =============================================================================
+// Tests 26–29: Status/list endpoints for mute, save, restrict
+// (Verifies GET /me/restrictions, /users/:id/mute-status, /users/:id/save-status,
+//  /users/:id/restrict-status — routes implemented in Phase 5/6, confirmed here)
+// =============================================================================
+
+describe("Mute — GET /users/:id/mute-status reflects active mute", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: mutesRouter } = await import("../routes/mutes.js");
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_mutes: [{
+        id: "ms1", muter_id: ALICE_ID, muted_id: BOB_ID,
+        mute_types: ["messages", "posts"], created_at: new Date().toISOString(),
+      }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(mutesRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("26. GET /users/:id/mute-status returns muted=true with muteTypes when mute exists", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/mute-status`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.userId, BOB_ID);
+    assert.equal(body.muted, true);
+    assert.deepEqual(body.muteTypes, ["messages", "posts"]);
+  });
+});
+
+describe("Save — GET /users/:id/save-status reflects active save", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: savesRouter } = await import("../routes/saves.js");
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_saves: [{
+        id: "sv1", saver_id: ALICE_ID, saved_id: BOB_ID,
+        created_at: new Date().toISOString(),
+      }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(savesRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("27. GET /users/:id/save-status returns saved=true when save row exists", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/save-status`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.userId, BOB_ID);
+    assert.equal(body.saved, true);
+  });
+});
+
+describe("Restrict — GET /me/restrictions lists restricted users", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: restrictRouter } = await import("../routes/restrict.js");
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_restrictions: [{
+        id: "r1", restrictor_id: ALICE_ID, restricted_id: BOB_ID,
+        options: { reason: "unwanted contact" }, created_at: new Date().toISOString(),
+      }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(restrictRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("28. GET /me/restrictions returns list including pre-populated restriction", async () => {
+    const res = await fetch(`${url}/api/me/restrictions`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.ok(Array.isArray(body.restricted), "should return restricted array");
+    assert.equal(body.restricted.length, 1);
+    assert.equal(body.restricted[0].id, BOB_ID);
+    assert.equal(body.restricted[0].restrictionReason, "unwanted contact");
+  });
+});
+
+describe("Restrict — GET /users/:id/restrict-status reflects active restriction", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: restrictRouter } = await import("../routes/restrict.js");
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_restrictions: [{
+        id: "r2", restrictor_id: ALICE_ID, restricted_id: BOB_ID,
+        options: { reason: "manual" }, created_at: new Date().toISOString(),
+      }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(restrictRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("29. GET /users/:id/restrict-status returns restricted=true when restriction exists", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/restrict-status`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.userId, BOB_ID);
+    assert.equal(body.restricted, true);
+    assert.equal(body.restrictionReason, "manual");
+  });
+});
