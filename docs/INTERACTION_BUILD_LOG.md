@@ -843,3 +843,66 @@ Code review identified six additional requirements. All 41 tests (22 Phase 3 + 1
 | `POST /me/requests/friend_request/:id/cancel` | `canCancelFriendRequest` |
 
 Gate: ✅ PASSED — 19/19 Phase 4 tests pass. 22/22 Phase 3 tests pass. Typecheck clean.
+
+---
+
+## Phase 5 — Interaction UI System (hooks + components)
+
+**Date:** 2026-06-30  
+**Typecheck:** ✅ PASSED — clean, zero errors
+
+### Hooks delivered (10)
+
+| Hook | File | Purpose |
+|------|------|---------|
+| `useUserInteractionContext` | `src/hooks/useUserInteractionContext.ts` | Fetches `GET /api/users/:id/interaction-context` |
+| `useProfileActions` | `src/hooks/useProfileActions.ts` | Derives available actions from permissions |
+| `useRelationshipLabel` | `src/hooks/useRelationshipLabel.ts` | Human-readable label for relationship state |
+| `useCanMessageUser` | `src/hooks/useCanMessageUser.ts` | Boolean + reason for messaging eligibility |
+| `useBlockUser` | `src/hooks/useBlockUser.ts` | Block / unblock with optimistic state |
+| `useReportUser` | `src/hooks/useReportUser.ts` | Submit abuse reports |
+| `useMuteUser` | `src/hooks/useMuteUser.ts` | Mute / unmute a user |
+| `useRestrictUser` | `src/hooks/useRestrictUser.ts` | Restrict / unrestrict a user |
+| `useFriendRequestActions` | `src/hooks/useFriendRequestActions.ts` | Re-exports `useFriendStatus` |
+| `useFollowActions` | `src/hooks/useFollowActions.ts` | Re-exports `useFollow` |
+| `useSavedProfileActions` | `src/hooks/useSavedProfileActions.ts` | Save / unsave a profile |
+
+### Components delivered (13 + 1 barrel)
+
+| Component | File |
+|-----------|------|
+| `RelationshipBadge` | `src/components/interaction/RelationshipBadge.tsx` |
+| `KnownFromRow` | `src/components/interaction/KnownFromRow.tsx` |
+| `UserAvatarButton` | `src/components/interaction/UserAvatarButton.tsx` |
+| `UserNameButton` | `src/components/interaction/UserNameButton.tsx` |
+| `BlockUserConfirmSheet` | `src/components/interaction/BlockUserConfirmSheet.tsx` |
+| `ReportUserSheet` | `src/components/interaction/ReportUserSheet.tsx` |
+| `RestrictUserSheet` | `src/components/interaction/RestrictUserSheet.tsx` |
+| `MuteUserSheet` | `src/components/interaction/MuteUserSheet.tsx` |
+| `UserOverflowMenu` | `src/components/interaction/UserOverflowMenu.tsx` |
+| `ProfileActionBar` | `src/components/interaction/ProfileActionBar.tsx` |
+| `MessageRequestCard` | `src/components/interaction/MessageRequestCard.tsx` |
+| `UserMiniProfileCard` | `src/components/interaction/UserMiniProfileCard.tsx` |
+| `SocialSafetyControlsScreen` | `src/components/interaction/SocialSafetyControlsScreen.tsx` |
+| barrel | `src/components/interaction/index.ts` |
+
+### Routes wired
+
+- `app/settings/safety.tsx` — Safety & Privacy screen (linked from Settings → Safety)
+- `app/muted-users.tsx` — Muted accounts list (with inline unmute)
+- `app/restricted-users.tsx` — Restricted accounts list (with inline unrestrict)
+
+### Services added
+
+- `src/services/interactionContext.ts`
+- `src/services/mutes.ts`
+- `src/services/saves.ts`
+- `src/services/restrict.ts`
+- `src/services/reports.ts`
+
+### Fixes applied
+
+- Unescaped apostrophes in `RestrictUserSheet.tsx` string literals converted to double-quoted strings
+- `run()` helper in `ProfileActionBar` and `UserMiniProfileCard` typed as `() => Promise<any> | undefined` to accept optional-chained callbacks
+
+Gate: ✅ PASSED — all 10 hooks + 13 components + 1 barrel. Typecheck clean.
