@@ -3,7 +3,7 @@
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
  */
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
@@ -76,6 +76,37 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const vp = viewport ?? fallback;
   const cameraRef = useRef<any>(null);
   const hasUser = userLat != null && userLng != null;
+
+  // Track whether the map has been mounted so we can skip the first vp
+  // (initialViewState handles the first position; subsequent changes use setCamera).
+  const mountedRef = useRef(false);
+  const prevCenterRef = useRef<[number, number] | null>(null);
+
+  useEffect(() => {
+    if (!vp) return;
+    const key = `${vp.center[0].toFixed(4)},${vp.center[1].toFixed(4)}`;
+    const prevKey = prevCenterRef.current
+      ? `${prevCenterRef.current[0].toFixed(4)},${prevCenterRef.current[1].toFixed(4)}`
+      : null;
+
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      prevCenterRef.current = vp.center;
+      return; // initialViewState handles first render
+    }
+
+    if (key === prevKey) return; // no meaningful change
+    prevCenterRef.current = vp.center;
+
+    if (cameraRef.current) {
+      cameraRef.current.setCamera({
+        centerCoordinate: vp.center,
+        zoomLevel: vp.zoom,
+        animationDuration: 500,
+      });
+    }
+  }, [vp]);
+
   const recenterOnMe = () => {
     if (hasUser && cameraRef.current) {
       cameraRef.current.setCamera({

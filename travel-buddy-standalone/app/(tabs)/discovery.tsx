@@ -94,10 +94,11 @@ export default function DiscoveryHub() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  // Seed from location context city if available; fall back to 'Paris' so
-  // content fetches start immediately without a blank screen.
+  // Seed from location context city if available; fall back to '' so that
+  // no spurious city is fetched before GPS resolves. The useEffect below
+  // will update destination once locationState.place.city is known.
   const [destination, setDestination] = useState(
-    () => locationState.place.city ?? 'Paris'
+    () => locationState.place.city ?? ''
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
     () => locationState.coords?.lat ?? null

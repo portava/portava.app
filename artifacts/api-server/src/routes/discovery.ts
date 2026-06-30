@@ -35,7 +35,7 @@ const router = Router();
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_URL  = "https://overpass-api.de/api/interpreter";
-const FETCH_TIMEOUT_MS = 9_000;
+const FETCH_TIMEOUT_MS = 25_000;
 const CACHE_TTL_MS     = 2 * 60 * 60 * 1_000; // 2 hours
 const MAX_FETCH        = 60;
 const PAGE_SIZE        = 20;
@@ -274,7 +274,7 @@ async function queryOverpass(
   category: string,
 ): Promise<DiscoveryPlace[]> {
   const filter = overpassFilter(category, radiusM, lat, lng);
-  const query  = `[out:json][timeout:8];\n${filter}\nout body center qt ${MAX_FETCH};`;
+  const query  = `[out:json][timeout:20];\n${filter}\nout body center qt ${MAX_FETCH};`;
 
   // GET avoids Content-Type 406 issues with undici (Node built-in fetch).
   const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
