@@ -1109,3 +1109,139 @@ describe("Restrict — GET /users/:id/restrict-status reflects active restrictio
     assert.equal(body.restrictionReason, "manual");
   });
 });
+
+// =============================================================================
+// Tests 30–33: interaction-context extended response fields
+// Verifies the augmented fields (iBlocked, theyBlockedMe, iMuted, iRestricted,
+// context.isFriend, context.areMutualFollowers) that the mobile permission
+// engine and relationship-label hook depend on directly.
+// =============================================================================
+
+describe("interaction-context — iBlocked / theyBlockedMe derived from relationshipLabel", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: ctxRouter } = await import("../routes/interactionContext.js");
+    // Viewer (alice) blocks target (bob) → iBlocked=true, theyBlockedMe=false
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      blocks:   [{ blocker_id: ALICE_ID, blocked_id: BOB_ID }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(ctxRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("30. iBlocked=true and theyBlockedMe=false when viewer blocks target", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/interaction-context`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.iBlocked,      true,  "viewer blocks target → iBlocked");
+    assert.equal(body.theyBlockedMe, false, "viewer blocks target → theyBlockedMe=false");
+    assert.equal(body.canViewProfile, false, "block hides profile");
+  });
+});
+
+describe("interaction-context — theyBlockedMe when target is the blocker", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: ctxRouter } = await import("../routes/interactionContext.js");
+    // Target (bob) blocks viewer (alice) → theyBlockedMe=true, iBlocked=false
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      blocks:   [{ blocker_id: BOB_ID, blocked_id: ALICE_ID }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(ctxRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("31. theyBlockedMe=true and iBlocked=false when target blocks viewer", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/interaction-context`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.theyBlockedMe, true,  "target blocks viewer → theyBlockedMe");
+    assert.equal(body.iBlocked,      false, "target blocks viewer → iBlocked=false");
+  });
+});
+
+describe("interaction-context — iMuted and iRestricted from interaction tables", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: ctxRouter } = await import("../routes/interactionContext.js");
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_mutes: [
+        { id: "m1", muter_id: ALICE_ID, muted_id: BOB_ID,
+          mute_types: ["all"], created_at: new Date().toISOString() },
+      ],
+      user_restrictions: [
+        { id: "r1", restrictor_id: ALICE_ID, restricted_id: BOB_ID,
+          options: {}, created_at: new Date().toISOString() },
+      ],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(ctxRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("32. iMuted=true and iRestricted=true when both interaction rows exist", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/interaction-context`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.iMuted,      true, "mute row exists → iMuted");
+    assert.equal(body.iRestricted, true, "restriction row exists → iRestricted");
+  });
+});
+
+describe("interaction-context — context.areMutualFollowers and context.isFriend", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: ctxRouter } = await import("../routes/interactionContext.js");
+    // Mutual follows: alice→bob and bob→alice → areMutualFollowers=true, isFriend=false
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: baseProfiles(),
+      user_follows: [
+        { follower_id: ALICE_ID, following_id: BOB_ID, created_at: new Date().toISOString() },
+        { follower_id: BOB_ID,   following_id: ALICE_ID, created_at: new Date().toISOString() },
+      ],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(ctxRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("33. areMutualFollowers=true and isFriend=false for mutual-follow relationship", async () => {
+    const res = await fetch(`${url}/api/users/${BOB_ID}/interaction-context`, {
+      headers: bearer("alice-tok"),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.context.areMutualFollowers, true,  "mutual follows → areMutualFollowers");
+    assert.equal(body.context.isFriend,           false, "mutual follows only → isFriend=false");
+    assert.equal(body.iBlocked,                   false, "no block");
+    assert.equal(body.iMuted,                     false, "no mute row");
+    assert.equal(body.iRestricted,                false, "no restriction row");
+  });
+});
