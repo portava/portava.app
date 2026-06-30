@@ -300,9 +300,12 @@ router.get("/me/trip-invites/pending", async (req, res) => {
 const PlanEditPermissionEnum = ["owner_only", "all_members", "specific_members"] as const;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
+const TripStatusEnum = ["planning", "ongoing", "completed", "cancelled"] as const;
+
 const PatchTripSchema = z.object({
   planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
   planEditors: z.array(z.string().regex(UUID_RE)).optional(),
+  status: z.enum(TripStatusEnum).optional(),
 });
 
 router.patch("/trips/:tripId", async (req, res) => {
@@ -315,19 +318,81 @@ router.patch("/trips/:tripId", async (req, res) => {
 
   const parsed = PatchTripSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { planEditPermission, planEditors } = parsed.data;
+  const { planEditPermission, planEditors, status } = parsed.data;
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Only the trip owner may change plan permissions
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // Only the trip owner may change trip settings
+  const { data: trip } = await sc.from("trips").select("owner_id, status, title").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can change plan permissions"); return; }
+  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
 
   if (planEditPermission !== undefined) {
     const { error } = await sc.from("trips").update({ plan_edit_permission: planEditPermission }).eq("id", tripId);
     if (error) { sendError(res, "db_error", error.message); return; }
+  }
+
+  if (status !== undefined && status !== (trip as any).status) {
+    const { error } = await sc.from("trips").update({ status, updated_at: new Date().toISOString() }).eq("id", tripId);
+    if (error) { sendError(res, "db_error", error.message); return; }
+
+    // Post-attendance review prompt — fire-and-forget when trip transitions to completed
+    if (status === "completed") {
+      void (async () => {
+        try {
+          const { data: members } = await sc
+            .from("trip_members")
+            .select("user_id")
+            .eq("trip_id", tripId);
+
+          if (members && (members as any[]).length > 0) {
+            const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
+            const tripTitle: string = (trip as any).title ?? "your trip";
+
+            // In-app notifications
+            await Promise.allSettled(
+              memberIds.map((uid) =>
+                sc.from("notifications").insert({
+                  user_id:           uid,
+                  actor_id:          user.id,
+                  notification_type: "review_prompt",
+                  content: {
+                    entityType: "trip",
+                    entityId:   tripId,
+                    entityName: tripTitle,
+                  },
+                  read: false,
+                }),
+              ),
+            );
+
+            // Push notifications via device tokens
+            const { data: devices } = await sc
+              .from("notification_devices")
+              .select("expo_push_token")
+              .in("user_id", memberIds);
+
+            const tokens: string[] = ((devices as any[]) ?? [])
+              .map((d: any) => d.expo_push_token)
+              .filter(Boolean);
+
+            if (tokens.length > 0) {
+              await sendPushNotification(tokens, {
+                title: "How was the trip?",
+                body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
+                data: {
+                  type:       "review_prompt",
+                  entityType: "trip",
+                  entityId:   tripId,
+                  entityName: tripTitle,
+                },
+              });
+            }
+          }
+        } catch {}
+      })();
+    }
   }
 
   // Replace plan_editors list when provided (always a full replacement)
@@ -346,7 +411,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   // Return current state
   const { data: updated } = await sc
     .from("trips")
-    .select("id, plan_edit_permission")
+    .select("id, plan_edit_permission, status")
     .eq("id", tripId)
     .maybeSingle();
 
@@ -357,6 +422,7 @@ router.patch("/trips/:tripId", async (req, res) => {
 
   res.json({
     tripId,
+    status:            (updated as any)?.status ?? null,
     planEditPermission: (updated as any)?.plan_edit_permission ?? "all_members",
     planEditors: (editorRows ?? []).map((r: any) => r.user_id as string),
   });

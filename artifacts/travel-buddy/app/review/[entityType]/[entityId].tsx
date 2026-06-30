@@ -13,6 +13,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   createReview,
+  createEventReview,
   REVIEW_TAGS,
   type ReviewEntityType,
 } from '../../../src/services/reviews';
@@ -93,14 +94,23 @@ export default function ReviewComposerScreen() {
 
     setSaving(true);
     try {
-      await createReview({
-        entityType: entityType as ReviewEntityType,
-        entityId,
-        rating,
-        body:      body.trim() || undefined,
-        tags,
-        anonymous,
-      });
+      if (entityType === 'event') {
+        await createEventReview({
+          eventId:   entityId,
+          rating,
+          body:      body.trim() || undefined,
+          anonymous,
+        });
+      } else {
+        await createReview({
+          entityType: entityType as ReviewEntityType,
+          entityId,
+          rating,
+          body:      body.trim() || undefined,
+          tags,
+          anonymous,
+        });
+      }
       Alert.alert('Review submitted', 'Thank you for your review!', [
         { text: 'OK', onPress: () => router.back() },
       ]);

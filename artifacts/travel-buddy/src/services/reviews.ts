@@ -134,3 +134,48 @@ export async function deleteReview(reviewId: string): Promise<void> {
   });
   if (!res.ok) throw new Error('Failed to delete review');
 }
+
+// ── Event reviews (uses the legacy event_reviews endpoint in events.ts) ───────
+
+export interface EventReviewsResponse {
+  reviews: Review[];
+  page: number;
+  limit: number;
+}
+
+export async function createEventReview(params: {
+  eventId: string;
+  rating: number;
+  body?: string;
+  anonymous?: boolean;
+}): Promise<Review> {
+  const res = await fetch(api(`events/${params.eventId}/reviews`), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      rating:    params.rating,
+      body:      params.body,
+      anonymous: params.anonymous ?? false,
+    }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw Object.assign(
+      new Error((json as any).message ?? 'Failed to create event review'),
+      { code: (json as any).error },
+    );
+  }
+  return res.json();
+}
+
+export async function getEventReviews(
+  eventId: string,
+  page = 1,
+  limit = 20,
+): Promise<EventReviewsResponse> {
+  const res = await fetch(api(`events/${eventId}/reviews?page=${page}&limit=${limit}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to load event reviews');
+  return res.json();
+}

@@ -1,8 +1,11 @@
 /**
- * ReviewsSection — embeddable reviews panel for event/trip detail screens.
+ * ReviewsSection — embeddable reviews panel for event/trip/booking detail screens.
+ *
+ * Event reviews use the legacy GET /api/events/:id/reviews endpoint (event_reviews table).
+ * Trip reviews use GET /api/trips/:id/reviews (reviews table).
  *
  * Shows aggregate rating (stars + count) + recent reviews.
- * Shows "Write a Review" CTA if the current user hasn't reviewed yet.
+ * Shows "Write a Review" CTA if canReview=true.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -16,8 +19,10 @@ import {
 import { router } from 'expo-router';
 import {
   getTripReviews,
+  getEventReviews,
   type Review,
   type ReviewsResponse,
+  type EventReviewsResponse,
   type ReviewEntityType,
 } from '../services/reviews';
 
@@ -57,7 +62,7 @@ function ReviewCard({ review }: { review: Review }) {
       {review.body ? (
         <Text style={s.reviewBody} numberOfLines={4}>{review.body}</Text>
       ) : null}
-      {review.tags.length > 0 && (
+      {review.tags && review.tags.length > 0 && (
         <View style={s.tagRow}>
           {review.tags.slice(0, 4).map((tag) => (
             <View key={tag} style={s.tag}>
@@ -87,18 +92,34 @@ export function ReviewsSection({
   entityName,
   canReview = false,
 }: ReviewsSectionProps) {
-  const [data, setData]       = useState<ReviewsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [reviews, setReviews]   = useState<Review[]>([]);
+  const [total, setTotal]       = useState(0);
+  const [avgRating, setAvg]     = useState<number | null>(null);
+  const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
-        let resp: ReviewsResponse | null = null;
         if (entityType === 'trip') {
-          resp = await getTripReviews(entityId, 1, 5);
+          const resp: ReviewsResponse = await getTripReviews(entityId, 1, 5);
+          if (active) {
+            setReviews(resp.reviews);
+            setTotal(resp.total);
+            setAvg(resp.avgRating);
+          }
+        } else if (entityType === 'event') {
+          const resp: EventReviewsResponse = await getEventReviews(entityId, 1, 5);
+          if (active) {
+            setReviews(resp.reviews);
+            setTotal(resp.reviews.length);
+            setAvg(
+              resp.reviews.length > 0
+                ? resp.reviews.reduce((sum, r) => sum + r.rating, 0) / resp.reviews.length
+                : null,
+            );
+          }
         }
-        if (active && resp) setData(resp);
       } catch {
         // silent — don't block the parent screen
       } finally {
@@ -125,19 +146,15 @@ export function ReviewsSection({
     );
   }
 
-  const reviews  = data?.reviews ?? [];
-  const avg      = data?.avgRating ?? null;
-  const total    = data?.total ?? reviews.length;
-
   return (
     <View style={s.container}>
       {/* Header row */}
       <View style={s.headerRow}>
         <Text style={s.sectionTitle}>Reviews</Text>
-        {avg !== null && (
+        {avgRating !== null && (
           <View style={s.avgRow}>
-            <Stars rating={avg} size={13} />
-            <Text style={s.avgText}>{avg.toFixed(1)} ({total})</Text>
+            <Stars rating={avgRating} size={13} />
+            <Text style={s.avgText}>{avgRating.toFixed(1)} ({total})</Text>
           </View>
         )}
       </View>

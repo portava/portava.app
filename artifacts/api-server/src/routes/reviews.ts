@@ -7,8 +7,11 @@
  * DELETE /api/reviews/:id                  — admin remove or author retract
  * POST   /api/reviews/:id/report           — report a review (routes to reports system)
  *
- * NOTE: GET /api/events/:id/reviews (from event_reviews table) lives in events.ts.
- * POST /api/reviews with entity_type=event writes to the unified `reviews` table.
+ * NOTE: Event reviews use a dedicated flow in events.ts (event_reviews table):
+ *   POST /api/events/:id/reviews  — write
+ *   GET  /api/events/:id/reviews  — read
+ *   DELETE /api/events/:id/reviews — delete (own)
+ * This router covers trips and rent_buddy_bookings only.
  */
 
 import { Router } from "express";
@@ -44,9 +47,10 @@ async function requireAdminGuard(
 
 /**
  * Checks whether the caller is eligible to review the given entity:
- *  - entity_type=event:  confirmed attendance in event_attendee_states
  *  - entity_type=trip:   active trip member (trip_members)
  *  - entity_type=rent_buddy_booking: party to the completed booking
+ *
+ * Note: event eligibility is handled by POST /api/events/:id/reviews in events.ts.
  */
 async function checkEligibility(
   sc: any,
@@ -55,16 +59,6 @@ async function checkEligibility(
   entityId: string,
 ): Promise<boolean> {
   switch (entityType) {
-    case "event": {
-      const { data } = await sc
-        .from("event_attendee_states")
-        .select("confirmed_at")
-        .eq("event_id", entityId)
-        .eq("user_id", userId)
-        .not("confirmed_at", "is", null)
-        .maybeSingle();
-      return !!data;
-    }
     case "trip": {
       const { data } = await sc
         .from("trip_members")
@@ -92,7 +86,7 @@ async function checkEligibility(
 // ── POST /api/reviews ─────────────────────────────────────────────────────────
 
 const CreateReviewSchema = z.object({
-  entityType:  z.enum(["event", "trip", "rent_buddy_booking"]),
+  entityType:  z.enum(["trip", "rent_buddy_booking"]),
   entityId:    z.string().uuid(),
   rating:      z.number().int().min(1).max(5),
   body:        z.string().max(2000).optional(),
