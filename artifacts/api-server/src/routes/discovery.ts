@@ -831,8 +831,35 @@ router.get("/discovery/community", async (req, res) => {
       };
     });
 
+    // Batch-fetch saved state (optional auth — non-fatal when unauthenticated)
+    const placeIds = items.map((i) => i.id);
+    const savedPlaceIds = new Set<string>();
+    try {
+      const authHeaderComm = req.headers.authorization;
+      if (authHeaderComm?.startsWith("Bearer ") && isServiceClientReady && placeIds.length > 0) {
+        const commSc = getServiceClient()!;
+        const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
+        if (authDataComm?.user) {
+          const { data: userCols } = await commSc
+            .from("collections")
+            .select("id")
+            .eq("owner_id", authDataComm.user.id);
+          const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+          if (colIds.length > 0) {
+            const { data: savedItems } = await commSc
+              .from("collection_items")
+              .select("entity_id")
+              .eq("entity_type", "place")
+              .in("collection_id", colIds)
+              .in("entity_id", placeIds);
+            for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+
     res.json({
-      items,
+      items: items.map((i) => ({ ...i, isSaved: savedPlaceIds.has(i.id) })),
       city,
       total: items.length,
       ageFilterMeta: {

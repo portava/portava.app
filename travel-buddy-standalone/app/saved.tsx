@@ -1,328 +1,481 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+/**
+ * Saved — Collections hub screen.
+ *
+ * Shows all of the user's collections as a grid of cards.
+ * Tapping a collection opens its items list within the same screen.
+ * The legacy place-bookmarks are preserved in the default "Saved" collection.
+ */
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, FlatList, StyleSheet,
-  ActivityIndicator, Pressable, Animated,
+  ActivityIndicator, Pressable, Animated, TextInput, Modal,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { Chip } from '../src/components/ui';
-import { color, space, radius, type as t } from '../src/theme/tokens';
-import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
-import { MapPin, Bookmark, Route, List, Map, Trash2 } from 'lucide-react-native';
-import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
-import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
-import { removeSaved } from '../src/services/discoveryBookmarks';
-import { placesForTab } from '../src/components/savedPlacesMapHelpers';
+import { color, space, radius, shadow, type as t } from '../src/theme/tokens';
+import {
+  getCollections, createCollection, deleteCollection, updateCollection,
+  getCollectionItems,
+  type Collection, type CollectionItem,
+} from '../src/services/collections';
+import {
+  Bookmark, FolderPlus, Folder, Trash2, X, ChevronRight,
+  ChevronLeft, MapPin, User, Image as ImageIcon, Hash, CalendarDays,
+  Pencil, ChevronRight as NavArrow,
+} from 'lucide-react-native';
 
-const TABS = ['Places', 'Hotels', 'Nightlife', 'Itineraries'];
+// ── Suggested starter collections ────────────────────────────────────────────
+const STARTER_SUGGESTIONS = ['Food', 'Nightlife', 'Beaches', 'Hidden Gems', 'Future Trips'];
 
-const LIST_CAT_KEY      = 'saved_places_list_cat_v1_global';
-const VIEW_MODE_KEY     = 'saved_places_view_mode_v1';
-
-// ── Place list card ───────────────────────────────────────────────────────────
-
-interface PlaceCardProps {
-  place: BookmarkedPlace;
-  onAddToRoute: (place: BookmarkedPlace) => void;
-  onRemove: (id: string) => void;
+// ── Entity type icon ──────────────────────────────────────────────────────────
+function EntityIcon({ type, size = 14 }: { type: string; size?: number }) {
+  const c = color.mute;
+  switch (type) {
+    case 'place':   return <MapPin size={size} color={c} />;
+    case 'profile': return <User size={size} color={c} />;
+    case 'hashtag': return <Hash size={size} color={c} />;
+    case 'event':   return <CalendarDays size={size} color={c} />;
+    default:        return <ImageIcon size={size} color={c} />;
+  }
 }
 
-function PlaceCard({ place, onAddToRoute, onRemove }: PlaceCardProps) {
+// ── Entity routing ───────────────────────────────────────────────────────────
+function routeForItem(item: CollectionItem): string | null {
+  switch (item.entityType) {
+    case 'post':      return `/post/${item.entityId}`;
+    case 'event':     return `/event/${item.entityId}`;
+    case 'trip':      return `/trip/${item.entityId}`;
+    case 'profile':   return `/u/${item.entityId}`;
+    case 'place':     return `/place/${item.entityId}`;
+    case 'hashtag':   return `/hashtag/${item.title?.startsWith('#') ? item.title.slice(1) : item.entityId}`;
+    case 'highlight': return null;
+    default:          return null;
+  }
+}
+
+// ── Collection grid card ──────────────────────────────────────────────────────
+interface CollectionCardProps {
+  col: Collection;
+  onPress: () => void;
+  onDelete?: () => void;
+  onRename?: () => void;
+}
+
+function CollectionCard({ col, onPress, onDelete, onRename }: CollectionCardProps) {
   return (
-    <View style={s.card}>
-      <View style={s.cardIcon}>
-        <MapPin size={16} color={color.signal} />
+    <Pressable
+      style={({ pressed }) => [s.colCard, pressed && { opacity: 0.8 }]}
+      onPress={onPress}
+    >
+      <View style={s.colCoverPlaceholder}>
+        <Folder size={28} color={color.signal} />
       </View>
-      <View style={s.cardBody}>
-        <Text style={s.cardName} numberOfLines={1}>{place.name}</Text>
-        {place.category ? (
-          <Text style={s.cardMeta} numberOfLines={1}>{place.category}</Text>
-        ) : null}
-        {place.address ? (
-          <Text style={s.cardAddress} numberOfLines={1}>{place.address}</Text>
-        ) : null}
+      <View style={s.colCardBody}>
+        <Text style={s.colName} numberOfLines={1}>{col.name}</Text>
+        <Text style={s.colMeta}>
+          {col.itemCount} {col.itemCount === 1 ? 'item' : 'items'}
+        </Text>
       </View>
-      <Pressable style={s.routeBtn} onPress={() => onAddToRoute(place)} hitSlop={8}>
-        <Route size={15} color={color.signal} />
-      </Pressable>
-      <Pressable style={s.removeBtn} onPress={() => onRemove(place.id)} hitSlop={8}>
-        <Trash2 size={15} color={color.mute} />
-      </Pressable>
-    </View>
+      <View style={s.colCardActions}>
+        {!col.isDefault && onRename && (
+          <Pressable
+            hitSlop={8}
+            onPress={(e) => { (e as any).stopPropagation?.(); onRename(); }}
+            style={s.actionBtn}
+          >
+            <Pencil size={14} color={color.mute} />
+          </Pressable>
+        )}
+        {!col.isDefault && onDelete && (
+          <Pressable
+            hitSlop={8}
+            onPress={(e) => { (e as any).stopPropagation?.(); onDelete(); }}
+            style={s.actionBtn}
+          >
+            <Trash2 size={14} color={color.mute} />
+          </Pressable>
+        )}
+        <ChevronRight size={16} color={color.faint} />
+      </View>
+    </Pressable>
   );
 }
 
-// ── View mode toggle ──────────────────────────────────────────────────────────
-
-interface ViewToggleProps {
-  mode: 'list' | 'map';
-  onChange: (m: 'list' | 'map') => void;
-}
-
-function ViewToggle({ mode, onChange }: ViewToggleProps) {
-  return (
-    <View style={s.toggleRow}>
-      <Pressable
-        style={[s.toggleBtn, mode === 'list' && s.toggleActive]}
-        onPress={() => onChange('list')}
-      >
-        <List size={14} color={mode === 'list' ? color.signal : color.mute} />
-        <Text style={[s.toggleLabel, mode === 'list' && s.toggleLabelActive]}>List</Text>
-      </Pressable>
-      <Pressable
-        style={[s.toggleBtn, mode === 'map' && s.toggleActive]}
-        onPress={() => onChange('map')}
-      >
-        <Map size={14} color={mode === 'map' ? color.signal : color.mute} />
-        <Text style={[s.toggleLabel, mode === 'map' && s.toggleLabelActive]}>Map</Text>
-      </Pressable>
+// ── Collection item row ────────────────────────────────────────────────────────
+function CollectionItemRow({ item }: { item: CollectionItem }) {
+  const dest = routeForItem(item);
+  const inner = (
+    <View style={s.itemRow}>
+      <View style={s.itemIcon}>
+        <EntityIcon type={item.entityType} size={15} />
+      </View>
+      <View style={s.itemBody}>
+        <Text style={s.itemTitle} numberOfLines={1}>
+          {item.title ?? item.entityId.slice(0, 8)}
+        </Text>
+        <Text style={s.itemMeta}>{item.entityType}</Text>
+      </View>
+      {dest ? <NavArrow size={14} color={color.faint} /> : null}
     </View>
+  );
+
+  if (!dest) return inner;
+
+  return (
+    <Pressable
+      onPress={() => router.push(dest as any)}
+      style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+    >
+      {inner}
+    </Pressable>
   );
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// ── Collection items view ─────────────────────────────────────────────────────
+interface CollectionItemsViewProps {
+  collection: Collection;
+  onBack: () => void;
+}
 
-export default function Saved() {
-  const [tab, setTab]           = useState('Places');
-  const [places, setPlaces]     = useState<BookmarkedPlace[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-  const [builderPlace, setBuilderPlace] = useState<BookmarkedPlace | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-  const errorToastY = useRef(new Animated.Value(80)).current;
-
-  const showRemoveError = useCallback((msg: string) => {
-    setRemoveError(msg);
-    Animated.spring(errorToastY, { toValue: 0, useNativeDriver: true }).start();
-    setTimeout(() => {
-      Animated.timing(errorToastY, { toValue: 80, duration: 220, useNativeDriver: true }).start(
-        () => setRemoveError(null),
-      );
-    }, 3000);
-  }, [errorToastY]);
-
-  // Restore persisted tab and viewMode on mount
-  useEffect(() => {
-    AsyncStorage.multiGet([LIST_CAT_KEY, VIEW_MODE_KEY]).then(([[, storedTab], [, storedMode]]) => {
-      if (storedTab && TABS.includes(storedTab)) setTab(storedTab);
-      if (storedMode === 'map') setViewMode('map');
-    }).catch(() => {});
-  }, []);
-
-  // Persist tab changes
-  const handleTabChange = useCallback((next: string) => {
-    setTab(next);
-    AsyncStorage.setItem(LIST_CAT_KEY, next).catch(() => {});
-  }, []);
+function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
+  const [items, setItems]     = useState<CollectionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor]   = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const data = await listSaved();
-      setPlaces(data);
-    } catch {
-      setPlaces([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    const result = await getCollectionItems(collection.id);
+    setItems(result.items);
+    setHasMore(result.hasMore);
+    setCursor(result.nextCursor);
+    setLoading(false);
+  }, [collection.id]);
 
-  useEffect(() => { void load(); }, [load]);
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  // Persist viewMode when the user explicitly toggles it
-  const handleViewModeChange = useCallback((next: 'list' | 'map') => {
-    setViewMode(next);
-    AsyncStorage.setItem(VIEW_MODE_KEY, next).catch(() => {});
+  const loadMore = async () => {
+    if (!hasMore || !cursor || loadingMore) return;
+    setLoadingMore(true);
+    const result = await getCollectionItems(collection.id, cursor);
+    setItems((prev) => [...prev, ...result.items]);
+    setHasMore(result.hasMore);
+    setCursor(result.nextCursor);
+    setLoadingMore(false);
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* Custom sub-header with in-screen back button */}
+      <View style={s.subHeader}>
+        <Pressable onPress={onBack} style={s.backBtn} hitSlop={8}>
+          <ChevronLeft size={22} color={color.ink} />
+        </Pressable>
+        <Text style={s.subHeaderTitle} numberOfLines={1}>{collection.name}</Text>
+        <Text style={s.subHeaderMeta}>
+          {collection.itemCount} {collection.itemCount === 1 ? 'item' : 'items'}
+        </Text>
+      </View>
+
+      {loading ? (
+        <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+      ) : items.length === 0 ? (
+        <View style={s.center}>
+          <Bookmark size={32} color={color.haze} />
+          <Text style={s.emptyTitle}>Nothing saved here yet</Text>
+          <Text style={s.emptySub}>
+            Tap the bookmark icon on posts, places, and more to add items.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: space.lg, gap: space.sm }}
+          renderItem={({ item }) => <CollectionItemRow item={item} />}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={loadingMore ? (
+            <View style={{ paddingVertical: space.lg, alignItems: 'center' }}>
+              <ActivityIndicator color={color.signal} />
+            </View>
+          ) : null}
+        />
+      )}
+    </View>
+  );
+}
+
+// ── Create collection modal ───────────────────────────────────────────────────
+interface CreateCollectionModalProps {
+  visible: boolean;
+  existingNames: string[];
+  onClose: () => void;
+  onCreated: (col: Collection) => void;
+}
+
+function CreateCollectionModal({
+  visible, existingNames, onClose, onCreated,
+}: CreateCollectionModalProps) {
+  const [name, setName]       = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleCreate = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || loading) return;
+    setLoading(true);
+    const col = await createCollection(trimmed);
+    setLoading(false);
+    if (col) { setName(''); onCreated(col); }
+  };
+
+  const suggestions = STARTER_SUGGESTIONS.filter((n) => !existingNames.includes(n));
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.modalBackdrop} onPress={onClose} />
+      <View style={s.modalBox}>
+        <View style={s.modalHeader}>
+          <Text style={s.modalTitle}>New collection</Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <X size={20} color={color.ink} />
+          </Pressable>
+        </View>
+        <TextInput
+          style={s.modalInput}
+          value={name}
+          onChangeText={setName}
+          placeholder="Collection name"
+          placeholderTextColor={color.faint}
+          autoFocus
+          maxLength={120}
+          returnKeyType="done"
+          onSubmitEditing={handleCreate}
+        />
+        {suggestions.length > 0 && (
+          <View style={s.suggestRow}>
+            {suggestions.map((sug) => (
+              <Pressable key={sug} style={chips.chip} onPress={() => setName(sug)}>
+                <Text style={chips.chipLabel}>{sug}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        <Pressable
+          style={[s.modalConfirm, (!name.trim() || loading) && s.btnDisabled]}
+          onPress={handleCreate}
+          disabled={!name.trim() || loading}
+        >
+          {loading
+            ? <ActivityIndicator size="small" color={color.onInk} />
+            : <Text style={s.modalConfirmText}>Create</Text>
+          }
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Rename collection modal ───────────────────────────────────────────────────
+interface RenameCollectionModalProps {
+  collection: Collection | null;
+  onClose: () => void;
+  onRenamed: (col: Collection) => void;
+}
+
+function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollectionModalProps) {
+  const [name, setName]       = useState(collection?.name ?? '');
+  const [loading, setLoading] = useState(false);
+
+  // Keep input in sync when the target collection changes
+  React.useEffect(() => { setName(collection?.name ?? ''); }, [collection?.id]);
+
+  const handleRename = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || !collection || loading || trimmed === collection.name) return;
+    setLoading(true);
+    const updated = await updateCollection(collection.id, { name: trimmed });
+    setLoading(false);
+    if (updated) onRenamed(updated);
+  };
+
+  return (
+    <Modal visible={!!collection} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.modalBackdrop} onPress={onClose} />
+      <View style={s.modalBox}>
+        <View style={s.modalHeader}>
+          <Text style={s.modalTitle}>Rename collection</Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <X size={20} color={color.ink} />
+          </Pressable>
+        </View>
+        <TextInput
+          style={s.modalInput}
+          value={name}
+          onChangeText={setName}
+          placeholder="Collection name"
+          placeholderTextColor={color.faint}
+          autoFocus
+          maxLength={120}
+          returnKeyType="done"
+          onSubmitEditing={handleRename}
+          selectTextOnFocus
+        />
+        <Pressable
+          style={[s.modalConfirm, (!name.trim() || loading || name.trim() === collection?.name) && s.btnDisabled]}
+          onPress={handleRename}
+          disabled={!name.trim() || loading || name.trim() === collection?.name}
+        >
+          {loading
+            ? <ActivityIndicator size="small" color={color.onInk} />
+            : <Text style={s.modalConfirmText}>Save</Text>
+          }
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+
+export default function SavedScreen() {
+  const [collections, setCollections]           = useState<Collection[]>([]);
+  const [loading, setLoading]                   = useState(true);
+  const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
+  const [createOpen, setCreateOpen]             = useState(false);
+  const [renameTarget, setRenameTarget]         = useState<Collection | null>(null);
+  const [removeError, setRemoveError]           = useState<string | null>(null);
+  const errorY = useRef(new Animated.Value(80)).current;
+
+  const showError = useCallback((msg: string) => {
+    setRemoveError(msg);
+    Animated.spring(errorY, { toValue: 0, useNativeDriver: true }).start();
+    setTimeout(() => {
+      Animated.timing(errorY, { toValue: 80, duration: 220, useNativeDriver: true }).start(
+        () => setRemoveError(null),
+      );
+    }, 3000);
+  }, [errorY]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const cols = await getCollections();
+    setCollections(cols);
+    setLoading(false);
   }, []);
 
-  // Reset to list when switching away from Places tab (do not persist this reset)
-  useEffect(() => {
-    if (tab !== 'Places') setViewMode('list');
-  }, [tab]);
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  const showPlaces = tab === 'Places';
+  const handleDelete = useCallback(async (col: Collection) => {
+    const prev = collections;
+    setCollections((cs) => cs.filter((c) => c.id !== col.id));
+    const ok = await deleteCollection(col.id);
+    if (!ok) {
+      setCollections(prev);
+      showError("Couldn't delete — please try again.");
+    }
+  }, [collections, showError]);
 
-  /** Places filtered to the active tab (catch-all for 'Places'). */
-  const tabPlaces = useMemo(
-    () => placesForTab(tab, places),
-    [tab, places],
-  );
-
-  /** Count per tab — computed once whenever `places` changes. */
-  const tabCounts = useMemo<Record<string, number>>(
-    () => {
-      const counts: Record<string, number> = {};
-      for (const tabName of TABS) {
-        counts[tabName] = placesForTab(tabName, places).length;
-      }
-      return counts;
-    },
-    [places],
-  );
-
-  const handleAddToRoute = useCallback((place: BookmarkedPlace) => {
-    setBuilderPlace(place);
+  const handleRenamed = useCallback((updated: Collection) => {
+    setCollections((cs) => cs.map((c) => c.id === updated.id ? updated : c));
+    setRenameTarget(null);
   }, []);
 
-  // Optimistically remove a place from both the list and map views, then
-  // persist to AsyncStorage. The map re-renders immediately because
-  // SavedPlacesMapView is purely prop-driven — it computes visible pins from
-  // the `places` prop via useMemo, so the pin disappears on the next render
-  // cycle without requiring a full reload or navigation away.
-  //
-  // If the active non-Places tab becomes empty after this removal, snap back
-  // to 'Places' so the user isn't left on a highlighted but empty chip.
-  //
-  // If removeSaved rejects (e.g. AsyncStorage failure), the optimistic removal
-  // is rolled back so the count badge stays accurate, and a brief error toast
-  // cues the user that removal did not succeed.
-  const handleRemove = useCallback(async (id: string) => {
-    const removed = places.find((p) => p.id === id);
-    const next = places.filter((p) => p.id !== id);
-    setPlaces(next);
-    if (tab !== 'Places' && placesForTab(tab, next).length === 0) {
-      handleTabChange('Places');
-    }
-    try {
-      await removeSaved(id);
-    } catch {
-      if (removed) {
-        setPlaces((prev) => {
-          if (prev.some((p) => p.id === id)) return prev;
-          const restored = [...prev, removed];
-          restored.sort((a, b) => b.savedAt - a.savedAt);
-          return restored;
-        });
-      }
-      showRemoveError('Couldn\'t remove — please try again.');
-    }
-  }, [places, tab, handleTabChange, showRemoveError]);
-
-  // Count places that have usable coordinates (for map vs list info)
-  const mappableCount = useMemo(
-    () => places.filter((p) => p.lat != null && p.lng != null).length,
-    [places],
-  );
-
-  const initialStop = builderPlace
-    ? [{
-        id:         builderPlace.id,
-        title:      builderPlace.name,
-        lat:        builderPlace.lat ?? null,
-        lng:        builderPlace.lng ?? null,
-        sourceType: 'discovery' as const,
-        sourceId:   builderPlace.id,
-        category:   builderPlace.category ?? undefined,
-      }]
-    : undefined;
+  const existingNames = collections.map((c) => c.name);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
+      {/* Always show the top-level Saved header; when in detail view, the
+          sub-header rendered by CollectionItemsView shows the collection name
+          with an in-screen back button. */}
       <ScreenHeader title="Saved" back />
 
-      {/* Category tab bar */}
-      <FlatList
-        data={TABS}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyExtractor={(x) => x}
-        style={{ flexGrow: 0 }}
-        contentContainerStyle={{ gap: space.sm, padding: space.lg }}
-        renderItem={({ item }) => (
-          <Chip
-            label={item}
-            active={item === tab}
-            count={loading ? undefined : tabCounts[item]}
-            onPress={() => handleTabChange(item)}
-          />
-        )}
-      />
-
-      {/* List / Map toggle — only on the Places tab, only when there's data */}
-      {showPlaces && !loading && places.length > 0 && (
-        <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
-      )}
-
-      {/* Content */}
-      {showPlaces ? (
-        loading ? (
-          <View style={s.center}>
-            <ActivityIndicator color={color.signal} />
-          </View>
-        ) : places.length === 0 ? (
-          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
-            <View style={s.empty}>
-              <Bookmark size={28} color={color.haze} />
-              <Text style={s.emptyTitle}>No saved places yet</Text>
-              <Text style={s.emptySub}>
-                Tap the bookmark icon on any place in Discovery to save it here.
-              </Text>
-            </View>
-          </ScrollView>
-        ) : viewMode === 'map' ? (
-          /* Map view — SavedPlacesMapView handles the MapLibre / web split */
-          <View style={{ flex: 1 }}>
-            <SavedPlacesMapView
-              places={places}
-              onPlanRoute={handleAddToRoute}
-            />
-            {mappableCount === 0 && (
-              <View style={s.noCoordsBanner}>
-                <Text style={s.noCoordsTxt}>
-                  None of your saved places have coordinates yet.
-                  Save places from the map view in Discovery to see them here.
-                </Text>
-              </View>
-            )}
-          </View>
-        ) : (
-          <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
-            {places.map((p) => (
-              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} onRemove={handleRemove} />
-            ))}
-          </ScrollView>
-        )
+      {activeCollection ? (
+        <CollectionItemsView
+          collection={activeCollection}
+          onBack={() => setActiveCollection(null)}
+        />
       ) : (
-        loading ? (
-          <View style={s.center}>
-            <ActivityIndicator color={color.signal} />
-          </View>
-        ) : tabPlaces.length === 0 ? (
-          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
-            <View style={s.empty}>
-              <Bookmark size={28} color={color.haze} />
-              <Text style={s.emptyTitle}>Nothing saved here yet</Text>
+        <>
+          {loading ? (
+            <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+          ) : collections.length === 0 ? (
+            <ScrollView contentContainerStyle={s.emptyState}>
+              <Bookmark size={40} color={color.haze} />
+              <Text style={s.emptyTitle}>Nothing saved yet</Text>
               <Text style={s.emptySub}>
-                Save places from Discovery and they&apos;ll appear in this category.
+                Save posts, places, events, and more — they&apos;ll appear here in collections.
               </Text>
-            </View>
-          </ScrollView>
-        ) : (
-          <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, gap: space.lg }}>
-            {tabPlaces.map((p) => (
-              <PlaceCard key={p.id} place={p} onAddToRoute={handleAddToRoute} onRemove={handleRemove} />
-            ))}
-          </ScrollView>
-        )
+              <Pressable style={s.createFirstBtn} onPress={() => setCreateOpen(true)}>
+                <FolderPlus size={16} color={color.onInk} />
+                <Text style={s.createFirstText}>Create your first collection</Text>
+              </Pressable>
+              <Text style={s.suggestLabel}>Starter ideas</Text>
+              <View style={s.suggestRow}>
+                {STARTER_SUGGESTIONS.map((name) => (
+                  <Pressable
+                    key={name}
+                    style={chips.chip}
+                    onPress={async () => {
+                      const col = await createCollection(name);
+                      if (col) setCollections((prev) => [...prev, col]);
+                    }}
+                  >
+                    <Text style={chips.chipLabel}>{name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+          ) : (
+            <FlatList
+              data={collections}
+              keyExtractor={(c) => c.id}
+              contentContainerStyle={{ padding: space.lg, gap: space.md }}
+              ListHeaderComponent={
+                <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
+                  <FolderPlus size={18} color={color.deep} />
+                  <Text style={s.newCollectionText}>New collection</Text>
+                </Pressable>
+              }
+              renderItem={({ item: col }) => (
+                <CollectionCard
+                  col={col}
+                  onPress={() => setActiveCollection(col)}
+                  onDelete={col.isDefault ? undefined : () => handleDelete(col)}
+                  onRename={col.isDefault ? undefined : () => setRenameTarget(col)}
+                />
+              )}
+            />
+          )}
+        </>
       )}
 
-      <RouteBuilderSheet
-        visible={builderPlace != null}
-        onClose={() => setBuilderPlace(null)}
-        onRouteCreated={() => setBuilderPlace(null)}
-        initialStops={initialStop}
+      <CreateCollectionModal
+        visible={createOpen}
+        existingNames={existingNames}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(col) => {
+          setCollections((prev) => [...prev, col]);
+          setCreateOpen(false);
+          setActiveCollection(col);
+        }}
       />
 
-      {removeError ? (
+      <RenameCollectionModal
+        collection={renameTarget}
+        onClose={() => setRenameTarget(null)}
+        onRenamed={handleRenamed}
+      />
+
+      {removeError && (
         <Animated.View
-          style={[s.errorToast, { transform: [{ translateY: errorToastY }] }]}
+          style={[s.errorToast, { transform: [{ translateY: errorY }] }]}
           pointerEvents="none"
         >
           <Text style={s.errorToastText}>{removeError}</Text>
         </Animated.View>
-      ) : null}
+      )}
     </View>
   );
 }
@@ -330,140 +483,131 @@ export default function Saved() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  card: {
-    flexDirection: 'row',
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
+
+  emptyState: {
     alignItems: 'center',
+    padding: space.lg,
+    paddingTop: space.xxxl,
     gap: space.md,
-    backgroundColor: color.paperRaised,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: color.haze,
-    padding: space.md,
   },
-  cardIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: `${color.signal}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardBody: {
-    flex: 1,
-    gap: 2,
-  },
-  cardName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: color.ink,
-  },
-  cardMeta: {
-    fontSize: 12,
-    color: color.mute,
-    textTransform: 'capitalize',
-  },
-  cardAddress: {
-    fontSize: 12,
-    color: color.faint,
-  },
-  routeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: `${color.signal}15`,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  removeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  empty: {
-    alignItems: 'center',
-    gap: space.sm,
-    paddingVertical: space.xxxl,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: color.ink,
-  },
+  emptyTitle: { ...t.heading, color: color.ink, fontSize: 17 },
   emptySub: {
-    fontSize: 13,
-    color: color.mute,
-    textAlign: 'center',
-    paddingHorizontal: space.xl,
+    ...t.body, color: color.mute, textAlign: 'center',
+    paddingHorizontal: space.xl, lineHeight: 20,
   },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.lg,
-    paddingBottom: space.sm,
+
+  createFirstBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: color.signal,
+    paddingHorizontal: space.lg, paddingVertical: space.md,
+    borderRadius: radius.pill, marginTop: space.sm,
   },
-  toggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: space.md,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: color.haze,
+  createFirstText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+
+  suggestLabel: {
+    ...t.stamp, color: color.faint, fontSize: 11,
+    textTransform: 'uppercase', letterSpacing: 0.8,
+  },
+  suggestRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, justifyContent: 'center' },
+
+  newCollectionRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingVertical: space.md,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+    marginBottom: space.sm,
+  },
+  newCollectionText: { ...t.bodyStrong, color: color.deep, fontSize: 14 },
+
+  colCard: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: color.paperRaised,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    padding: space.md, gap: space.md,
+    ...shadow.card,
   },
-  toggleActive: {
-    borderColor: color.signal,
+  colCoverPlaceholder: {
+    width: 52, height: 52, borderRadius: radius.sm,
     backgroundColor: `${color.signal}12`,
+    alignItems: 'center', justifyContent: 'center',
   },
-  toggleLabel: {
-    ...t.small,
-    fontSize: 12,
-    fontWeight: '600',
-    color: color.mute,
+  colCardBody: { flex: 1, gap: 4 },
+  colName:   { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  colMeta:   { ...t.small, color: color.mute, fontSize: 12 },
+  colCardActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  actionBtn: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
   },
-  toggleLabelActive: {
-    color: color.signal,
+
+  subHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingHorizontal: space.lg, paddingVertical: space.md,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
   },
-  noCoordsBanner: {
-    position: 'absolute',
-    bottom: 24,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.60)',
-    borderRadius: radius.sm,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  backBtn: { padding: 4 },
+  subHeaderTitle: { ...t.heading, color: color.ink, flex: 1, fontSize: 15 },
+  subHeaderMeta:  { ...t.small, color: color.mute, fontSize: 12 },
+
+  itemRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingVertical: space.sm,
+    borderBottomWidth: 1, borderBottomColor: `${color.haze}60`,
+  },
+  itemIcon: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  itemBody:  { flex: 1, gap: 2 },
+  itemTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  itemMeta:  { ...t.small, color: color.mute, fontSize: 11, textTransform: 'capitalize' },
+
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalBox: {
+    position: 'absolute', top: '30%', left: space.lg, right: space.lg,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg, padding: space.lg, gap: space.md,
+    ...shadow.float,
+  },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  modalTitle:       { ...t.heading, color: color.ink, fontSize: 16 },
+  modalInput: {
+    borderWidth: 1.5, borderColor: color.signal,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md, paddingVertical: space.md,
+    fontSize: 14, color: color.ink,
+  },
+  modalConfirm: {
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
     alignItems: 'center',
   },
-  noCoordsTxt: {
-    color: '#fff',
-    fontSize: 12,
-    textAlign: 'center',
-  },
+  modalConfirmText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  btnDisabled:      { opacity: 0.5 },
+
   errorToast: {
-    position: 'absolute',
-    bottom: 24,
-    left: space.lg,
-    right: space.lg,
+    position: 'absolute', bottom: 24, left: space.lg, right: space.lg,
     backgroundColor: '#DC2626',
     borderRadius: radius.sm,
-    paddingHorizontal: space.md,
-    paddingVertical: 10,
+    paddingHorizontal: space.md, paddingVertical: 10,
     alignItems: 'center',
   },
-  errorToastText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+  errorToastText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+});
+
+const chips = StyleSheet.create({
+  chip: {
+    paddingHorizontal: space.md, paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1, borderColor: color.haze,
   },
+  chipLabel: { ...t.small, color: color.mute, fontSize: 12 },
 });

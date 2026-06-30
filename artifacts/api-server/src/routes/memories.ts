@@ -344,8 +344,28 @@ router.get("/memories", async (req, res) => {
 
   const enriched = await enrichMemories(sc, visible, user.id);
 
+  // Batch-fetch saved state for the viewer across these memories
+  const memoryIds = visible.map((m: any) => m.id as string);
+  const savedMemoryIds = new Set<string>();
+  try {
+    const { data: userCols } = await sc
+      .from("collections")
+      .select("id")
+      .eq("owner_id", user.id);
+    const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+    if (colIds.length > 0 && memoryIds.length > 0) {
+      const { data: savedItems } = await sc
+        .from("collection_items")
+        .select("entity_id")
+        .eq("entity_type", "memory")
+        .in("collection_id", colIds)
+        .in("entity_id", memoryIds);
+      for (const s of (savedItems ?? []) as any[]) savedMemoryIds.add(s.entity_id as string);
+    }
+  } catch { /* non-fatal */ }
+
   res.json({
-    memories: enriched,
+    memories: (enriched as any[]).map((m: any) => ({ ...m, isSaved: savedMemoryIds.has(m.id as string) })),
     nextCursor: visible.length === limit ? (visible[visible.length - 1]?.created_at ?? null) : null,
   });
 });

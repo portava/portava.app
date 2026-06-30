@@ -18,6 +18,7 @@ import {
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { SaveButton } from './SaveButton';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -75,6 +76,7 @@ export function HighlightViewer({
   // for the session (not reset when the viewer reopens).
   const [isMuted, setIsMuted] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const videoRef = useRef<Video>(null);
   // goNextRef lets the stable handleVideoStatus callback call the latest goNext
   const goNextRef = useRef<() => void>(() => {});
@@ -428,6 +430,10 @@ export function HighlightViewer({
               >
                 <Share2 size={20} color="rgba(255,255,255,0.85)" />
               </Pressable>
+            )}
+
+            {!isOwner && current && (
+              <SaveButton entityType="highlight" entityId={current.id} size={20} tint="rgba(255,255,255,0.85)" />
             )}
 
             {!isOwner && (

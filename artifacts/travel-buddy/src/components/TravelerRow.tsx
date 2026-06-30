@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { UserCheck, UserPlus, Lock, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
 import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
+import { SaveButton } from './SaveButton';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
@@ -141,6 +142,9 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
       )}
 
       {!isOwnProfile && (
+        <SaveButton entityType="profile" entityId={user.id} />
+      )}
+      {!isOwnProfile && (
         <UserOverflowMenu
           userId={user.id}
           displayName={displayName}
@@ -212,6 +216,7 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontStyle: 'italic',
   },
+  saveProfileBtn: { padding: 4 },
   followBtn: {
     flexDirection: 'row',
     alignItems: 'center',

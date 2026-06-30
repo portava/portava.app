@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Hash, MapPin, Calendar, Users, Map, Plane, Flag,
 } from 'lucide-react-native';
+import { SaveButton } from '../../src/components/SaveButton';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import {
   getHashtag, getHashtagFeed, followHashtag, unfollowHashtag, reportHashtag,
@@ -388,6 +389,7 @@ export default function HashtagFeedScreen() {
               </Text>
           }
         </Pressable>
+        {meta && <SaveButton entityType="hashtag" entityId={meta.id} size={18} />}
         <Pressable onPress={handleReport} hitSlop={10} disabled={reportBusy} style={s.reportBtn}>
           <Flag size={18} color={color.haze} />
         </Pressable>

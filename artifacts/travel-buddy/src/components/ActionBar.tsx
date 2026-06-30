@@ -18,6 +18,7 @@ export function ActionBar({
   onComment,
   onSave,
   onShare,
+  renderSave,
   tint = color.ink,
 }: {
   liked?: boolean;
@@ -29,6 +30,7 @@ export function ActionBar({
   onComment?: () => void;
   onSave?: () => void;
   onShare?: () => void;
+  renderSave?: React.ReactNode;
   tint?: string;
 }) {
   return (
@@ -37,8 +39,15 @@ export function ActionBar({
         label={compact(likeCount)} onPress={onLike} tint={tint} />
       <Action icon={<MessageCircle size={20} color={tint} />}
         label={compact(commentCount)} onPress={onComment} tint={tint} />
-      <Action icon={<Bookmark size={20} color={tint} fill={saved ? tint : 'transparent'} />}
-        label={compact(saveCount)} onPress={onSave} tint={tint} />
+      {renderSave ? (
+        <View style={styles.action}>
+          {renderSave}
+          <Text style={[styles.count, { color: tint }]}>{compact(saveCount)}</Text>
+        </View>
+      ) : (
+        <Action icon={<Bookmark size={20} color={tint} fill={saved ? tint : 'transparent'} />}
+          label={compact(saveCount)} onPress={onSave} tint={tint} />
+      )}
       <View style={{ flex: 1 }} />
       <Pressable onPress={onShare} hitSlop={8} accessibilityRole="button">
         <Share2 size={20} color={tint} />

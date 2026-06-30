@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
-import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
+import { checkSaved, toggleSave } from '../../services/collections';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 import { categoryColor } from './PlaceCard';
 
@@ -19,7 +19,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (place) isSaved(place.id).then(setSaved).catch(() => {});
+    if (place) {
+      checkSaved('place', place.id)
+        .then(({ saved }) => setSaved(saved))
+        .catch(() => {});
+    }
   }, [place?.id]);
 
   if (!place) return null;
@@ -80,8 +84,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
             style={({ pressed }) => [styles.saveHeaderBtn, saved && styles.saveHeaderBtnActive, pressed && { opacity: 0.7 }]}
             onPress={() => {
               if (!place) return;
-              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, lat: place.lat ?? null, lng: place.lng ?? null, savedAt: Date.now() };
-              toggleSave(bookmark).then(setSaved).catch(() => setSaved((s) => !s));
+              const next = !saved;
+              setSaved(next);
+              toggleSave('place', place.id, !next)
+                .then(setSaved)
+                .catch(() => setSaved((s) => !s));
             }}
             hitSlop={8}
           >

@@ -5,6 +5,7 @@ import { Clock, Users, ChevronDown, ChevronUp, CalendarClock } from 'lucide-reac
 import type { CityEvent } from '../types/models';
 import { Stamp, Avatar } from './ui';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { SaveButton } from './SaveButton';
 
 function timeLabel(iso: string) {
   const d = new Date(iso);
@@ -12,7 +13,11 @@ function timeLabel(iso: string) {
 }
 
 /** Compact, utility event/plan card — visually distinct from editorial posts. */
-export function EventCard({ ev, dim }: { ev: CityEvent; dim?: boolean }) {
+export function EventCard({ ev, dim, initialSaved }: {
+  ev: CityEvent;
+  dim?: boolean;
+  initialSaved?: boolean;
+}) {
   return (
     <Pressable
       style={[styles.card, dim && styles.dim]}
@@ -33,6 +38,7 @@ export function EventCard({ ev, dim }: { ev: CityEvent; dim?: boolean }) {
         )}
       </View>
       {ev.host && <Avatar uri={ev.host.avatarUrl} size={36} />}
+      <SaveButton entityType="event" entityId={ev.id} initialSaved={initialSaved} />
     </Pressable>
   );
 }
@@ -45,7 +51,7 @@ export function FlexibleSection({ events }: { events: CityEvent[] }) {
     <View style={styles.flexWrap}>
       <Pressable style={styles.flexHead} onPress={() => setOpen((o) => !o)}>
         <CalendarClock size={16} color={color.mute} />
-        <Text style={styles.flexTitle}>When you’re flexible</Text>
+        <Text style={styles.flexTitle}>When you're flexible</Text>
         <Text style={styles.flexCount}>· {events.length} plans</Text>
         <View style={{ flex: 1 }} />
         {open ? <ChevronUp size={18} color={color.mute} /> : <ChevronDown size={18} color={color.mute} />}
@@ -71,6 +77,7 @@ const styles = StyleSheet.create({
   title: { ...t.bodyStrong, color: color.ink },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   meta: { ...t.small, color: color.mute },
+  saveBtn: { padding: 4 },
 
   flexWrap: { marginHorizontal: space.lg, marginTop: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, overflow: 'hidden' },
   flexHead: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: space.md },

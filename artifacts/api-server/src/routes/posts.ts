@@ -657,6 +657,27 @@ router.get("/posts", async (req, res) => {
     ? await enrichSpans(svc, 'post', globalPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
     : {};
 
+  // Batch-fetch saved state for the global feed
+  const globalSavedSet = new Set<string>();
+  try {
+    if (globalPostIds.length > 0) {
+      const { data: userCols } = await svc
+        .from("collections")
+        .select("id")
+        .eq("owner_id", user.id);
+      const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+      if (colIds.length > 0) {
+        const { data: savedItems } = await svc
+          .from("collection_items")
+          .select("entity_id")
+          .eq("entity_type", "post")
+          .in("collection_id", colIds)
+          .in("entity_id", globalPostIds);
+        for (const s of (savedItems ?? []) as any[]) globalSavedSet.add((s as any).entity_id as string);
+      }
+    }
+  } catch { /* non-fatal */ }
+
   const mergedGlobal = globalPosts.map((p) => {
     const safe = mapPublicPost(p);
     const pr = globalProfileMap[p.author_id];
@@ -668,6 +689,7 @@ router.get("/posts", async (req, res) => {
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
+      saved: globalSavedSet.has(p.id as string),
       canLike: true,
       canComment: true,
       canShare: true,

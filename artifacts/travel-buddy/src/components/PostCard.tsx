@@ -13,6 +13,7 @@ import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
 import { ReportPostSheet } from './ReportPostSheet';
 import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu';
+import { SaveButton } from './SaveButton';
 
 const DEFAULT_SETTINGS: PostSettings = {
   commentsSetting: 'everyone',
@@ -95,8 +96,9 @@ function HeroCard({ post }: { post: Post }) {
         <View style={styles.heroActions}>
           <ActionBar
             tint={color.onInk}
-            liked={post.liked} saved={post.saved}
+            liked={post.liked}
             likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
+            renderSave={<SaveButton entityType="post" entityId={post.id} initialSaved={post.saved ?? false} size={20} tint={color.onInk} />}
           />
         </View>
       </View>
@@ -181,8 +183,9 @@ function StandardCard({ post }: { post: Post }) {
           />
         )}
         <ActionBar
-          liked={post.liked} saved={post.saved}
+          liked={post.liked}
           likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
+          renderSave={<SaveButton entityType="post" entityId={post.id} initialSaved={post.saved ?? false} />}
         />
       </View>
       {!isOwnPost && (

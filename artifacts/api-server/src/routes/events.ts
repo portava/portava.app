@@ -462,10 +462,34 @@ router.get("/events", async (req, res) => {
     }
   }
 
+  // Batch-fetch saved state for this user across these events
+  let savedEventIds = new Set<string>();
+  if (eventIds.length > 0) {
+    try {
+      const { data: userCols } = await sc
+        .from("collections")
+        .select("id")
+        .eq("owner_id", user.id);
+      const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+      if (colIds.length > 0) {
+        const { data: savedItems } = await sc
+          .from("collection_items")
+          .select("entity_id")
+          .eq("entity_type", "event")
+          .in("collection_id", colIds)
+          .in("entity_id", eventIds);
+        for (const s of (savedItems ?? []) as any[]) savedEventIds.add(s.entity_id as string);
+      }
+    } catch {
+      // non-fatal — isSaved defaults to false
+    }
+  }
+
   res.json({
     events: filtered.map((ev: any) => ({
       ...formatEvent(ev, user.id),
-      myRsvp: rsvpMap[ev.id] ?? null,
+      myRsvp:  rsvpMap[ev.id] ?? null,
+      isSaved: savedEventIds.has(ev.id as string),
     })),
     page,
     limit,

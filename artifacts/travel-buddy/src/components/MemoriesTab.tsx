@@ -9,6 +9,7 @@ import {
   createPassportMemory,
   updatePassportMemory,
 } from '../services/passportStamps';
+import { SaveButton } from './SaveButton';
 import { color, space, radius, type as t } from '../theme/tokens';
 
 const CATEGORIES = [
@@ -86,6 +87,7 @@ function MemoryCard({ memory, onVisibilityChange }: MemoryCardProps) {
             {visibilityIcon(memory.visibility)}
             <Text style={mc.visText}>{visibilityLabel(memory.visibility)}</Text>
           </Pressable>
+          <SaveButton entityType="memory" entityId={memory.id} size={14} />
         </View>
       </View>
 
@@ -308,6 +310,7 @@ const mc = StyleSheet.create({
   date: { ...t.small, color: color.mute },
   visBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.haze, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
   visText: { fontSize: 11, color: color.mute, fontWeight: '600' },
+  saveBtn: { padding: 4 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', padding: space.lg },
   menuBox: { backgroundColor: color.paper, borderRadius: radius.lg, padding: space.lg, gap: space.sm },
   menuTitle: { ...t.bodyStrong, color: color.ink, marginBottom: space.xs },

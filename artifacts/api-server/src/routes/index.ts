@@ -57,6 +57,7 @@ import storiesRouter from "./stories";
 import closeFriendsRouter from "./closeFriends";
 import reviewsRouter from "./reviews";
 import appealsRouter from "./appeals";
+import collectionsRouter from "./collections";
 
 const router: IRouter = Router();
 
@@ -118,5 +119,6 @@ router.use(storiesRouter);
 router.use(closeFriendsRouter);
 router.use(reviewsRouter);
 router.use(appealsRouter);
+router.use(collectionsRouter);
 
 export default router;
