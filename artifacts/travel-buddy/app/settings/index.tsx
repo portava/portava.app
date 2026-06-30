@@ -135,6 +135,8 @@ export default function Settings() {
       router.replace('/(auth)/sign-in');
     } else if (label === 'Blocked accounts') {
       router.push('/blocked-users');
+    } else if (label === 'Saved profiles') {
+      router.push('/saved-profiles' as any);
     } else if (label === 'Edit profile') {
       router.push('/profile/edit');
     } else if (label === 'Notifications') {
@@ -170,7 +172,7 @@ export default function Settings() {
 
   const BASIC_GROUPS = [
     { h: 'Privacy', items: ['Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
-    { h: 'Safety', items: ['Blocked accounts', 'Safe Return history', 'Report history', 'Muted words'] },
+    { h: 'Safety', items: ['Blocked accounts', 'Saved profiles', 'Safe Return history', 'Report history', 'Muted words'] },
     { h: 'Account', items: ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'Log out'] },
   ];
 

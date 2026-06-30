@@ -1,0 +1,1040 @@
+Build the full Travel Buddy user interaction system across users, posts, comments, events, trips, circles, memories, highlights, stories, places, profiles, Telegraph messages, reviews, reports, notifications, Trust Score, and Compass discovery signals.
+
+IMPORTANT FIRST STEP:
+Before building anything, inspect the existing app carefully. Check the current database schema, migrations, Supabase/RLS policies, backend routes, services, frontend screens, hooks, stores, components, auth/session logic, notification system, messaging system, post/comment/like/save/share/report logic, blocking/muting logic, event/trip membership logic, Safe Return logic, Trust Score logic, Compass/feed logic, and any existing tagging/hashtag systems.
+
+Do not duplicate systems that already exist. Reuse and extend what is already there. If a partial implementation exists, upgrade it. If a system already works, do not break it. Keep all changes cohesive with the current Travel Buddy architecture and naming.
+
+Do NOT add fake users, fake reviews, fake places, fake posts, or fake content. Real data only where data is required. Do not apply Supabase migrations yourself unless the project workflow already expects that; otherwise provide the SQL/migration for me to run.
+
+GOAL:
+Create one unified, privacy-safe, safety-aware interaction layer that controls how users interact with content and with each other throughout the entire app.
+
+The system must support these entity types where applicable:
+
+- users/profiles/Passport
+- posts
+- comments
+- replies
+- events
+- trips
+- circles
+- memories
+- highlights
+- stories
+- places
+- hashtags
+- collections
+- Telegraph chats/messages
+- reviews
+- reports
+- Rent a Buddy bookings if that module already exists or is stubbed
+
+CORE USER-TO-USER INTERACTIONS:
+Implement or upgrade user interactions including:
+
+- follow
+- unfollow
+- friend request
+- accept friend request
+- decline friend request
+- cancel friend request
+- remove friend
+- block user
+- unblock user
+- mute user
+- unmute user
+- report user
+- invite user to event
+- invite user to trip
+- invite user to circle
+- invite user to Telegraph group chat
+- open Passport profile from username/profile picture anywhere in the app
+- show mutual friends where available
+- show mutual events/trips where privacy allows
+- restrict who can follow, friend, message, tag, invite, or view profile content
+
+FOLLOW VS FRIEND:
+Support both connection levels:
+
+Follow = lighter connection for public content discovery.
+Friend = mutual connection that can unlock friend-only posts, private memories, trip/event invites, closer recommendations, and Telegraph messaging depending on privacy settings.
+
+Users must have account-level settings for:
+
+- who can follow me
+- who can send friend requests
+- who can message me
+- who can invite me to events
+- who can invite me to trips
+- who can invite me to circles
+- who can tag me
+- who can comment on my content
+- who can share my content
+- who can see my friends/followers list
+- who can see my Passport stamps
+- who can see my upcoming trips
+- who can see my current city/travel status
+- who can see my memories/highlights
+
+MESSAGE REQUESTS / TELEGRAPH:
+Upgrade Telegraph messaging with a full unknown-message request flow.
+
+When someone unknown messages a user:
+
+- message goes into requests
+- receiver can accept, decline, block, or report
+- sender cannot spam repeated requests
+- media/links can be blurred or restricted until accepted
+- receiver can preview the sender’s Passport before accepting
+- accepted requests become active chats
+- declined requests do not harshly notify the sender
+- blocked users lose all interaction access
+- group chats should respect trip/event/circle membership rules
+
+POST INTERACTIONS:
+Posts must support:
+
+- like
+- unlike
+- emoji reactions
+- comment
+- reply to comment
+- like comment
+- save
+- unsave
+- share
+- copy link
+- repost/quote repost only if enabled
+- hide post
+- report post
+- mute poster
+- block poster
+- tag users
+- tag places
+- tag events
+- tag trips
+- tag circles where applicable
+- use hashtags
+- translate post/comment if translation already exists
+- open tagged users/entities
+- add post to memory
+- add post to highlight
+- add post to collection
+
+Post owners must be able to:
+
+- disable comments
+- limit comments to everyone/friends/Trip Crew/Circle/verified users/no one
+- hide like count
+- limit sharing
+- disable reposting
+- remove comments on their own posts
+- pin comments
+- control post visibility
+- archive/delete posts
+- edit posts with edit history
+
+POST PRIVACY:
+Support visibility:
+
+- public
+- friends only
+- followers only if follow system exists
+- Trip Crew only
+- Circle only
+- private/only me
+- custom allowed users
+- custom hidden users
+
+Also enforce delayed geotagged posting. If a post is geotagged from a sensitive/current location, it should not publish publicly until the user leaves the geofence, while still allowing the user to earn geotagged credit/stamps where existing systems support it.
+
+COMMENTS AND REPLIES:
+Comments must support:
+
+- create
+- edit
+- delete own comment
+- reply
+- like
+- report
+- hide
+- mention users
+- hashtags
+- translate where supported
+- owner/moderator deletion on owned content
+- comment-disabled state
+- comment-limited state
+- blocked/muted-user enforcement
+- spam/rate-limit protection
+
+EVENT INTERACTIONS:
+Events must support:
+
+- view event
+- save/unsave event
+- share event
+- invite users
+- RSVP: Going, Maybe, Interested, Can’t Go
+- request to join
+- cancel RSVP/request
+- join waitlist
+- leave waitlist
+- auto-promote from waitlist when a spot opens
+- host manual approval from waitlist
+- waitlist offer expiration
+- message host
+- ask host question
+- join event Telegraph chat after approval
+- check in
+- leave check-in if appropriate
+- confirm attendance
+- host confirms attendance
+- no-show marking
+- post to event
+- add event to trip
+- add event to calendar if existing app supports calendar linking
+- get directions/map
+- review event/host after attendance
+- report event
+- block host
+- leave event
+
+Event hosts must be able to:
+
+- approve/deny join requests
+- remove attendees
+- ban attendees from event
+- set event public/private/invite-only
+- set age limit
+- set max attendees
+- set minimum Trust Score
+- require verified users only
+- set language/gender preferences where already supported and legally/product-appropriate
+- hide attendee list
+- pin event updates
+- enable/disable comments
+- edit event
+- cancel event
+- archive completed event
+- create/connect Telegraph group chat
+- assign co-hosts/moderators
+- control who can post inside event
+- convert completed event content into shared memories
+
+EVENT LIFECYCLE:
+Events must support lifecycle states:
+
+- draft
+- open
+- full
+- waitlist
+- started
+- completed
+- cancelled
+- archived
+- removed/moderated
+
+Notify attendees when key event details change, especially time, date, location, cancellation, age/trust/verification requirements, or host changes.
+
+TRIP INTERACTIONS:
+Trips must support:
+
+- create trip
+- public/private/friends-only/Trip Crew-only visibility
+- invite users
+- request to join
+- accept/decline trip invite
+- cancel trip request
+- join/leave waitlist if trip has limited spots
+- add cities
+- add dates
+- add hotels/areas
+- add events
+- add saved places
+- add hidden gems
+- add restaurants/bars/beaches/landmarks
+- add itinerary items
+- vote on itinerary ideas
+- comment on trip plans
+- share posts to trip
+- share memories to trip
+- join Trip Crew Telegraph chat
+- enable Safe Return where already implemented
+- location sharing with privacy controls where already implemented
+- hide exact location but show general area where supported
+- add packing checklist if trip planning supports it
+- add budget notes if trip planning supports it
+- add emergency contacts if Safe Return supports it
+- review trip/crew experience after completion
+- convert completed trip into memory collection
+
+Trip owners must be able to:
+
+- approve/deny members
+- remove members
+- ban members from trip
+- assign co-hosts
+- assign moderators
+- lock itinerary edits
+- allow crew voting
+- control who can post
+- control who can invite others
+- set trip visibility
+- set age limit
+- set minimum Trust Score
+- require verified users only
+- enable/disable location sharing
+- enable/disable Trip Crew chat
+- archive completed trips
+
+TRIP LIFECYCLE:
+Trips must support lifecycle states:
+
+- draft
+- planning
+- active
+- completed
+- cancelled
+- archived
+- removed/moderated
+
+CIRCLES:
+Circles must support where applicable:
+
+- join/request to join
+- invite user
+- accept/decline invite
+- owner approval
+- member removal
+- member ban
+- post/comment inside circle
+- share posts/events/trips/memories into circle
+- circle Telegraph group chat
+- roles: owner, moderator, member, pending, banned
+- visibility: public/private/invite-only
+- age/trust/verification gates where appropriate
+
+MEMORY INTERACTIONS:
+Memories must support:
+
+- create memory from completed trip
+- create memory from completed event
+- create memory from post collection
+- create memory from photos/videos
+- create memory from place visit
+- create memory from tagged content
+- add photos
+- add short videos
+- add captions
+- add tagged users
+- add location
+- add date
+- link trip/event/place
+- like
+- react
+- comment
+- save
+- share
+- report
+- add to Passport
+- add to highlight
+- archive/delete
+- edit with edit history
+- privacy controls
+
+Memory privacy must support:
+
+- public
+- friends only
+- Trip Crew only
+- Circle only
+- only me
+- custom allowed users
+- custom hidden users
+
+Tagged users must be able to remove themselves from a memory tag or require approval before a tag appears, depending on their tag settings.
+
+HIGHLIGHT INTERACTIONS:
+Highlights must support:
+
+- create profile highlight
+- name highlight
+- add cover image
+- add posts
+- add memories
+- add events
+- add places
+- add trip moments
+- add short clips
+- reorder items
+- delete item
+- delete highlight
+- pin highlight
+- feature highlight on Passport
+- set privacy
+- view viewer list if enabled
+- hide viewer list if user setting requires
+- react/reply if allowed
+- save places/events from highlight
+- report highlight
+
+Highlights should appear on the Passport profile in a clean story-bubble/highlight area and must not clutter the bottom navigation.
+
+STORIES:
+Add or upgrade temporary story-style posts if the app already has this concept or a natural place for it.
+
+Stories must support:
+
+- 24-hour expiration
+- save to highlight
+- delete
+- reactions
+- replies
+- viewer list
+- hide viewer list setting if supported
+- tags
+- hashtags
+- location
+- trip/event/place links
+- public/friends/Trip Crew/Circle/custom privacy
+- hide-from-specific-users
+- blocked/muted enforcement
+
+TAGS / MENTIONS / HASHTAGS:
+Create or upgrade a shared tagging system.
+
+Users must be able to tag:
+
+- users
+- posts
+- comments
+- events
+- trips
+- circles
+- places
+- memories
+- highlights
+- cities where applicable
+
+Mentions like @username must hyperlink to the user’s Passport profile.
+Entity tags must open the correct detail screen.
+Hashtags like #TokyoNightlife must open a hashtag feed.
+
+Users need tag controls:
+
+- everyone can tag me
+- friends can tag me
+- Trip Crew/Circle members can tag me
+- approval required
+- no one can tag me
+
+Users must be able to remove themselves from tags.
+Prevent tag spam and hashtag spam with reasonable limits/rate limits.
+
+SAVES AND COLLECTIONS:
+Users must be able to privately save:
+
+- posts
+- events
+- trips
+- places
+- memories
+- highlights
+- profiles
+- hashtags
+
+Users must be able to organize saved items into collections such as:
+
+- Food
+- Nightlife
+- Beaches
+- Hidden Gems
+- Future Trips
+- city-specific collections
+
+Saving should not notify the content owner unless the user explicitly shares the saved item.
+
+SHARING:
+Users can share allowed content to:
+
+- Telegraph DM
+- Telegraph group chat
+- Trip Crew chat
+- Circle
+- external share sheet
+- copy link
+
+Sharing must respect privacy. Private content shared to someone without access must show a locked preview or no content. Never allow sharing to bypass privacy, blocks, age gates, verification gates, Trust Score gates, event membership, trip membership, or circle membership.
+
+VIEWERS / AUDIENCE CONTROLS:
+For stories, highlights, memories, and any profile-view feature already present, support viewer/audience controls.
+
+Include:
+
+- who viewed my story
+- who viewed my highlight if enabled
+- who viewed my memory if enabled
+- viewer privacy settings
+- blocked users never appear or gain access
+- no anonymous story viewing unless explicitly designed
+- profile views should only be shown if the app already supports or intentionally adds that product behavior
+
+CLOSE FRIENDS / TRUSTED CREW:
+Add or upgrade a Close Friends / Trusted Crew audience layer.
+
+Users can create a tighter audience for:
+
+- private stories
+- private memories
+- sensitive travel posts
+- real-time trip updates
+- Safe Return visibility
+- location sharing
+- invite-only plans
+
+This should be separate from normal friends where possible.
+
+CHECK-INS / ATTENDANCE PROOF:
+For events and trips, support real-world attendance interactions.
+
+Include:
+
+- check in
+- check out/leave check-in where appropriate
+- attendance confirmation
+- host confirmation
+- no-show marking
+- attendance-based reviews
+- attendance-based Trust Score impact
+- location-safe delayed check-ins
+- badge/stamp unlocks after verified attendance where Passport Stamps already exist
+
+ROLES AND PERMISSIONS:
+Events, trips, and circles need role-based permissions.
+
+Support roles where applicable:
+
+- owner
+- host
+- co-host
+- moderator
+- member
+- guest
+- pending member
+- waitlisted member
+- removed member
+- banned member
+
+Each role must have clear permissions. Enforce permissions server-side.
+
+CO-OWNED CONTENT RULES:
+Define and enforce rules for shared content.
+
+Handle:
+
+- who can delete shared memories
+- who can remove a photo from a trip/event album
+- whether a tagged user can remove themselves
+- whether trip members can add posts to shared trip memories
+- whether hosts can remove attendee posts from event page
+- whether co-hosts can edit event/trip details
+- what happens when someone leaves a trip
+- what happens when someone is removed from a trip/event/circle
+- whether removed users can still review
+- whether old content remains visible after membership changes
+
+CONTENT LIFECYCLE:
+Every content type must have clear states.
+
+Posts:
+
+- draft
+- delayed publish
+- published
+- edited
+- archived
+- deleted
+- reported
+- removed/moderated
+
+Comments:
+
+- published
+- edited
+- deleted
+- hidden
+- reported
+- removed/moderated
+
+Memories:
+
+- draft
+- published
+- private
+- shared
+- archived
+- deleted
+- removed/moderated
+
+Highlights:
+
+- active
+- pinned
+- archived
+- deleted
+- removed/moderated
+
+Stories:
+
+- active
+- expired
+- saved to highlight
+- deleted
+- removed/moderated
+
+Events and trips use the lifecycle states listed above.
+
+EDIT HISTORY:
+Track edit history for important content and safety-sensitive changes.
+
+Track edits for:
+
+- posts
+- comments
+- event time/date/location
+- event requirements
+- trip itinerary
+- trip requirements
+- memory captions
+- highlight titles/covers
+- rules/age limits/trust requirements
+
+Notify affected users when key event/trip details change.
+
+BLOCKING / MUTING / HIDING:
+Blocked users must not see or interact with each other’s:
+
+- profiles
+- posts
+- comments
+- events
+- trips
+- circles
+- memories
+- highlights
+- stories
+- Telegraph messages
+- search results where possible
+- recommendations where possible
+
+Muted users should be hidden from feeds/recommendations without fully blocking.
+Hidden posts should reduce similar recommendations through Compass signals.
+
+Define behavior after blocking/removing:
+
+- blocker should stop seeing blocked user content
+- blocked user should lose access to blocker content
+- existing comments may be hidden from blocker-owned content where appropriate
+- shared trip/event content must respect membership and ownership rules
+- tag links from blocked users should not reopen access
+- blocked users should not be able to invite, tag, message, comment, RSVP, or join each other’s content
+
+PROFILE / PASSPORT VISIBILITY:
+Support profile visibility modes:
+
+- public Passport
+- friends-only Passport
+- private Passport
+- hidden from search
+- hide followers/friends
+- hide upcoming trips
+- hide current city
+- hide travel status
+- hide Passport stamps
+- hide memories
+- hide highlights
+
+Tapping a user’s profile picture, username, mention, comment author, attendee row, Trip Crew member, or review author anywhere must open the Passport profile only if privacy/block rules allow it.
+
+REVIEWS:
+Support review interactions after verified attendance/completion.
+
+Users can review:
+
+- event host
+- event
+- trip/crew experience
+- place recommendation
+- Rent a Buddy booking where applicable
+- safety/trust experience
+
+Reviews can include:
+
+- star rating if already part of product design
+- written review
+- tags like safe, friendly, on time, misleading, great host
+- private moderation note/report
+- public recommendation
+
+Reviews should affect Trust Score only through controlled rules. Reports should trigger moderation review and should not automatically punish without confirmation unless severity rules already exist.
+
+REPORTS / MODERATION / APPEALS:
+Users must be able to report:
+
+- user
+- post
+- comment
+- event
+- trip
+- circle
+- memory
+- highlight
+- story
+- place
+- review
+- Telegraph message
+- Rent a Buddy booking where applicable
+- unsafe location
+
+Add moderation states and appeal flow where appropriate:
+
+- report submitted
+- under review
+- action taken
+- no violation found
+- content removed
+- warning issued
+- temporary restriction
+- account ban
+- appeal submitted
+- appeal approved/denied
+
+Users should be able to appeal:
+
+- removed post
+- removed memory/highlight
+- account warning
+- Trust Score penalty
+- false no-show
+- event/trip removal
+- review dispute
+- booking dispute where applicable
+
+DISPUTES / CANCELLATIONS / REFUNDS:
+Where paid or booked experiences exist, especially Rent a Buddy, support:
+
+- user cancellation
+- host cancellation
+- reschedule request
+- refund eligibility
+- late cancellation
+- no-show
+- dispute
+- evidence notes
+- admin/moderator resolution
+
+Do not invent payment behavior if the payment module does not exist. If payment is not built yet, add clean stubs/interfaces only where useful and document what remains pending.
+
+PRESENCE / USER STATUS:
+Add or upgrade user status and presence where appropriate:
+
+- online
+- offline
+- recently active
+- available to hang out
+- traveling now
+- open to plans
+- do not disturb
+- invisible mode
+- hide active status
+
+Respect privacy settings.
+
+ANTI-SPAM / RATE LIMITS:
+Prevent abuse across:
+
+- friend requests
+- follows
+- messages
+- message requests
+- invites
+- tags
+- comments
+- likes/reactions
+- reports
+- shares
+- repeated join requests
+- copy/paste spam
+- bot-like activity
+
+Use server-side rate limits and clear user-facing errors.
+
+NOTIFICATIONS:
+Wire notifications for:
+
+- likes
+- reactions
+- comments
+- replies
+- comment likes
+- mentions
+- tags
+- tag approval requests
+- event invites
+- event join requests
+- RSVP changes
+- event approval/denial
+- event waitlist promotion
+- event time/location changes
+- trip invites
+- trip join requests
+- trip approval/denial
+- itinerary updates
+- Trip Crew updates
+- memory tags
+- highlight tags
+- shares
+- friend requests
+- accepted friend requests
+- follows where applicable
+- Telegraph message requests
+- Safe Return reminders where already implemented
+- saved event reminders
+- review requests after attendance
+- moderation/report updates
+- dispute updates where applicable
+
+Users must be able to control notification categories.
+
+COMPASS / FEED / ALGORITHM SIGNALS:
+Feed interaction events into the Compass Intelligence Engine and activity/recommendation system.
+
+Positive signals:
+
+- likes
+- comments
+- replies
+- saves
+- shares
+- event RSVPs
+- event attendance
+- trip joins
+- trip participation
+- memory views
+- highlight views
+- verified reviews
+- quality posts
+- fast safe responses
+- completed bookings
+- good hosting
+- Safe Return compliance
+- helpful recommendations
+
+Negative signals:
+
+- hides
+- reports
+- blocks
+- mutes
+- spam
+- fake locations
+- no-shows
+- repeated cancellations
+- unsafe behavior
+- confirmed moderation violations
+- misleading events/trips
+- abusive messages
+
+Safety, privacy, moderation, age limits, verification gates, Trust Score gates, and block rules must always override popularity and engagement.
+
+DATABASE / BACKEND REQUIREMENTS:
+Inspect existing tables first. Add migrations only where needed.
+
+Prefer shared polymorphic interaction tables where practical using entity_type/entity_id, but do not break existing foreign keys, RLS, or features.
+
+Add or upgrade tables/policies for:
+
+- follows
+- friendships/friend_requests
+- message_requests
+- likes
+- reactions
+- comments
+- comment_replies if not modeled in comments
+- saves
+- collections
+- shares
+- reports
+- hides
+- mutes
+- blocks
+- tags
+- tag approvals
+- hashtags
+- hashtag follows/mutes
+- event RSVPs
+- event waitlists
+- trip members
+- trip invites
+- circle members
+- memories
+- memory items
+- highlights
+- highlight items
+- stories/story items
+- viewers where supported
+- reviews
+- disputes/appeals where supported
+- notifications
+- interaction/audit/activity events
+- user interaction settings
+- Close Friends / Trusted Crew lists
+- role permissions where needed
+
+Add indexes, uniqueness constraints, dedupe rules, and idempotent mutations. Prevent duplicate likes, duplicate saves, duplicate follows, duplicate active friend requests, duplicate event RSVPs, duplicate trip memberships, duplicate tags, and duplicate hashtag rows.
+
+RLS / SERVER-SIDE ENFORCEMENT:
+All privacy and permission checks must be enforced server-side, not only in the frontend.
+
+Server must enforce:
+
+- authentication
+- content visibility
+- block/mute rules
+- age restrictions
+- verified-only requirements
+- Trust Score requirements
+- event/trip/circle membership
+- role permissions
+- comment disabled/limited settings
+- sharing disabled
+- repost disabled
+- hidden like count
+- hidden attendee list
+- tag approval
+- custom allowed/hidden users
+- delayed geotag publishing
+- story expiration
+- rate limits
+- moderation removals
+
+Return clear errors such as:
+
+- comments disabled
+- sharing disabled
+- private content
+- blocked user
+- age requirement not met
+- verification required
+- Trust Score too low
+- invite required
+- waitlist full
+- event full
+- trip full
+- tag approval required
+- content removed
+- rate limited
+
+FRONTEND REQUIREMENTS:
+Wire consistent UI actions across:
+
+- post cards
+- comment sheets
+- event cards/details
+- trip cards/details
+- circle screens
+- memory cards/details
+- highlight viewer
+- story viewer
+- place cards/details
+- Passport profile
+- Telegraph chats
+- notification center
+- activity feed
+- Compass/Discovery feeds
+- City Pulse
+
+Use consistent menus/buttons:
+
+- like/reaction
+- comment
+- save
+- share
+- more menu
+- report
+- block
+- mute
+- tag
+- invite
+- RSVP/join
+- request access
+- privacy selector
+
+Use optimistic UI only where safe. Roll back on failed server validation.
+Add loading, empty, and error states.
+Keep the mobile UI clean. Do not clutter the bottom nav.
+Use Travel Buddy naming consistently: Passport, Telegraph, Trip Crew, City Pulse, Compass, Memories, Highlights, Stamps, Safe Return, Rent a Buddy.
+
+TESTING:
+Add backend tests for:
+
+- privacy enforcement
+- block enforcement
+- mute/hide behavior
+- duplicate prevention
+- comments disabled
+- comment limits
+- hidden like counts
+- disabled sharing
+- tag approval
+- hashtag creation/linking
+- saves/collections
+- reports
+- follows/friend requests
+- message requests
+- event RSVP/join/waitlist
+- trip invite/join/roles
+- circle membership/roles
+- memory privacy
+- highlight privacy
+- story expiration/privacy
+- check-ins/attendance/no-show
+- review eligibility
+- notification creation
+- rate limits
+- Compass signal creation
+- moderation removed content
+- custom allowed/hidden users
+
+Add frontend tests for core flows:
+
+- tapping profile opens Passport when allowed
+- tapping hashtag opens hashtag feed
+- tapping tags opens correct entity
+- like/comment/save/share interactions
+- RSVP/request join flow
+- trip invite flow
+- message request accept/decline/block
+- privacy selector behavior
+- blocked user cannot interact
+- hidden/disabled controls render correctly
+
+Run existing tests and typechecks. Fix regressions. Do not ship until existing app behavior still works.
+
+DELIVERABLE:
+Return a concise implementation report with:
+
+- what already existed
+- what was reused
+- what was newly added
+- files changed
+- migrations added
+- RLS policies added/changed
+- backend endpoints added/changed
+- frontend screens/components changed
+- tests added
+- exact test/typecheck results
+- any known limitations or follow-up items
+
+Do not break the app to achieve this build. Keep everything cohesive, privacy-safe, and production-ready.
