@@ -26,10 +26,10 @@ export interface SavedUser {
 
 export interface SaveStatus {
   userId: string;
-  saved: boolean;
+  isSaved: boolean;
 }
 
-export async function saveUser(userId: string): Promise<SaveResult> {
+export async function saveProfile(userId: string): Promise<SaveResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
@@ -48,7 +48,7 @@ export async function saveUser(userId: string): Promise<SaveResult> {
   }
 }
 
-export async function unsaveUser(userId: string): Promise<SaveResult> {
+export async function unsaveProfile(userId: string): Promise<SaveResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };

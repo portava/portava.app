@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
 import { UserCheck, UserPlus, Lock, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
 import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { UserAvatarButton } from './interaction/UserAvatarButton';
+import { UserNameButton } from './interaction/UserNameButton';
+import { UserOverflowMenu } from './interaction/UserOverflowMenu';
 
 function rowSignalIcon(signal: string) {
   const lower = signal.toLowerCase();
@@ -34,14 +36,18 @@ interface Props {
   user: TravelerSearchResult;
   isOwnProfile?: boolean;
   onFollowed?: (userId: string) => void;
+  onBlockSuccess?: (userId: string) => void;
 }
 
-export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
+export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuccess }: Props) {
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [followerCount, setFollowerCount] = useState(user.followerCount);
   const [toggling, setToggling] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const ringState = useHighlightRingState(user.id);
+
+  if (hidden) return null;
 
   async function handleToggle() {
     if (toggling || user.isPrivate) return;
@@ -63,18 +69,16 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
     setToggling(false);
   }
 
-  function handleRowPress() {
-    if (user.username) {
-      router.push(`/u/${user.username}` as any);
-    }
+  function handleBlockSuccess(userId: string) {
+    setHidden(true);
+    onBlockSuccess?.(userId);
   }
 
   const displayName = user.displayName ?? user.username ?? 'Traveler';
-  const handle = user.username ? `@${user.username}` : null;
 
   return (
     <>
-    <Pressable style={styles.row} onPress={handleRowPress}>
+    <View style={styles.row}>
       <HighlightRing
         hasActive={ringState?.hasActive ?? false}
         allViewed={ringState?.allViewed ?? false}
@@ -83,18 +87,24 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
         gap={2}
         onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
       >
-        {user.avatarUrl ? (
-          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarEmpty]}>
-            <Text style={{ fontSize: 22 }}>👤</Text>
-          </View>
-        )}
+        <UserAvatarButton
+          userId={user.id}
+          handle={user.username}
+          avatarUrl={user.avatarUrl}
+          size={48}
+        />
       </HighlightRing>
 
       <View style={styles.info}>
-        <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
-        {handle ? <Text style={styles.handle} numberOfLines={1}>{handle}</Text> : null}
+        <UserNameButton
+          userId={user.id}
+          handle={user.username}
+          displayName={displayName}
+          style={styles.name}
+        />
+        {user.username ? (
+          <Text style={styles.handle} numberOfLines={1}>@{user.username}</Text>
+        ) : null}
         {user.isPrivate ? (
           <View style={styles.privateBadge}>
             <Lock size={10} color={color.mute} />
@@ -129,7 +139,15 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed }: Props) {
           )}
         </Pressable>
       )}
-    </Pressable>
+
+      {!isOwnProfile && (
+        <UserOverflowMenu
+          userId={user.id}
+          displayName={displayName}
+          onBlockSuccess={handleBlockSuccess}
+        />
+      )}
+    </View>
     <HighlightViewer
       visible={viewerOpen}
       highlights={ringState?.highlights ?? []}
@@ -150,17 +168,6 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
     padding: space.md,
   },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: color.haze,
-  },
-  avatarEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0EDE8',
-  },
   info: {
     flex: 1,
     gap: 2,
@@ -179,11 +186,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: color.faint,
     marginTop: 1,
-  },
-  reason: {
-    fontSize: 11,
-    color: color.signal,
-    marginTop: 2,
   },
   reasonMulti: {
     marginTop: 2,

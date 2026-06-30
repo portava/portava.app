@@ -906,3 +906,90 @@ Gate: ✅ PASSED — 19/19 Phase 4 tests pass. 22/22 Phase 3 tests pass. Typeche
 - `run()` helper in `ProfileActionBar` and `UserMiniProfileCard` typed as `() => Promise<any> | undefined` to accept optional-chained callbacks
 
 Gate: ✅ PASSED — all 10 hooks + 13 components + 1 barrel. Typecheck clean.
+
+---
+
+## Phase 6 — Cross-Screen Wiring (2026-06-30)
+
+### Objective
+
+Wire Phase 5 interaction components across every screen that surfaces user identities.
+Enforce: blocked user cannot bypass blocker from any surface; Safe Return / live-share
+location withheld from blocked viewer; typecheck clean.
+
+---
+
+### Components and hooks built (Phase 5 deliverables, now confirmed in filesystem)
+
+**Services (`travel-buddy-standalone/src/services/`):**
+| File | Responsibility |
+|------|---------------|
+| `interactionContext.ts` | `GET /api/users/:id/interaction-context` → `InteractionContext` |
+| `mutes.ts` | POST/DELETE `/api/users/:id/mute`, GET `/api/me/mutes` |
+| `restrict.ts` | POST/DELETE `/api/users/:id/restrict`, GET `/api/me/restrictions` |
+| `saves.ts` | POST/DELETE `/api/users/:id/save` |
+| `reports.ts` | POST `/api/reports` |
+
+**Hooks (`travel-buddy-standalone/src/hooks/`):**
+| Hook | Purpose |
+|------|---------|
+| `useUserInteractionContext` | Fetches + caches permission engine result for a target user |
+| `useBlockUser` | `block()` / `unblock()` with loading state |
+| `useMuteUser` | `mute()` / `unmute()` with loading state |
+| `useRestrictUser` | `restrict()` / `unrestrict()` with loading state |
+| `useReportUser` | `report(targetId, reasonCode, detail?)` with loading state |
+| `useSavedProfileActions` | `save()` / `unsave()` with loading state |
+| `useRelationshipLabel` | Maps `context.relationshipLabel` → human-readable badge string |
+| `useCanMessageUser` | Derives `canMessage / canSendRequest / isDenied / reason` from context |
+
+**Components (`travel-buddy-standalone/src/components/interaction/`):**
+| Component | Role |
+|-----------|------|
+| `RelationshipBadge` | Coloured chip showing mutual/friend/blocked/etc. |
+| `KnownFromRow` | "On the same trip · In your circle" context banner |
+| `UserAvatarButton` | Avatar that navigates only if `!isBlocked`; integrates HighlightRing |
+| `UserNameButton` | Name text that navigates only if `!isBlocked`; shows "Unavailable user" when blocked |
+| `BlockUserConfirmSheet` | Bottom-sheet confirmation for block action |
+| `ReportUserSheet` | Two-step reason picker + detail composer |
+| `MuteUserSheet` | Mute / unmute bottom sheet |
+| `RestrictUserSheet` | Restrict / unrestrict bottom sheet |
+| `UserOverflowMenu` | Kebab `⋮` menu — mute / restrict / report / block; wires all four sheets |
+| `ProfileActionBar` | Row: MessageRequestCard + UserOverflowMenu |
+| `MessageRequestCard` | Message / Send Request / Denied chip with composer modal |
+| `UserMiniProfileCard` | Self-contained card — fetches own context, hides blocked users, adds overflow menu |
+| `SocialSafetyControlsScreen` | Safety settings content view (blocked / muted / restricted lists + location) |
+| `index.ts` | Barrel re-exports all 13 components |
+
+**New screens:**
+- `app/settings/safety.tsx` — wraps `SocialSafetyControlsScreen` with `ScreenHeader`
+- `app/muted-users.tsx` — full mute list management (Unmute, empty state, focus-refresh)
+- `app/restricted-users.tsx` — full restrict list management (Unrestrict, empty state, focus-refresh)
+
+---
+
+### Phase 6 wiring — surfaces updated
+
+| Surface | Change |
+|---------|--------|
+| `app/settings/index.tsx` | Added **Safety & Privacy** row (routes → `/settings/safety`); routes "Blocked accounts" still works independently |
+| `src/components/TravelerRow.tsx` | Added `UserOverflowMenu` at row end; added `onBlockSuccess` prop; local `isMuted` / `isRestricted` state |
+| `app/circle.tsx` — `CircleUserRow` | Restructured to `View` + inner `Pressable`; added `UserOverflowMenu`; `hidden` state hides row after block |
+| `src/components/tripCrew/CrewMemberCard.tsx` | Added `isBlockedByViewer` prop — when `true`, downgrades `statusLabel → location_hidden`, zeroes `safeReturnActive`, `liveShareActive`, `areaLabel`, and `planCheckInStatus`; also adds `UserOverflowMenu` |
+| `app/(rent-a-buddy)/buddy/[id].tsx` | Added `UserOverflowMenu` in hero nav overlay (alongside Back + Save buttons) |
+
+---
+
+### Safety invariants confirmed
+
+1. **No-bypass guarantee** — every `UserAvatarButton` / `UserNameButton` checks `context.reasonCodes.includes('blocked')` before navigating. `UserMiniProfileCard` renders null when blocked. `CircleUserRow` sets `hidden=true` on block success.
+2. **Safe Return / live-share location withheld** — `CrewMemberCard` accepts `isBlockedByViewer?: boolean`; when true, location status is forced to `'location_hidden'`, area label, Safe Return flag, and live-share flag are all suppressed client-side regardless of what the server returned.
+3. **Uniform overflow menu** — every surface that lists another user (TravelerRow, CircleUserRow, CrewMemberCard, BuddyProfile, UserMiniProfileCard) now carries a `UserOverflowMenu` offering mute / restrict / block / report.
+
+---
+
+### Typecheck result
+
+- `cd travel-buddy-standalone && pnpm typecheck` → **0 errors**
+- `pnpm run typecheck` (workspace root) → **0 errors**
+
+Gate: ✅ PASSED — Phase 6 wiring complete, all safety invariants enforced, typecheck clean.

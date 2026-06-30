@@ -7,7 +7,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { Bookmark } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { getSaveList, unsaveUser } from '../src/services/saves';
+import { getSaveList, unsaveProfile } from '../src/services/saves';
 import type { SavedUser } from '../src/services/saves';
 
 export default function SavedProfilesScreen() {
@@ -36,7 +36,7 @@ export default function SavedProfilesScreen() {
           style: 'destructive',
           onPress: async () => {
             setUnsaving(user.id);
-            const res = await unsaveUser(user.id);
+            const res = await unsaveProfile(user.id);
             setUnsaving(null);
             if (res.ok) {
               setUsers((prev) => prev.filter((u) => u.id !== user.id));

@@ -10,13 +10,7 @@ async function freshToken(): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
-export interface ReportResult {
-  ok: boolean;
-  reportId?: string;
-  error?: string;
-}
-
-export type ReasonCode =
+export type ReportReason =
   | 'harassment'
   | 'spam'
   | 'hate_speech'
@@ -24,42 +18,54 @@ export type ReasonCode =
   | 'impersonation'
   | 'nudity'
   | 'misinformation'
+  | 'inappropriate_content'
+  | 'fake_account'
   | 'other';
 
-export type TargetType =
-  | 'user'
-  | 'message'
-  | 'thread'
-  | 'trip'
-  | 'post'
-  | 'place'
-  | 'event';
+export const REPORT_REASON_LABELS: Record<ReportReason, string> = {
+  harassment: 'Harassment or bullying',
+  spam: 'Spam',
+  hate_speech: 'Hate speech',
+  violence: 'Violence',
+  impersonation: 'Impersonation',
+  nudity: 'Nudity',
+  misinformation: 'Misinformation',
+  inappropriate_content: 'Inappropriate content',
+  fake_account: 'Fake or scam account',
+  other: 'Something else',
+};
 
-export interface ReportParams {
-  target_type: TargetType;
-  target_id: string;
-  reason_code: ReasonCode;
-  reason_detail?: string;
-  context_type?: string;
-  context_id?: string;
+export interface SubmitReportPayload {
+  targetUserId: string;
+  reason: ReportReason;
+  details?: string;
 }
 
-export async function reportContent(params: ReportParams): Promise<ReportResult> {
+export interface ReportResult {
+  ok: boolean;
+  data?: { reportId: string };
+  error?: string;
+}
+
+export async function submitReport(payload: SubmitReportPayload): Promise<ReportResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
   try {
     const res = await fetch(`${apiBase()}/api/reports`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       return { ok: false, error: (body as any).message ?? 'Failed to submit report' };
     }
     const body = await res.json();
-    return { ok: true, reportId: body.reportId };
+    return { ok: true, data: { reportId: body.reportId } };
   } catch (e: any) {
     return { ok: false, error: e.message };
   }

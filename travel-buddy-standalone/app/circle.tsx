@@ -18,16 +18,24 @@ import { color, space, radius, type as t, shadow } from '../src/theme/tokens';
 import { HighlightRing } from '../src/components/HighlightRing';
 import { HighlightViewer } from '../src/components/HighlightViewer';
 import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
+import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton';
+import { UserNameButton } from '../src/components/interaction/UserNameButton';
+import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
+import { useBlockedIds } from '../src/context/BlockedIdsContext';
 
 function CircleUserRow({ u, reason }: { u: FollowUser; reason?: string }) {
   const ringState = useHighlightRingState(u.id);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const { blockedIds } = useBlockedIds();
+
+  if (hidden || blockedIds.has(u.id)) return null;
+
+  const displayName = u.name ?? u.handle ?? 'Traveler';
+
   return (
     <>
-      <Pressable
-        style={styles.row}
-        onPress={() => u.handle ? router.push(`/u/${u.handle}`) : undefined}
-      >
+      <View style={styles.row}>
         <HighlightRing
           hasActive={ringState?.hasActive ?? false}
           allViewed={ringState?.allViewed ?? false}
@@ -36,20 +44,19 @@ function CircleUserRow({ u, reason }: { u: FollowUser; reason?: string }) {
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
         >
-          {u.avatarUrl ? (
-            <Image source={{ uri: u.avatarUrl }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatar, styles.avatarEmpty]}>
-              <Text style={{ fontSize: 22 }}>👤</Text>
-            </View>
-          )}
+          <UserAvatarButton userId={u.id} handle={u.handle} avatarUrl={u.avatarUrl} size={52} />
         </HighlightRing>
         <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{u.name ?? u.handle ?? 'Traveler'}</Text>
+          <UserNameButton userId={u.id} handle={u.handle} displayName={displayName} style={styles.name} />
           {u.handle ? <Text style={styles.handle}>@{u.handle}</Text> : null}
           {reason ? <Text style={styles.reason}>{reason}</Text> : null}
         </View>
-      </Pressable>
+        <UserOverflowMenu
+          userId={u.id}
+          displayName={displayName}
+          onBlockSuccess={() => setHidden(true)}
+        />
+      </View>
       <HighlightViewer
         visible={viewerOpen}
         highlights={ringState?.highlights ?? []}

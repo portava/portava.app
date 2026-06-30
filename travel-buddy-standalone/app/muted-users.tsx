@@ -124,7 +124,7 @@ const s = StyleSheet.create({
     flex: 1, alignItems: 'center', justifyContent: 'center',
     gap: space.md, paddingHorizontal: space.xl,
   },
-  empty: { fontSize: 16, fontWeight: '700', color: color.ink, textAlign: 'center' },
+  empty: { ...t.bodyStrong, fontSize: 16, color: color.ink, textAlign: 'center' },
   emptySub: { fontSize: 13, color: color.mute, textAlign: 'center' },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
@@ -137,13 +137,13 @@ const s = StyleSheet.create({
   },
   avatarInitial: { fontSize: 18, fontWeight: '700', color: color.mute },
   info: { flex: 1, gap: 2 },
-  name: { fontSize: 14, fontWeight: '700', color: color.ink },
-  handle: { fontSize: 12, color: color.mute },
+  name: { ...t.bodyStrong, fontSize: 14, color: color.ink },
+  handle: { fontSize: 12, color: color.mute, fontFamily: 'Courier' },
   muteType: { fontSize: 11, color: color.faint, marginTop: 1 },
   unmuteBtn: {
     paddingHorizontal: space.md, paddingVertical: 7,
     borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
     backgroundColor: color.paperRaised, minWidth: 68, alignItems: 'center',
   },
-  unmuteBtnText: { fontSize: 13, fontWeight: '600', color: color.mute },
+  unmuteBtnText: { ...t.bodyStrong, fontSize: 13, color: color.mute },
 });

@@ -27,8 +27,8 @@ import { MapTab } from '../../src/components/MapTab';
 import { getProfileByHandle, getProfileById } from '../../src/services/friends';
 import { blockUser, getBlockStatus } from '../../src/services/blocks';
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
-import { saveUser, unsaveUser, getSaveStatus } from '../../src/services/saves';
-import { reportContent, type ReasonCode } from '../../src/services/reports';
+import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
+import { submitReport, type ReportReason } from '../../src/services/reports';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
@@ -213,7 +213,7 @@ function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
 
 // ── Kebab / action menu ───────────────────────────────────────────────────────
 
-const REPORT_REASONS: { code: ReasonCode; label: string }[] = [
+const REPORT_REASONS: { code: ReportReason; label: string }[] = [
   { code: 'harassment',     label: 'Harassment or bullying' },
   { code: 'spam',           label: 'Spam' },
   { code: 'hate_speech',    label: 'Hate speech' },
@@ -235,7 +235,7 @@ function KebabMenu({
   const [busy, setBusy] = useState<string | null>(null);
 
   const [reportOpen, setReportOpen] = useState(false);
-  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
+  const [reportReason, setReportReason] = useState<ReportReason | null>(null);
   const [reportDetail, setReportDetail] = useState('');
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportDone, setReportDone] = useState(false);
@@ -245,8 +245,8 @@ function KebabMenu({
     setStatusLoading(true);
     Promise.all([getMuteStatus(userId), getSaveStatus(userId)])
       .then(([muteRes, saveRes]) => {
-        if (muteRes.ok && muteRes.data) setIsMuted(muteRes.data.muted);
-        if (saveRes.ok && saveRes.data) setIsSaved(saveRes.data.saved);
+        if (muteRes.ok && muteRes.data) setIsMuted(muteRes.data.isMuted);
+        if (saveRes.ok && saveRes.data) setIsSaved(saveRes.data.isSaved);
       })
       .catch(() => {})
       .finally(() => setStatusLoading(false));
@@ -295,7 +295,7 @@ function KebabMenu({
     setBusy('save');
     const wasSaved = isSaved;
     setIsSaved(!wasSaved);
-    const res = wasSaved ? await unsaveUser(userId) : await saveUser(userId);
+    const res = wasSaved ? await unsaveProfile(userId) : await saveProfile(userId);
     setBusy(null);
     if (!res.ok) {
       setIsSaved(wasSaved);
@@ -314,11 +314,10 @@ function KebabMenu({
   async function handleSubmitReport() {
     if (!reportReason) return;
     setReportSubmitting(true);
-    const res = await reportContent({
-      target_type: 'user',
-      target_id: userId,
-      reason_code: reportReason,
-      reason_detail: reportDetail.trim() || undefined,
+    const res = await submitReport({
+      targetUserId: userId,
+      reason: reportReason,
+      details: reportDetail.trim() || undefined,
     });
     setReportSubmitting(false);
     if (res.ok) {

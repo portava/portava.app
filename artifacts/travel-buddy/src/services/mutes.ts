@@ -27,11 +27,11 @@ export interface MutedUser {
 
 export interface MuteStatus {
   userId: string;
-  muted: boolean;
+  isMuted: boolean;
   muteTypes: string[];
 }
 
-export async function muteUser(userId: string, muteTypes?: string[]): Promise<MuteResult> {
+export async function muteUser(userId: string, types: string[] = ['posts', 'stories']): Promise<MuteResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
@@ -39,7 +39,7 @@ export async function muteUser(userId: string, muteTypes?: string[]): Promise<Mu
     const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/mute`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mute_types: muteTypes ?? ['all'] }),
+      body: JSON.stringify({ types }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -70,6 +70,25 @@ export async function unmuteUser(userId: string): Promise<MuteResult> {
   }
 }
 
+export async function getMuteList(): Promise<MuteResult<MutedUser[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/me/mutes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: (body as any).message ?? 'Failed to load mutes' };
+    }
+    const body = await res.json();
+    return { ok: true, data: body.muted ?? [] };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export async function getMuteStatus(userId: string): Promise<MuteResult<MuteStatus>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
@@ -84,25 +103,6 @@ export async function getMuteStatus(userId: string): Promise<MuteResult<MuteStat
     }
     const body = await res.json();
     return { ok: true, data: body as MuteStatus };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
-
-export async function getMuteList(): Promise<MuteResult<MutedUser[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/me/mutes`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any).message ?? 'Failed to load mute list' };
-    }
-    const body = await res.json();
-    return { ok: true, data: body.muted ?? [] };
   } catch (e: any) {
     return { ok: false, error: e.message };
   }

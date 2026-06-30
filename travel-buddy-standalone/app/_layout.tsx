@@ -23,6 +23,7 @@ import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { setNotificationHandler } from '../src/lib/safeNotifications';
+import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
@@ -57,6 +58,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <SessionProvider>
+          <BlockedIdsProvider>
           <CompassProvider>
           <LanguagePreferenceProvider>
           <LocationProvider>
@@ -89,6 +91,7 @@ export default function RootLayout() {
           </LocationProvider>
           </LanguagePreferenceProvider>
           </CompassProvider>
+          </BlockedIdsProvider>
         </SessionProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

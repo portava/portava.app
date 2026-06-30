@@ -3,17 +3,23 @@
  *
  * Renders a single crew member's privacy-safe location status card.
  * No exact coordinates are ever displayed; statusLabel drives the UI.
+ *
+ * When isBlockedByViewer=true, ALL location signals (Safe Return, live share,
+ * area label, plan check-in) are withheld regardless of what the server sent.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import {
   Shield, MapPin, Navigation, Eye, EyeOff, Clock, CheckCircle2,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import type { CrewMemberCard as CrewMemberCardType, CrewStatusLabel } from '../../services/tripCrewLocation';
+import { UserOverflowMenu } from '../interaction/UserOverflowMenu';
 
 interface Props {
   member: CrewMemberCardType;
+  isBlockedByViewer?: boolean;
+  onBlockSuccess?: (userId: string) => void;
 }
 
 type StatusConfig = {
@@ -59,8 +65,18 @@ function formatExpiry(iso: string): string | null {
   return `${Math.ceil(mins / 60)}h left`;
 }
 
-export function CrewMemberCard({ member }: Props) {
-  const status = getStatusConfig(member.statusLabel, member.liveShareExpiresAt);
+export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSuccess }: Props) {
+  const [hidden, setHidden] = useState(false);
+
+  if (hidden) return null;
+
+  const effectiveStatusLabel: CrewStatusLabel = isBlockedByViewer ? 'location_hidden' : member.statusLabel;
+  const effectiveLiveShare = isBlockedByViewer ? false : member.liveShareActive;
+  const effectiveSafeReturn = isBlockedByViewer ? false : member.safeReturnActive;
+  const effectiveAreaLabel = isBlockedByViewer ? null : member.areaLabel;
+  const effectivePlanCheckIn = isBlockedByViewer ? null : member.planCheckInStatus;
+
+  const status = getStatusConfig(effectiveStatusLabel, isBlockedByViewer ? null : member.liveShareExpiresAt);
 
   return (
     <View style={s.card}>
@@ -75,30 +91,28 @@ export function CrewMemberCard({ member }: Props) {
             </Text>
           </View>
         )}
-        {member.liveShareActive && <View style={s.liveDot} />}
-        {member.ghostMode && <View style={s.ghostDot} />}
+        {effectiveLiveShare && <View style={s.liveDot} />}
+        {member.ghostMode && !isBlockedByViewer && <View style={s.ghostDot} />}
       </View>
 
       {/* Info */}
       <View style={s.body}>
         <Text style={s.name} numberOfLines={1}>{member.name ?? member.handle ?? 'Unknown'}</Text>
-        {member.areaLabel ? (
+        {effectiveAreaLabel ? (
           <View style={s.areaRow}>
             <MapPin size={11} color={color.mute} />
-            <Text style={s.areaLabel} numberOfLines={1}>{member.areaLabel}</Text>
+            <Text style={s.areaLabel} numberOfLines={1}>{effectiveAreaLabel}</Text>
           </View>
         ) : null}
-        {/* Distinct arrival / check-in row */}
-        {member.planCheckInStatus ? (
+        {effectivePlanCheckIn ? (
           <View style={s.areaRow}>
             <CheckCircle2 size={11} color={color.success} />
             <Text style={[s.areaLabel, { color: color.success }]}>
-              {member.planCheckInStatus === 'arrived' ? 'Arrived at plan' : member.planCheckInStatus}
+              {effectivePlanCheckIn === 'arrived' ? 'Arrived at plan' : effectivePlanCheckIn}
             </Text>
           </View>
         ) : null}
-        {/* Distinct Safe Return row */}
-        {member.safeReturnActive ? (
+        {effectiveSafeReturn ? (
           <View style={s.areaRow}>
             <Shield size={11} color="#7A4DBF" />
             <Text style={[s.areaLabel, { color: '#7A4DBF' }]}>Safe Return active</Text>
@@ -111,6 +125,15 @@ export function CrewMemberCard({ member }: Props) {
         {status.icon}
         <Text style={[s.badgeText, { color: status.color }]}>{status.label}</Text>
       </View>
+
+      {/* Overflow menu — hidden when already blocked */}
+      {member.userId && !isBlockedByViewer && (
+        <UserOverflowMenu
+          userId={member.userId}
+          displayName={member.name ?? member.handle ?? 'Crew member'}
+          onBlockSuccess={(uid) => { setHidden(true); onBlockSuccess?.(uid); }}
+        />
+      )}
     </View>
   );
 }

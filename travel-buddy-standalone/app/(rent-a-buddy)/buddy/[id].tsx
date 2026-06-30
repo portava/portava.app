@@ -16,6 +16,7 @@ import {
   type BuddyPackage, type BuddyAddon, type BuddyReview, type BuddyAvailability,
 } from '../../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
 
 function ReviewSection({ buddyId, initialReviews, total, avgRating }: {
   buddyId: string;
@@ -189,6 +190,11 @@ export default function BuddyProfileScreen() {
             >
               <Heart size={18} color={color.onInk} fill={saved ? color.signal : 'none'} />
             </Pressable>
+            <UserOverflowMenu
+              userId={buddy.userId}
+              displayName={buddy.displayName ?? 'Local Buddy'}
+              onBlockSuccess={() => router.replace('/(rent-a-buddy)/' as any)}
+            />
           </View>
 
           {/* Hero info */}
