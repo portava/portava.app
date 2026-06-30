@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { isUuid } from '../lib/followDecisions.js';
+import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 
 const router = Router();
 
@@ -35,6 +36,104 @@ async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: a
   const sc = getServiceClient() ?? client;
   return { userId: user.id, sc };
 }
+
+// ─── POST /api/tags — create a tag (tagger → tagged_user_id) ─────────────────
+//
+// Body: { source_type: 'post'|'comment'|'message', source_id: uuid, tagged_user_id: uuid }
+// Permission engine enforces: block-both-directions → 403, tag_permission gate (canTag).
+
+const VALID_SOURCE_TYPES = new Set(['post', 'comment', 'message', 'place_checkin', 'place_mention']);
+// Location-type sources require a friend connection (stricter than default tag_permission).
+const LOCATION_SOURCE_TYPES = new Set(['place_checkin', 'place_mention']);
+
+const CreateTagSchema = z.object({
+  source_type:    z.string().refine((v) => VALID_SOURCE_TYPES.has(v), 'source_type must be post, comment, or message'),
+  source_id:      z.string().refine(isUuid, 'source_id must be a valid UUID'),
+  tagged_user_id: z.string().refine(isUuid, 'tagged_user_id must be a valid UUID'),
+});
+
+router.post('/tags', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = CreateTagSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues.map((i) => i.message).join('; '));
+    return;
+  }
+
+  const { source_type, source_id, tagged_user_id } = parsed.data;
+
+  if (tagged_user_id === user.id) {
+    sendError(res, 'invalid_payload', 'Cannot tag yourself');
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Permission engine — enforces:
+  //   1. Block (either direction) → 403
+  //   2. tag_permission policy (canTag / canTagPending)
+  //   3. Location-type sources require friendship (stricter privacy for location context)
+  let perms: Awaited<ReturnType<typeof resolveInteractionPermissions>>;
+  try {
+    perms = await resolveInteractionPermissions(sc, user.id, tagged_user_id);
+  } catch (err) {
+    req.log.error({ err }, 'permission engine failed for tag create');
+    sendError(res, 'db_error', 'Permission check failed');
+    return;
+  }
+
+  // Location-type sources require a friend connection regardless of tag_permission setting.
+  // canSeeFriendOnlyPosts === isFriend (see permission engine), so it's the correct friendship proxy.
+  if (LOCATION_SOURCE_TYPES.has(source_type) && !perms.canSeeFriendOnlyPosts) {
+    sendError(res, 'forbidden', 'Location tags require a friend connection');
+    return;
+  }
+
+  if (!perms.canTag && !perms.canTagPending) {
+    sendError(res, 'forbidden', perms.reasonCodes.includes('blocked')
+      ? 'Cannot tag a user you have blocked or who has blocked you'
+      : 'This user does not allow tags from you');
+    return;
+  }
+
+  // approval_required: insert with status='pending' and return 202 Accepted
+  const tagStatus = perms.canTagPending ? 'pending' : 'approved';
+
+  const { data, error } = await sc
+    .from('tags')
+    .insert({ source_type, source_id, tagger_id: user.id, tagged_user_id, status: tagStatus })
+    .select('id')
+    .single();
+
+  if (error) {
+    // Unique constraint violation → already tagged (idempotent)
+    if ((error as any).code === '23505') {
+      const { data: existing } = await sc
+        .from('tags')
+        .select('id, status')
+        .eq('source_type', source_type)
+        .eq('source_id', source_id)
+        .eq('tagged_user_id', tagged_user_id)
+        .maybeSingle();
+      const existingStatus = (existing as any)?.status ?? 'approved';
+      res.status(existingStatus === 'pending' ? 202 : 200).json({
+        tagId: (existing as any)?.id ?? null,
+        alreadyTagged: true,
+        status: existingStatus,
+      });
+      return;
+    }
+    req.log.error({ err: error }, 'tags insert failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(tagStatus === 'pending' ? 202 : 201).json({ tagId: (data as any).id, status: tagStatus });
+});
 
 // ─── GET /api/tags/suggestions ────────────────────────────────────────────────
 

@@ -21,3 +21,4 @@
 - [Expo dotenv overrides Replit secrets](expo-dotenv-override.md) — Expo CLI's own dotenv loader overwrites Replit secrets with .env placeholders; fix via .env.local written in predev before expo starts
 - [MapLibre React Native v11 API](maplibre-v11-api.md) — Map/Camera/Marker/GeoJSONSource/Layer; coordinate order [lng,lat]; requires @types/geojson devDep
 - [expo-notifications safe wrapper](safe-notifications.md) — ExpoTopicSubscriptionModule crash fixed by lazy require() in safeNotifications.ts; remove all top-level imports; user_location_privacy table was renamed to location_preferences (migration 0032)
+- [Interaction Phase 4 — core actions](interaction-phase4-core-actions.md) — sendError body uses { error: code } not { code }; isUuid() rejects non-hex chars; friend_request cooldown added to permission engine canAddFriend; .catch() invalid on Supabase builders → use .then(undefined, () => {})

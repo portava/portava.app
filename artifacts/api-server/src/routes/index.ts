@@ -47,6 +47,10 @@ import compassRouter from "./compass";
 import adminCompassRouter from "./adminCompass";
 import routePlanRouter from "./routePlan";
 import interactionContextRouter from "./interactionContext";
+import mutesRouter from "./mutes";
+import savesRouter from "./saves";
+import reportsRouter from "./reports";
+import restrictRouter from "./restrict";
 
 const router: IRouter = Router();
 
@@ -98,5 +102,9 @@ router.use(compassRouter);
 router.use(adminCompassRouter);
 router.use(routePlanRouter);
 router.use(interactionContextRouter);
+router.use(mutesRouter);
+router.use(savesRouter);
+router.use(reportsRouter);
+router.use(restrictRouter);
 
 export default router;

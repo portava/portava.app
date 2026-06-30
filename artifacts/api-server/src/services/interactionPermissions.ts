@@ -87,6 +87,7 @@ export interface InteractionPermissions {
   canInviteToTripCrew: boolean;
 
   canTag: boolean;
+  canTagPending: boolean;  // true when tag_permission='approval_required'; insert with status='pending'
   canMention: boolean;
   canBookBuddy: boolean;
   canReview: boolean;
@@ -94,6 +95,7 @@ export interface InteractionPermissions {
   canMute: boolean;
   canRestrict: boolean;
   canBlock: boolean;
+  canUnblock: boolean;  // true when viewer is the blocker; false in ALL_FALSE suspension path
   canReport: boolean;
   canShareProfile: boolean;
 
@@ -195,7 +197,9 @@ const ALL_FALSE: Omit<
   canMute: false,
   canRestrict: false,
   canBlock: true,    // can always block unless already blocked
+  canUnblock: false, // set per-context based on whether viewer is the blocker
   canReport: true,   // can always report
+  canTagPending: false,
   canShareProfile: false,
   canSeeMutuals: false,
   canSeeAvailability: false,
@@ -295,7 +299,9 @@ export async function resolveInteractionPermissions(
   if (iBlocked || theyBlocked) {
     const label: RelationshipLabel = iBlocked && theyBlocked ? "mutual_block" : iBlocked ? "blocked" : "blocks_you";
     reasonCodes.push("blocked");
-    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel: label, profileVisibility: "private", canBlock: !iBlocked, canReport: true, safetyWarnings, reasonCodes, context: ctx };
+    // Undo-own-action capabilities survive a block: the blocker/blockee can still
+    // remove their own restrictions (unsave, unmute, unrestrict) and their own block.
+    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel: label, profileVisibility: "private", canBlock: !iBlocked, canUnblock: iBlocked, canUnsaveProfile: true, canReport: true, safetyWarnings, reasonCodes, context: ctx };
   }
 
   // ── PRIORITY 3: Trust restriction on viewer (FAIL-CLOSED) ────────────────
@@ -360,6 +366,8 @@ export async function resolveInteractionPermissions(
     msgSettingsRes,
     msgCooldownRes,
     nudgeCooldownRes,
+    friendReqCooldownRes,
+    followCooldownRes,
     muteRes,
     restrictionRes,
   ] = await Promise.all([
@@ -374,6 +382,10 @@ export async function resolveInteractionPermissions(
     sc.from("user_interaction_cooldowns").select("expires_at").eq("user_id", viewerId).eq("target_user_id", targetUserId).eq("cooldown_type", "message_request").maybeSingle(),
     // nudge cooldown (Phase 2 table — optional; uses cooldown_type='nudge')
     sc.from("user_interaction_cooldowns").select("expires_at").eq("user_id", viewerId).eq("target_user_id", targetUserId).eq("cooldown_type", "nudge").maybeSingle(),
+    // friend_request cooldown — set after a decline (24 h) or block (90 days)
+    sc.from("user_interaction_cooldowns").select("expires_at").eq("user_id", viewerId).eq("target_user_id", targetUserId).eq("cooldown_type", "friend_request").maybeSingle(),
+    // follow cooldown — set after a block (90 days) to prevent follow churn
+    sc.from("user_interaction_cooldowns").select("expires_at").eq("user_id", viewerId).eq("target_user_id", targetUserId).eq("cooldown_type", "follow").maybeSingle(),
     // viewer mutes target (Phase 2 table — optional)
     sc.from("user_mutes").select("muter_id").eq("muter_id", viewerId).eq("muted_id", targetUserId).maybeSingle(),
     // target restricts viewer (Phase 2 table — optional)
@@ -403,7 +415,9 @@ export async function resolveInteractionPermissions(
 
   const msgCooldownActive = isActiveCooldown(msgCooldownRes);
   const nudgeCooldownActive = isActiveCooldown(nudgeCooldownRes);
+  const friendReqCooldownActive = isActiveCooldown(friendReqCooldownRes);
   if (nudgeCooldownActive) safetyWarnings.push("nudge_cooldown");
+  const followCooldownActive = isActiveCooldown(followCooldownRes);
 
   const isMuted = (muteRes as any).error && !isTableMissingError((muteRes as any).error)
     ? false
@@ -485,7 +499,7 @@ export async function resolveInteractionPermissions(
   const canViewProfile = !isPrivate || isFriend;
   if (!canViewProfile) {
     reasonCodes.push("private_profile");
-    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel, profileVisibility: "private", canBlock: true, canReport: true, safetyWarnings, reasonCodes, context: ctx };
+    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel, profileVisibility: "private", canBlock: true, canUnblock: true, canUnsaveProfile: true, canReport: true, safetyWarnings, reasonCodes, context: ctx };
   }
 
   // ── Messaging ─────────────────────────────────────────────────────────────
@@ -519,13 +533,15 @@ export async function resolveInteractionPermissions(
   // ── Tag permission ────────────────────────────────────────────────────────
   const whoCanTag = privSettings?.who_can_tag ?? targetProfile.tag_permission ?? "everyone";
   let canTag = false;
+  let canTagPending = false;  // true when tag_permission='approval_required' → insert with status='pending'
   switch (whoCanTag) {
-    case "everyone":     canTag = true; break;
+    case "everyone":            canTag = true; break;
     case "friends":
-    case "friends_only": canTag = isFriend; break;
-    case "followers":    canTag = viewerFollowsTarget; break;
-    case "no_one":       canTag = false; break;
-    default:             canTag = true;
+    case "friends_only":        canTag = isFriend; break;
+    case "followers":           canTag = viewerFollowsTarget; break;
+    case "no_one":              canTag = false; break;
+    case "approval_required":   canTagPending = true; canTag = false; break;
+    default:                    canTag = true;
   }
 
   // ── Final permissions ─────────────────────────────────────────────────────
@@ -543,12 +559,12 @@ export async function resolveInteractionPermissions(
     canAcceptMessageRequest: false,
     canDeclineMessageRequest: false,
 
-    canAddFriend:          !isFriend && !hasOutgoingFriendReq && !hasIncomingFriendReq && !viewerSuspended,
+    canAddFriend:          !isFriend && !hasOutgoingFriendReq && !hasIncomingFriendReq && !viewerSuspended && !friendReqCooldownActive,
     canAcceptFriendRequest: hasIncomingFriendReq && !viewerSuspended,
     canDeclineFriendRequest: hasIncomingFriendReq && !viewerSuspended,
     canCancelFriendRequest: hasOutgoingFriendReq,
 
-    canFollow:   !viewerFollowsTarget && !viewerSuspended,
+    canFollow:   !viewerFollowsTarget && !viewerSuspended && !followCooldownActive,
     canUnfollow: viewerFollowsTarget,
 
     canSaveProfile:   true,
@@ -558,14 +574,16 @@ export async function resolveInteractionPermissions(
     canInviteToCircle:  !ageRestricted && !viewerSuspended,
     canInviteToTripCrew: !ageRestricted && !viewerSuspended,
 
-    canTag:      canTag && !viewerSuspended,
-    canMention:  !viewerSuspended,
+    canTag:        canTag && !viewerSuspended,
+    canTagPending: canTagPending && !viewerSuspended,
+    canMention:    !viewerSuspended,
     canBookBuddy: !viewerSuspended,
     canReview:   !viewerSuspended,
 
-    canMute:     !isMuted,
+    canMute:     true,  // always allow mute/update; blocked/suspended handled by early ALL_FALSE return
     canRestrict: true,
     canBlock:    true,
+    canUnblock:  true,  // in normal path (no block active), unblock is a no-op but allowed
     canReport:   true,
     canShareProfile: true,
 

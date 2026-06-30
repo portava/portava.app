@@ -715,3 +715,131 @@ Three issues raised by code review were addressed. All 22 tests still pass.
 
 Gate: ✅ PASSED — 22/22 named tests pass. Typecheck clean.
 
+
+---
+
+## Phase 4 — Core Actions (backend) (2026-06-30)
+
+**Objective:** Implement all core social-action endpoints, routing every write through the Phase 3 permission engine (`resolveInteractionPermissions`). All actions are block-aware and anti-retaliation-hardened.
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `src/migrations/0063_interaction_foundation.sql` | Creates Phase 4 tables: `user_interaction_cooldowns`, `user_mutes`, `user_restrictions`, `reports`, `user_saves`, `moderation_actions`, `user_account_states`, `user_privacy_settings`. All have RLS enabled. |
+| `src/routes/mutes.ts` | POST/DELETE `/users/:id/mute`, GET `/me/mutes`, GET `/users/:id/mute-status`. Private mute (user never notified). Permission-engine gate: `canMute=false` when either party has blocked the other. |
+| `src/routes/saves.ts` | POST/DELETE `/users/:id/save`, GET `/me/saves`, GET `/users/:id/save-status`. Private bookmark: grants no access to private content. Permission-engine gate: `canSaveProfile=false` when blocked. |
+| `src/routes/reports.ts` | POST `/reports`, GET `/reports/:id`. Unified cross-domain report table. High-severity user reports (`harassment`, `hate_speech`, `violence`) auto-restrict the target and write 90-day anti-retaliation cooldowns for `message_request` + `friend_request`. |
+| `src/test/coreActions.test.ts` | 13-test suite: block app-wide ×3, mute ×3, save ×3, report ×2, anti-retaliation cooldown ×1, blocked-save ×1. |
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `src/routes/friends.ts` | Added `resolveInteractionPermissions` gate in `POST /users/:id/friend-request` (fail-closed block check). Added 24-hour anti-retaliation `friend_request` cooldown write on `POST /friend-requests/:id/decline`. |
+| `src/routes/blocks.ts` | Fixed `friend_requests` cleanup query (was using wrong columns `from_user`/`to_user` → now correct `requester_id`/`recipient_id`). Added `message_requests` cancellation (both directions) on block. Added 90-day anti-retaliation cooldowns for `message_request`, `friend_request`, `follow`. |
+| `src/routes/follows.ts` | Replaced direct block check + `decideFollow()` with `resolveInteractionPermissions` call. Handles: blocked→403, already-following→200 idempotent (via `canUnfollow`), suspended→403. |
+| `src/routes/index.ts` | Registered `mutesRouter`, `savesRouter`, `reportsRouter`. |
+| `src/services/interactionPermissions.ts` | Added `friend_request` cooldown query to the Phase 3 permission engine's parallel fetch batch. `canAddFriend` now also checks `friendReqCooldownActive`, making anti-retaliation cooldowns enforceable across all friend-request entry points. |
+
+### Permission engine coverage
+
+All 5 social-action endpoints now route through `resolveInteractionPermissions`:
+
+| Endpoint | Capability checked |
+|----------|--------------------|
+| `POST /users/:id/follow` | `canFollow` / `canUnfollow` (idempotent) |
+| `POST /users/:id/friend-request` | `canAddFriend` |
+| `POST /users/:id/mute` | `canMute` |
+| `POST /users/:id/save` | `canSaveProfile` |
+| `POST /reports` | `canReport` (user reports only) |
+
+### Anti-retaliation cooldown summary
+
+| Trigger | Cooldown written | Duration |
+|---------|-----------------|---------|
+| Friend request declined | `friend_request` | 24 hours |
+| User blocked | `message_request` + `friend_request` + `follow` | 90 days |
+| High-severity report | `message_request` + `friend_request` (on target → reporter) | 90 days |
+
+### Gate
+
+✅ PASSED — 13/13 Phase 4 tests pass. 22/22 Phase 3 tests still pass. Typecheck clean.
+
+```
+node --import tsx/esm --test src/test/coreActions.test.ts
+ℹ tests 13
+ℹ pass 13
+ℹ fail 0
+```
+
+---
+
+## Phase 4 — Code Review Corrections (2026-06-30)
+
+Three critical issues identified in code review were addressed. All 35 tests (22 Phase 3 + 13 Phase 4) still pass.
+
+### Changes from code review
+
+| Issue | Fix |
+|-------|-----|
+| **Reporter-protection restrict row was inverted** | `user_restrictions` upsert in `reports.ts` had `restrictor_id: target_id, restricted_id: user.id`. The permission engine queries `restrictor_id=targetUserId, restricted_id=viewerId` to check if target restricts the viewer. For Bob (future viewer) to be blocked from contacting Alice (reporter), the row must be `restrictor_id=Alice (reporter), restricted_id=Bob (reported)`. Fixed to `{ restrictor_id: user.id, restricted_id: target_id }`. |
+| **Permission engine missing on block + unfollow endpoints** | Added `resolveInteractionPermissions` gate to `POST /users/:id/block` (suspension check via `canBlock`) and `DELETE /users/:id/follow` (idempotent unfollow when `canUnfollow=false` means not currently following). |
+| **Permission engine missing on friend-request mutations** | Added `resolveInteractionPermissions` checks to accept (`canAcceptFriendRequest`), decline (`canDeclineFriendRequest`), and cancel (`canCancelFriendRequest`) — prevents suspended users from performing these mutations. |
+
+### Endpoints now fully gated by permission engine
+
+| Endpoint | Capability |
+|----------|-----------|
+| `POST /users/:id/block` | `canBlock` |
+| `DELETE /users/:id/follow` | `canUnfollow` (idempotent when false) |
+| `POST /users/:id/follow` | `canFollow` / `canUnfollow` |
+| `POST /users/:id/friend-request` | `canAddFriend` |
+| `POST /friend-requests/:id/accept` | `canAcceptFriendRequest` |
+| `POST /friend-requests/:id/decline` | `canDeclineFriendRequest` |
+| `POST /friend-requests/:id/cancel` | `canCancelFriendRequest` |
+| `POST /users/:id/mute` | `canMute` |
+| `POST /users/:id/save` | `canSaveProfile` |
+| `POST /reports` | `canReport` |
+
+Gate: ✅ PASSED — 13/13 Phase 4 tests pass. 22/22 Phase 3 tests pass. Typecheck clean.
+
+---
+
+## Phase 4 — Second Code Review Pass (2026-06-30)
+
+Code review identified six additional requirements. All 41 tests (22 Phase 3 + 19 Phase 4) pass.
+
+### Changes
+
+| Item | Fix |
+|------|-----|
+| **Missing restrict endpoint** | Created `routes/restrict.ts` — `POST/DELETE /users/:id/restrict`, `GET /me/restrictions`, `GET /users/:id/restrict-status`. Gated by `canRestrict` from the permission engine. Registered in `routes/index.ts`. |
+| **messaging.ts write actions ungated** | `POST /users/:userId/open-thread` — replaced `canMessage()` helper call with `resolveInteractionPermissions` check on `perms.canMessage`/`perms.canSendMessageRequest`. `POST /users/:userId/message-request` — added engine gate: `!canMessage && !canSendMessageRequest` → 403. Added `resolveInteractionPermissions` import. |
+| **requests.ts friend_request mutations ungated** | Added `resolveInteractionPermissions` import + engine gate to `POST /me/requests/friend_request/:id/accept` (`canAcceptFriendRequest`), `/decline` (`canDeclineFriendRequest`), `/cancel` (`canCancelFriendRequest`). Widened `select()` columns to include the counterparty id needed by the engine. |
+| **DELETE /users/:id/follow fail-open** | Changed `catch {}` fail-open to fail-closed: `sendError(res, "db_error", "Permission check failed"); return;` |
+| **Mute idempotency** | `POST /users/:id/mute` now queries for an existing mute row first. If row exists, skips the engine `canMute` check and goes straight to upsert (updating types). New mutes still gate on `canMute`. This fixes `canMute = !isMuted` blocking type updates. |
+| **Block-app-wide test coverage** | Extended `coreActions.test.ts` from 13 → 19 tests. New tests: blocked message-request (403), restrict CRUD, blocked restrict (403), mute-type update idempotency, and blocked `requests.ts` friend-request accept (403). |
+
+### Endpoint permission engine coverage (complete)
+
+| Endpoint | Capability |
+|----------|-----------|
+| `POST /users/:id/follow` | `canFollow` |
+| `DELETE /users/:id/follow` | `canUnfollow` (fail-closed) |
+| `POST /users/:id/friend-request` | `canAddFriend` |
+| `POST /friend-requests/:id/accept` | `canAcceptFriendRequest` |
+| `POST /friend-requests/:id/decline` | `canDeclineFriendRequest` |
+| `POST /friend-requests/:id/cancel` | `canCancelFriendRequest` |
+| `POST /users/:id/block` | `canBlock` |
+| `POST /users/:id/mute` | `canMute` (new mutes) |
+| `POST /users/:id/save` | `canSaveProfile` |
+| `POST /users/:id/restrict` | `canRestrict` |
+| `POST /reports` | `canReport` |
+| `POST /users/:id/open-thread` | `canMessage` / `canSendMessageRequest` |
+| `POST /users/:id/message-request` | `canMessage || canSendMessageRequest` |
+| `POST /me/requests/friend_request/:id/accept` | `canAcceptFriendRequest` |
+| `POST /me/requests/friend_request/:id/decline` | `canDeclineFriendRequest` |
+| `POST /me/requests/friend_request/:id/cancel` | `canCancelFriendRequest` |
+
+Gate: ✅ PASSED — 19/19 Phase 4 tests pass. 22/22 Phase 3 tests pass. Typecheck clean.

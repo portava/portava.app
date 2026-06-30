@@ -17,6 +17,7 @@ import { requireUser, sendError } from "../lib/http";
 import { normalizedFriendshipPair, isUuid } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { getAgeEligibilityReason } from "../lib/ageEligibility";
+import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 
 const router = Router();
 
@@ -220,6 +221,21 @@ router.post("/me/requests/friend_request/:id/accept", async (req, res) => {
   if (fr.status !== "pending") { sendError(res, "invalid_payload", `Request is already ${fr.status}`); return; }
   if (fr.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may accept this request"); return; }
 
+  // Permission engine — suspended recipient cannot accept; requester may have blocked recipient
+  const permSc = getServiceClient();
+  if (!permSc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  try {
+    const perms = await resolveInteractionPermissions(permSc, user.id, fr.requester_id);
+    if (!perms.canAcceptFriendRequest) {
+      sendError(res, "forbidden", "Cannot accept this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request accept");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
+
   const now = new Date().toISOString();
   await sc.from("friend_requests").update({ status: "accepted", responded_at: now, updated_at: now }).eq("id", id);
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
@@ -241,13 +257,38 @@ router.post("/me/requests/friend_request/:id/decline", async (req, res) => {
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid request id"); return; }
 
   const { data: fr } = await sc.from("friend_requests")
-    .select("id, recipient_id, status").eq("id", id).maybeSingle();
+    .select("id, requester_id, recipient_id, status").eq("id", id).maybeSingle();
   if (!fr) { sendError(res, "not_found", "Friend request not found"); return; }
   if (fr.status !== "pending") { sendError(res, "invalid_payload", `Request is already ${fr.status}`); return; }
   if (fr.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may decline this request"); return; }
 
+  // Permission engine — suspended recipient cannot decline
+  const permScD = getServiceClient();
+  if (!permScD) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  try {
+    const perms = await resolveInteractionPermissions(permScD, user.id, fr.requester_id);
+    if (!perms.canDeclineFriendRequest) {
+      sendError(res, "forbidden", "Cannot decline this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request decline");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
+
   const now = new Date().toISOString();
   await sc.from("friend_requests").update({ status: "declined", responded_at: now, updated_at: now }).eq("id", id);
+
+  // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
+  const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await permScD.from("user_interaction_cooldowns").upsert({
+    user_id:        fr.requester_id,
+    target_user_id: user.id,
+    cooldown_type:  "friend_request",
+    expires_at:     cooldownExpiry,
+  }, { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
+
   res.status(200).json({ status: "declined", requestId: id });
 });
 
@@ -264,10 +305,25 @@ router.post("/me/requests/friend_request/:id/cancel", async (req, res) => {
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid request id"); return; }
 
   const { data: fr } = await sc.from("friend_requests")
-    .select("id, requester_id, status").eq("id", id).maybeSingle();
+    .select("id, requester_id, recipient_id, status").eq("id", id).maybeSingle();
   if (!fr) { sendError(res, "not_found", "Friend request not found"); return; }
   if (fr.status !== "pending") { sendError(res, "invalid_payload", `Request is already ${fr.status}`); return; }
   if (fr.requester_id !== user.id) { sendError(res, "forbidden", "Only the requester may cancel this request"); return; }
+
+  // Permission engine — verify requester still owns an outgoing request (canCancelFriendRequest)
+  const permScC = getServiceClient();
+  if (!permScC) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  try {
+    const perms = await resolveInteractionPermissions(permScC, user.id, fr.recipient_id);
+    if (!perms.canCancelFriendRequest) {
+      sendError(res, "forbidden", "Cannot cancel this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request cancel");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
 
   const now = new Date().toISOString();
   await sc.from("friend_requests").update({ status: "cancelled", updated_at: now }).eq("id", id);

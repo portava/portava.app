@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
 import { getServiceClient } from '../lib/supabase';
+import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
@@ -271,13 +272,20 @@ router.post('/users/:userId/open-thread', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const verdict = await canMessage(sc, user.id, recipientId);
-  if (verdict.verdict === 'denied') {
-    sendError(res, 'forbidden', `Cannot message this user: ${verdict.reason ?? 'denied'}`);
-    return;
-  }
-  if (verdict.verdict === 'requires_request') {
-    sendError(res, 'forbidden', 'This user requires a message request first. Use POST /api/users/:userId/message-request.');
+  // Phase 4 permission engine gate — primary authorization check (fail-closed)
+  try {
+    const msgPerms = await resolveInteractionPermissions(sc, user.id, recipientId);
+    if (!msgPerms.canMessage) {
+      if (msgPerms.canSendMessageRequest) {
+        sendError(res, 'forbidden', 'This user requires a message request first. Use POST /api/users/:userId/message-request.');
+      } else {
+        sendError(res, 'forbidden', 'Cannot message this user');
+      }
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, 'permission engine failed for open-thread');
+    sendError(res, 'db_error', 'Permission check failed');
     return;
   }
 
@@ -386,6 +394,19 @@ router.post('/users/:userId/message-request', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Phase 4 permission engine gate — deny when blocked or suspended
+  try {
+    const reqPerms = await resolveInteractionPermissions(sc, user.id, recipientId);
+    if (!reqPerms.canMessage && !reqPerms.canSendMessageRequest) {
+      sendError(res, 'forbidden', 'Cannot send a message request to this user');
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, 'permission engine failed for message-request');
+    sendError(res, 'db_error', 'Permission check failed');
+    return;
+  }
 
   // Trust Engine: check if sender is restricted from messaging
   const senderRestrictions = await getRestrictionState(sc, user.id);

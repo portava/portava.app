@@ -10,6 +10,7 @@ import {
 } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { syncCircleChatMembers } from "../lib/chatSync";
+import { resolveInteractionPermissions } from "../services/interactionPermissions";
 
 const router = Router();
 
@@ -45,6 +46,21 @@ router.post("/users/:userId/friend-request", async (req, res) => {
 
   const { data: profile } = await sc.from("profiles").select("id").eq("id", recipientId).maybeSingle();
   if (!profile) { sendError(res, "not_found", "User not found"); return; }
+
+  // Permission engine — fail-closed block + restriction gate before any DB write
+  try {
+    const perms = await resolveInteractionPermissions(sc, user.id, recipientId);
+    if (!perms.canAddFriend) {
+      const isBlocked = perms.reasonCodes.includes("blocked");
+      sendError(res, isBlocked ? "forbidden" : "invalid_payload",
+        isBlocked ? "Cannot send a friend request to this user" : "Friend request not allowed");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
 
   // Check for an existing request in this direction
   const { data: existing } = await sc
@@ -130,6 +146,19 @@ router.post("/friend-requests/:requestId/accept", async (req, res) => {
   const decision = decideAcceptRequest(user.id, fr.recipient_id);
   if (!decision.ok) { sendError(res, "forbidden", decision.reason); return; }
 
+  // Permission engine — suspended recipient cannot accept requests
+  try {
+    const perms = await resolveInteractionPermissions(sc, user.id, fr.requester_id);
+    if (!perms.canAcceptFriendRequest) {
+      sendError(res, "forbidden", "Cannot accept this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request accept");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
+
   const now = new Date().toISOString();
   await sc.from("friend_requests")
     .update({ status: "accepted", responded_at: now, updated_at: now })
@@ -163,10 +192,32 @@ router.post("/friend-requests/:requestId/decline", async (req, res) => {
   const decision = decideDeclineRequest(user.id, fr.recipient_id);
   if (!decision.ok) { sendError(res, "forbidden", decision.reason); return; }
 
+  // Permission engine — suspended recipient cannot decline requests
+  try {
+    const perms = await resolveInteractionPermissions(sc, user.id, fr.requester_id);
+    if (!perms.canDeclineFriendRequest) {
+      sendError(res, "forbidden", "Cannot decline this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request decline");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
+
   const now = new Date().toISOString();
   await sc.from("friend_requests")
     .update({ status: "declined", responded_at: now, updated_at: now })
     .eq("id", requestId);
+
+  // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
+  const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await sc.from("user_interaction_cooldowns").upsert({
+    user_id:        fr.requester_id,
+    target_user_id: user.id,
+    cooldown_type:  "friend_request",
+    expires_at:     cooldownExpiry,
+  }, { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
 
   res.status(200).json({ status: "declined", requestId });
 });
@@ -191,6 +242,19 @@ router.post("/friend-requests/:requestId/cancel", async (req, res) => {
 
   const decision = decideCancelRequest(user.id, fr.requester_id);
   if (!decision.ok) { sendError(res, "forbidden", decision.reason); return; }
+
+  // Permission engine — suspended requester cannot cancel (edge case safety)
+  try {
+    const perms = await resolveInteractionPermissions(sc, user.id, fr.recipient_id);
+    if (!perms.canCancelFriendRequest) {
+      sendError(res, "forbidden", "Cannot cancel this friend request");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for friend request cancel");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
 
   const now = new Date().toISOString();
   await sc.from("friend_requests")

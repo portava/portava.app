@@ -4,6 +4,7 @@ import { publishToUsers } from "../lib/telegraphEvents";
 import { getServiceClient } from "../lib/supabase.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
+import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 
 const router = Router();
 
@@ -24,6 +25,19 @@ router.post("/users/:userId/block", async (req, res) => {
   if (!UUID.test(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
   if (target === user.id) { sendError(res, "invalid_payload", "You cannot block yourself"); return; }
 
+  // Permission engine — enforces suspension gate (suspended users cannot block)
+  try {
+    const perms = await resolveInteractionPermissions(client, user.id, target);
+    if (!perms.canBlock) {
+      sendError(res, "forbidden", "Cannot block this user");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for block");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
+
   // Idempotent: upsert the block row
   const { error: blockErr } = await client
     .from("blocks")
@@ -35,17 +49,33 @@ router.post("/users/:userId/block", async (req, res) => {
     return;
   }
 
-  // Remove all follow edges between the two users (both directions) — fire-and-forget errors
+  // Remove all social edges between the two users — fire-and-forget errors
+  const now = new Date().toISOString();
   await Promise.all([
+    // Follow edges (both directions)
     client.from("user_follows").delete().eq("follower_id", user.id).eq("following_id", target),
     client.from("user_follows").delete().eq("follower_id", target).eq("following_id", user.id),
-    // Also remove any pending friend requests between them
+    // Pending friend requests (both directions) — uses correct column names
     client.from("friend_requests").delete()
-      .or(`and(from_user.eq.${user.id},to_user.eq.${target}),and(from_user.eq.${target},to_user.eq.${user.id})`),
-    // Remove friendship if it exists
+      .or(`and(requester_id.eq.${user.id},recipient_id.eq.${target}),and(requester_id.eq.${target},recipient_id.eq.${user.id})`),
+    // Active friendship row
     client.from("user_friendships").delete()
       .or(`and(user_a.eq.${user.id},user_b.eq.${target}),and(user_a.eq.${target},user_b.eq.${user.id})`),
+    // Cancel pending message requests (both directions) — prevents post-block inbox spam
+    client.from("message_requests").update({ status: "cancelled", updated_at: now })
+      .eq("sender_id", target).eq("recipient_id", user.id).eq("status", "pending"),
+    client.from("message_requests").update({ status: "cancelled", updated_at: now })
+      .eq("sender_id", user.id).eq("recipient_id", target).eq("status", "pending"),
   ]).catch((e) => req.log.warn({ err: e }, "cleanup after block partially failed"));
+
+  // Anti-retaliation cooldowns: prevent blocked user from re-requesting for 90 days
+  // (uses client which is already the service-role client, available before sc is declared below)
+  const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+  await client.from("user_interaction_cooldowns").upsert([
+    { user_id: target, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
+    { user_id: target, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },
+    { user_id: target, target_user_id: user.id, cooldown_type: "follow",          expires_at: expiresAt },
+  ], { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
 
   // Evict Compass profile + feed cache for both parties — must complete before response
   // so clients immediately see consistent state on next request.
@@ -79,6 +109,21 @@ router.delete("/users/:userId/block", async (req, res) => {
   const target = req.params.userId;
   if (!UUID.test(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
   if (target === user.id) { sendError(res, "invalid_payload", "Invalid request"); return; }
+
+  // Permission engine — canUnblock is true when viewer is the blocker (iBlocked=true);
+  // false when viewer never blocked (no-op anyway) or when viewer account is in a terminal state.
+  // Uses client (JWT) client since blocks table RLS is viewer-scoped.
+  try {
+    const perms = await resolveInteractionPermissions(client, user.id, target);
+    if (!perms.canUnblock) {
+      sendError(res, "forbidden", "Cannot remove this block");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for block delete");
+    sendError(res, "db_error", "Permission check failed");
+    return;
+  }
 
   const { error } = await client
     .from("blocks")

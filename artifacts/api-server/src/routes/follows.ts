@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
-import { decideFollow, decideUnfollow, isUuid } from "../lib/followDecisions";
+import { decideUnfollow, isUuid } from "../lib/followDecisions";
+import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
 
 const router = Router();
@@ -24,29 +25,32 @@ router.post("/users/:userId/follow", async (req, res) => {
   const { client, user } = auth;
   const target = req.params.userId;
 
-  const targetExists = isUuid(target) ? await profileExists(client, target) : false;
-  // Block check — `client` here is the service-role client (bypasses RLS) so both
-  // directions are visible regardless of which user is blocker_id.
-  let blocked = false;
-  if (targetExists) {
-    const { data: blockRow } = await client
-      .from("blocks")
-      .select("blocker_id")
-      .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${target}),and(blocker_id.eq.${target},blocked_id.eq.${user.id})`)
-      .limit(1)
-      .maybeSingle();
-    blocked = Boolean(blockRow);
-  }
-  const decision = decideFollow(user.id, target, { targetExists, blocked });
-  if (!decision.ok) {
-    const map: Record<string, any> = {
-      unauthenticated: "unauthenticated",
-      invalid_payload: "invalid_payload",
-      cannot_follow_self: "invalid_payload",
-      not_found: "not_found",
-      blocked: "forbidden",
-    };
-    sendError(res, map[decision.code], decision.code === "cannot_follow_self" ? "You cannot follow yourself" : undefined);
+  if (!isUuid(target)) { sendError(res, "invalid_payload"); return; }
+  if (target === user.id) { sendError(res, "invalid_payload", "You cannot follow yourself"); return; }
+
+  const targetExists = await profileExists(client, target);
+  if (!targetExists) { sendError(res, "not_found"); return; }
+
+  // Permission engine — replaces direct block check; fail-closed on any safety error
+  try {
+    const perms = await resolveInteractionPermissions(client, user.id, target);
+    const isBlocked = perms.reasonCodes.includes("blocked");
+    if (isBlocked || !perms.canViewProfile) {
+      sendError(res, "forbidden");
+      return;
+    }
+    if (!perms.canFollow) {
+      if (perms.canUnfollow) {
+        // Already following — idempotent success
+        res.status(200).json({ following: true, userId: target });
+        return;
+      }
+      sendError(res, "forbidden", "Cannot follow this user");
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for follow");
+    sendError(res, "db_error", "Permission check failed");
     return;
   }
 
@@ -72,9 +76,21 @@ router.delete("/users/:userId/follow", async (req, res) => {
   const { client, user } = auth;
   const target = req.params.userId;
 
-  const decision = decideUnfollow(user.id, target);
-  if (!decision.ok) {
-    sendError(res, decision.code === "unauthenticated" ? "unauthenticated" : "invalid_payload");
+  if (!isUuid(target)) { sendError(res, "invalid_payload"); return; }
+  if (target === user.id) { sendError(res, "invalid_payload", "Cannot unfollow yourself"); return; }
+
+  // Permission engine — canUnfollow=true only when actually following; blocks don't
+  // prevent unfollow (you should always be able to remove your own follow edge).
+  try {
+    const perms = await resolveInteractionPermissions(client, user.id, target);
+    if (!perms.canUnfollow) {
+      // Not currently following — idempotent success
+      res.status(200).json({ following: false, userId: target });
+      return;
+    }
+  } catch (err) {
+    req.log.error({ err }, "permission engine failed for unfollow");
+    sendError(res, "db_error", "Permission check failed");
     return;
   }
 
