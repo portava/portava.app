@@ -16,6 +16,7 @@ import {
   Navigation, EyeOff, RefreshCw, Users, Info, MapPin,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
 import { CrewMemberCard } from './CrewMemberCard';
 import { LiveShareSheet } from './LiveShareSheet';
 import { useTripCrewMap } from '../../hooks/useTripCrewMap';
@@ -135,6 +136,13 @@ function VisibilitySelector({
 
 export function CrewMapSection({ tripId }: Props) {
   const { members, totalCount, featureEnabled, loading, error, refresh } = useTripCrewMap(tripId);
+  const { blockedIds, blockerIds } = useBlockedIds();
+
+  function isBlockedMember(userId: string): boolean {
+    return blockedIds.has(userId) || blockerIds.has(userId);
+  }
+
+  const visibleMembers = members.filter((m) => !isBlockedMember(m.userId));
   const [liveShareOpen, setLiveShareOpen] = useState(false);
   const [ghostMode, setGhostMode] = useState(false);
   const [ghostLoading, setGhostLoading] = useState(false);
@@ -211,8 +219,8 @@ export function CrewMapSection({ tripId }: Props) {
         </Pressable>
       </View>
 
-      {/* Density map */}
-      {members.length > 0 && <DensityMap members={members} />}
+      {/* Density map — blocked members excluded so their location can't be inferred from dot counts */}
+      {visibleMembers.length > 0 && <DensityMap members={visibleMembers} />}
 
       {/* Members list */}
       <View style={s.listCard}>
@@ -240,7 +248,11 @@ export function CrewMapSection({ tripId }: Props) {
         ) : (
           <View>
             {members.map((m) => (
-              <CrewMemberCard key={m.userId} member={m} />
+              <CrewMemberCard
+                key={m.userId}
+                member={m}
+                isBlockedByViewer={isBlockedMember(m.userId)}
+              />
             ))}
           </View>
         )}
