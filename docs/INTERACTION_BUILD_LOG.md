@@ -313,3 +313,145 @@ All routes are mounted under `/api` via `app.use("/api", router)`.
 | `tripCrewLocation.ts` | GET /trips/:tripId/crew/map\|location-preferences, PUT /trips/:tripId/crew/location-preferences, POST /trips/:tripId/crew/ghost-mode/enable\|disable, POST /trips/:tripId/crew/live-share/start\|stop, GET /trips/:tripId/crew/live-shares |
 | `trips.ts` | POST /trips, GET /trips/:tripId/members\|invitable-users, GET /me/trip-invites/pending, PATCH /trips/:tripId, GET/POST /trips/:tripId/plan/items, PATCH /trips/:tripId/plan/items/:itemId\|:itemId/remove\|:itemId/reorder, DELETE /trips/:tripId/plan/items/:itemId, GET /trips/:tripId/plan-permission\|plan\|plan/map, POST /trips/:tripId/invite\|accept-invite\|decline-invite, GET /me/plan-editable-trips |
 | `trust-admin.ts` | GET /admin/trust/reviews, GET /admin/trust/users/:userId, POST /admin/trust/events/:eventId/confirm\|dismiss, POST /admin/trust/users/:userId/restrict, POST /admin/trust/restrictions/:id/remove, POST /admin/trust/users/:userId/cap/override, GET /admin/trust/gaming-flags, POST /admin/trust/gaming-flags/:id/mark-reviewed, GET/PUT /admin/trust/settings\|settings/:key |
+
+---
+
+## Phase 2 — Data Foundation (SQL Migrations) (2026-06-30)
+
+### Objective
+
+Write all SQL migration files for the User Interaction System data layer.
+No SQL is applied to the database — the human runs each file in the Supabase SQL Editor.
+
+---
+
+### Pre-flight findings
+
+#### trust_restrictions (admin table — pre-existing, not in migrations directory)
+
+`artifacts/api-server/src/routes/trust-admin.ts` and `TrustRestrictionService.ts` write to a
+`trust_restrictions` table. This table is NOT present in any migration file in either migration
+directory — it appears to have been created directly in Supabase outside the migration log.
+
+Confirmed columns from the service code:
+`id, user_id, restriction_type, reason, source_event_id, expires_at, created_at, lifted_at, lifted_by`
+
+**Decision:** The new `user_restrictions` table (0065) is user-initiated and orthogonal.
+No conflict exists. The admin `trust_restrictions` table is left as-is.
+
+#### docs/sql/ numbering
+
+At time of Phase 2 execution, `docs/sql/` contained two files:
+- `0036_pulse_geo_tags.sql`
+- `0060_discovery_places_coords.sql`
+
+New files start at **0062** (0061 = discovery_place_reports, already in src/migrations).
+
+---
+
+### Migration files created
+
+| File | Table | Action |
+|------|-------|--------|
+| `docs/sql/0062_user_privacy_settings.sql` | `user_privacy_settings` | CREATE new 1:1 linked table |
+| `docs/sql/0063_user_account_states.sql` | `user_account_states` | CREATE new multi-row lifecycle table |
+| `docs/sql/0064_user_mutes.sql` | `user_mutes` | CREATE new global per-user mute table |
+| `docs/sql/0065_user_restrictions.sql` | `user_restrictions` | CREATE new user-initiated restriction table |
+| `docs/sql/0066_user_interaction_audit_log.sql` | `user_interaction_audit_log` | CREATE new append-only cross-domain audit log |
+| `docs/sql/0067_moderation_actions.sql` | `moderation_actions` | CREATE new admin/moderator action log |
+| `docs/sql/0068_user_interaction_cooldowns.sql` | `user_interaction_cooldowns` | CREATE new generic cooldown/rate-limit table |
+| `docs/sql/0069_user_social_consents.sql` | `user_social_consents` | CREATE new policy/consent version log |
+| `docs/sql/0070_user_hidden_recommendations.sql` | `user_hidden_recommendations` | CREATE new durable suggestion-hide table |
+| `docs/sql/0071_reports.sql` | `reports` | CREATE new unified report table |
+| `docs/sql/0072_report_evidence.sql` | `report_evidence` | CREATE new report evidence attachment table |
+
+**Note:** The six scattered domain report tables (`message_reports`, `thread_reports`,
+`highlight_reports`, `hidden_gem_reports`, `discovery_place_reports`, `hashtag_reports`) are
+NOT dropped — they remain active and are deprecated-in-place per Phase 1 decision.
+
+---
+
+### Enum types created
+
+| Enum | File |
+|------|------|
+| `privacy_visibility` | 0062 |
+| `travel_mode_type` | 0062 |
+| `account_state` | 0063 |
+| `mute_surface` | 0064 |
+| `restrict_surface` | 0065 |
+| `interaction_action_type` | 0066 |
+| `moderation_action_type` | 0067 |
+| `cooldown_type` | 0068 |
+| `consent_type` | 0069 |
+| `recommendation_direction` | 0070 |
+| `report_target_type` | 0071 |
+| `report_reason_code` | 0071 |
+| `report_status` | 0071 |
+| `report_severity` | 0071 |
+| `evidence_type` | 0072 |
+
+All enums use `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$;` for idempotency.
+
+---
+
+### Shape conflict resolutions
+
+| Conflict (from Phase 1) | Resolution |
+|------------------------|-----------|
+| `thread_reports.thread_id` is `text` not `uuid` | `reports.context_id` is `text` to accommodate both |
+| `reason` field: text vs enum across domain tables | `reports.reason_code` enum (superset) + `reason_detail text` |
+| Admin restriction vs user restriction | `user_restrictions` (0065) is user-initiated only; admin `trust_restrictions` is separate and unchanged |
+
+---
+
+### Idempotency checklist (all files)
+
+- Enums: `DO $$ BEGIN CREATE TYPE ... EXCEPTION WHEN duplicate_object THEN NULL; END $$;`
+- Tables: `CREATE TABLE IF NOT EXISTS`
+- Indexes: `CREATE INDEX IF NOT EXISTS`
+- Triggers: `DROP TRIGGER IF EXISTS` then `CREATE TRIGGER`
+- Trigger functions: `CREATE OR REPLACE FUNCTION`
+- RLS policies: `DROP POLICY IF EXISTS` then `CREATE POLICY`
+
+---
+
+### Application instructions (for each file)
+
+1. Open Supabase dashboard → SQL Editor
+2. Paste the file contents
+3. Click **Run**
+4. After success, paste and run the verification query at the bottom of the file
+5. Confirm the expected columns are listed before proceeding to the next file
+
+Run files in numeric order (0062 → 0072). Each file depends on `profiles` (pre-existing) and
+files must be applied sequentially because `moderation_actions` (0067) references
+`user_interaction_audit_log` (0066), and `reports` (0071) references `moderation_actions` (0067).
+
+---
+
+### Gate check
+
+**Files changed outside `docs/`:** none — `git diff` and `git ls-files --others --exclude-standard`
+show only `docs/` files modified.
+
+Gate: ✅ PASSED
+
+
+### Phase 2 — Correction: FK / nullability fix (2026-06-30)
+
+Code review identified a blocking PostgreSQL constraint contradiction in three tables:
+`ON DELETE SET NULL` cannot be used with a `NOT NULL` column — the DB raises a not-null
+constraint violation at delete time instead of nulling the FK.
+
+**Fix applied to:**
+| File | Column | Before | After |
+|------|--------|--------|-------|
+| `0066_user_interaction_audit_log.sql` | `actor_user_id` | `uuid NOT NULL … ON DELETE SET NULL` | `uuid … ON DELETE SET NULL` (nullable) |
+| `0067_moderation_actions.sql` | `admin_user_id` | `uuid NOT NULL … ON DELETE SET NULL` | `uuid … ON DELETE SET NULL` (nullable) |
+| `0071_reports.sql` | `reporter_user_id` | `uuid NOT NULL … ON DELETE SET NULL` | `uuid … ON DELETE SET NULL` (nullable) |
+
+**Semantic justification:** All three tables are audit/historical records. When a user deletes
+their account the rows must be retained (for moderation continuity) with the actor/reporter
+column nulled. Nullable + `ON DELETE SET NULL` is the correct PostgreSQL pattern for this.
+`target_user_id` and `target_user_id` in the same tables are already correctly nullable.
