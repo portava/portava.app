@@ -655,3 +655,83 @@ describe("GET /api/memories (discovery)", () => {
     } finally { await app.close(); }
   });
 });
+
+// ── GET /api/trips/:tripId/memory ─────────────────────────────────────────────
+
+describe("GET /api/trips/:tripId/memory", () => {
+  it("returns 401 without auth", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`);
+      assert.equal(status, 401);
+    } finally { await app.close(); }
+  });
+
+  it("returns 400 for an invalid trip UUID", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status } = await get(app.baseUrl, "/api/trips/not-a-uuid/memory", auth("owner-tok"));
+      assert.equal(status, 400);
+    } finally { await app.close(); }
+  });
+
+  it("returns 200 with memory for the trip owner", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(status, 200);
+      assert.equal(body?.memory?.id, MEM_ID);
+      assert.equal(body?.memory?.tripId, TRIP_ID);
+    } finally { await app.close(); }
+  });
+
+  it("returns 200 for a non-owner when memory is public", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("stranger-tok"));
+      assert.equal(status, 200);
+      assert.equal(body?.memory?.id, MEM_ID);
+    } finally { await app.close(); }
+  });
+
+  it("returns 404 for a blocked user", async () => {
+    const state = baseState();
+    // owner (USER_ID) has blocked the stranger — isBlocked returns true
+    state.blocks.push({ blocker_id: USER_ID, blocked_id: STRANGER_ID });
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("stranger-tok"));
+      assert.equal(status, 404);
+    } finally { await app.close(); }
+  });
+
+  it("returns 404 when memory visibility is only_me and viewer is not the owner", async () => {
+    const state = baseState();
+    state.memories[0].visibility = "only_me";
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("stranger-tok"));
+      assert.equal(status, 404);
+    } finally { await app.close(); }
+  });
+
+  it("returns 404 when the trip has no linked memory", async () => {
+    const state = baseState();
+    state.memories = [];
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(status, 404);
+    } finally { await app.close(); }
+  });
+
+  it("returns 404 when the trip does not exist", async () => {
+    const state = baseState();
+    state.trips = [];
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(status, 404);
+    } finally { await app.close(); }
+  });
+});
