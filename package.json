@@ -9,7 +9,7 @@
     "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src"
   },
   "devDependencies": {
-    "@types/node": "^22.15.21",
+    "@types/node": "catalog:",
     "eslint": "^10.6.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "typescript": "~5.9.2",
