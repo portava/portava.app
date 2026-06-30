@@ -265,6 +265,8 @@ router.delete("/users/me/collections/:id", async (req, res) => {
   const colId = req.params.id;
   if (!isUuid(colId)) { sendError(res, "invalid_payload", "Invalid collection id"); return; }
 
+  const moveToDefault = req.query.moveItemsToDefault === "true";
+
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
@@ -282,6 +284,62 @@ router.delete("/users/me/collections/:id", async (req, res) => {
     return;
   }
 
+  // Count items in the collection
+  const { data: itemRows, error: itemsErr } = await sc
+    .from("collection_items")
+    .select("id, entity_type, entity_id")
+    .eq("collection_id", colId);
+
+  if (itemsErr) {
+    req.log.error({ err: itemsErr }, "collection items fetch failed before delete");
+    sendError(res, "db_error", itemsErr.message);
+    return;
+  }
+
+  const items = (itemRows ?? []) as Array<{ id: string; entity_type: string; entity_id: string }>;
+  const itemCount = items.length;
+
+  if (itemCount > 0 && !moveToDefault) {
+    // Warn the client — they must pass moveItemsToDefault=true to migrate, or unsave items first
+    res.status(409).json({
+      error: "collection_has_items",
+      message: `This collection contains ${itemCount} saved item${itemCount === 1 ? "" : "s"}. Pass moveItemsToDefault=true to move them to your default collection before deleting.`,
+      itemCount,
+    });
+    return;
+  }
+
+  if (itemCount > 0 && moveToDefault) {
+    // Ensure the default collection exists
+    const defaultResult = await ensureDefaultCollection(sc, user.id);
+    if ("code" in defaultResult) {
+      req.log.error({ code: defaultResult.code, detail: defaultResult.detail }, "default collection creation failed during collection delete");
+      sendError(res, defaultResult.code, defaultResult.detail);
+      return;
+    }
+    const defaultColId = defaultResult.id;
+
+    // Upsert each item into the default collection (ignore if already there)
+    for (const item of items) {
+      const { error: upsertErr } = await sc
+        .from("collection_items")
+        .upsert(
+          {
+            collection_id: defaultColId,
+            entity_type: item.entity_type,
+            entity_id: item.entity_id,
+            saved_at: new Date().toISOString(),
+          },
+          { onConflict: "collection_id,entity_type,entity_id", ignoreDuplicates: true },
+        );
+      if (upsertErr) {
+        req.log.error({ err: upsertErr }, "failed to migrate item to default collection");
+        sendError(res, "db_error", `Failed to migrate items: ${upsertErr.message}`);
+        return;
+      }
+    }
+  }
+
   const { error } = await sc
     .from("collections")
     .delete()
@@ -294,7 +352,7 @@ router.delete("/users/me/collections/:id", async (req, res) => {
     return;
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, itemCount });
 });
 
 // =============================================================================

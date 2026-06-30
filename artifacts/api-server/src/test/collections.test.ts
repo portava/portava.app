@@ -673,6 +673,301 @@ describe("Collections & Saves", () => {
     assert.ok(!saved, "GET /users/me/saves should report saved:false after a failed collection_items upsert");
   });
 
+  // ── DELETE: DB error fetching items → db_error (not silent proceed) ────────
+  it("DELETE /collections/:id returns db_error when collection_items read fails before delete", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    // Inject an error on the collection_items table so the pre-delete item count query fails
+    const tables: Record<string, FakeTable> = {
+      collections: {
+        rows: [
+          {
+            id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+            is_default: true, position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Asia Trip",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+      collection_items: {
+        rows: [],
+        nextInsertError: "connection timeout",
+      },
+    };
+
+    // Override: make the fake client return a query error for collection_items selects
+    // by wrapping the standard client with a patched .from() that injects an error on
+    // collection_items SELECT. We do this by creating a client whose collection_items
+    // table has a select-time error injected via a custom fake.
+    const selectErrClient: any = {
+      from(table: string) {
+        if (table === "collection_items") {
+          const obj: any = {
+            select() { return obj; },
+            eq()     { return obj; },
+            in()     { return obj; },
+            order()  { return obj; },
+            limit()  { return obj; },
+            lt()     { return obj; },
+            maybeSingle() { return Promise.resolve({ data: null, error: { message: "connection timeout" } }); },
+            single()      { return Promise.resolve({ data: null, error: { message: "connection timeout" } }); },
+            then(onF: any, onR: any) { return Promise.resolve({ data: null, error: { message: "connection timeout" } }).then(onF, onR); },
+          };
+          return obj;
+        }
+        // Fall through to a real fake for collections (ownership check must succeed)
+        const collectionRows = tables.collections.rows;
+        const filters: Array<(r: any) => boolean> = [];
+        const obj: any = {
+          select() { return obj; },
+          eq(col: string, val: any) { filters.push((r) => r[col] === val); return obj; },
+          maybeSingle() {
+            const row = collectionRows.find((r) => filters.every((f) => f(r)));
+            return Promise.resolve({ data: row ?? null, error: null });
+          },
+          then(onF: any, onR: any) {
+            const rows = collectionRows.filter((r) => filters.every((f) => f(r)));
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          },
+        };
+        return obj;
+      },
+      auth: {
+        getUser: async (token: string) => {
+          if (token === "owner-token") return { data: { user: { id: OWNER_ID } }, error: null };
+          return { data: { user: null }, error: { message: "invalid" } };
+        },
+      },
+    };
+
+    _setTestClient(selectErrClient, true);
+    const srv = await new Promise<{ url: string; close: () => Promise<void> }>((resolve, reject) => {
+      const s = createServer(app);
+      s.listen(0, "127.0.0.1", () => {
+        const { port } = (s.address() as { port: number });
+        s.unref();
+        resolve({
+          url: `http://127.0.0.1:${port}`,
+          close: () => new Promise<void>((res, rej) => {
+            s.closeAllConnections?.();
+            s.close((e?: Error) => (e ? rej(e) : res()));
+          }),
+        });
+      });
+      s.on("error", reject);
+    });
+    url = srv.url; close = srv.close;
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 500, "should return db_error when item count query fails");
+    const body = await res.json();
+    assert.equal(body.error, "db_error", "error code should be db_error not a silent proceed");
+  });
+
+  // ── DELETE non-empty collection without flag → 409 with itemCount ─────────
+  it("DELETE /collections/:id with items returns 409 collection_has_items when moveItemsToDefault is absent", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    ({ url, close } = await startServer({
+      collections: {
+        rows: [
+          {
+            id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+            is_default: true, position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Asia Trip",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+      collection_items: {
+        rows: [
+          { id: "item-1", collection_id: NAMED_COL, entity_type: "post", entity_id: ENTITY_ID, saved_at: new Date().toISOString() },
+          { id: "item-2", collection_id: NAMED_COL, entity_type: "trip", entity_id: HASHTAG_ID, saved_at: new Date().toISOString() },
+        ],
+      },
+    }));
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 409, "should return 409 when collection has items and no migration flag");
+    const body = await res.json();
+    assert.equal(body.error, "collection_has_items");
+    assert.equal(body.itemCount, 2, "itemCount should reflect the number of saved items");
+  });
+
+  // ── DELETE empty collection without flag → 200 ───────────────────────────
+  it("DELETE /collections/:id on an empty collection succeeds without moveItemsToDefault", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    ({ url, close } = await startServer({
+      collections: {
+        rows: [
+          {
+            id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+            is_default: true, position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Empty",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+    }));
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 200, "empty collection should delete without confirmation");
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.itemCount, 0);
+  });
+
+  // ── DELETE with moveItemsToDefault=true → items migrated, collection gone ─
+  it("DELETE /collections/:id?moveItemsToDefault=true migrates items to default collection", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const tables: Record<string, FakeTable> = {
+      collections: {
+        rows: [
+          {
+            id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+            is_default: true, position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Asia Trip",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+      collection_items: {
+        rows: [
+          { id: "item-1", collection_id: NAMED_COL, entity_type: "post", entity_id: ENTITY_ID, saved_at: new Date().toISOString() },
+        ],
+      },
+    };
+    ({ url, close } = await startServer(tables));
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}?moveItemsToDefault=true`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 200, "deletion with migration should succeed");
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.itemCount, 1, "itemCount should report how many items were migrated");
+
+    // Named collection should be gone
+    const remainingCols = tables.collections.rows.map((r: any) => r.id);
+    assert.ok(!remainingCols.includes(NAMED_COL), "named collection should be deleted");
+
+    // Item should now belong to the default collection
+    const movedItem = tables.collection_items.rows.find(
+      (r: any) => r.entity_type === "post" && r.entity_id === ENTITY_ID && r.collection_id === COL_ID,
+    );
+    assert.ok(movedItem, "item should be in the default collection after migration");
+  });
+
+  // ── DELETE with moveItemsToDefault=true creates default if it doesn't exist ─
+  it("DELETE with moveItemsToDefault=true auto-creates default collection if absent", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const tables: Record<string, FakeTable> = {
+      collections: {
+        rows: [
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Asia Trip",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+      collection_items: {
+        rows: [
+          { id: "item-1", collection_id: NAMED_COL, entity_type: "trip", entity_id: ENTITY_ID, saved_at: new Date().toISOString() },
+        ],
+      },
+    };
+    ({ url, close } = await startServer(tables));
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}?moveItemsToDefault=true`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 200, "should succeed even when default collection did not exist");
+    const body = await res.json();
+    assert.equal(body.ok, true);
+
+    // A default collection should have been created
+    const defaultCol = tables.collections.rows.find((r: any) => r.is_default === true && r.owner_id === OWNER_ID);
+    assert.ok(defaultCol, "default collection should have been auto-created");
+
+    // Item should be in the new default collection
+    const migratedItem = tables.collection_items.rows.find(
+      (r: any) => r.collection_id === defaultCol!.id && r.entity_type === "trip" && r.entity_id === ENTITY_ID,
+    );
+    assert.ok(migratedItem, "item should be migrated to the newly created default collection");
+  });
+
+  // ── Duplicate item already in default → idempotent migration (no error) ───
+  it("DELETE with moveItemsToDefault=true is idempotent when item already exists in default", async () => {
+    const NAMED_COL = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    ({ url, close } = await startServer({
+      collections: {
+        rows: [
+          {
+            id: COL_ID, owner_id: OWNER_ID, name: "Saved",
+            is_default: true, position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: NAMED_COL, owner_id: OWNER_ID, name: "Asia Trip",
+            is_default: false, position: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      },
+      collection_items: {
+        rows: [
+          { id: "item-named", collection_id: NAMED_COL, entity_type: "post", entity_id: ENTITY_ID, saved_at: new Date().toISOString() },
+          { id: "item-default", collection_id: COL_ID, entity_type: "post", entity_id: ENTITY_ID, saved_at: new Date().toISOString() },
+        ],
+      },
+    }));
+
+    const res = await fetch(`${url}/api/users/me/collections/${NAMED_COL}?moveItemsToDefault=true`, {
+      method: "DELETE",
+      headers: auth("owner-token"),
+    });
+    assert.equal(res.status, 200, "should succeed even when item already in default collection");
+    const body = await res.json();
+    assert.equal(body.ok, true);
+  });
+
   // ── isSaved hydration: check is scoped by entity_type ────────────────────
   it("saved:true for post entity does not bleed into event check", async () => {
     const POST_ID = "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
