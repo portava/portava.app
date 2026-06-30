@@ -441,6 +441,23 @@ router.post("/me/requests/circle_invite/:id/decline", async (req, res) => {
 
   const now = new Date().toISOString();
   await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", id);
+
+  // Anti-retaliation cooldown: invite owner cannot re-invite for 48 hours after a decline
+  const ciCooldownExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+  const ciPermSc = getServiceClient();
+  if (ciPermSc) {
+    const { data: ciInvFull } = await ciPermSc.from("circle_invites")
+      .select("owner_id").eq("id", id).maybeSingle();
+    if (ciInvFull?.owner_id) {
+      await ciPermSc.from("user_interaction_cooldowns").upsert({
+        user_id:        ciInvFull.owner_id,
+        target_user_id: user.id,
+        cooldown_type:  "circle_invite",
+        expires_at:     ciCooldownExpiry,
+      }, { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
+    }
+  }
+
   res.status(200).json({ status: "declined" });
 });
 
@@ -483,6 +500,23 @@ router.post("/me/requests/trip_invite/:tripId/decline", async (req, res) => {
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
 
   await sc.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
+
+  // Anti-retaliation cooldown: trip owner cannot re-invite for 48 hours after a decline
+  const tiPermSc = getServiceClient();
+  if (tiPermSc) {
+    const { data: ownerRow } = await tiPermSc.from("trip_members")
+      .select("user_id").eq("trip_id", tripId).eq("role", "owner").maybeSingle();
+    if (ownerRow?.user_id) {
+      const tiCooldownExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+      await tiPermSc.from("user_interaction_cooldowns").upsert({
+        user_id:        ownerRow.user_id,
+        target_user_id: user.id,
+        cooldown_type:  "trip_invite",
+        expires_at:     tiCooldownExpiry,
+      }, { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
+    }
+  }
+
   res.status(200).json({ status: "declined", tripId });
 });
 

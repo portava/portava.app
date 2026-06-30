@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { retranslateForUser } from "../services/messageTranslation";
+import { isFlagEnabled } from "../lib/featureFlags";
 
 const router = Router();
 
@@ -362,6 +363,12 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
+    // Emergency flag: disable_media_uploads — fail-open on DB error
+    if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+      sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
+      return;
+    }
+
     const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
     const ext = ALLOWED_AVATAR_MIME[mimeType];
     if (!ext) {
@@ -425,6 +432,12 @@ router.post(
 
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+    // Emergency flag: disable_media_uploads — fail-open on DB error
+    if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+      sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
+      return;
+    }
 
     const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
     const ext = ALLOWED_AVATAR_MIME[mimeType];

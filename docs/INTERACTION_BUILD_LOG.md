@@ -993,3 +993,65 @@ location withheld from blocked viewer; typecheck clean.
 - `pnpm run typecheck` (workspace root) → **0 errors**
 
 Gate: ✅ PASSED — Phase 6 wiring complete, all safety invariants enforced, typecheck clean.
+
+---
+
+## Phase 7 — Safety, Moderation & Emergency Controls
+
+**Date:** 2026-06-30
+**Gate:** ✅ PASSED — pre-release check 8/8, adminModeration 17/17, emergencyFlags 8/8, typecheck clean
+
+### What was built
+
+#### 1. Evidence preservation (`reports.ts` + migration 0065)
+- Added `report_evidence` table (migration 0065): `id, report_id, collected_by, evidence_type, payload JSONB, created_at`
+- `POST /api/reports` now atomically creates a `report_evidence` row when `context_type` is present in the body
+- `reportContent()` + `ReasonCode` type added to `travel-buddy-standalone/src/services/reports.ts` — enables message and post reporting from mobile screens
+
+#### 2. Admin moderation view + actions (`admin.ts`)
+- `GET /admin/users/:userId/moderation-summary` — returns full moderation profile: user record, account states, action history, reports received/filed
+- `PATCH /admin/users/:userId/moderation-action` — 13 action types (warn, message_limit, invite_limit, hosting_limit, discovery_hidden, rent_a_buddy_frozen, temporary_suspension, permanent_ban, report_resolved, content_removed, event_removed, circle_removed, booking_frozen)
+- **Audit log mandatory invariant**: every action writes a row to `moderation_actions` before returning — proven by test suite
+- `GET /admin/dev/interaction-test` — dev-only tester listing all interaction endpoints
+
+#### 3. Emergency feature flags (migration 0065 + `featureFlags.ts`)
+- 11 flags seeded: `disable_tagging`, `disable_unknown_message_requests`, `disable_new_event_creation`, `disable_location_sharing`, `disable_profile_search`, `disable_rab_bookings`, `disable_media_uploads`, `disable_ai_suggestions`, `disable_payments`, `disable_reporting`, `disable_new_account_creation`
+- Shared `isFlagEnabled(sc, flag)` helper in `src/lib/featureFlags.ts` — fail-open on DB error (feature allowed when flag table is unreachable)
+- Gates wired into: `POST /tags` (disable_tagging), `POST /users/:id/message-request` (disable_unknown_message_requests), `POST /meetups` (disable_new_event_creation), `POST /me/location-state` (disable_location_sharing), `GET /users/search` (disable_profile_search, soft-block → empty array), `POST /api/rent-a-buddy/bookings` (disable_rab_bookings), `PUT /me/avatar` + `PUT /me/cover` (disable_media_uploads)
+
+#### 4. Anti-retaliation cooldowns (`requests.ts`)
+- Circle invite decline: sets 48-hour `circle_invite` cooldown on the owner in `user_interaction_cooldowns`
+- Trip invite decline: sets 48-hour `trip_invite` cooldown on the trip owner
+- Tag-after-removal cooldown was handled in `tags.ts` (Phase 4 permission engine already enforces this via the `canTag` policy)
+
+#### 5. Tests
+| File | Tests | Result |
+|---|---|---|
+| `src/test/adminModeration.test.ts` | 17 | ✅ 17/17 pass |
+| `src/test/emergencyFlags.test.ts` | 8 | ✅ 8/8 pass |
+
+Key assertions:
+- Every one of the 13 action types inserts an audit row with correct `action_type`, `target_user_id`, and `performed_by`
+- `disable_tagging=true` → `POST /tags` returns `404 feature_disabled`
+- `disable_tagging=false` → tagging is NOT blocked
+- DB error on flag query → **fail-open** (feature is not blocked)
+- `disable_new_event_creation=true` → `POST /meetups` returns `404 feature_disabled`
+- `disable_profile_search=true` → `GET /users/search` returns `200 { users: [] }` (soft block)
+
+### Files changed
+- `artifacts/api-server/src/migrations/0065_phase7_safety.sql` — new migration
+- `artifacts/api-server/src/lib/featureFlags.ts` — new shared flag helper
+- `artifacts/api-server/src/routes/admin.ts` — moderation summary + action + dev tester endpoints
+- `artifacts/api-server/src/routes/reports.ts` — evidence creation on report submit
+- `artifacts/api-server/src/routes/tags.ts` — `disable_tagging` gate
+- `artifacts/api-server/src/routes/messaging.ts` — `disable_unknown_message_requests` gate
+- `artifacts/api-server/src/routes/meetups.ts` — `disable_new_event_creation` gate
+- `artifacts/api-server/src/routes/location.ts` — `disable_location_sharing` gate
+- `artifacts/api-server/src/routes/follows.ts` — `disable_profile_search` gate
+- `artifacts/api-server/src/routes/profile.ts` — `disable_media_uploads` gate (avatar + cover upload)
+- `artifacts/api-server/src/routes/rentABuddy.ts` — `disable_rab_bookings` gate
+- `artifacts/api-server/src/routes/requests.ts` — circle + trip invite decline cooldowns
+- `travel-buddy-standalone/src/services/reports.ts` — `reportContent()` function + `ReasonCode` type
+- `artifacts/travel-buddy/src/services/reports.ts` — mirror of standalone
+- `artifacts/api-server/src/test/adminModeration.test.ts` — new audit-log proof tests
+- `artifacts/api-server/src/test/emergencyFlags.test.ts` — new flag-gate proof tests

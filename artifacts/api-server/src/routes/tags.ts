@@ -12,6 +12,7 @@ import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
+import { isFlagEnabled } from '../lib/featureFlags.js';
 
 const router = Router();
 
@@ -72,6 +73,12 @@ router.post('/tags', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Emergency flag: disable_tagging — fail-open (allow) on DB error
+  if (await isFlagEnabled(sc, 'disable_tagging')) {
+    sendError(res, 'feature_disabled', 'Tagging is temporarily disabled');
+    return;
+  }
 
   // Permission engine — enforces:
   //   1. Block (either direction) → 403

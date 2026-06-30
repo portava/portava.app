@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 import { createStamp } from "../services/passport/PassportStampService.js";
@@ -82,6 +83,13 @@ router.post("/me/location-state", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
+
+  // Emergency flag: disable_location_sharing — fail-open on DB error
+  const flagSc = getServiceClient();
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_location_sharing')) {
+    sendError(res, 'feature_disabled', 'Location sharing is temporarily disabled');
+    return;
+  }
 
   const body = req.body ?? {};
   const source = sanitizeText(body.source, 32);

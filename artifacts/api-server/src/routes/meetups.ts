@@ -21,6 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushNotification } from "../lib/push.js";
 import {
@@ -124,6 +125,13 @@ router.post("/meetups", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
+
+  // Emergency flag: disable_new_event_creation — fail-open on DB error
+  const flagSc = getServiceClient();
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_new_event_creation')) {
+    sendError(res, 'feature_disabled', 'New event creation is temporarily disabled');
+    return;
+  }
 
   const parsed = CreateMeetupSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }

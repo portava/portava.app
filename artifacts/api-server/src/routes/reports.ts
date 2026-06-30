@@ -124,6 +124,17 @@ router.post("/reports", async (req, res) => {
   const reportId      = (report as any).id   as string;
   const reportSeverity = (report as any).severity as string;
 
+  // Atomically create report_evidence row from context_type / context_id
+  // (fire-and-forget — evidence creation failure must never block the report itself)
+  if (context_type) {
+    void sc.from("report_evidence").insert({
+      report_id:     reportId,
+      evidence_type: "context",
+      content_ref:   context_id ?? null,
+      metadata:      { context_type, context_id: context_id ?? null, auto_attached: true },
+    }).then(undefined, () => {});
+  }
+
   // High-severity user report: protect reporter from retaliation
   if (target_type === "user" && reportSeverity === "high") {
     const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // 90 days

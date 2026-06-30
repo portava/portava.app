@@ -693,5 +693,246 @@ router.patch("/admin/safe-return/config", async (req, res) => {
   res.json({ ok: true, updated: results });
 });
 
+// ── Admin moderation summary ──────────────────────────────────────────────────
+//
+// GET /admin/users/:userId/moderation-summary
+//
+// Returns a full moderation profile for a user: account state, reports received
+// and filed, block/mute/restrict counts, active moderation actions, and audit log.
+
+router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { userId } = req.params;
+
+  const [
+    profileRes,
+    accountStateRes,
+    modActionsRes,
+    reportsReceivedRes,
+    reportsFiledRes,
+    blocksRes,
+    mutesRes,
+    restrictsRes,
+    trustRes,
+  ] = await Promise.all([
+    sc.from("profiles")
+      .select("id, handle, name, avatar_url, role, verification_status, created_at")
+      .eq("id", userId)
+      .maybeSingle(),
+    sc.from("user_account_states")
+      .select("state, reason, expires_at, set_by, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    sc.from("moderation_actions")
+      .select("id, action_type, reason, performed_by, created_at")
+      .eq("target_user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, reason_code, severity, status, created_at")
+      .eq("target_id",  userId)
+      .eq("target_type", "user")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, target_id, reason_code, severity, status, created_at")
+      .eq("reporter_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    sc.from("blocks")
+      .select("id", { count: "exact", head: true })
+      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
+    sc.from("user_mutes")
+      .select("id", { count: "exact", head: true })
+      .eq("muter_id", userId),
+    sc.from("user_restrictions")
+      .select("id", { count: "exact", head: true })
+      .eq("restrictor_id", userId),
+    sc.from("trust_restrictions")
+      .select("id, restriction_type, reason, lifted_at, created_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null),
+  ]);
+
+  if (!profileRes.data) {
+    sendError(res, "not_found", "User not found");
+    return;
+  }
+
+  res.json({
+    profile:          profileRes.data,
+    accountStates:    accountStateRes.data  ?? [],
+    moderationActions: modActionsRes.data   ?? [],
+    reportsReceived:  reportsReceivedRes.data ?? [],
+    reportsFiled:     reportsFiledRes.data  ?? [],
+    blockCount:       blocksRes.count        ?? 0,
+    muteCount:        mutesRes.count         ?? 0,
+    restrictCount:    restrictsRes.count     ?? 0,
+    trustRestrictions: (trustRes as any).data ?? [],
+  });
+});
+
+// ── Admin moderation action ───────────────────────────────────────────────────
+//
+// PATCH /admin/users/:userId/moderation-action
+//
+// Applies a moderation action to a user.
+// EVERY action writes an audit-log row to moderation_actions (append-only).
+// Some actions additionally mutate user_account_states or reports rows.
+//
+// action_type values:
+//   warn | message_limit | invite_limit | hosting_limit | discovery_hidden
+//   rent_a_buddy_frozen | temporary_suspension | permanent_ban
+//   report_resolved | content_removed | event_removed | circle_removed | booking_frozen
+
+const MODERATION_ACTION_TYPES = [
+  "warn",
+  "message_limit",
+  "invite_limit",
+  "hosting_limit",
+  "discovery_hidden",
+  "rent_a_buddy_frozen",
+  "temporary_suspension",
+  "permanent_ban",
+  "report_resolved",
+  "content_removed",
+  "event_removed",
+  "circle_removed",
+  "booking_frozen",
+] as const;
+
+const moderationActionSchema = z.object({
+  action_type:  z.enum(MODERATION_ACTION_TYPES),
+  reason:       z.string().max(1000).optional().nullable(),
+  expires_at:   z.string().datetime().optional().nullable(), // for temporary_suspension
+  target_ref_id: z.string().uuid().optional().nullable(),   // for report_resolved / content/event/circle/booking actions
+});
+
+router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  const { userId } = req.params;
+
+  const parsed = moderationActionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { action_type, reason, expires_at, target_ref_id } = parsed.data;
+
+  const now = new Date().toISOString();
+
+  // ── AUDIT LOG: write a moderation_actions row for EVERY action ──────────
+  const { data: auditRow, error: auditErr } = await sc
+    .from("moderation_actions")
+    .insert({
+      target_user_id: userId,
+      action_type,
+      reason:       reason ?? null,
+      performed_by: adminUserId,
+      created_at:   now,
+    })
+    .select("id, target_user_id, action_type, reason, performed_by, created_at")
+    .single();
+
+  if (auditErr) {
+    sendError(res, "db_error", `Audit log write failed: ${auditErr.message}`);
+    return;
+  }
+
+  const sideEffects: Record<string, unknown> = {};
+
+  // ── SIDE EFFECTS by action_type ──────────────────────────────────────────
+
+  if (action_type === "temporary_suspension") {
+    const { error } = await sc.from("user_account_states").upsert(
+      {
+        user_id:    userId,
+        state:      "suspended",
+        reason:     reason ?? null,
+        expires_at: expires_at ?? null,
+        set_by:     adminUserId,
+        created_at: now,
+      },
+      { onConflict: "user_id,state" },
+    );
+    sideEffects.accountState = error ? "error" : "suspended";
+  }
+
+  if (action_type === "permanent_ban") {
+    const { error } = await sc.from("user_account_states").upsert(
+      {
+        user_id:    userId,
+        state:      "banned",
+        reason:     reason ?? null,
+        expires_at: null,
+        set_by:     adminUserId,
+        created_at: now,
+      },
+      { onConflict: "user_id,state" },
+    );
+    sideEffects.accountState = error ? "error" : "banned";
+  }
+
+  if (action_type === "report_resolved" && target_ref_id) {
+    const { error } = await sc
+      .from("reports")
+      .update({
+        status:           "resolved",
+        reviewed_by:      adminUserId,
+        reviewed_at:      now,
+        moderation_notes: reason ?? null,
+        updated_at:       now,
+      })
+      .eq("id", target_ref_id);
+    sideEffects.reportStatus = error ? "error" : "resolved";
+  }
+
+  res.json({ action: auditRow, sideEffects });
+});
+
+// ── Dev interaction tester ────────────────────────────────────────────────────
+//
+// GET /admin/dev/interaction-test
+//   ?viewerUserId=<uuid>&targetUserId=<uuid>&sourceType=<string>&sourceId=<uuid>
+//
+// Returns the full permission context for a viewer → target pair.
+// Admin-gated. Intended for QA and integration debugging only.
+
+router.get("/admin/dev/interaction-test", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const viewerUserId  = (req.query.viewerUserId  as string | undefined) ?? "";
+  const targetUserId  = (req.query.targetUserId  as string | undefined) ?? "";
+  const sourceType    = (req.query.sourceType    as string | undefined) ?? null;
+  const sourceId      = (req.query.sourceId      as string | undefined) ?? null;
+
+  const { isUuid } = await import("../lib/followDecisions.js");
+  if (!isUuid(viewerUserId)) { sendError(res, "invalid_payload", "viewerUserId must be a valid UUID"); return; }
+  if (!isUuid(targetUserId)) { sendError(res, "invalid_payload", "targetUserId must be a valid UUID"); return; }
+
+  const { resolveInteractionPermissions } = await import("../services/interactionPermissions.js");
+
+  try {
+    const permissions = await resolveInteractionPermissions(sc, viewerUserId, targetUserId, {
+      sourceType,
+      sourceId,
+    });
+    res.json(permissions);
+  } catch (err) {
+    req.log.error({ err }, "admin/dev/interaction-test: resolver failed");
+    sendError(res, "db_error", "Failed to resolve interaction permissions");
+  }
+});
+
 export default router;
+
 

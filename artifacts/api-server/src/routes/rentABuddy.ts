@@ -18,6 +18,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
@@ -595,6 +596,11 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const serviceClient = sc(auth.client);
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  // Emergency flag: disable_rab_bookings — fail-open on DB error
+  if (await isFlagEnabled(serviceClient, 'disable_rab_bookings')) {
+    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+  }
 
   const rolloutAccess = await checkRentBuddyAccess({
     sc: serviceClient, userId: user.id,

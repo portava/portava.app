@@ -47,23 +47,17 @@ export interface ReportResult {
   error?: string;
 }
 
-export type ReasonCode =
-  | 'harassment'
-  | 'spam'
-  | 'hate_speech'
-  | 'violence'
-  | 'impersonation'
-  | 'nudity'
-  | 'misinformation'
-  | 'other';
+/** Alias: generic "reason code" for content-level reports */
+export type ReasonCode = ReportReason;
 
 export interface ReportContentPayload {
-  target_type: 'post' | 'message';
-  target_id: string;
+  target_type: string;
+  target_id:   string;
   reason_code: ReasonCode;
   reason_detail?: string;
 }
 
+/** Report a piece of content (message, post, etc.) to the moderation team */
 export async function reportContent(payload: ReportContentPayload): Promise<ReportResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();

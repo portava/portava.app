@@ -28,6 +28,7 @@ import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
+import { isFlagEnabled } from '../lib/featureFlags.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
@@ -394,6 +395,12 @@ router.post('/users/:userId/message-request', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Emergency flag: disable_unknown_message_requests — fail-open on DB error
+  if (await isFlagEnabled(sc, 'disable_unknown_message_requests')) {
+    sendError(res, 'feature_disabled', 'New message requests are temporarily disabled');
+    return;
+  }
 
   // Phase 4 permission engine gate — deny when blocked or suspended
   try {
