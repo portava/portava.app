@@ -64,6 +64,10 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     // Deferred mutations — stored when called, executed in .then() after all
     // filters have been accumulated (mirrors real Supabase SDK lazy evaluation).
     let pendingOp: null | { type: "delete" } | { type: "update"; data: Row } = null;
+    // Track IS NULL conditions so .then() can re-validate against the CURRENT
+    // table state — this simulates Postgres's atomic "UPDATE … WHERE col IS NULL"
+    // and lets concurrent-request tests exercise the correct winner/loser split.
+    let isNullCols: string[] = [];
 
     const obj: any = {
       select()  { return obj; },
@@ -122,6 +126,10 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
         filtered = filtered.filter((r) =>
           val === null ? (r[col] === null || r[col] === undefined) : r[col] === val,
         );
+        // Remember which columns were IS-NULL-filtered so .then() can re-check
+        // the CURRENT table state before committing an update (simulates atomic
+        // "UPDATE … WHERE col IS NULL" — prevents two concurrent callers both winning).
+        if (val === null) isNullCols = [...isNullCols, col];
         return obj;
       },
       or() { return obj; },
@@ -152,11 +160,24 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
             filtered = [];
           } else if (pendingOp.type === "update") {
             const updateData = (pendingOp as { type: "update"; data: Row }).data;
-            filtered = filtered.map((row) => {
+            filtered = filtered.reduce<Row[]>((acc, row) => {
               const idx = table.rows.findIndex((r) => r === row || r.id === row.id);
-              if (idx >= 0) { table.rows[idx] = { ...table.rows[idx], ...updateData }; return table.rows[idx]; }
-              return { ...row, ...updateData };
-            });
+              if (idx >= 0) {
+                // Re-validate any IS NULL conditions against the CURRENT row in
+                // table.rows (not the snapshot). Two concurrent callers may both
+                // have snapshot-filtered to null; only the first whose .then()
+                // fires will see the condition still hold — the second sees a
+                // non-null value and is correctly excluded (simulates atomic UPDATE).
+                const current = table.rows[idx];
+                const stillValid = isNullCols.every(
+                  (col) => current[col] === null || current[col] === undefined,
+                );
+                if (!stillValid) return acc;
+                table.rows[idx] = { ...table.rows[idx], ...updateData };
+                return [...acc, table.rows[idx]];
+              }
+              return [...acc, { ...row, ...updateData }];
+            }, []);
           }
           pendingOp = null;
         }
@@ -929,6 +950,36 @@ describe("Events — POST /:id/chat (idempotent chat creation)", () => {
     try {
       const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1);
       assert.equal(r.status, 403);
+    } finally { await close(); }
+  });
+
+  it("concurrent double-tap: both callers get the same threadId and exactly one thread is created", async () => {
+    // Both requests arrive before either has committed chat_thread_id. The atomic
+    // claim (UPDATE … WHERE chat_thread_id IS NULL) ensures only one wins. The
+    // fake client's IS-NULL re-validation in .then() simulates this correctly.
+    const client = makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, state: "open", chat_enabled: true, chat_thread_id: null })] },
+      event_roles: { rows: [{ id: ID.role1, event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const [r1, r2] = await Promise.all([
+        apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1),
+        apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1),
+      ]);
+      // Both must return a valid threadId and they must be the same
+      assert.ok(r1.body.threadId, "first caller should receive a threadId");
+      assert.ok(r2.body.threadId, "second caller should receive a threadId");
+      assert.equal(r1.body.threadId, r2.body.threadId, "both callers must receive the same threadId");
+      // One wins (201 created=true) and one defers to it (200 created=false)
+      const statuses = [r1.status, r2.status].sort();
+      assert.deepEqual(statuses, [200, 201], "expect one 201 (winner) and one 200 (loser)");
+      // Exactly one thread row should exist — no orphans
+      assert.equal(
+        (client as any)._db.message_threads.rows.length, 1,
+        "exactly one message_threads row must exist — no orphans",
+      );
     } finally { await close(); }
   });
 });

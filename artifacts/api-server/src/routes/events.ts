@@ -31,6 +31,7 @@
  * GET    /api/users/:userId/events                — events for a user profile tab
  */
 
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
@@ -1840,15 +1841,38 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
     const chatEnabled = await isFlagEnabled(sc, "events_chat_enabled");
     if (!chatEnabled) return null;
 
-    // Idempotency guard: if a thread was already created for this event, return it instead of
-    // creating a duplicate. This is belt-and-suspenders on top of the call-site checks so that
-    // a retry or concurrent double-tap cannot produce two separate threads.
-    const { data: existing } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
-    if ((existing as any)?.chat_thread_id) return (existing as any).chat_thread_id as string;
+    // Quick read: if a thread already exists, return it without touching anything.
+    const { data: ev0 } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
+    if ((ev0 as any)?.chat_thread_id) return (ev0 as any).chat_thread_id as string;
 
-    const { data: thread } = await sc
+    // Pre-generate the thread ID so we can commit it to events.chat_thread_id atomically
+    // BEFORE inserting the message_threads row.  Only the request that wins the conditional
+    // UPDATE gets to insert the thread — preventing both orphan rows and split conversations.
+    const candidateId = randomUUID();
+
+    // Atomic claim: write candidateId into events.chat_thread_id only if it is still NULL.
+    // Two concurrent callers both see null → both attempt this UPDATE → exactly one row is
+    // returned (the winner); the loser gets an empty array.
+    const { data: claimed } = await sc
+      .from("events")
+      .update({ chat_thread_id: candidateId, updated_at: new Date().toISOString() })
+      .eq("id", eventId)
+      .is("chat_thread_id", null)
+      .select("chat_thread_id");
+
+    const claimedRows = (claimed as any[]) ?? [];
+
+    if (claimedRows.length === 0) {
+      // We lost the race — return the thread the winner already created.
+      const { data: ev1 } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
+      return (ev1 as any)?.chat_thread_id ?? null;
+    }
+
+    // We won the race — now create the thread using the pre-committed ID.
+    const { data: thread, error: threadErr } = await sc
       .from("message_threads")
       .insert({
+        id: candidateId,
         type: "group",
         name: title,
         created_by: hostId,
@@ -1857,12 +1881,14 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
       .select("id")
       .single();
 
-    if (!(thread as any)?.id) return null;
+    if (threadErr || !(thread as any)?.id) {
+      // Roll back the claim so another caller can retry.
+      await sc.from("events").update({ chat_thread_id: null, updated_at: new Date().toISOString() }).eq("id", eventId);
+      return null;
+    }
 
-    const threadId = (thread as any).id as string;
-    await sc.from("message_thread_members").insert({ thread_id: threadId, user_id: hostId });
-    await sc.from("events").update({ chat_thread_id: threadId, updated_at: new Date().toISOString() }).eq("id", eventId);
-    return threadId;
+    await sc.from("message_thread_members").insert({ thread_id: candidateId, user_id: hostId });
+    return candidateId;
   } catch { return null; }
 }
 
