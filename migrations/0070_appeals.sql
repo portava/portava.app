@@ -12,7 +12,9 @@ DO $$ BEGIN
     'account_warning',
     'trust_score_event',
     'no_show',
+    'event',
     'event_membership',
+    'trip',
     'trip_membership',
     'review'
   );

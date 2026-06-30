@@ -238,7 +238,7 @@ export default function TripDetail() {
             entityType="trip"
             entityId={trip.id}
             entityName={trip.destinationCity ?? 'this trip'}
-            canReview={realTrip?.status === 'completed'}
+            canReview={realTrip?.status === 'completed' && !!userId && userId !== realTrip?.ownerId}
           />
         ) : null}
       </ScrollView>

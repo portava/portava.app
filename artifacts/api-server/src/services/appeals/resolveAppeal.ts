@@ -128,6 +128,30 @@ export async function resolveAppeal(
       return { ok: true, action: "trip_membership_restored" };
     }
 
+    // ── Moderated event/trip restoration ────────────────────────────────────
+    // When a moderator removed an event or trip, appeal approval restores it
+    // to a safe draft/open state so the owner can review before re-publishing.
+
+    case "event": {
+      const { error } = await sc
+        .from("events")
+        .update({ state: "open", updated_at: new Date().toISOString() })
+        .eq("id", target_id)
+        .eq("host_id", appellant_id);
+      if (error) return { ok: false, action: "noop", reason: `event restore failed: ${error.message}` };
+      return { ok: true, action: "event_restored" };
+    }
+
+    case "trip": {
+      const { error } = await sc
+        .from("trips")
+        .update({ status: "planning", updated_at: new Date().toISOString() })
+        .eq("id", target_id)
+        .eq("owner_id", appellant_id);
+      if (error) return { ok: false, action: "noop", reason: `trip restore failed: ${error.message}` };
+      return { ok: true, action: "trip_restored" };
+    }
+
     // ── Review restoration ──────────────────────────────────────────────────
 
     case "review": {
