@@ -1112,7 +1112,7 @@ router.patch("/posts/:postId", async (req, res) => {
   // Load the existing row (service role) to check ownership + cross-field rules.
   const { data: existing, error: loadErr } = await client
     .from("posts")
-    .select("id, author_id, trip_id, visibility")
+    .select("id, author_id, trip_id, visibility, content")
     .eq("id", postId)
     .maybeSingle();
   if (loadErr) {
@@ -1155,6 +1155,20 @@ router.patch("/posts/:postId", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
+  // Record edit history when caption/body content changes (non-fatal fire-and-forget)
+  if (parsed.data.content !== undefined && (existing as any).content !== parsed.data.content) {
+    const sc = getServiceClient();
+    if (sc) {
+      void sc.from("post_edits").insert({
+        post_id: postId,
+        user_id: user.id,
+        old_content: (existing as any).content ?? null,
+        new_content: parsed.data.content,
+      });
+    }
+  }
+
   res.status(200).json(data);
 });
 
@@ -1861,6 +1875,205 @@ router.delete("/posts/:postId/comments/:commentId/like", async (req, res) => {
     .from("comment_likes").select("id", { count: "exact", head: true }).eq("comment_id", commentId);
 
   res.status(200).json({ ok: true, likedByMe: false, likeCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * GET /posts/:postId/edit-history — owner-only list of past content edits
+ * ============================================================================
+ */
+router.get("/posts/:postId/edit-history", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, author_id").eq("id", postId).maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if ((post as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the post author can view edit history");
+    return;
+  }
+
+  const { data: edits, error } = await sc
+    .from("post_edits")
+    .select("id, old_content, new_content, edited_at")
+    .eq("post_id", postId)
+    .order("edited_at", { ascending: false });
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.status(200).json({
+    ok: true,
+    edits: (edits ?? []).map((e: any) => ({
+      id: e.id,
+      oldContent: e.old_content ?? null,
+      newContent: e.new_content ?? null,
+      editedAt: e.edited_at,
+    })),
+  });
+});
+
+/* ============================================================================
+ * GET  /posts/:postId/comments/:commentId/replies — list one-level replies
+ * POST /posts/:postId/comments/:commentId/replies — add a reply
+ * ============================================================================
+ */
+router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+  if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  const { data: parent } = await sc.from("posts_comments").select("id, post_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (!parent || (parent as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
+
+  const isPostAuthor = (post as any).author_id === user.id;
+
+  const { data: rows, error } = await sc
+    .from("posts_comments")
+    .select("id, post_id, user_id, body, created_at, updated_at, parent_comment_id")
+    .eq("parent_comment_id", commentId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true });
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  const replyRows: any[] = rows ?? [];
+  const authorIds = [...new Set(replyRows.map((r) => r.user_id))];
+  let profileMap: Record<string, any> = {};
+  if (authorIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    for (const p of profiles ?? []) profileMap[p.id] = p;
+  }
+
+  const replyIds = replyRows.map((r) => r.id as string);
+  const likeRows = replyIds.length > 0
+    ? ((await sc.from("comment_likes").select("comment_id, user_id").in("comment_id", replyIds)).data ?? [])
+    : [];
+
+  const likeCountMap: Record<string, number> = {};
+  const likedByMeSet = new Set<string>();
+  for (const row of likeRows as any[]) {
+    likeCountMap[row.comment_id] = (likeCountMap[row.comment_id] ?? 0) + 1;
+    if (row.user_id === user.id) likedByMeSet.add(row.comment_id);
+  }
+
+  const replies = replyRows.map((r) => {
+    const pr = profileMap[r.user_id];
+    return {
+      id: r.id,
+      body: r.body,
+      parentCommentId: r.parent_comment_id,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at ?? null,
+      canDelete: r.user_id === user.id || isPostAuthor,
+      likeCount: likeCountMap[r.id] ?? 0,
+      likedByMe: likedByMeSet.has(r.id),
+      tags: [],
+      hashtagUsages: [],
+      author: pr
+        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
+        : { id: r.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },
+    };
+  });
+
+  res.status(200).json({ ok: true, replies });
+});
+
+router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+  if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
+
+  const rl = checkRateLimit("comment", user.id, 30, 60_000);
+  if (!rl.allowed) {
+    sendError(res, "rate_limited", `Too many comments — retry in ${Math.ceil(rl.retryAfterMs / 1000)}s`);
+    return;
+  }
+
+  const body = String(req.body?.body ?? "").trim();
+  if (!body) { sendError(res, "invalid_payload", "Reply body is required"); return; }
+  if (body.length > 1000) { sendError(res, "invalid_payload", "Reply must be 1000 characters or fewer"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  // Verify parent comment belongs to the post
+  const { data: parent } = await sc.from("posts_comments").select("id, post_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (!parent || (parent as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
+
+  // Enforce comments_setting (same rules as top-level comments)
+  const commentsSetting = (post as any).comments_setting ?? "everyone";
+  const callerId = user.id;
+  const authorId = (post as any).author_id as string;
+  if (callerId !== authorId && commentsSetting !== "everyone") {
+    if (commentsSetting === "disabled") { sendError(res, "comments_disabled", "Comments are disabled on this post"); return; }
+    if (commentsSetting === "friends") {
+      const { data: fr } = await sc.from("friend_requests").select("id").eq("status", "accepted")
+        .or(`and(requester_id.eq.${callerId},recipient_id.eq.${authorId}),and(requester_id.eq.${authorId},recipient_id.eq.${callerId})`)
+        .maybeSingle();
+      if (!fr) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
+    }
+    if (commentsSetting === "circle") {
+      const { data: mem } = await sc.from("circle_memberships").select("member_id").eq("owner_id", authorId).eq("member_id", callerId).maybeSingle();
+      if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
+    }
+    if (commentsSetting === "trip_crew") {
+      const tripId = (post as any).trip_id as string | null;
+      if (!tripId || !(await isAcceptedTripMember(client, tripId, callerId))) { sendError(res, "comments_limited", "Only trip crew can comment on this post"); return; }
+    }
+    if (commentsSetting === "verified") {
+      const { data: profile } = await sc.from("profiles").select("is_verified").eq("id", callerId).maybeSingle();
+      if (!(profile as any)?.is_verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+    }
+  }
+
+  const { data: reply, error: insertErr } = await sc
+    .from("posts_comments")
+    .insert({ post_id: postId, user_id: user.id, body, parent_comment_id: commentId })
+    .select("id, post_id, user_id, body, created_at, updated_at, parent_comment_id")
+    .single();
+  if (insertErr) { sendError(res, "db_error", insertErr.message); return; }
+
+  const { data: profile } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id).single();
+
+  res.status(201).json({
+    ok: true,
+    reply: {
+      id: (reply as any).id,
+      body: (reply as any).body,
+      parentCommentId: (reply as any).parent_comment_id,
+      createdAt: (reply as any).created_at,
+      updatedAt: null,
+      canDelete: true,
+      likeCount: 0,
+      likedByMe: false,
+      tags: [],
+      hashtagUsages: [],
+      author: profile
+        ? { id: profile.id, handle: profile.handle, name: profile.name, avatarUrl: profile.avatar_url ?? null }
+        : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },
+    },
+  });
 });
 
 export default router;

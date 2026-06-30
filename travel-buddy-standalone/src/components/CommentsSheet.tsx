@@ -5,6 +5,8 @@
  * - Sticky input at the bottom, keyboard-aware
  * - Optimistically appends new comment while waiting for server
  * - Comment like / unlike
+ * - Threaded replies: tap "Reply" → input shows "Replying to @name" → sends reply
+ * - Replies toggle open/closed per comment (lazy-loaded on first expand)
  * - Handles comments_disabled error gracefully
  * - Safe-area aware; does not clash with bottom nav
  */
@@ -23,7 +25,7 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, SendHorizonal, Trash2, Heart } from 'lucide-react-native';
+import { X, SendHorizonal, Trash2, Heart, CornerDownRight } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
 import { MentionSuggestionList } from './MentionSuggestionList';
@@ -34,7 +36,10 @@ import {
   deleteComment,
   likeComment,
   unlikeComment,
+  listReplies,
+  addReply,
   type EngagementComment,
+  type EngagementReply,
 } from '../services/postEngagement';
 import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
@@ -81,103 +86,244 @@ function AvatarFallback({ name, size = 32 }: { name: string; size?: number }) {
   );
 }
 
-function CommentItem({
-  comment,
+function CommentAvatar({ uri, name, size = 32 }: { uri?: string | null; name: string; size?: number }) {
+  const [imgErr, setImgErr] = useState(false);
+  if (uri && !imgErr) {
+    return (
+      <Image
+        source={{ uri }}
+        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+        onError={() => setImgErr(true)}
+      />
+    );
+  }
+  return <AvatarFallback name={name} size={size} />;
+}
+
+function ReplyItem({
+  reply,
   postId,
   onDelete,
   onLikeChange,
 }: {
-  comment: EngagementComment;
+  reply: EngagementReply;
   postId: string;
   onDelete: (id: string) => void;
   onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
 }) {
-  const [imgErr, setImgErr] = useState(false);
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
+  const likedByMe = reply.likedByMe ?? false;
+  const likeCount = reply.likeCount ?? 0;
 
   const handleLike = useCallback(async () => {
     if (liking) return;
     setLiking(true);
-    const wasLiked = comment.likedByMe ?? false;
-    const prevCount = comment.likeCount ?? 0;
-
-    onLikeChange(comment.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
-
+    const wasLiked = likedByMe;
+    const prevCount = likeCount;
+    onLikeChange(reply.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
     try {
       const result = wasLiked
-        ? await unlikeComment(postId, comment.id)
-        : await likeComment(postId, comment.id);
-      if (result) {
-        onLikeChange(comment.id, result.likedByMe, result.likeCount);
-      } else {
-        onLikeChange(comment.id, wasLiked, prevCount);
-      }
+        ? await unlikeComment(postId, reply.id)
+        : await likeComment(postId, reply.id);
+      if (result) onLikeChange(reply.id, result.likedByMe, result.likeCount);
+      else onLikeChange(reply.id, wasLiked, prevCount);
     } finally {
       setLiking(false);
     }
-  }, [liking, comment, postId, onLikeChange]);
-
-  const likedByMe = comment.likedByMe ?? false;
-  const likeCount = comment.likeCount ?? 0;
+  }, [liking, likedByMe, likeCount, reply.id, postId, onLikeChange]);
 
   return (
-    <View style={s.commentRow}>
-      {comment.author.avatarUrl && !imgErr ? (
-        <Image
-          source={{ uri: comment.author.avatarUrl }}
-          style={s.avatar}
-          onError={() => setImgErr(true)}
-        />
-      ) : (
-        <AvatarFallback name={comment.author.name} size={32} />
-      )}
+    <View style={s.replyRow}>
+      <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
+      <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
       <View style={s.commentBody}>
         <View style={s.commentMeta}>
-          <Text style={s.commentAuthor}>{comment.author.name}</Text>
-          <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
+          <Text style={s.commentAuthor}>{reply.author.name}</Text>
+          <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
         </View>
         <RichText
-          content={comment.body}
-          tags={comment.tags}
-          hashtagUsages={comment.hashtagUsages}
+          content={reply.body}
+          tags={reply.tags}
+          hashtagUsages={reply.hashtagUsages}
           currentUserId={currentUserId ?? undefined}
           style={s.commentText}
         />
       </View>
       <View style={s.commentActions}>
-        <Pressable
-          hitSlop={8}
-          onPress={handleLike}
-          disabled={liking}
-          style={s.likeBtn}
-        >
-          <Heart
-            size={13}
-            color={likedByMe ? color.signal : color.faint}
-            fill={likedByMe ? color.signal : 'transparent'}
-          />
+        <Pressable hitSlop={8} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+          <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
           {likeCount > 0 && (
-            <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>
-              {likeCount}
-            </Text>
+            <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
           )}
         </Pressable>
-        {comment.canDelete && (
+        {reply.canDelete && (
           <Pressable
             hitSlop={8}
             onPress={() =>
-              Alert.alert('Delete comment?', 'This cannot be undone.', [
+              Alert.alert('Delete reply?', 'This cannot be undone.', [
                 { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
+                { text: 'Delete', style: 'destructive', onPress: () => onDelete(reply.id) },
               ])
             }
             style={s.deleteBtn}
           >
-            <Trash2 size={13} color={color.faint} />
+            <Trash2 size={12} color={color.faint} />
           </Pressable>
         )}
       </View>
+    </View>
+  );
+}
+
+function CommentItem({
+  comment,
+  postId,
+  onDelete,
+  onLikeChange,
+  onReply,
+}: {
+  comment: EngagementComment;
+  postId: string;
+  onDelete: (id: string) => void;
+  onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
+  onReply: (commentId: string, authorName: string) => void;
+}) {
+  const [liking, setLiking] = useState(false);
+  const [repliesOpen, setRepliesOpen] = useState(false);
+  const [replies, setReplies] = useState<EngagementReply[]>([]);
+  const [repliesLoading, setRepliesLoading] = useState(false);
+  const [repliesLoaded, setRepliesLoaded] = useState(false);
+  const { userId: currentUserId } = useSession();
+
+  const likedByMe = comment.likedByMe ?? false;
+  const likeCount = comment.likeCount ?? 0;
+
+  const handleLike = useCallback(async () => {
+    if (liking) return;
+    setLiking(true);
+    const wasLiked = likedByMe;
+    const prevCount = likeCount;
+    onLikeChange(comment.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
+    try {
+      const result = wasLiked
+        ? await unlikeComment(postId, comment.id)
+        : await likeComment(postId, comment.id);
+      if (result) onLikeChange(comment.id, result.likedByMe, result.likeCount);
+      else onLikeChange(comment.id, wasLiked, prevCount);
+    } finally {
+      setLiking(false);
+    }
+  }, [liking, likedByMe, likeCount, comment.id, postId, onLikeChange]);
+
+  const handleToggleReplies = useCallback(async () => {
+    if (!repliesLoaded) {
+      setRepliesLoading(true);
+      const data = await listReplies(postId, comment.id);
+      setReplies(data);
+      setRepliesLoaded(true);
+      setRepliesLoading(false);
+    }
+    setRepliesOpen((prev) => !prev);
+  }, [postId, comment.id, repliesLoaded]);
+
+  const handleReplyLikeChange = useCallback(
+    (id: string, liked: boolean, count: number) => {
+      setReplies((prev) => prev.map((r) => r.id === id ? { ...r, likedByMe: liked, likeCount: count } : r));
+    },
+    [],
+  );
+
+  const handleReplyDelete = useCallback(
+    (id: string) => {
+      setReplies((prev) => prev.filter((r) => r.id !== id));
+    },
+    [],
+  );
+
+  return (
+    <View>
+      <View style={s.commentRow}>
+        <CommentAvatar uri={comment.author.avatarUrl} name={comment.author.name} size={32} />
+        <View style={s.commentBody}>
+          <View style={s.commentMeta}>
+            <Text style={s.commentAuthor}>{comment.author.name}</Text>
+            <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
+          </View>
+          <RichText
+            content={comment.body}
+            tags={comment.tags}
+            hashtagUsages={comment.hashtagUsages}
+            currentUserId={currentUserId ?? undefined}
+            style={s.commentText}
+          />
+          <Pressable
+            hitSlop={6}
+            onPress={() => onReply(comment.id, comment.author.name)}
+            style={s.replyBtn}
+          >
+            <Text style={s.replyBtnText}>Reply</Text>
+          </Pressable>
+        </View>
+        <View style={s.commentActions}>
+          <Pressable hitSlop={8} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+            <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
+            {likeCount > 0 && (
+              <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+            )}
+          </Pressable>
+          {comment.canDelete && (
+            <Pressable
+              hitSlop={8}
+              onPress={() =>
+                Alert.alert('Delete comment?', 'This cannot be undone.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
+                ])
+              }
+              style={s.deleteBtn}
+            >
+              <Trash2 size={13} color={color.faint} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      {/* Replies toggle */}
+      {(replies.length > 0 || repliesLoaded) && (
+        <Pressable style={s.repliesToggle} onPress={handleToggleReplies} hitSlop={4}>
+          {repliesLoading ? (
+            <ActivityIndicator size="small" color={color.signal} />
+          ) : (
+            <Text style={s.repliesToggleText}>
+              {repliesOpen
+                ? 'Hide replies'
+                : `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}`}
+            </Text>
+          )}
+        </Pressable>
+      )}
+
+      {/* Initial load trigger — show "View replies" if we haven't loaded yet */}
+      {!repliesLoaded && !repliesLoading && (
+        <Pressable style={s.repliesToggle} onPress={handleToggleReplies} hitSlop={4}>
+          <Text style={s.repliesToggleText}>View replies</Text>
+        </Pressable>
+      )}
+
+      {repliesOpen && replies.length > 0 && (
+        <View style={s.repliesContainer}>
+          {replies.map((r) => (
+            <ReplyItem
+              key={r.id}
+              reply={r}
+              postId={postId}
+              onDelete={handleReplyDelete}
+              onLikeChange={handleReplyLikeChange}
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -189,6 +335,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [commentsDisabled, setCommentsDisabled] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; authorName: string } | null>(null);
   const mentionRef = useRef<MentionInputHandle>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -204,10 +351,15 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   useEffect(() => {
     if (visible) {
       setCommentsDisabled(false);
+      setReplyingTo(null);
       load();
       setText('');
     }
   }, [visible, load]);
+
+  const handleReply = useCallback((commentId: string, authorName: string) => {
+    setReplyingTo({ id: commentId, authorName });
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     const trimmed = text.trim();
@@ -217,23 +369,45 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
       return;
     }
     setSubmitting(true);
-    const result = await addComment(postId, trimmed);
-    if (result && 'comment' in result) {
-      setText('');
-      setComments((prev) => [...prev, result.comment]);
-      onCountChange(result.commentCount);
-    } else if (result && 'error' in result) {
-      if (result.error === 'comments_disabled') {
-        setCommentsDisabled(true);
-        Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
-      } else if (result.error === 'comments_limited') {
-        Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+
+    if (replyingTo) {
+      // Submit as reply
+      const result = await addReply(postId, replyingTo.id, trimmed);
+      if (result && 'reply' in result) {
+        setText('');
+        setReplyingTo(null);
+        // Note: replies are managed per-CommentItem; no top-level count change
+      } else if (result && 'error' in result) {
+        if (result.error === 'comments_disabled') {
+          setCommentsDisabled(true);
+          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+        } else if (result.error === 'comments_limited') {
+          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+        }
+      } else {
+        Alert.alert('Could not post reply', 'Please try again.');
       }
     } else {
-      Alert.alert('Could not post comment', 'Please try again.');
+      // Submit as top-level comment
+      const result = await addComment(postId, trimmed);
+      if (result && 'comment' in result) {
+        setText('');
+        setComments((prev) => [...prev, result.comment]);
+        onCountChange(result.commentCount);
+      } else if (result && 'error' in result) {
+        if (result.error === 'comments_disabled') {
+          setCommentsDisabled(true);
+          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+        } else if (result.error === 'comments_limited') {
+          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+        }
+      } else {
+        Alert.alert('Could not post comment', 'Please try again.');
+      }
     }
+
     setSubmitting(false);
-  }, [text, submitting, postId, onCountChange]);
+  }, [text, submitting, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
@@ -254,6 +428,10 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     },
     [],
   );
+
+  const inputPlaceholder = replyingTo
+    ? `Reply to ${replyingTo.authorName}…`
+    : 'Add a comment…';
 
   return (
     <Modal
@@ -293,6 +471,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
                   postId={postId}
                   onDelete={handleDelete}
                   onLikeChange={handleLikeChange}
+                  onReply={handleReply}
                 />
               )}
               ListEmptyComponent={
@@ -314,6 +493,18 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             </View>
           )}
 
+          {/* Reply context bar */}
+          {replyingTo && (
+            <View style={s.replyContext}>
+              <Text style={s.replyContextText} numberOfLines={1}>
+                Replying to {replyingTo.authorName}
+              </Text>
+              <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
+                <X size={14} color={color.faint} />
+              </Pressable>
+            </View>
+          )}
+
           {/* Mention suggestions — above input row */}
           <MentionSuggestionList
             suggestions={mentionSuggestions}
@@ -330,7 +521,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
                 style={s.input}
                 value={text}
                 onChangeText={setText}
-                placeholder="Add a comment…"
+                placeholder={inputPlaceholder}
                 placeholderTextColor={color.faint}
                 multiline
                 maxLength={1000}
@@ -427,16 +618,37 @@ const s = StyleSheet.create({
     color: color.mute,
     fontStyle: 'italic',
   },
+  replyContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.xs,
+    backgroundColor: color.paper,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+  },
+  replyContextText: {
+    fontSize: 12,
+    color: color.faint,
+    fontStyle: 'italic',
+    flex: 1,
+    marginRight: space.sm,
+  },
   commentRow: {
     flexDirection: 'row',
     gap: space.sm,
     alignItems: 'flex-start',
   },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: color.haze,
+  replyRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    alignItems: 'flex-start',
+    paddingLeft: space.md,
+    marginTop: space.xs,
+  },
+  replyIcon: {
+    marginTop: 6,
   },
   commentBody: {
     flex: 1,
@@ -461,6 +673,15 @@ const s = StyleSheet.create({
     color: color.ink,
     lineHeight: 20,
   },
+  replyBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 3,
+  },
+  replyBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: color.faint,
+  },
   commentActions: {
     flexDirection: 'column',
     alignItems: 'center',
@@ -482,6 +703,21 @@ const s = StyleSheet.create({
   },
   deleteBtn: {
     paddingLeft: space.xs,
+  },
+  repliesToggle: {
+    marginLeft: 44,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  repliesToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: color.deep,
+  },
+  repliesContainer: {
+    marginLeft: space.sm,
+    gap: space.md,
+    marginTop: space.xs,
   },
   inputRow: {
     flexDirection: 'row',

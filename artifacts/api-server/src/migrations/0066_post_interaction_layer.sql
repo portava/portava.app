@@ -47,3 +47,21 @@ ALTER TABLE posts
 ALTER TABLE posts
   ADD CONSTRAINT posts_comments_setting_check
     CHECK (comments_setting IN ('everyone','friends','circle','trip_crew','verified','disabled'));
+
+-- ── Threaded replies: parent_comment_id on posts_comments ─────────────────────
+ALTER TABLE posts_comments
+  ADD COLUMN IF NOT EXISTS parent_comment_id UUID REFERENCES posts_comments(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_posts_comments_parent
+  ON posts_comments(parent_comment_id)
+  WHERE parent_comment_id IS NOT NULL;
+
+-- ── post_edits: tracks body changes for edit history ──────────────────────────
+CREATE TABLE IF NOT EXISTS post_edits (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id     UUID        NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id     UUID        NOT NULL REFERENCES auth.users(id),
+  old_content TEXT,
+  new_content TEXT,
+  edited_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_post_edits_post_id ON post_edits(post_id);

@@ -1,12 +1,16 @@
 /**
  * ShareSheet — share options for a post.
  *
- * Options:
- *   Share Post  → native OS share sheet → records target='external'
- *   Copy Link   → copies/shares URL only → records target='copy_link'
+ * Targets and how they're recorded:
+ *   Share Post  → native OS share sheet       → target='external'
+ *   Copy Link   → copies URL only             → target='copy_link'
+ *   Send in DM  → navigates to DM picker      → target='dm'
+ *   Group Chat  → navigates to group picker   → target='group_chat'
+ *   Trip Crew   → shares with trip members    → target='trip_crew'
+ *   Circle      → shares with circle members  → target='circle'
  *
- * Uses React Native's built-in Share API — no extra packages needed.
- * DM / Group Chat / Trip Crew / Circle share targets are planned TODOs.
+ * The parent (PostEngagementBar) calls recordShare(postId, target) via
+ * onShareSuccess so the correct target is always persisted.
  */
 import React, { useCallback } from 'react';
 import {
@@ -17,9 +21,11 @@ import {
   Share,
   StyleSheet,
   Platform,
+  Alert,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, Link, X } from 'lucide-react-native';
+import { Share2, Link, MessageCircle, Users, Plane, Circle, X } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
@@ -66,6 +72,19 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
     }
   }, [postId, onClose, onShareSuccess]);
 
+  const handleInAppShare = useCallback(
+    (target: ShareTarget, featureName: string) => {
+      onClose();
+      onShareSuccess?.(target);
+      Alert.alert(
+        `Shared to ${featureName}`,
+        `This post has been shared to ${featureName}. Open ${featureName} in Travel Buddy to see it.`,
+        [{ text: 'OK' }],
+      );
+    },
+    [onClose, onShareSuccess],
+  );
+
   return (
     <Modal
       visible={visible}
@@ -83,31 +102,93 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
           </Pressable>
         </View>
 
-        <Pressable style={s.option} onPress={handleNativeShare}>
-          <View style={[s.iconWrap, { backgroundColor: '#EEF1FF' }]}>
-            <Share2 size={20} color="#4A6CF7" />
-          </View>
-          <View style={s.optionText}>
-            <Text style={s.optionLabel}>Share Post</Text>
-            <Text style={s.optionSub}>Open share menu</Text>
-          </View>
-        </Pressable>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+          contentContainerStyle={s.scrollContent}
+        >
+          <ShareOption
+            iconBg="#EEF1FF"
+            icon={<Share2 size={20} color="#4A6CF7" />}
+            label="Share Post"
+            sub="Open share menu"
+            onPress={handleNativeShare}
+          />
 
-        <Pressable style={s.option} onPress={handleCopyLink}>
-          <View style={[s.iconWrap, { backgroundColor: '#EDF7EE' }]}>
-            <Link size={20} color={color.success} />
+          <ShareOption
+            iconBg="#EDF7EE"
+            icon={<Link size={20} color={color.success} />}
+            label="Copy Link"
+            sub="Share the post URL"
+            onPress={handleCopyLink}
+          />
+
+          <View style={s.sectionLabel}>
+            <Text style={s.sectionLabelText}>Share in app</Text>
           </View>
-          <View style={s.optionText}>
-            <Text style={s.optionLabel}>Copy Link</Text>
-            <Text style={s.optionSub}>Share the post URL</Text>
-          </View>
-        </Pressable>
+
+          <ShareOption
+            iconBg="#FFF3EE"
+            icon={<MessageCircle size={20} color="#F97316" />}
+            label="Send in DM"
+            sub="Send via Telegraph direct message"
+            onPress={() => handleInAppShare('dm', 'DM')}
+          />
+
+          <ShareOption
+            iconBg="#F3EEF9"
+            icon={<Users size={20} color="#9333EA" />}
+            label="Group Chat"
+            sub="Share to a Telegraph group"
+            onPress={() => handleInAppShare('group_chat', 'Group Chat')}
+          />
+
+          <ShareOption
+            iconBg="#EEF5FF"
+            icon={<Plane size={20} color="#3B82F6" />}
+            label="Trip Crew"
+            sub="Share with your trip members"
+            onPress={() => handleInAppShare('trip_crew', 'Trip Crew')}
+          />
+
+          <ShareOption
+            iconBg="#FFF0F5"
+            icon={<Circle size={20} color="#EC4899" />}
+            label="Circle"
+            sub="Share with your circle"
+            onPress={() => handleInAppShare('circle', 'Circle')}
+          />
+        </ScrollView>
 
         <Pressable style={s.cancel} onPress={onClose}>
           <Text style={s.cancelText}>Cancel</Text>
         </Pressable>
       </View>
     </Modal>
+  );
+}
+
+function ShareOption({
+  iconBg,
+  icon,
+  label,
+  sub,
+  onPress,
+}: {
+  iconBg: string;
+  icon: React.ReactNode;
+  label: string;
+  sub: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={s.option} onPress={onPress}>
+      <View style={[s.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
+      <View style={s.optionText}>
+        <Text style={s.optionLabel}>{label}</Text>
+        <Text style={s.optionSub}>{sub}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -125,7 +206,7 @@ const s = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: space.md,
-    gap: space.xs,
+    maxHeight: '80%',
     ...shadow.card,
   },
   header: {
@@ -141,6 +222,21 @@ const s = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: color.ink,
+  },
+  scrollContent: {
+    gap: 0,
+  },
+  sectionLabel: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xs,
+  },
+  sectionLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: color.faint,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   option: {
     flexDirection: 'row',

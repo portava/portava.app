@@ -3,7 +3,7 @@
  *
  * Actions:
  *   - Edit Post
- *   - Edit History
+ *   - Edit History  (opens EditHistorySheet with real data)
  *   - Comment Audience (everyone / friends / circle / trip crew / verified / disabled)
  *   - Hide/Show Like Count
  *   - Disable/Enable Sharing
@@ -28,8 +28,9 @@ import {
   X, Pencil, Clock, Users, EyeOff, Eye,
   Share2, Repeat2, Archive, Trash2, ChevronRight,
 } from 'lucide-react-native';
-import { color, space, radius, shadow } from '../theme/tokens';
+import { color, space, shadow } from '../theme/tokens';
 import { updatePostSettings, archivePost, deletePost } from '../services/postEngagement';
+import { EditHistorySheet } from './EditHistorySheet';
 
 export interface PostSettings {
   commentsSetting: 'everyone' | 'friends' | 'circle' | 'trip_crew' | 'verified' | 'disabled';
@@ -106,6 +107,7 @@ export function PostOwnerMenu({
 }: Props) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const [editHistoryOpen, setEditHistoryOpen] = useState(false);
 
   const toggle = useCallback(
     async (field: Partial<PostSettings>) => {
@@ -141,12 +143,9 @@ export function PostOwnerMenu({
   }, [postId, settings, onClose, onSettingsChange]);
 
   const handleEditHistory = useCallback(() => {
-    Alert.alert(
-      'Edit History',
-      'Post edit history will be available in a future update.',
-      [{ text: 'OK' }],
-    );
-  }, []);
+    onClose();
+    setTimeout(() => setEditHistoryOpen(true), 350);
+  }, [onClose]);
 
   const handleArchive = useCallback(async () => {
     Alert.alert(
@@ -194,91 +193,99 @@ export function PostOwnerMenu({
   }, [postId, onClose, onDeleted]);
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <Pressable style={s.backdrop} onPress={onClose} />
-      <View style={[s.sheet, { paddingBottom: insets.bottom + space.md }]}>
-        <View style={s.header}>
-          <Text style={s.title}>Post Options</Text>
-          <Pressable onPress={onClose} hitSlop={10}>
-            <X size={20} color={color.ink} />
-          </Pressable>
-        </View>
-
-        {busy && (
-          <View style={s.busyOverlay} pointerEvents="none">
-            <ActivityIndicator color={color.signal} />
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent
+        onRequestClose={onClose}
+        statusBarTranslucent
+      >
+        <Pressable style={s.backdrop} onPress={onClose} />
+        <View style={[s.sheet, { paddingBottom: insets.bottom + space.md }]}>
+          <View style={s.header}>
+            <Text style={s.title}>Post Options</Text>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <X size={20} color={color.ink} />
+            </Pressable>
           </View>
-        )}
 
-        {onEdit && (
+          {busy && (
+            <View style={s.busyOverlay} pointerEvents="none">
+              <ActivityIndicator color={color.signal} />
+            </View>
+          )}
+
+          {onEdit && (
+            <MenuRow
+              icon={<Pencil size={20} color={color.ink} />}
+              label="Edit Post"
+              onPress={() => { onClose(); onEdit(); }}
+            />
+          )}
+
           <MenuRow
-            icon={<Pencil size={20} color={color.ink} />}
-            label="Edit Post"
-            onPress={() => { onClose(); onEdit(); }}
+            icon={<Clock size={20} color={color.ink} />}
+            label="Edit History"
+            onPress={handleEditHistory}
           />
-        )}
 
-        <MenuRow
-          icon={<Clock size={20} color={color.ink} />}
-          label="Edit History"
-          onPress={handleEditHistory}
-        />
+          <View style={s.divider} />
 
-        <View style={s.divider} />
+          <MenuRow
+            icon={<Users size={20} color={color.ink} />}
+            label="Who can comment"
+            value={AUDIENCE_LABELS[settings.commentsSetting]}
+            onPress={handleAudiencePicker}
+            showChevron
+          />
 
-        <MenuRow
-          icon={<Users size={20} color={color.ink} />}
-          label="Who can comment"
-          value={AUDIENCE_LABELS[settings.commentsSetting]}
-          onPress={handleAudiencePicker}
-          showChevron
-        />
+          <MenuRow
+            icon={
+              settings.likesHidden
+                ? <Eye size={20} color={color.ink} />
+                : <EyeOff size={20} color={color.ink} />
+            }
+            label={settings.likesHidden ? 'Show Like Count' : 'Hide Like Count'}
+            onPress={() => toggle({ likesHidden: !settings.likesHidden })}
+          />
 
-        <MenuRow
-          icon={
-            settings.likesHidden
-              ? <Eye size={20} color={color.ink} />
-              : <EyeOff size={20} color={color.ink} />
-          }
-          label={settings.likesHidden ? 'Show Like Count' : 'Hide Like Count'}
-          onPress={() => toggle({ likesHidden: !settings.likesHidden })}
-        />
+          <MenuRow
+            icon={<Share2 size={20} color={color.ink} />}
+            label={settings.sharingDisabled ? 'Allow Sharing' : 'Disable Sharing'}
+            onPress={() => toggle({ sharingDisabled: !settings.sharingDisabled })}
+          />
 
-        <MenuRow
-          icon={<Share2 size={20} color={color.ink} />}
-          label={settings.sharingDisabled ? 'Allow Sharing' : 'Disable Sharing'}
-          onPress={() => toggle({ sharingDisabled: !settings.sharingDisabled })}
-        />
+          <MenuRow
+            icon={<Repeat2 size={20} color={color.ink} />}
+            label={settings.repostingDisabled ? 'Allow Reposts' : 'Disable Reposts'}
+            onPress={() => toggle({ repostingDisabled: !settings.repostingDisabled })}
+          />
 
-        <MenuRow
-          icon={<Repeat2 size={20} color={color.ink} />}
-          label={settings.repostingDisabled ? 'Allow Reposts' : 'Disable Reposts'}
-          onPress={() => toggle({ repostingDisabled: !settings.repostingDisabled })}
-        />
+          <View style={s.divider} />
 
-        <View style={s.divider} />
+          <MenuRow
+            icon={<Archive size={20} color={color.mute} />}
+            label="Archive Post"
+            labelColor={color.mute}
+            onPress={handleArchive}
+          />
 
-        <MenuRow
-          icon={<Archive size={20} color={color.mute} />}
-          label="Archive Post"
-          labelColor={color.mute}
-          onPress={handleArchive}
-        />
+          <MenuRow
+            icon={<Trash2 size={20} color={color.signal} />}
+            label="Delete Post"
+            labelColor={color.signal}
+            onPress={handleDelete}
+          />
+        </View>
+      </Modal>
 
-        <MenuRow
-          icon={<Trash2 size={20} color={color.signal} />}
-          label="Delete Post"
-          labelColor={color.signal}
-          onPress={handleDelete}
-        />
-      </View>
-    </Modal>
+      <EditHistorySheet
+        visible={editHistoryOpen}
+        postId={postId}
+        onClose={() => setEditHistoryOpen(false)}
+      />
+    </>
   );
 }
 

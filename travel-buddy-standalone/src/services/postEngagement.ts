@@ -240,3 +240,55 @@ export async function recordShare(
   const res = await apiCall<{ ok: boolean }>('POST', `/api/posts/${postId}/share`, { target });
   return res.ok;
 }
+
+// ── Threaded Replies ──────────────────────────────────────────────────────────
+
+export interface EngagementReply extends EngagementComment {
+  parentCommentId: string;
+}
+
+export async function listReplies(
+  postId: string,
+  commentId: string,
+): Promise<EngagementReply[]> {
+  const res = await apiCall<{ ok: boolean; replies: EngagementReply[] }>(
+    'GET',
+    `/api/posts/${postId}/comments/${commentId}/replies`,
+  );
+  return res.ok ? (res.data.replies ?? []) : [];
+}
+
+export async function addReply(
+  postId: string,
+  commentId: string,
+  body: string,
+): Promise<{ reply: EngagementReply } | null | { error: 'comments_disabled' | 'comments_limited' }> {
+  const trimmed = body.trim();
+  if (!trimmed || trimmed.length > 1000) return null;
+  const res = await apiCall<{ ok: boolean; reply: EngagementReply }>(
+    'POST',
+    `/api/posts/${postId}/comments/${commentId}/replies`,
+    { body: trimmed },
+  );
+  if (res.ok) return { reply: res.data.reply };
+  if (!res.ok && (res as any).code === 'comments_disabled') return { error: 'comments_disabled' };
+  if (!res.ok && (res as any).code === 'comments_limited') return { error: 'comments_limited' };
+  return null;
+}
+
+// ── Edit History ──────────────────────────────────────────────────────────────
+
+export interface EditHistoryEntry {
+  id: string;
+  oldContent: string | null;
+  newContent: string | null;
+  editedAt: string;
+}
+
+export async function getEditHistory(postId: string): Promise<EditHistoryEntry[]> {
+  const res = await apiCall<{ ok: boolean; edits: EditHistoryEntry[] }>(
+    'GET',
+    `/api/posts/${postId}/edit-history`,
+  );
+  return res.ok ? (res.data.edits ?? []) : [];
+}
