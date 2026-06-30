@@ -867,3 +867,68 @@ describe("Events — trust gates filter listing", () => {
     } finally { await close(); }
   });
 });
+
+// ── POST /api/events/:id/chat — idempotent chat creation ──────────────────────
+
+describe("Events — POST /:id/chat (idempotent chat creation)", () => {
+  const THREAD_ID = "00000000-0000-0000-0004-000000000001";
+
+  it("creates a chat thread and returns 201 created=true", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, state: "open", chat_enabled: true, chat_thread_id: null })] },
+      event_roles: { rows: [{ id: ID.role1, event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1);
+      assert.equal(r.status, 201);
+      assert.ok(r.body.threadId, "should return a threadId");
+      assert.equal(r.body.created, true);
+      assert.equal((client as any)._db.message_threads.rows.length, 1, "exactly one thread created");
+    } finally { await close(); }
+  });
+
+  it("returns existing thread (200 created=false) on a duplicate call", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, state: "open", chat_enabled: true, chat_thread_id: THREAD_ID })] },
+      event_roles: { rows: [{ id: ID.role1, event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      message_threads: { rows: [{ id: THREAD_ID, type: "group", name: "Test Event", created_by: ID.host1 }] },
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1);
+      assert.equal(r.status, 200, "should return 200 (not 201) when thread already exists");
+      assert.equal(r.body.threadId, THREAD_ID, "should return the existing thread id");
+      assert.equal(r.body.created, false);
+      assert.equal((client as any)._db.message_threads.rows.length, 1, "no new thread created");
+    } finally { await close(); }
+  });
+
+  it("rejects non-host/co-host callers with 403", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, state: "open", chat_enabled: true, chat_thread_id: null })] },
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.user1);
+      assert.equal(r.status, 403);
+      assert.equal((client as any)._db.message_threads.rows.length, 0, "no thread should be created");
+    } finally { await close(); }
+  });
+
+  it("rejects with 403 when chat_enabled is false", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, state: "open", chat_enabled: false, chat_thread_id: null })] },
+      event_roles: { rows: [{ id: ID.role1, event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/chat`, null, ID.host1);
+      assert.equal(r.status, 403);
+    } finally { await close(); }
+  });
+});

@@ -1590,6 +1590,48 @@ router.post("/events/:id/memory", async (req, res) => {
   res.status(201).json({ memoryId: (memory as any).id });
 });
 
+// ── POST /api/events/:id/chat ─────────────────────────────────────────────────
+// Idempotent: creates the event's group chat thread, or returns the existing one.
+// Host and co-hosts only — attendees enter the existing thread via /chat/join.
+// Returns { threadId: string; created: boolean }.
+// If the event already has a chat_thread_id this returns 200 + created:false.
+// If a new thread is created this returns 201 + created:true.
+
+router.post("/events/:id/chat", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc
+    .from("events")
+    .select("chat_thread_id, chat_enabled, title, host_id, state")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if (!(ev as any).chat_enabled) { sendError(res, "forbidden", "Chat is disabled for this event"); return; }
+
+  const isStaff = await isHostOrCoHost(sc, id, user.id);
+  if (!isStaff) { sendError(res, "forbidden", "Only the host or co-host can create the event chat"); return; }
+
+  // Idempotent: return the existing thread rather than creating a duplicate
+  if ((ev as any).chat_thread_id) {
+    res.status(200).json({ threadId: (ev as any).chat_thread_id, created: false });
+    return;
+  }
+
+  const threadId = await createEventChatThread(sc, id, (ev as any).title, user.id);
+  if (!threadId) { sendError(res, "db_error", "Failed to create chat thread"); return; }
+
+  res.status(201).json({ threadId, created: true });
+});
+
 // ── POST /api/events/:id/chat/join ────────────────────────────────────────────
 
 router.post("/events/:id/chat/join", async (req, res) => {
@@ -1793,10 +1835,16 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
   return !!(rsvp as any).data || !!(role as any).data;
 }
 
-async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<void> {
+async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<string | null> {
   try {
     const chatEnabled = await isFlagEnabled(sc, "events_chat_enabled");
-    if (!chatEnabled) return;
+    if (!chatEnabled) return null;
+
+    // Idempotency guard: if a thread was already created for this event, return it instead of
+    // creating a duplicate. This is belt-and-suspenders on top of the call-site checks so that
+    // a retry or concurrent double-tap cannot produce two separate threads.
+    const { data: existing } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
+    if ((existing as any)?.chat_thread_id) return (existing as any).chat_thread_id as string;
 
     const { data: thread } = await sc
       .from("message_threads")
@@ -1809,12 +1857,13 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
       .select("id")
       .single();
 
-    if (!(thread as any)?.id) return;
+    if (!(thread as any)?.id) return null;
 
     const threadId = (thread as any).id as string;
     await sc.from("message_thread_members").insert({ thread_id: threadId, user_id: hostId });
     await sc.from("events").update({ chat_thread_id: threadId, updated_at: new Date().toISOString() }).eq("id", eventId);
-  } catch {}
+    return threadId;
+  } catch { return null; }
 }
 
 // ── POST /api/events/:id/reviews ─────────────────────────────────────────────
