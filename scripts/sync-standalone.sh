@@ -304,6 +304,11 @@ if $CHECK_SOURCE; then
     while IFS= read -r -d '' f; do
       rel="${f#$from/}"
       dst_file="$to/$rel"
+      # Skip files that standalone owns — they are intentionally different
+      if is_standalone_owned "$dir/$rel"; then
+        echo "    [protected] $dir/$rel (standalone-owned — skipped)"
+        continue
+      fi
       if [[ ! -f "$dst_file" ]]; then
         echo "    + $dir/$rel (new in source — missing from standalone)"
         dir_drift=$(( dir_drift + 1 ))
@@ -317,6 +322,10 @@ if $CHECK_SOURCE; then
     while IFS= read -r -d '' f; do
       rel="${f#$to/}"
       src_file="$from/$rel"
+      # Skip files that standalone owns — they may legitimately not exist in source
+      if is_standalone_owned "$dir/$rel"; then
+        continue
+      fi
       if [[ ! -f "$src_file" ]]; then
         echo "    - $dir/$rel (removed from source — stale in standalone)"
         dir_drift=$(( dir_drift + 1 ))
