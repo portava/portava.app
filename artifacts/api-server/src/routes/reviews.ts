@@ -90,6 +90,44 @@ async function checkEligibility(
   }
 }
 
+// ── GET /api/reviews/my-review ────────────────────────────────────────────────
+// Returns whether the current user has already reviewed a given entity.
+// Query params: entityType (trip|rent_buddy_booking), entityId (uuid)
+
+router.get("/reviews/my-review", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const { entityType, entityId } = req.query as Record<string, string>;
+  if (!entityType || !entityId || !isUuid(entityId)) {
+    sendError(res, "invalid_payload", "entityType and entityId (uuid) are required");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data, error } = await sc
+    .from("reviews")
+    .select("id")
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId)
+    .eq("reviewer_id", auth.user.id)
+    .neq("state", "removed")
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "get my-review");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({
+    exists:   !!data,
+    reviewId: (data as any)?.id ?? null,
+  });
+});
+
 // ── POST /api/reviews ─────────────────────────────────────────────────────────
 
 const CreateReviewSchema = z.object({

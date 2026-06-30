@@ -5,7 +5,8 @@
  * Trip reviews use GET /api/trips/:id/reviews (reviews table).
  *
  * Shows aggregate rating (stars + count) + recent reviews.
- * Shows "Write a Review" CTA if canReview=true.
+ * Shows "Write a Review" CTA if canReview=true and the user has not yet reviewed.
+ * Shows "Edit your review" CTA if the user already has a review on file.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -20,11 +21,13 @@ import { router } from 'expo-router';
 import {
   getTripReviews,
   getEventReviews,
+  getMyReview,
   type Review,
   type ReviewsResponse,
   type EventReviewsResponse,
   type ReviewEntityType,
 } from '../services/reviews';
+import { useSession } from '../context/SessionContext';
 
 // ── Star display ──────────────────────────────────────────────────────────────
 
@@ -92,10 +95,13 @@ export function ReviewsSection({
   entityName,
   canReview = false,
 }: ReviewsSectionProps) {
-  const [reviews, setReviews]   = useState<Review[]>([]);
-  const [total, setTotal]       = useState(0);
-  const [avgRating, setAvg]     = useState<number | null>(null);
-  const [loading, setLoading]   = useState(true);
+  const { isAuthed } = useSession();
+
+  const [reviews, setReviews]         = useState<Review[]>([]);
+  const [total, setTotal]             = useState(0);
+  const [avgRating, setAvg]           = useState<number | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [alreadyReviewed, setAlready] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -130,6 +136,23 @@ export function ReviewsSection({
     return () => { active = false; };
   }, [entityType, entityId]);
 
+  // Separately check whether the current user has already submitted a review.
+  // Only runs when the review CTA would otherwise be shown, and only for trip/booking
+  // entities (event reviews don't use the my-review endpoint).
+  useEffect(() => {
+    if (!canReview || !isAuthed || entityType === 'event') return;
+    let active = true;
+    getMyReview(entityType, entityId)
+      .then((result) => {
+        if (!active) return;
+        setAlready(result.exists);
+      })
+      .catch(() => {
+        // Fail open — don't prevent writing a review if the check fails
+      });
+    return () => { active = false; };
+  }, [canReview, isAuthed, entityType, entityId]);
+
   const openComposer = () => {
     router.push({
       pathname: `/review/${entityType}/${entityId}` as any,
@@ -159,17 +182,23 @@ export function ReviewsSection({
         )}
       </View>
 
-      {/* Write a review CTA */}
+      {/* Review CTA */}
       {canReview && (
-        <TouchableOpacity style={s.writeBtn} onPress={openComposer}>
-          <Text style={s.writeBtnText}>★ Write a Review</Text>
-        </TouchableOpacity>
+        alreadyReviewed ? (
+          <TouchableOpacity style={[s.writeBtn, s.writeBtnEditing]} onPress={openComposer}>
+            <Text style={s.writeBtnTextEditing}>✎ Edit your review</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={s.writeBtn} onPress={openComposer}>
+            <Text style={s.writeBtnText}>★ Write a Review</Text>
+          </TouchableOpacity>
+        )
       )}
 
       {/* Review list */}
       {reviews.length === 0 ? (
         <Text style={s.emptyText}>
-          No reviews yet.{canReview ? ' Be the first to share your experience.' : ''}
+          No reviews yet.{canReview && !alreadyReviewed ? ' Be the first to share your experience.' : ''}
         </Text>
       ) : (
         reviews.map((r) => <ReviewCard key={r.id} review={r} />)
@@ -203,7 +232,12 @@ const s = StyleSheet.create({
     alignSelf: 'flex-start',
     marginBottom: 14,
   },
-  writeBtnText: { fontSize: 13, fontWeight: '600', color: '#92400E' },
+  writeBtnEditing: {
+    borderColor: '#9CA3AF',
+    backgroundColor: '#F9FAFB',
+  },
+  writeBtnText:        { fontSize: 13, fontWeight: '600', color: '#92400E' },
+  writeBtnTextEditing: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
 
   reviewCard: {
     borderTopWidth: 1,

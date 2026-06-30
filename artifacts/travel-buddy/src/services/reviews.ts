@@ -127,6 +127,26 @@ export async function reportReview(reviewId: string, reason: string): Promise<vo
   }
 }
 
+export interface MyReviewResult {
+  exists: boolean;
+  reviewId: string | null;
+}
+
+export async function getMyReview(
+  entityType: ReviewEntityType,
+  entityId: string,
+): Promise<MyReviewResult> {
+  const params = new URLSearchParams({ entityType, entityId });
+  const res = await fetch(api(`reviews/my-review?${params.toString()}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) {
+    // Treat errors as "not reviewed" so the UI doesn't block the user
+    return { exists: false, reviewId: null };
+  }
+  return res.json();
+}
+
 export async function deleteReview(reviewId: string): Promise<void> {
   const res = await fetch(api(`reviews/${reviewId}`), {
     method: 'DELETE',
