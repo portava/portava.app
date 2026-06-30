@@ -15,7 +15,7 @@
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/components/__tests__/ReportPostSheet.test.ts",
-    "test:component": "jest"
+    "test:component": "jest --forceExit"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",

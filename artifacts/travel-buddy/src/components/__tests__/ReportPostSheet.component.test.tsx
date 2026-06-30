@@ -180,20 +180,32 @@ describe('open → select reason → close → re-open: no stale state survives'
     expect(queryByText('✓')).toBeNull(); // no checkmark on re-open
   });
 
-  it('"Report submitted" banner is cleared on re-open after dismissing', async () => {
-    // handleClose() always resets done=false regardless of prior state.
+  it('"Report submitted" banner is absent on re-open after a successful submission', async () => {
+    // Drive done=true via a real submit, then dismiss and verify the banner
+    // is gone when the sheet re-opens.  This ensures handleClose() resets
+    // done=false even after the happy-path submit completes.
     const onClose = jest.fn();
-    const { getByTestId, queryByTestId, rerender } = await renderSheet(
-      true,
-      onClose,
-    );
+    const { getByTestId, findByTestId, queryByTestId, rerender } =
+      await renderSheet(true, onClose);
 
-    await fireEvent.press(getByTestId('report-post-close'));
+    // Select a reason and submit (reportContent is mocked to return { ok: true })
+    await fireEvent.press(getByTestId('reason-spam'));
+    await fireEvent.press(getByTestId('report-post-submit'));
+
+    // Wait for the async submit to resolve and the done banner to appear
+    await findByTestId('report-post-done');
+    expect(queryByTestId('report-post-done')).not.toBeNull();
+
+    // Dismiss via backdrop (close button is not rendered in the done view)
+    await fireEvent.press(getByTestId('report-post-backdrop'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Parent re-opens the sheet (e.g. user reports a different post)
     await rerender(
       <ReportPostSheet postId="post-abc" visible={true} onClose={onClose} />,
     );
 
-    // The done banner must not be present
+    // Done banner must be gone — state fully reset after dismiss
     expect(queryByTestId('report-post-done')).toBeNull();
   });
 
