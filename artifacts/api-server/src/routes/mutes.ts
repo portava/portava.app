@@ -18,6 +18,7 @@ import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
+import { muteRateLimit } from "../lib/rateLimit";
 
 const router = Router();
 
@@ -44,6 +45,14 @@ router.post("/users/:userId/mute", async (req, res) => {
   const targetId = req.params.userId;
   if (!isUuid(targetId)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
   if (targetId === user.id) { sendError(res, "invalid_payload", "Cannot mute yourself"); return; }
+
+  const rl = muteRateLimit(user.id);
+  if (!rl.allowed) {
+    const retryAfterSecs = Math.ceil(rl.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(retryAfterSecs));
+    sendError(res, "rate_limited", "Too many mute operations. Please try again later.");
+    return;
+  }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }

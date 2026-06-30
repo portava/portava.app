@@ -39,7 +39,8 @@ export type ApiErrorCode =
   | "invalid_payload"
   | "not_found"
   | "db_error"
-  | "feature_disabled";
+  | "feature_disabled"
+  | "rate_limited";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -50,6 +51,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   not_found: 404,
   db_error: 500,
   feature_disabled: 404,
+  rate_limited: 429,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {

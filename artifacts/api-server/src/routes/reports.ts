@@ -22,6 +22,7 @@ import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
+import { reportRateLimit } from "../lib/rateLimit";
 
 const router = Router();
 
@@ -57,6 +58,14 @@ router.post("/reports", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+
+  const rl = reportRateLimit(user.id);
+  if (!rl.allowed) {
+    const retryAfterSecs = Math.ceil(rl.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(retryAfterSecs));
+    sendError(res, "rate_limited", "Too many reports. Please try again later.");
+    return;
+  }
 
   const parsed = CreateReportSchema.safeParse(req.body);
   if (!parsed.success) {
