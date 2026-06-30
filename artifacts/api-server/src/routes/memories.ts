@@ -578,7 +578,36 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
+  // Fetch the item to get its media_url before deleting
+  const { data: item } = await sc
+    .from("memory_items")
+    .select("id, media_url")
+    .eq("id", itemId)
+    .eq("memory_id", id)
+    .maybeSingle();
+
+  if (!item) { sendError(res, "not_found", "Item not found"); return; }
+
+  // Delete the DB row first so the item is immediately inaccessible
   await sc.from("memory_items").delete().eq("id", itemId).eq("memory_id", id);
+
+  // Delete the storage object — derive path from public URL.
+  // URL format: https://<host>/storage/v1/object/public/memories/<path>
+  try {
+    const mediaUrl: string = (item as any).media_url ?? "";
+    const marker = "/object/public/memories/";
+    const markerIdx = mediaUrl.indexOf(marker);
+    if (markerIdx !== -1) {
+      const storagePath = mediaUrl.slice(markerIdx + marker.length);
+      if (storagePath) {
+        await sc.storage.from("memories").remove([storagePath]);
+      }
+    }
+  } catch (storageErr) {
+    // Non-fatal: DB row is already gone; log and continue
+    req.log.warn({ err: storageErr }, "memories: storage delete failed (item already removed from DB)");
+  }
+
   res.status(204).send();
 });
 

@@ -112,12 +112,16 @@ export default function MemoryDetailScreen() {
         text: 'Remove', style: 'destructive',
         onPress: async () => {
           setDeletingItemId(item.id);
-          await deleteMemoryItem(memory.id, item.id);
-          setMemory((prev) => {
-            if (!prev) return prev;
-            return { ...prev, items: (prev.items ?? []).filter((i) => i.id !== item.id) };
-          });
+          const res = await deleteMemoryItem(memory.id, item.id);
           setDeletingItemId(null);
+          if (res.ok) {
+            setMemory((prev) => {
+              if (!prev) return prev;
+              return { ...prev, items: (prev.items ?? []).filter((i) => i.id !== item.id) };
+            });
+          } else {
+            Alert.alert('Could not remove', 'Something went wrong. Please try again.');
+          }
         },
       },
     ]);
