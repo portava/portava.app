@@ -39,7 +39,7 @@ export async function muteUser(userId: string, types: string[] = ['posts', 'stor
     const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/mute`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ types }),
+      body: JSON.stringify({ mute_types: types }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

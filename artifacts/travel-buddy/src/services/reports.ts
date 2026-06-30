@@ -41,6 +41,13 @@ export interface SubmitReportPayload {
   details?: string;
 }
 
+interface SubmitReportBody {
+  target_type: 'user';
+  target_id: string;
+  reason_code: string;
+  reason_detail?: string;
+}
+
 export interface ReportResult {
   ok: boolean;
   data?: { reportId: string };
@@ -86,6 +93,27 @@ export async function submitReport(payload: SubmitReportPayload): Promise<Report
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
+
+  const REASON_MAP: Record<ReportReason, string> = {
+    harassment:           'harassment',
+    spam:                 'spam',
+    hate_speech:          'hate_speech',
+    violence:             'violence',
+    impersonation:        'impersonation',
+    nudity:               'nudity',
+    misinformation:       'misinformation',
+    inappropriate_content: 'other',
+    fake_account:         'other',
+    other:                'other',
+  };
+
+  const body: SubmitReportBody = {
+    target_type:   'user',
+    target_id:     payload.targetUserId,
+    reason_code:   REASON_MAP[payload.reason] ?? 'other',
+    reason_detail: payload.details,
+  };
+
   try {
     const res = await fetch(`${apiBase()}/api/reports`, {
       method: 'POST',
@@ -93,14 +121,14 @@ export async function submitReport(payload: SubmitReportPayload): Promise<Report
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any).message ?? 'Failed to submit report' };
+      const errBody = await res.json().catch(() => ({}));
+      return { ok: false, error: (errBody as any).message ?? 'Failed to submit report' };
     }
-    const body = await res.json();
-    return { ok: true, data: { reportId: body.reportId } };
+    const respBody = await res.json();
+    return { ok: true, data: { reportId: respBody.reportId } };
   } catch (e: any) {
     return { ok: false, error: e.message };
   }
