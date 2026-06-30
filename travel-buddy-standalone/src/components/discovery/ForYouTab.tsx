@@ -37,9 +37,6 @@ interface ForYouTabProps {
   contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
   lat?: number | null;
   lng?: number | null;
-  userLat?: number | null;
-  userLng?: number | null;
-  fallbackZoom?: number;
   viewMode?: 'list' | 'map';
 }
 
@@ -67,7 +64,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list' }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, viewMode = 'list' }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -204,11 +201,6 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         <DiscoveryMapView
           places={mapPlaces}
           onSelectPlace={(p) => setDetail(p)}
-          fallbackLat={lat}
-          fallbackLng={lng}
-          userLat={userLat}
-          userLng={userLng}
-          fallbackZoom={fallbackZoom}
         />
         <PlaceDetailSheet
           place={detail}

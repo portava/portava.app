@@ -8,7 +8,7 @@ import { useFocusEffect } from 'expo-router';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip } from '../src/components/ui';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { listSaved, toggleSave, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
+import { listSaved, type BookmarkedPlace } from '../src/services/discoveryBookmarks';
 import { MapPin, Bookmark, Route, List, Map, Trash2 } from 'lucide-react-native';
 import { RouteBuilderSheet } from '../src/components/RouteBuilderSheet';
 import { SavedPlacesMapView } from '../src/components/SavedPlacesMapView';
@@ -116,21 +116,6 @@ export default function Saved() {
     AsyncStorage.setItem(LIST_CAT_KEY, next).catch(() => {});
   }, []);
 
-  // TEMP DEV SEED — remove after testing the saved-places map
-  const seedTestPins = useCallback(async () => {
-    const TEST_PINS: BookmarkedPlace[] = [
-      { id: 'seed-tokyo-1', name: 'Senso-ji Temple', category: 'places', type: null, address: 'Asakusa, Tokyo', lat: 35.7148, lng: 139.7967, savedAt: Date.now() },
-      { id: 'seed-tokyo-2', name: 'Shibuya Crossing', category: 'activities', type: null, address: 'Shibuya, Tokyo', lat: 35.6595, lng: 139.7004, savedAt: Date.now() },
-      { id: 'seed-tokyo-3', name: 'teamLab Planets', category: 'activities', type: null, address: 'Toyosu, Tokyo', lat: 35.6488, lng: 139.7896, savedAt: Date.now() },
-      { id: 'seed-tokyo-4', name: 'Park Hyatt Tokyo', category: 'hotel', type: null, address: 'Shinjuku, Tokyo', lat: 35.6852, lng: 139.6891, savedAt: Date.now() },
-    ];
-    for (const pin of TEST_PINS) {
-      const already = (await listSaved()).some((b) => b.id === pin.id);
-      if (!already) await toggleSave(pin);
-    }
-    await load();
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -236,14 +221,6 @@ export default function Saved() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Saved" back />
-      {__DEV__ && (
-        <Pressable
-          onPress={seedTestPins}
-          style={{ margin: space.lg, padding: space.md, borderRadius: radius.md, backgroundColor: color.signal, alignItems: 'center' }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>🌱 Seed 4 test pins (DEV)</Text>
-        </Pressable>
-      )}
 
       {/* Category tab bar */}
       <FlatList

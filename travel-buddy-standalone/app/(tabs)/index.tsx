@@ -133,8 +133,8 @@ export default function Pulse() {
     const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
       : realItems.filter(() => false);
-    return filteredReal;
-  }, [realItems, active]);
+    return [...filteredReal, ...mockFeed];
+  }, [realItems, mockFeed, active]);
 
   const followingItems = useMemo<PulseFeedItem[]>(
     () => (followingFeed.data ?? []).map(postRowToFeedItem),
@@ -326,7 +326,15 @@ export default function Pulse() {
           <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
         ) : null
       )}
-      {/* Editorial inspiration removed — real data only */}
+      {/* Editorial inspiration — shown only in For You mode */}
+      {feedMode === 'forYou' && (
+        <>
+          <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
+          {editorialPosts.slice(0, 3).map((p) => (
+            <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
+          ))}
+        </>
+      )}
     </View>
   );
 
