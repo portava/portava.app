@@ -165,6 +165,66 @@ export async function getMemory(
   }
 }
 
+// ── Discovery feed ────────────────────────────────────────────────────────────
+
+export async function getMemoryFeed(
+  limit = 20,
+  cursor?: string | null,
+): Promise<{ ok: true; memories: Memory[]; nextCursor: string | null } | { ok: false; message: string }> {
+  try {
+    const headers = await authHeader();
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(`${apiBase()}/api/memories?${params}`, { headers });
+    if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
+    const json = await res.json();
+    return { ok: true, memories: json.memories ?? [], nextCursor: json.nextCursor ?? null };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
+// ── Create from trip ──────────────────────────────────────────────────────────
+
+export async function createTripMemory(
+  tripId: string,
+): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
+  try {
+    const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
+    const res = await fetch(`${apiBase()}/api/trips/${tripId}/memory`, {
+      method: 'POST',
+      headers,
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, memory: json.memory };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
+// ── Get trip memory ───────────────────────────────────────────────────────────
+
+export async function getTripMemory(
+  tripId: string,
+): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
+  try {
+    const headers = await authHeader();
+    const res = await fetch(`${apiBase()}/api/trips/${tripId}/memory`, { headers });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, memory: json.memory };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
 // ── Get user memories ─────────────────────────────────────────────────────────
 
 export async function getUserMemories(

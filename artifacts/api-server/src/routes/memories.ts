@@ -917,6 +917,64 @@ router.post("/trips/:tripId/memory", async (req, res) => {
   res.status(201).json({ memory: mapMemory(memory), taggedCount: crewIds.length });
 });
 
+// ── GET /trips/:tripId/memory — fetch memory linked to a trip ─────────────────
+
+router.get("/trips/:tripId/memory", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!isUuid(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: memory, error } = await sc
+    .from("memories")
+    .select(MEMORY_SELECT)
+    .eq("trip_id", tripId)
+    .neq("state", "deleted")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) { req.log.error({ err: error }, "trip-memory: query failed"); sendError(res, "db_error", error.message); return; }
+  if (!memory) { sendError(res, "not_found", "No memory for this trip"); return; }
+
+  if ((memory as any).owner_id !== user.id) {
+    const blocked = await isBlocked(sc, user.id, (memory as any).owner_id);
+    if (blocked) { sendError(res, "not_found", "No memory for this trip"); return; }
+    const ok = await canViewMemory(sc, memory, user.id);
+    if (!ok) { sendError(res, "not_found", "No memory for this trip"); return; }
+  }
+
+  const memoryId = (memory as any).id;
+  const ownerId = (memory as any).owner_id;
+
+  const [coverRow, likeCount, likedByMe, ownerProfile] = await Promise.all([
+    sc.from("memory_items").select("media_url, media_type").eq("memory_id", memoryId).eq("position", 0).maybeSingle(),
+    sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", memoryId),
+    sc.from("memory_likes").select("memory_id").eq("memory_id", memoryId).eq("user_id", user.id).maybeSingle(),
+    sc.from("profiles").select("id, name, handle, avatar_url").eq("id", ownerId).maybeSingle(),
+  ]);
+
+  res.json({
+    memory: {
+      ...mapMemory(memory),
+      likeCount: likeCount.count ?? 0,
+      likedByMe: Boolean(likedByMe.data),
+      cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
+      owner: ownerProfile.data ? {
+        id: (ownerProfile.data as any).id,
+        name: (ownerProfile.data as any).name,
+        handle: (ownerProfile.data as any).handle,
+        avatarUrl: (ownerProfile.data as any).avatar_url ?? null,
+      } : null,
+    },
+  });
+});
+
 // ── GET /users/:userId/memories ───────────────────────────────────────────────
 
 router.get("/users/:userId/memories", async (req, res) => {
@@ -1012,14 +1070,16 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
   if (rows.length === 0) return [];
 
   const ids = rows.map((m) => m.id as string);
+  const ownerIds = [...new Set(rows.map((m) => m.owner_id as string))];
 
-  const [likeRows, savedRows, coverRows] = await Promise.all([
+  const [likeRows, savedRows, coverRows, ownerRows] = await Promise.all([
     sc.from("memory_likes").select("memory_id, user_id").in("memory_id", ids),
     sc.from("memory_saves").select("memory_id").eq("user_id", viewerId).in("memory_id", ids),
     sc.from("memory_items")
       .select("memory_id, media_url, media_type")
       .in("memory_id", ids)
       .eq("position", 0),
+    sc.from("profiles").select("id, name, handle, avatar_url").in("id", ownerIds),
   ]);
 
   const likeCounts: Record<string, number> = {};
@@ -1035,12 +1095,18 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
     coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
   }
 
+  const ownerMap: Record<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }> = {};
+  for (const r of (ownerRows.data ?? []) as any[]) {
+    ownerMap[r.id] = { id: r.id, name: r.name, handle: r.handle, avatarUrl: r.avatar_url ?? null };
+  }
+
   return rows.map((m) => ({
     ...mapMemory(m),
     likeCount: likeCounts[m.id] ?? 0,
     likedByMe: likedByMeSet.has(m.id),
     savedByMe: savedSet.has(m.id),
     cover: coverMap[m.id] ?? null,
+    owner: ownerMap[m.owner_id] ?? null,
   }));
 }
 

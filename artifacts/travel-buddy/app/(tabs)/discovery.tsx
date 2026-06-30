@@ -27,6 +27,7 @@ import { LocationChip } from '../../src/components/LocationChip';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
+import { MemoriesStrip } from '../../src/components/MemoriesStrip';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
@@ -439,6 +440,9 @@ export default function DiscoveryHub() {
           onMarkViewed={markSessionViewed}
         />
       )}
+
+      {/* ── Traveler memories strip ── */}
+      {isAuthed && <MemoriesStrip />}
 
       {/* ── Trending hashtags strip ── */}
       {trendingHashtags.length > 0 && (
