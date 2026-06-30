@@ -12,6 +12,7 @@ import {
 } from '../../src/components/TripPage';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
+import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
@@ -230,6 +231,14 @@ export default function TripDetail() {
             tripId={trip.id}
             isOwner={realTrip ? userId === realTrip.ownerId : false}
             tripStatus={realTrip?.status}
+          />
+        ) : null}
+        {live && trip.id ? (
+          <ReviewsSection
+            entityType="trip"
+            entityId={trip.id}
+            entityName={trip.destinationCity ?? 'this trip'}
+            canReview={realTrip?.status === 'completed'}
           />
         ) : null}
       </ScrollView>

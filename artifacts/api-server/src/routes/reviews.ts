@@ -269,56 +269,87 @@ router.get("/users/:id/reviews", async (req, res) => {
     return;
   }
 
-  // Build OR filter for all hosted entity IDs
-  const orParts: string[] = [];
-  if (tripIds.length > 0)  orParts.push(`and(entity_type.eq.trip,entity_id.in.(${tripIds.join(",")}))`);
-  if (eventIds.length > 0) orParts.push(`and(entity_type.eq.event,entity_id.in.(${eventIds.join(",")}))`);
+  // ── Trip reviews (from unified `reviews` table) ───────────────────────────
+  const tripOrParts: string[] = [];
+  if (tripIds.length > 0) tripOrParts.push(`and(entity_type.eq.trip,entity_id.in.(${tripIds.join(",")}))`);
 
-  // Aggregate over ALL reviews for this host (not page-limited)
-  const { data: allForAggregate } = await sc
-    .from("reviews")
-    .select("rating")
-    .or(orParts.join(","))
-    .eq("state", "published");
+  const [tripReviewsRes, eventReviewsRes] = await Promise.all([
+    // All trip reviews for aggregate
+    tripIds.length > 0
+      ? sc.from("reviews").select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+          .or(tripOrParts.join(","))
+          .eq("state", "published")
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
 
-  const allRows = (allForAggregate as any[]) ?? [];
-  const reviewCount = allRows.length;
+    // All event reviews from legacy event_reviews table
+    eventIds.length > 0
+      ? sc.from("event_reviews").select("id, rating, body, anonymous, event_id, reviewer_id, created_at, profiles!reviewer_id(handle, display_name, avatar_url)")
+          .in("event_id", eventIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (tripReviewsRes.error) {
+    req.log.error({ err: tripReviewsRes.error }, "get user trip reviews");
+    sendError(res, "db_error", tripReviewsRes.error.message); return;
+  }
+
+  const tripRows = (tripReviewsRes.data as any[]) ?? [];
+  const eventRows = (eventReviewsRes.data as any[]) ?? [];
+
+  // Combined aggregate across all hosted reviews (trips + events)
+  const allRatings = [
+    ...tripRows.map((r: any) => r.rating),
+    ...eventRows.map((r: any) => r.rating),
+  ];
+  const reviewCount = allRatings.length;
   const avgRating = reviewCount > 0
-    ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / reviewCount) * 10) / 10
+    ? Math.round((allRatings.reduce((s, v) => s + v, 0) / reviewCount) * 10) / 10
     : null;
 
-  // Paginated list for display — includes entity_type, entity_id
-  const { data: reviews, error } = await sc
-    .from("reviews")
-    .select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
-    .or(orParts.join(","))
-    .eq("state", "published")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) { req.log.error({ err: error }, "get user reviews"); sendError(res, "db_error", error.message); return; }
-
-  const rows = (reviews as any[]) ?? [];
-
-  res.json({
-    avgRating,
-    reviewCount,
-    reviews: rows.map((r: any) => ({
-      id:          r.id,
-      rating:      r.rating,
-      body:        r.body ?? null,
-      tags:        r.tags ?? [],
-      entityType:  r.entity_type,
-      entityId:    r.entity_id,
-      anonymous:   r.visibility === "anonymous",
-      createdAt:   r.created_at,
-      reviewer:    r.visibility === "anonymous" ? null : {
+  // Merge + sort by date, return most recent `limit` items
+  const merged = [
+    ...tripRows.map((r: any) => ({
+      id:         r.id,
+      rating:     r.rating,
+      body:       r.body ?? null,
+      tags:       r.tags ?? [],
+      entityType: r.entity_type as string,
+      entityId:   r.entity_id as string,
+      anonymous:  r.visibility === "anonymous",
+      createdAt:  r.created_at as string,
+      reviewer:   r.visibility === "anonymous" ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
         displayName: r.profiles?.display_name ?? null,
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),
+    ...eventRows.map((r: any) => ({
+      id:         r.id,
+      rating:     r.rating,
+      body:       r.body ?? null,
+      tags:       [] as string[],
+      entityType: "event",
+      entityId:   r.event_id as string,
+      anonymous:  r.anonymous ?? false,
+      createdAt:  r.created_at as string,
+      reviewer:   r.anonymous ? null : {
+        id:          r.reviewer_id,
+        handle:      r.profiles?.handle ?? null,
+        displayName: r.profiles?.display_name ?? null,
+        avatarUrl:   r.profiles?.avatar_url ?? null,
+      },
+    })),
+  ]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  res.json({
+    avgRating,
+    reviewCount,
+    reviews: merged,
   });
 });
 

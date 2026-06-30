@@ -29,6 +29,7 @@ import { blockUser, getBlockStatus } from '../../src/services/blocks';
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
 import { submitReport, type ReportReason } from '../../src/services/reports';
+import { getUserReviews, type Review } from '../../src/services/reviews';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
@@ -463,6 +464,76 @@ function InfoChip({ label, accent = false }: { label: string; accent?: boolean }
   );
 }
 
+// ── Host reviews summary ─────────────────────────────────────────────────────
+
+function StarLine({ rating }: { rating: number }) {
+  const full = Math.round(rating);
+  return (
+    <View style={{ flexDirection: 'row', gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((s) => (
+        <Text key={s} style={{ fontSize: 11, color: s <= full ? '#F59E0B' : '#D1D5DB' }}>★</Text>
+      ))}
+    </View>
+  );
+}
+
+function HostReviewsSummary({ userId }: { userId: string }) {
+  const [data, setData]     = useState<{ avgRating: number | null; reviewCount: number; reviews: Review[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    getUserReviews(userId, 3)
+      .then((d) => { if (active) setData(d as any); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [userId]);
+
+  if (loading || !data || data.reviewCount === 0) return null;
+
+  return (
+    <View style={{ marginTop: space.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
+        <Text style={{ ...t.bodyStrong, color: color.ink, fontSize: 14 }}>Host Reviews</Text>
+        {data.avgRating !== null && (
+          <>
+            <StarLine rating={data.avgRating} />
+            <Text style={{ ...t.small, color: color.mute }}>
+              {data.avgRating.toFixed(1)} ({data.reviewCount})
+            </Text>
+          </>
+        )}
+      </View>
+      {data.reviews.slice(0, 3).map((r) => (
+        <View
+          key={r.id}
+          style={{
+            backgroundColor: color.paperRaised,
+            borderRadius: 10,
+            padding: space.md,
+            marginBottom: space.sm,
+            borderWidth: 1,
+            borderColor: color.haze,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: 4 }}>
+            <StarLine rating={r.rating} />
+            {r.reviewer && (
+              <Text style={{ ...t.small, color: color.mute }}>@{r.reviewer.handle ?? r.reviewer.displayName ?? 'traveler'}</Text>
+            )}
+          </View>
+          {r.body ? (
+            <Text style={{ ...t.body, color: color.ink, fontSize: 13 }} numberOfLines={3}>
+              {r.body}
+            </Text>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ── Main screen ──────────────────────────────────────────────────────────────
 
 export default function PublicPassportScreen() {
@@ -793,6 +864,9 @@ export default function PublicPassportScreen() {
                     </AboutRow>
                   )}
                 </View>
+              )}
+              {profile.id && (
+                <HostReviewsSummary userId={profile.id} />
               )}
             </View>
           )}

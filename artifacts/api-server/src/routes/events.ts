@@ -1972,18 +1972,19 @@ router.post("/events/:id/reviews", async (req, res) => {
     sendError(res, "forbidden", "Reviews are only allowed after the event has completed"); return;
   }
 
-  // Must have attended (Going RSVP) — hosts cannot review their own event
+  // Must have confirmed attendance — hosts cannot review their own event
   if ((ev as any).host_id === user.id) {
     sendError(res, "forbidden", "Hosts cannot review their own event"); return;
   }
-  const { data: rsvp } = await sc
-    .from("event_rsvps")
-    .select("status")
+  const { data: attendeeState } = await sc
+    .from("event_attendee_states")
+    .select("confirmed_at")
     .eq("event_id", id)
     .eq("user_id", user.id)
+    .not("confirmed_at", "is", null)
     .maybeSingle();
-  if (!(rsvp as any) || (rsvp as any).status !== "going") {
-    sendError(res, "forbidden", "Only attendees with a Going RSVP can review this event"); return;
+  if (!attendeeState) {
+    sendError(res, "forbidden", "Only confirmed attendees can review this event"); return;
   }
 
   const { data: review, error } = await sc
