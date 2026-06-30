@@ -690,6 +690,51 @@ describe("CompassFeedBuilder", () => {
   });
 });
 
+// ── categoryWeights: null — new-user safety net ───────────────────────────────
+
+describe("CompassFeedBuilder — categoryWeights null guard", () => {
+  it("buildFeed with null categoryWeights does not throw and returns valid output", async () => {
+    const item: CompassItem = { id: "nw-ev1", type: "event", authorId: CAROL_ID };
+    const profile = baseProfile({ categoryWeights: null, ignoredItemIds: [], mutedHashtags: [] });
+    const result = await buildFeed(
+      [item],
+      profile,
+      baseContext(),
+      null,
+      null,
+      {
+        skipFairExposure:  true,
+        skipActiveRewards: true,
+        safetyFilter:     () => ({ allowed: true }),
+        eligibilityCheck: () => ({ eligible: true }),
+        scoreItem:        () => ({ finalScore: 55, components: {} as any }),
+      },
+    );
+    assert.equal(result.fallback, false);
+    assert.ok(Array.isArray(result.sections), "sections must be an array");
+  });
+
+  it("rankItemsForDiscovery with null categoryWeights does not throw and returns items", async () => {
+    const item: CompassItem = { id: "nw-sug1", type: "suggestion", authorId: BOB_ID };
+    const profile = baseProfile({ categoryWeights: null, ignoredItemIds: [], mutedHashtags: [] });
+    const results = await rankItemsForDiscovery(
+      [item],
+      profile,
+      baseContext(),
+      null,
+      {
+        skipFairExposure:  true,
+        skipActiveRewards: true,
+        safetyFilter:     () => ({ allowed: true }),
+        eligibilityCheck: () => ({ eligible: true }),
+        scoreItem:        () => ({ finalScore: 60, components: {} as any }),
+      },
+    );
+    assert.ok(Array.isArray(results), "results must be an array");
+    assert.equal(results.length, 1);
+  });
+});
+
 // ── rankItemsForDiscovery — Compass-rejected items excluded ────────────────────
 
 describe("rankItemsForDiscovery — discovery exclusion regression", () => {

@@ -106,8 +106,11 @@ export interface CompassProfile {
    * Loaded from compass_user_preferences.category_weights.
    * Applied as a score bonus/penalty post-pipeline so hide_category/show_more
    * feedback influences the very next feed build.
+   *
+   * null when the user has never set travel-interest preferences (new users).
+   * All callsites must guard against null before calling Object.keys() or indexing.
    */
-  categoryWeights: Record<string, number>;
+  categoryWeights: Record<string, number> | null;
   /**
    * Item IDs the user has dismissed via "not_interested" feedback.
    * These items are filtered out before the feed pipeline runs.

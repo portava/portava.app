@@ -471,15 +471,16 @@ export async function buildFeed(
   // Apply user's category weight preferences (from hide_category / show_more
   // feedback) by scaling finalScore after the pipeline. This lets the user's
   // expressed preferences move items within each section on the VERY NEXT build.
-  if (profile.categoryWeights && Object.keys(profile.categoryWeights).length > 0) {
+  const weights = profile.categoryWeights;
+  if (weights && Object.keys(weights).length > 0) {
     for (const [name, sectionItems] of sectionMap) {
       const adjusted = sectionItems.map((r) => {
         // Look up weight by item type (e.g. "event", "post") AND by each
         // interest/activity tag (e.g. "nightlife", "food") so both
         // itemType-keyed and category-keyed feedback entries take effect.
-        const typeWeight = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        const typeWeight = weights[r.item.type ?? ""] ?? 0;
         const tagWeight  = (r.item.interestTags ?? []).reduce(
-          (acc: number, tag: string) => acc + (profile.categoryWeights[tag] ?? 0),
+          (acc: number, tag: string) => acc + (weights[tag] ?? 0),
           0,
         );
         const delta = typeWeight + tagWeight;
@@ -548,12 +549,13 @@ export async function buildSection(
   );
 
   // ── Category-weight post-adjustment (mirrors buildFeed) ───────────────────
-  if (profile.categoryWeights && Object.keys(profile.categoryWeights).length > 0) {
+  const rankWeights = profile.categoryWeights;
+  if (rankWeights && Object.keys(rankWeights).length > 0) {
     for (const [name, sectionItems] of sectionMap) {
       const adjusted = sectionItems.map((r) => {
-        const typeWeight = profile.categoryWeights[r.item.type ?? ""] ?? 0;
+        const typeWeight = rankWeights[r.item.type ?? ""] ?? 0;
         const tagWeight  = (r.item.interestTags ?? []).reduce(
-          (acc: number, tag: string) => acc + (profile.categoryWeights[tag] ?? 0),
+          (acc: number, tag: string) => acc + (rankWeights[tag] ?? 0),
           0,
         );
         const delta = typeWeight + tagWeight;
