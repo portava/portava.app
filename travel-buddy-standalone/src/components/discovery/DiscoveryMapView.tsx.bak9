@@ -24,7 +24,6 @@ export interface DiscoveryMapViewProps {
   userLng?: number | null;
   fallbackLat?: number | null;
   fallbackLng?: number | null;
-  fallbackZoom?: number;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
 }
@@ -63,7 +62,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, userLat, userLng }: DiscoveryMapViewProps) {
   const mappable = useMemo(
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
@@ -71,7 +70,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
   const fallback = (fallbackLat != null && fallbackLng != null)
-    ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
+    ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: 11 }
     : null;
   const vp = viewport ?? fallback;
   const cameraRef = useRef<any>(null);

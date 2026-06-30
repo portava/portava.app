@@ -39,7 +39,6 @@ interface ForYouTabProps {
   lng?: number | null;
   userLat?: number | null;
   userLng?: number | null;
-  fallbackZoom?: number;
   viewMode?: 'list' | 'map';
 }
 
@@ -67,7 +66,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list' }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, viewMode = 'list' }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -208,7 +207,6 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           fallbackLng={lng}
           userLat={userLat}
           userLng={userLng}
-          fallbackZoom={fallbackZoom}
         />
         <PlaceDetailSheet
           place={detail}

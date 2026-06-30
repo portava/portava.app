@@ -510,7 +510,6 @@ export default function DiscoveryHub() {
             userLat={locationState.coords?.lat ?? null}
             userLng={locationState.coords?.lng ?? null}
             viewMode={viewMode}
-            fallbackZoom={destinationZoom}
           />
         ) : (
           <DiscoveryCategoryTab
@@ -531,7 +530,6 @@ export default function DiscoveryHub() {
             userLat={locationState.coords?.lat ?? null}
             userLng={locationState.coords?.lng ?? null}
             onFiltersChange={handleFiltersChange}
-            fallbackZoom={destinationZoom}
           />
         )}
       </View>

@@ -3,10 +3,10 @@
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
  */
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
-import { MapPin, Navigation } from 'lucide-react-native';
+import { MapPin } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
@@ -20,11 +20,6 @@ const MAP_STYLE = MAPTILER_KEY
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DiscoveryMapViewProps {
-  userLat?: number | null;
-  userLng?: number | null;
-  fallbackLat?: number | null;
-  fallbackLng?: number | null;
-  fallbackZoom?: number;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
 }
@@ -63,34 +58,23 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace }: DiscoveryMapViewProps) {
   const mappable = useMemo(
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
   );
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
-  const fallback = (fallbackLat != null && fallbackLng != null)
-    ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
-    : null;
-  const vp = viewport ?? fallback;
-  const cameraRef = useRef<any>(null);
-  const hasUser = userLat != null && userLng != null;
-  const recenterOnMe = () => {
-    if (hasUser && cameraRef.current) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [userLng as number, userLat as number],
-        zoomLevel: 14,
-        animationDuration: 600,
-      });
-    }
-  };
-  if (!vp) {
+  if (!viewport) {
     return (
       <View style={s.empty}>
-        <View style={s.emptyIcon}><MapPin size={28} color={color.faint} /></View>
-        <Text style={s.emptyTitle}>No location set</Text>
-        <Text style={s.emptyBody}>Pick a city to see it on the map.</Text>
+        <View style={s.emptyIcon}>
+          <MapPin size={28} color={color.faint} />
+        </View>
+        <Text style={s.emptyTitle}>No pins available</Text>
+        <Text style={s.emptyBody}>
+          These places don't have coordinates yet. Try a different search area or category.
+        </Text>
       </View>
     );
   }
@@ -104,10 +88,9 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         attribution={false}
       >
         <Camera
-          ref={cameraRef}
           initialViewState={{
-            center: vp.center,
-            zoom: vp.zoom,
+            center: viewport.center,
+            zoom: viewport.zoom,
           }}
         />
         {mappable.map((place) => (
@@ -122,13 +105,6 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             </Pressable>
           </Marker>
         ))}
-              {hasUser && (
-          <Marker key="me-marker" lngLat={[userLng as number, userLat as number]}>
-            <View style={s.meDotOuter}>
-              <View style={s.meDot} />
-            </View>
-          </Marker>
-        )}
       </Map>
       <View style={s.badge}>
         <MapPin size={10} color="#fff" />
@@ -136,11 +112,6 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
         </Text>
       </View>
-      {hasUser && (
-        <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
-          <Navigation size={18} color={color.signal} />
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -148,38 +119,6 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  meDotOuter: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(45,127,249,0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  meDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#2D7FF9',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  recenterBtn: {
-    position: 'absolute',
-    right: 14,
-    bottom: 14,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
-  },
   root: {
     flex: 1,
     position: 'relative',

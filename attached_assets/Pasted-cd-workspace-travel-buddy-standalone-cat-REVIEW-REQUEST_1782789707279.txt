@@ -1,0 +1,44 @@
+cd ~/workspace/travel-buddy-standalone && cat > REVIEW_REQUEST.md <<'EOF'
+# Review Request — Map Features (ALREADY APPLIED, verify only)
+
+Working dir: ~/workspace/travel-buddy-standalone
+These edits are ALREADY APPLIED and verified in-file via direct Node scripts.
+DO NOT re-apply, and DO NOT sync the standalone from artifacts/travel-buddy — that has reverted these changes twice. Review and typecheck ONLY.
+
+## Changes
+
+1. Map renders with city fallback — src/components/discovery/DiscoveryMapView.tsx
+   - Removed old `if (!viewport) return "No pins available"` early-return.
+   - Added props: fallbackLat, fallbackLng, fallbackZoom, userLat, userLng.
+   - Always renders: `vp = viewport ?? fallback`. Shows "No location set" placeholder only when no coords AND no fallback.
+
+2. City geocoding on load — app/(tabs)/discovery.tsx
+   - React.useEffect geocodes destination city via MapTiler when destinationLat/Lng are null.
+   - handlePickDestination also geocodes on manual pick.
+
+3. Country fallback — app/(tabs)/discovery.tsx
+   - Added destinationZoom state (default 11).
+   - Geocode effect falls back to locationState.place.country (types=country) at zoom 4 when no city but country known.
+
+4. "Me" dot + re-center button — DiscoveryMapView.tsx
+   - userLat/userLng fed from locationState.coords.
+   - Blue "me" Marker when user coords exist.
+   - Floating re-center button (bottom-right) via cameraRef.setCamera({ centerCoordinate, zoomLevel: 14, animationDuration: 600 }).
+   - New styles: meDot, meDotOuter, recenterBtn.
+
+5. Prop threading — DiscoveryCategoryTab.tsx, ForYouTab.tsx
+   - Both accept + forward fallbackLat, fallbackLng, fallbackZoom, userLat, userLng to DiscoveryMapView.
+
+6. TEMP DEV seed button — app/saved.tsx
+   - __DEV__-only "Seed 4 test pins" button + seedTestPins() writing 4 Tokyo places via toggleSave, to test SavedPlacesMapView.
+   - TEMPORARY — remove before production.
+
+Backups: .bak through .bak9 per touched file.
+
+## Please verify (do NOT re-apply or sync):
+- Typecheck these files (tsc).
+- Confirm EXPO_PUBLIC_MAPTILER_KEY is valid AND geocoding (not just tiles) is enabled — city + country centering depend on it.
+- Flag any type errors from cameraRef / CameraRef usage or the new props.
+- Do NOT sync standalone from artifacts/travel-buddy (reverts these changes).
+EOF
+echo "=== written. files touched: ===" && ls -la REVIEW_REQUEST.md && echo "--- changed source files ---" && ls -la src/components/discovery/DiscoveryMapView.tsx app/\(tabs\)/discovery.tsx src/components/discovery/DiscoveryCategoryTab.tsx src/components/discovery/ForYouTab.tsx app/saved.tsx

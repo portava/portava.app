@@ -24,7 +24,6 @@ export interface DiscoveryMapViewProps {
   userLng?: number | null;
   fallbackLat?: number | null;
   fallbackLng?: number | null;
-  fallbackZoom?: number;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
 }
@@ -63,7 +62,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, userLat, userLng }: DiscoveryMapViewProps) {
   const mappable = useMemo(
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
@@ -71,7 +70,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
   const fallback = (fallbackLat != null && fallbackLng != null)
-    ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
+    ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: 11 }
     : null;
   const vp = viewport ?? fallback;
   const cameraRef = useRef<any>(null);
@@ -148,38 +147,6 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  meDotOuter: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(45,127,249,0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  meDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#2D7FF9',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  recenterBtn: {
-    position: 'absolute',
-    right: 14,
-    bottom: 14,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
-  },
   root: {
     flex: 1,
     position: 'relative',
