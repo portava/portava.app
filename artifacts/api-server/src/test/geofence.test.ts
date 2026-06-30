@@ -77,6 +77,7 @@ function makeGeofenceClient(opts: {
     },
     from(table: string) {
       const store = eventStore;
+      let lastInsert: any = null;
       const builder: any = {
         select: (..._a: any[]) => builder,
         eq:     (..._a: any[]) => builder,
@@ -88,7 +89,7 @@ function makeGeofenceClient(opts: {
         limit:  (..._a: any[]) => builder,
         update: (patch: any) => { store.push({ table, op: "update", patch }); return builder; },
         delete: () => { store.push({ table, op: "delete" }); return builder; },
-        insert: (row: any) => { store.push({ table, op: "insert", row }); return builder; },
+        insert: (row: any) => { store.push({ table, op: "insert", row }); lastInsert = row; return builder; },
         upsert: (row: any) => { checkinStore.push({ table, op: "upsert", row }); return builder; },
         maybeSingle: async () => {
           if (table === "feature_flags") return { data: { enabled: true }, error: null };
@@ -98,7 +99,7 @@ function makeGeofenceClient(opts: {
           }
 
           if (table === "trip_members") {
-            if (memberRole === "member") return { data: { user_id: MEMBER_ID }, error: null };
+            if (memberRole === "member") return { data: { user_id: MEMBER_ID, role: "member" }, error: null };
             return { data: null, error: null };
           }
 
@@ -121,7 +122,14 @@ function makeGeofenceClient(opts: {
 
           return { data: null, error: null };
         },
-        single: async () => ({ data: null, error: null }),
+        single: async () => {
+          if (lastInsert) {
+            const row = { id: `test-event-${Date.now()}`, ...lastInsert };
+            lastInsert = null;
+            return { data: row, error: null };
+          }
+          return { data: null, error: null };
+        },
         then: (onF: any) => {
           // Used for location_trust_events insert
           return Promise.resolve({ data: null, error: null }).then(onF);

@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
+export { _setTestServiceClient } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Test-only client injection — lets unit tests pass a fake Supabase client

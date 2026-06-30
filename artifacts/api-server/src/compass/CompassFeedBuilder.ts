@@ -471,7 +471,7 @@ export async function buildFeed(
   // Apply user's category weight preferences (from hide_category / show_more
   // feedback) by scaling finalScore after the pipeline. This lets the user's
   // expressed preferences move items within each section on the VERY NEXT build.
-  if (Object.keys(profile.categoryWeights).length > 0) {
+  if (profile.categoryWeights && Object.keys(profile.categoryWeights).length > 0) {
     for (const [name, sectionItems] of sectionMap) {
       const adjusted = sectionItems.map((r) => {
         // Look up weight by item type (e.g. "event", "post") AND by each
@@ -548,7 +548,7 @@ export async function buildSection(
   );
 
   // ── Category-weight post-adjustment (mirrors buildFeed) ───────────────────
-  if (Object.keys(profile.categoryWeights).length > 0) {
+  if (profile.categoryWeights && Object.keys(profile.categoryWeights).length > 0) {
     for (const [name, sectionItems] of sectionMap) {
       const adjusted = sectionItems.map((r) => {
         const typeWeight = profile.categoryWeights[r.item.type ?? ""] ?? 0;

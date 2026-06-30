@@ -87,7 +87,8 @@ function makeFakeClient(state: FakeState = {}) {
 
   function getRows(table: string): any[] {
     if (table === "feature_flags") {
-      return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled }));
+      // Include both `key` (safeReturn.ts isFlagEnabled) and `flag` (admin.ts isSafeReturnAdminEnabled)
+      return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, flag: key, enabled }));
     }
     if (table === "safe_return_sessions") return state.sessions ?? [];
     if (table === "safe_return_contacts") return state.contacts ?? [];

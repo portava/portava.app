@@ -415,6 +415,14 @@ function makeClient(userId: string, role = "user") {
           return { data: rows, count: controls.length, error: null };
         }
 
+        if (t === "rent_buddy_city_rollouts") {
+          // Default: all cities are live so unit tests can test business logic
+          // without needing to set up rollout state. rentABuddyRollout.test.ts
+          // tests the rollout logic specifically.
+          if (this._maybeSingle) return { data: { id: "default-rollout", status: "live" }, error: null };
+          return { data: [{ id: "default-rollout", status: "live" }], count: 1, error: null };
+        }
+
         if (this._maybeSingle) return { data: null, error: null };
         return { data: [], count: 0, error: null };
       },
@@ -455,9 +463,12 @@ after(() => {
 });
 
 function setupState(extra: Partial<FakeState> = {}) {
+  const { featureFlags: extraFlags, ...restExtra } = extra;
   state = {
     featureFlags: {
       rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true },
+      RENT_BUDDY_NIGHTLIFE_ENABLED: { flag: "RENT_BUDDY_NIGHTLIFE_ENABLED", enabled: true },
+      ...(extraFlags ?? {}),
     },
     profiles: {
       [USER_ID]:   { id: USER_ID,   role: "user" },
@@ -496,7 +507,7 @@ function setupState(extra: Partial<FakeState> = {}) {
     adminActions: [],
     trustEvents: [],
     reviews: [],
-    ...extra,
+    ...restExtra,
   };
 
   const client = makeClient(USER_ID);
@@ -1565,7 +1576,10 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
 
   function setupBookingEnforcement(launchControl: any, travelerBuddyProfile?: any) {
     state = {
-      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      featureFlags: {
+        rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true },
+        RENT_BUDDY_NIGHTLIFE_ENABLED: { flag: "RENT_BUDDY_NIGHTLIFE_ENABLED", enabled: true },
+      },
       profiles: {
         [USER_ID]:   { id: USER_ID,   trust_score: 80 },
         [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },

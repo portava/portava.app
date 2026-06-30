@@ -132,7 +132,7 @@ function makeFakeClient(state: FakeState, userId: string) {
 
     function rows(): any[] {
       const tableData: Record<string, any[]> = {
-        feature_flags:           Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled })),
+        feature_flags:           Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ flag: key, enabled })),
         hidden_gems:             state.gems ?? [],
         hidden_gem_saves:        state.gemSaves ?? [],
         hidden_gem_visits:       state.gemVisits ?? [],

@@ -266,7 +266,10 @@ function makeGeofenceClient(userId: string, memberRole: "member" | "invited" | n
             if (memberRole === "member" && userId === MEMBER_ID) {
               return { data: { user_id: userId, role: "member" }, error: null };
             }
-            // invited or non-member → no row (the role filter excluded them)
+            // Invited (pending) members: return their row so getMemberRole can detect them
+            if (memberRole === "invited" && userId === INVITED_ID) {
+              return { data: { user_id: userId, role: "invited" }, error: null };
+            }
             return { data: null, error: null };
           }
           if (table === "feature_flags") {

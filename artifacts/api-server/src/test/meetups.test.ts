@@ -84,6 +84,7 @@ interface State {
   meetup_time_options: any[];
   meetup_time_votes: any[];
   trip_members: any[];
+  trips: any[];
   circle_memberships: any[];
   trip_plan_items: any[];
   user_friendships: any[];
@@ -102,6 +103,7 @@ function baseState(overrides: Partial<State> = {}): State {
     meetup_time_options: [],
     meetup_time_votes: [],
     trip_members: [],
+    trips: [],
     circle_memberships: [],
     trip_plan_items: [],
     user_friendships: [],
@@ -612,7 +614,10 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
   });
 
   it("rejects non-trip-members", async () => {
-    const state = baseState({ meetups: [makeMeetup()] });
+    const state = baseState({
+      meetups: [makeMeetup()],
+      trips: [{ id: TRIP_ID, owner_id: BOB_ID, plan_edit_permission: "all_members" }],
+    });
     const s = await startServer(state);
     try {
       const r = await httpPost(s.port, `/api/meetups/${MEETUP_ID}/add-to-trip-plan`, "alice-tok", { tripId: TRIP_ID });
@@ -624,6 +629,7 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
     const OTHER_TRIP = "00000000-0000-0000-0000-000000000099";
     const state = baseState({
       trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members" }],
       meetups: [makeMeetup({ trip_id: OTHER_TRIP, visibility: "trip" })],
     });
     const s = await startServer(state);
@@ -636,6 +642,7 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
   it("creates plan item for trip owner", async () => {
     const state = baseState({
       trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members" }],
       meetups: [makeMeetup()],
       trip_plan_items: [],
     });
@@ -651,6 +658,7 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
   it("idempotent — returns 200 with idempotent flag if already added", async () => {
     const state = baseState({
       trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members" }],
       meetups: [makeMeetup()],
       trip_plan_items: [{
         id: "plan-1", trip_id: TRIP_ID, source_type: "meetup", source_id: MEETUP_ID,

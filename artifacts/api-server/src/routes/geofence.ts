@@ -76,7 +76,7 @@ async function getMemberRole(
   db: ReturnType<typeof getServiceClient>,
   tripId: string,
   userId: string,
-): Promise<"owner" | "member" | null> {
+): Promise<"owner" | "member" | "invited" | null> {
   if (!db) return null;
   try {
     const { data: trip } = await db
@@ -88,12 +88,12 @@ async function getMemberRole(
 
     const { data: member } = await db
       .from("trip_members")
-      .select("user_id")
+      .select("user_id, role")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
-      .eq("role", "member")
       .maybeSingle();
-    return member ? "member" : null;
+    if (!member) return null;
+    return (member as any).role === "member" ? "member" : "invited";
   } catch {
     return null;
   }
@@ -219,6 +219,12 @@ router.get("/trips/:tripId/geofence", async (req, res) => {
   }
 
   const g = data as any;
+
+  // Invited (pending) members cannot access geofence at all
+  if (role === "invited") {
+    sendError(res, "forbidden", "Pending invitees cannot access geofence");
+    return;
+  }
 
   // Non-members get a stripped public card (no coords, no check-in data)
   if (!role) {
@@ -447,9 +453,9 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
   const { tripId } = req.params;
   const { lat, lng } = parsed.data;
 
-  // Must be accepted member
+  // Must be an accepted member (owner or member) — invited/pending users cannot check in
   const role = await getMemberRole(db, tripId, user.id);
-  if (!role) {
+  if (role !== "owner" && role !== "member") {
     sendError(res, "not_member", "You must be an accepted trip member to check in");
     return;
   }
@@ -480,14 +486,8 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
     });
     return;
   }
-  if (geofence.check_in_window_end && new Date(geofence.check_in_window_end) < now) {
-    res.status(200).json({
-      ok: false,
-      reason: "window_closed",
-      message: "The check-in window has closed. Contact the host if you have trouble.",
-    });
-    return;
-  }
+  // Window-closed: allow check-in but mark as late (creates late_check_in trust event)
+  // Users who arrive late are still admitted; the trust engine logs it.
 
   // Check suspicious GPS (fire-and-forget trust event, never auto-punishes)
   const trustResult = await checkAndRecordSnapshot(db, user.id, lat, lng);

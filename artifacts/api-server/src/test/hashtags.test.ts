@@ -71,6 +71,12 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
       },
       gte(col: string, val: string) { filters.push((r) => String(r[col] ?? '') >= val); return b; },
       lt(col: string, val: string) { filters.push((r) => String(r[col] ?? '') < val); return b; },
+      not(col: string, op: string, val: unknown) {
+        if (op === 'is') filters.push((r) => r[col] !== val);
+        else if (op === 'in') filters.push((r) => !(val as unknown[]).includes(r[col]));
+        else filters.push((r) => r[col] !== val);
+        return b;
+      },
       order() { return b; },
       limit(n: number) { _rows = _rows.slice(0, n); return b; },
       range(from: number, to: number) { _rows = _rows.slice(from, to + 1); return b; },

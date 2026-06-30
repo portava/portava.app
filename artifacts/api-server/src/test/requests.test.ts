@@ -88,9 +88,35 @@ function makeFakeClient(state: State) {
       },
 
       eq(col: string, val: any) { filters.push((r: any) => r[col] === val); return b; },
+      neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
       in(col: string, vals: any[]) { filters.push((r: any) => vals.includes(r[col])); return b; },
+      gt(col: string, val: any) { filters.push((r: any) => r[col] > val); return b; },
+      gte(col: string, val: any) { filters.push((r: any) => r[col] >= val); return b; },
+      lt(col: string, val: any) { filters.push((r: any) => r[col] < val); return b; },
+      lte(col: string, val: any) { filters.push((r: any) => r[col] <= val); return b; },
+      not(col: string, op: string, val: any) {
+        if (op === 'is') filters.push((r: any) => r[col] !== val);
+        else if (op === 'in') filters.push((r: any) => !(val as any[]).includes(r[col]));
+        else filters.push((r: any) => r[col] !== val);
+        return b;
+      },
+      is(col: string, val: any) {
+        if (val === null) filters.push((r: any) => r[col] == null);
+        else filters.push((r: any) => r[col] === val);
+        return b;
+      },
+      or(_expr: string) {
+        // No-op: unknown tables return empty; complex or() expressions not needed in test state.
+        return b;
+      },
+      ilike(col: string, pat: string) {
+        const prefix = pat.replace(/%/g, '').toLowerCase();
+        filters.push((r: any) => String(r[col] ?? '').toLowerCase().startsWith(prefix));
+        return b;
+      },
       order()  { return b; },
       limit()  { return b; },
+      range()  { return b; },
 
       maybeSingle() { return resolveOne(); },
       single()      { return resolveOne(); },
