@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
-import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays, PlayCircle, Flag, MoreVertical, X } from 'lucide-react-native';
+import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays, PlayCircle, MoreVertical, X } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui';

@@ -45,7 +45,7 @@ import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecom
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
-import { reportMessage } from '../../src/services/messaging';
+import { reportContent, type ReasonCode } from '../../src/services/reports';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
 import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
@@ -107,7 +107,15 @@ const dd = StyleSheet.create({
 
 // ── Long-press action sheet ───────────────────────────────────────────────────
 
-const REPORT_MSG_REASONS = ['Spam', 'Harassment', 'Inappropriate content', 'Misinformation', 'Other'];
+const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
+  { code: 'spam',           label: 'Spam or misleading' },
+  { code: 'harassment',     label: 'Harassment or bullying' },
+  { code: 'hate_speech',    label: 'Hate speech' },
+  { code: 'violence',       label: 'Violent or dangerous content' },
+  { code: 'nudity',         label: 'Nudity or sexual content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other',          label: 'Something else' },
+];
 
 function LongPressActionSheet({
   message,
@@ -121,21 +129,21 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
 }) {
   const [showReport, setShowReport] = useState(false);
-  const [reportReason, setReportReason] = useState<string | null>(null);
+  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
   const [reportSending, setReportSending] = useState(false);
 
   async function submitReport() {
     if (!reportReason || !message) return;
     setReportSending(true);
-    const result = await reportMessage(message.id, reportReason).catch(() => ({ ok: false }));
+    await reportContent({
+      target_type: 'message',
+      target_id: message.id,
+      reason_code: reportReason,
+    }).catch(() => ({ ok: false }));
     setReportSending(false);
     setShowReport(false);
     onClose();
-    if (result.ok) {
-      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
-    } else {
-      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
-    }
+    Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
   }
 
   if (!message) return null;
@@ -149,14 +157,14 @@ function LongPressActionSheet({
           <>
             <Text style={las.reportTitle}>Report this message</Text>
             <Text style={las.reportSub}>What's wrong with this message?</Text>
-            {REPORT_MSG_REASONS.map((reason) => (
+            {REPORT_MSG_REASONS.map((r) => (
               <Pressable
-                key={reason}
-                style={[las.reasonOption, reportReason === reason && las.reasonSelected]}
-                onPress={() => setReportReason(reason)}
+                key={r.code}
+                style={[las.reasonOption, reportReason === r.code && las.reasonSelected]}
+                onPress={() => setReportReason(r.code)}
               >
-                <Text style={[las.reasonText, reportReason === reason && las.reasonTextSelected]}>{reason}</Text>
-                {reportReason === reason && <Text style={las.reasonCheck}>✓</Text>}
+                <Text style={[las.reasonText, reportReason === r.code && las.reasonTextSelected]}>{r.label}</Text>
+                {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
               </Pressable>
             ))}
             <Pressable
