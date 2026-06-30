@@ -38,8 +38,12 @@ function isValidUuid(v: unknown): v is string {
   return typeof v === "string" && isUuid(v);
 }
 
+type EnsureDefaultResult =
+  | { id: string }
+  | { code: "collection_create_failed"; detail: string };
+
 /** Ensure a default "Saved" collection exists and return its id. */
-async function ensureDefaultCollection(sc: any, userId: string): Promise<string | null> {
+async function ensureDefaultCollection(sc: any, userId: string): Promise<EnsureDefaultResult> {
   const { data: existing } = await sc
     .from("collections")
     .select("id")
@@ -47,7 +51,7 @@ async function ensureDefaultCollection(sc: any, userId: string): Promise<string 
     .eq("is_default", true)
     .maybeSingle();
 
-  if (existing) return (existing as any).id as string;
+  if (existing) return { id: (existing as any).id as string };
 
   const { data: created, error } = await sc
     .from("collections")
@@ -55,8 +59,13 @@ async function ensureDefaultCollection(sc: any, userId: string): Promise<string 
     .select("id")
     .single();
 
-  if (error || !created) return null;
-  return (created as any).id as string;
+  if (error || !created) {
+    return {
+      code: "collection_create_failed",
+      detail: error?.message ?? "Default collection insert returned no data",
+    };
+  }
+  return { id: (created as any).id as string };
 }
 
 // =============================================================================
@@ -476,11 +485,13 @@ router.post("/saves", async (req, res) => {
     colId = (col as any).id as string;
   } else {
     // Auto-create or find default collection
-    colId = await ensureDefaultCollection(sc, user.id);
-    if (!colId) {
-      sendError(res, "db_error", "Failed to resolve default collection");
+    const defaultResult = await ensureDefaultCollection(sc, user.id);
+    if ("code" in defaultResult) {
+      req.log.error({ code: defaultResult.code, detail: defaultResult.detail }, "default collection creation failed");
+      sendError(res, defaultResult.code, defaultResult.detail);
       return;
     }
+    colId = defaultResult.id;
   }
 
   const { error } = await sc

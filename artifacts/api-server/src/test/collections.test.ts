@@ -108,13 +108,19 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
 
       // DELETE
       if (_delete) {
-        const before = table.rows.length;
         table.rows = table.rows.filter((r) => !filters.every((f) => f(r)));
         return { data: null, error: null };
       }
 
       // INSERT / UPSERT
       if (_insert !== null) {
+        // Simulate a forced insert error (consumed once)
+        if (table.nextInsertError) {
+          const msg = table.nextInsertError;
+          delete table.nextInsertError;
+          return { data: null, error: { message: msg } };
+        }
+
         const rows = Array.isArray(_insert) ? _insert : [_insert];
         const inserted: Row[] = [];
 
@@ -513,6 +519,61 @@ describe("Collections & Saves", () => {
     assert.equal(checkRes.status, 200);
     const { saved } = await checkRes.json();
     assert.ok(!saved, "GET /users/me/saves should report saved:false after DELETE /saves");
+  });
+
+  // ── Default collection insert failure → clear error, no partial save ─────
+  it("POST /saves returns collection_create_failed when default collection insert fails", async () => {
+    ({ url, close } = await startServer({
+      collections: {
+        rows: [],
+        nextInsertError: "new row violates row-level security policy",
+      },
+    }));
+
+    const res = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "post", entity_id: ENTITY_ID }),
+    });
+    assert.notEqual(res.status, 200, "should not succeed when collection cannot be created");
+    const body = await res.json();
+    assert.equal(body.error, "collection_create_failed", "error code should be collection_create_failed");
+    assert.ok(
+      typeof body.message === "string" && body.message.length > 0,
+      "should include a message explaining the failure",
+    );
+  });
+
+  it("item is not saved after collection_create_failed — GET /users/me/saves returns saved:false", async () => {
+    // Shared in-memory tables so the save attempt and the check query the same state
+    const tables: Record<string, FakeTable> = {
+      collections: {
+        rows: [],
+        nextInsertError: "new row violates row-level security policy",
+      },
+      collection_items: { rows: [] },
+    };
+    ({ url, close } = await startServer(tables));
+
+    // Attempt to save — expect failure
+    const saveRes = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "post", entity_id: ENTITY_ID }),
+    });
+    assert.notEqual(saveRes.status, 200, "save should fail");
+
+    // Confirm nothing was written to collection_items
+    assert.equal(tables.collection_items.rows.length, 0, "collection_items should remain empty");
+
+    // GET /users/me/saves must also report saved:false (no collections means no items)
+    const checkRes = await fetch(
+      `${url}/api/users/me/saves?entity_type=post&entity_id=${ENTITY_ID}`,
+      { headers: auth("owner-token") },
+    );
+    assert.equal(checkRes.status, 200);
+    const { saved } = await checkRes.json();
+    assert.ok(!saved, "GET /users/me/saves should report saved:false after a failed POST /saves");
   });
 
   // ── isSaved hydration: check is scoped by entity_type ────────────────────
