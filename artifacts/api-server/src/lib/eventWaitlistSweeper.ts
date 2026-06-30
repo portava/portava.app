@@ -42,11 +42,26 @@ interface SweepStatus {
 
 const _status: SweepStatus = { lastRunAt: null, lastExpiredCount: 0, consecutiveFailures: 0 };
 export function getSweepStatus(): Readonly<SweepStatus> { return { ..._status }; }
+/** Reset status between test runs — not for production use. */
+export function _resetStatus(): void {
+  _status.lastRunAt = null;
+  _status.lastExpiredCount = 0;
+  _status.consecutiveFailures = 0;
+}
 
 // ── Core logic ────────────────────────────────────────────────────────────────
 
-export async function runSweep(): Promise<void> {
-  const sc = getServiceClient();
+/**
+ * Run one sweep pass.
+ *
+ * Accepts an optional `client` override so unit tests can inject a fake
+ * Supabase client without a live connection. Production always uses the
+ * module-level service client.
+ */
+export async function runSweep(opts?: { client?: any }): Promise<void> {
+  // Use opts.client when explicitly provided (even null means "no client" in tests).
+  // Fall back to the module-level service client for production.
+  const sc: any = (opts !== undefined && "client" in opts) ? opts.client : getServiceClient();
   if (!sc) { logger.warn("service client not ready — skipping sweep"); return; }
 
   try {
