@@ -6,16 +6,14 @@ import {
 import { X } from 'lucide-react-native';
 import { reportContent, type ReasonCode } from '../services/reports';
 import { color, space, radius, type as t } from '../theme/tokens';
+import {
+  INITIAL_REPORT_SHEET_STATE,
+  canSubmitReport,
+  resetReportSheet,
+  REPORT_POST_REASONS,
+} from './ReportPostSheet.state';
 
-export const REPORT_POST_REASONS: { code: ReasonCode; label: string }[] = [
-  { code: 'spam',           label: 'Spam or misleading' },
-  { code: 'harassment',     label: 'Harassment or bullying' },
-  { code: 'hate_speech',    label: 'Hate speech' },
-  { code: 'violence',       label: 'Violent or dangerous content' },
-  { code: 'nudity',         label: 'Nudity or sexual content' },
-  { code: 'misinformation', label: 'Misinformation' },
-  { code: 'other',          label: 'Something else' },
-];
+export { REPORT_POST_REASONS };
 
 export function ReportPostSheet({
   postId,
@@ -26,16 +24,17 @@ export function ReportPostSheet({
   visible: boolean;
   onClose: () => void;
 }) {
-  const [reason, setReason] = useState<ReasonCode | null>(null);
-  const [detail, setDetail] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
+  const [reason, setReason]       = useState<ReasonCode | null>(INITIAL_REPORT_SHEET_STATE.reason);
+  const [detail, setDetail]       = useState(INITIAL_REPORT_SHEET_STATE.detail);
+  const [submitting, setSubmitting] = useState(INITIAL_REPORT_SHEET_STATE.submitting);
+  const [done, setDone]           = useState(INITIAL_REPORT_SHEET_STATE.done);
 
   function reset() {
-    setReason(null);
-    setDetail('');
-    setSubmitting(false);
-    setDone(false);
+    const s = resetReportSheet();
+    setReason(s.reason);
+    setDetail(s.detail);
+    setSubmitting(s.submitting);
+    setDone(s.done);
   }
 
   function handleClose() {
@@ -44,12 +43,12 @@ export function ReportPostSheet({
   }
 
   async function submit() {
-    if (!reason) return;
+    if (!canSubmitReport({ reason, detail, submitting, done })) return;
     setSubmitting(true);
     const res = await reportContent({
       target_type: 'post',
       target_id: postId,
-      reason_code: reason,
+      reason_code: reason!,
       reason_detail: detail.trim() || undefined,
     });
     setSubmitting(false);
@@ -108,9 +107,9 @@ export function ReportPostSheet({
                 )}
               </ScrollView>
               <Pressable
-                style={[rps.submitBtn, (!reason || submitting) && rps.submitBtnDisabled]}
+                style={[rps.submitBtn, !canSubmitReport({ reason, detail, submitting, done }) && rps.submitBtnDisabled]}
                 onPress={submit}
-                disabled={!reason || submitting}
+                disabled={!canSubmitReport({ reason, detail, submitting, done })}
               >
                 {submitting
                   ? <ActivityIndicator size="small" color={color.onInk} />

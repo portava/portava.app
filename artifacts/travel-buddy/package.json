@@ -1,17 +1,20 @@
 {
-  "name": "@workspace/travel-buddy",
-  "version": "0.0.0",
+  "name": "travel-buddy-standalone",
+  "version": "1.0.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "predev": "fuser -k ${PORT:-20682}/tcp 2>/dev/null || true; printf 'EXPO_PUBLIC_SUPABASE_URL=%s\\nEXPO_PUBLIC_SUPABASE_ANON_KEY=%s\\nEXPO_PUBLIC_API_BASE_URL=https://%s\\nEXPO_PUBLIC_MAPTILER_KEY=%s\\n' \"${SUPABASE_URL}\" \"${EXPO_PUBLIC_SUPABASE_ANON_KEY}\" \"${REPLIT_DEV_DOMAIN}\" \"${EXPO_PUBLIC_MAPTILER_KEY}\" > .env.local",
-    "dev": "bash -c 'bash scripts/prewarm-android.sh &\nEXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT'",
-    "dev:clear": "bash -c 'bash scripts/prewarm-android.sh &\nEXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT --clear'",
+    "start": "expo start",
+    "dev": "bash scripts/android-dev.sh",
+    "dev:android": "bash scripts/android-dev.sh --clear",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
     "eas-build-pre-install": "corepack enable",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/services/sdk54-downgrade-compat.test.ts src/services/passportShare.test.ts"
+    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/components/__tests__/ReportPostSheet.test.ts"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",
