@@ -214,6 +214,10 @@ function Byline({ post, onInk }: { post: Post; onInk?: boolean }) {
 
 /* 1. HERO — full-bleed image, scrim, editorial title overlaid. */
 function HeroCard({ post }: { post: Post }) {
+  const { userId: currentUserId } = useSession();
+  const [reportOpen, setReportOpen] = useState(false);
+  const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+
   return (
     <Pressable style={[styles.card, styles.hero]} onPress={() => router.push(`/post/${post.id}`)}>
       <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} />
@@ -221,6 +225,11 @@ function HeroCard({ post }: { post: Post }) {
       <View style={styles.heroTop}>
         <Stamp label={post.category} tone="onInk" />
       </View>
+      {!isOwnPost && (
+        <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.heroMoreBtn}>
+          <MoreVertical size={20} color={color.onInk} />
+        </Pressable>
+      )}
       <View style={styles.heroBottom}>
         <Locator post={post} onInk />
         <Text style={styles.heroTitle} numberOfLines={2}>{post.title}</Text>
@@ -236,6 +245,9 @@ function HeroCard({ post }: { post: Post }) {
           />
         </View>
       </View>
+      {!isOwnPost && (
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+      )}
     </Pressable>
   );
 }
@@ -344,13 +356,24 @@ function QuestionCard({ post }: { post: Post }) {
 
 /* 4. ITINERARY — cover image top, trip meta, Add to Trip. */
 function ItineraryCard({ post }: { post: Post }) {
+  const { userId: currentUserId } = useSession();
+  const [reportOpen, setReportOpen] = useState(false);
+  const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+
   return (
     <Pressable style={[styles.card, styles.itin]} onPress={() => router.push(`/post/${post.id}`)}>
       {post.media[0] && <Image source={{ uri: post.media[0].url }} style={styles.itinCover} />}
       <View style={styles.itinBody}>
-        <View style={styles.stampRow}>
-          <Stamp label="itinerary" tone="deep" />
-          <Stamp label={`${post.dayCount} days`} rotate={2} />
+        <View style={styles.itinHead}>
+          <View style={styles.stampRow}>
+            <Stamp label="itinerary" tone="deep" />
+            <Stamp label={`${post.dayCount} days`} rotate={2} />
+          </View>
+          {!isOwnPost && (
+            <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.moreBtn}>
+              <MoreVertical size={16} color={color.mute} />
+            </Pressable>
+          )}
         </View>
         <Text style={styles.itinTitle}>{post.title}</Text>
         <View style={styles.itinMetaRow}>
@@ -363,6 +386,9 @@ function ItineraryCard({ post }: { post: Post }) {
           <Text style={styles.solidBtnText}>Add to Trip</Text>
         </Pressable>
       </View>
+      {!isOwnPost && (
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+      )}
     </Pressable>
   );
 }
@@ -372,6 +398,7 @@ const styles = StyleSheet.create({
 
   hero: { height: 460 },
   heroTop: { position: 'absolute', top: space.lg, left: space.lg },
+  heroMoreBtn: { position: 'absolute', top: space.lg, right: space.lg, padding: 4 },
   heroBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.lg, gap: space.sm },
   heroTitle: { ...t.hero, color: color.onInk },
   heroByRow: { flexDirection: 'row', alignItems: 'center' },
@@ -395,6 +422,7 @@ const styles = StyleSheet.create({
   itin: {},
   itinCover: { width: '100%', height: 180, backgroundColor: color.haze },
   itinBody: { padding: space.lg, gap: space.sm },
+  itinHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   itinTitle: { ...t.title, color: color.ink },
   itinMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itinMeta: { ...t.small, color: color.mute },

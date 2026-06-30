@@ -135,15 +135,19 @@ function LongPressActionSheet({
   async function submitReport() {
     if (!reportReason || !message) return;
     setReportSending(true);
-    await reportContent({
+    const result = await reportContent({
       target_type: 'message',
       target_id: message.id,
       reason_code: reportReason,
-    }).catch(() => ({ ok: false }));
+    }).catch(() => ({ ok: false as const }));
     setReportSending(false);
-    setShowReport(false);
-    onClose();
-    Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    if (result.ok) {
+      setShowReport(false);
+      onClose();
+      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    } else {
+      Alert.alert('Error', (result as any).error ?? 'Could not submit report');
+    }
   }
 
   if (!message) return null;
