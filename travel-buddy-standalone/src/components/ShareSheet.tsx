@@ -23,7 +23,9 @@ import {
   Platform,
   Alert,
   ScrollView,
+  ToastAndroid,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Link, MessageCircle, Users, Plane, Circle, X } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
@@ -62,13 +64,16 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
   const handleCopyLink = useCallback(async () => {
     onClose();
     try {
-      await Share.share({
-        message: postPermalink(postId),
-        ...(Platform.OS === 'ios' ? { url: postPermalink(postId) } : {}),
-      });
+      await Clipboard.setStringAsync(postPermalink(postId));
       onShareSuccess?.('copy_link');
+      // Brief feedback
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Link copied', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Copied', 'Post link copied to clipboard.');
+      }
     } catch (_) {
-      // Silent
+      Alert.alert('Error', 'Could not copy link. Please try again.');
     }
   }, [postId, onClose, onShareSuccess]);
 

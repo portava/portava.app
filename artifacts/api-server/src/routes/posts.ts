@@ -1415,12 +1415,12 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const callerId = user.id;
   const authorId = (post as any).author_id as string;
 
-  // Block check: reject if either party has blocked the other
+  // Block check: fail-closed count query (avoids maybeSingle multi-row error)
   if (callerId !== authorId) {
-    const { data: block } = await sc.from("blocks").select("blocker_id")
-      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`)
-      .maybeSingle();
-    if (block) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+    const { count: blockCount, error: blockErr } = await sc.from("blocks")
+      .select("id", { count: "exact", head: true })
+      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`);
+    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
   }
 
   // Post owner can always comment on their own post
@@ -2045,12 +2045,12 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   const callerId = user.id;
   const authorId = (post as any).author_id as string;
 
-  // Block check: reject if either party has blocked the other
+  // Block check: fail-closed count query (avoids maybeSingle multi-row error)
   if (callerId !== authorId) {
-    const { data: block } = await sc.from("blocks").select("blocker_id")
-      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`)
-      .maybeSingle();
-    if (block) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+    const { count: blockCount, error: blockErr } = await sc.from("blocks")
+      .select("id", { count: "exact", head: true })
+      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`);
+    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
   }
 
   if (callerId !== authorId && commentsSetting !== "everyone") {
