@@ -930,10 +930,24 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  // Resolve the trip owner first.  The create-from-trip route (POST /trips/:tripId/memory)
+  // requires caller == trip owner, so the canonical trip memory always has owner_id == trip.owner_id.
+  // Scoping to that owner prevents an unrelated crew member's trip-linked memory from being surfaced.
+  const { data: trip } = await sc
+    .from("trips")
+    .select("id, owner_id")
+    .eq("id", tripId)
+    .maybeSingle();
+
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const tripOwnerId = (trip as any).owner_id as string;
+
   const { data: memory, error } = await sc
     .from("memories")
     .select(MEMORY_SELECT)
     .eq("trip_id", tripId)
+    .eq("owner_id", tripOwnerId)
     .neq("state", "deleted")
     .order("created_at", { ascending: false })
     .limit(1)
