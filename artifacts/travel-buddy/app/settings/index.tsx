@@ -133,6 +133,8 @@ export default function Settings() {
     if (label === 'Log out') {
       await signOut();
       router.replace('/(auth)/sign-in');
+    } else if (label === 'Close Friends') {
+      router.push('/close-friends' as any);
     } else if (label === 'Blocked accounts') {
       router.push('/blocked-users');
     } else if (label === 'Muted accounts') {
@@ -177,7 +179,7 @@ export default function Settings() {
   }
 
   const BASIC_GROUPS = [
-    { h: 'Privacy', items: ['Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
+    { h: 'Privacy', items: ['Close Friends', 'Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
     { h: 'Safety', items: ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Report history', 'Muted words'] },
     { h: 'Account', items: ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'Log out'] },
   ];

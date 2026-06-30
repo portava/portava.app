@@ -53,6 +53,8 @@ import reportsRouter from "./reports";
 import restrictRouter from "./restrict";
 import eventsRouter from "./events";
 import memoriesRouter from "./memories";
+import storiesRouter from "./stories";
+import closeFriendsRouter from "./closeFriends";
 
 const router: IRouter = Router();
 
@@ -110,5 +112,7 @@ router.use(reportsRouter);
 router.use(restrictRouter);
 router.use(eventsRouter);
 router.use(memoriesRouter);
+router.use(storiesRouter);
+router.use(closeFriendsRouter);
 
 export default router;
