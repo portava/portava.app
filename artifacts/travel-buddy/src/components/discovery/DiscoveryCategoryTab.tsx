@@ -211,6 +211,9 @@ interface DiscoveryCategoryTabProps {
   customMaxAge?: number | null;
   lat?: number | null;
   lng?: number | null;
+  userLat?: number | null;
+  userLng?: number | null;
+  fallbackZoom?: number;
   /** Called whenever the user changes radius, open-now, or min-rating. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
 }
@@ -229,6 +232,9 @@ export function DiscoveryCategoryTab({
   customMaxAge,
   lat,
   lng,
+  userLat,
+  userLng,
+  fallbackZoom,
   onFiltersChange,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
@@ -316,7 +322,7 @@ export function DiscoveryCategoryTab({
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
       ) : viewMode === 'map' ? (
-        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} />
+        <DiscoveryMapView places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} />
       ) : error && places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Couldn't load places</Text>

@@ -27,7 +27,6 @@ import { LocationChip } from '../../src/components/LocationChip';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
-import { MemoriesStrip } from '../../src/components/MemoriesStrip';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
@@ -106,6 +105,7 @@ export default function DiscoveryHub() {
   const [destinationLng, setDestinationLng] = useState<number | null>(
     () => locationState.coords?.lng ?? null
   );
+  const [destinationZoom, setDestinationZoom] = useState<number>(11);
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   // Single object so any preset updating both min and max is one setState call →
@@ -245,6 +245,35 @@ export default function DiscoveryHub() {
     // Also persist as manual city in the location system
     setManualCity(city).catch(() => {});
   }, [setManualCity]);
+
+  // MapTiler geocode on load:
+  //  - If a city is set but coords missing -> geocode the city (zoom 11).
+  //  - If no city but a country is known -> geocode the country (country-level zoom 4).
+  React.useEffect(() => {
+    if (destinationLat != null || destinationLng != null) return;
+    const key = process.env.EXPO_PUBLIC_MAPTILER_KEY;
+    if (!key) return;
+    const country = locationState.place.country ?? null;
+    const query = destination || country;
+    if (!query) return;
+    const isCountryView = !destination && !!country;
+    let cancelled = false;
+    const types = isCountryView ? 'country' : '';
+    const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${key}&limit=1${types ? `&types=${types}` : ''}`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const c = data?.features?.[0]?.center;
+        if (Array.isArray(c) && c.length === 2) {
+          setDestinationLng(c[0]);
+          setDestinationLat(c[1]);
+          setDestinationZoom(isCountryView ? 4 : 11);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [destination, destinationLat, destinationLng, locationState.place.country]);
 
   const handleSelectPlaceFromBar = useCallback((place: Place) => {
     setDestination(place.city ?? place.name);
@@ -441,9 +470,6 @@ export default function DiscoveryHub() {
         />
       )}
 
-      {/* ── Traveler memories strip ── */}
-      {isAuthed && <MemoriesStrip />}
-
       {/* ── Trending hashtags strip ── */}
       {trendingHashtags.length > 0 && (
         <ScrollView
@@ -481,7 +507,10 @@ export default function DiscoveryHub() {
             contextMode={contextMode}
             lat={destinationLat}
             lng={destinationLng}
+            userLat={locationState.coords?.lat ?? null}
+            userLng={locationState.coords?.lng ?? null}
             viewMode={viewMode}
+            fallbackZoom={destinationZoom}
           />
         ) : (
           <DiscoveryCategoryTab
@@ -499,7 +528,10 @@ export default function DiscoveryHub() {
             customMaxAge={debouncedAgeRange.max}
             lat={destinationLat}
             lng={destinationLng}
+            userLat={locationState.coords?.lat ?? null}
+            userLng={locationState.coords?.lng ?? null}
             onFiltersChange={handleFiltersChange}
+            fallbackZoom={destinationZoom}
           />
         )}
       </View>

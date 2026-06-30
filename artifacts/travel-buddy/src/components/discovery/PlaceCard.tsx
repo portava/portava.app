@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
-import { isSaved, toggleSave } from '../../services/discoveryBookmarks';
+import { checkSaved, saveItem, unsaveItem } from '../../services/collections';
 import { usePlanPicker } from '../PlanPickerController';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
@@ -21,7 +21,9 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
   const alreadyAdded = isAdded(place.id);
 
   useEffect(() => {
-    isSaved(place.id).then(setSaved).catch(() => {});
+    checkSaved('place', place.id)
+      .then(({ saved }) => setSaved(saved))
+      .catch(() => {});
   }, [place.id]);
 
   const openDirections = () => {
@@ -148,8 +150,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
           <Pressable
             style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
             onPress={() => {
-              const bookmark = { id: place.id, name: place.name, category: place.category, type: place.type, address: place.address, lat: place.lat ?? null, lng: place.lng ?? null, savedAt: Date.now() };
-              toggleSave(bookmark).then(setSaved).catch(() => setSaved((s) => !s));
+              const next = !saved;
+              setSaved(next);
+              (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
+                .then((ok) => { if (!ok) setSaved(!next); })
+                .catch(() => setSaved(!next));
             }}
             hitSlop={6}
           >

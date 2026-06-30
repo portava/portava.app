@@ -170,7 +170,16 @@ export async function saveItem(
       headers,
       body: JSON.stringify({ entity_type: entityType, entity_id: entityId, collection_id: collectionId }),
     });
-    return res.ok;
+    if (res.ok) return true;
+    if (collectionId && (res.status === 404 || res.status === 400)) {
+      const retry = await fetch(`${apiBase()}/api/saves`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ entity_type: entityType, entity_id: entityId }),
+      });
+      return retry.ok;
+    }
+    return false;
   } catch {
     return false;
   }
