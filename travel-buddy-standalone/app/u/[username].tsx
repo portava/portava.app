@@ -482,6 +482,7 @@ export default function PublicPassportScreen() {
   const [social, setSocial] = useState<SocialProfile | null>(null);
   const [socialLoading, setSocialLoading] = useState(false);
   const [isBlockedRelation, setIsBlockedRelation] = useState(false);
+  const [isMutedByMe, setIsMutedByMe] = useState(false);
 
   const loadSocial = useCallback(async (userId: string) => {
     if (!userId) return;
@@ -516,10 +517,16 @@ export default function PublicPassportScreen() {
     }
 
     if (userId !== currentUserId) {
-      const blockRes = await getBlockStatus(userId).catch(() => ({ ok: false, data: null }));
+      const [blockRes, muteRes] = await Promise.all([
+        getBlockStatus(userId).catch(() => ({ ok: false, data: null })),
+        getMuteStatus(userId).catch(() => ({ ok: false, data: null })),
+      ]);
       if (blockRes.ok && blockRes.data) {
         const bd = blockRes.data as any;
         setIsBlockedRelation(bd.iBlocked || bd.theyBlockedMe);
+      }
+      if (muteRes.ok && muteRes.data) {
+        setIsMutedByMe((muteRes.data as any).muted ?? false);
       }
     }
 
@@ -545,6 +552,7 @@ export default function PublicPassportScreen() {
     setSessionAllViewed(false);
     setSocial(null);
     setIsBlockedRelation(false);
+    setIsMutedByMe(false);
   }, [profile?.id]);
 
   function handleViewerClose() {
@@ -560,6 +568,28 @@ export default function PublicPassportScreen() {
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
   const displayHandle = social?.handle ?? username ?? '';
   const displayName = social?.name ?? (profile && ('displayName' in profile ? profile.displayName : null)) ?? username ?? '';
+
+  async function handleUnmuteFromBadge() {
+    if (!profile?.id) return;
+    Alert.alert(
+      'Unmute',
+      `Unmute ${displayName}? They will be able to reach you again based on your privacy settings.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unmute',
+          onPress: async () => {
+            const res = await unmuteUser(profile.id);
+            if (res.ok) {
+              setIsMutedByMe(false);
+            } else {
+              Alert.alert('Error', res.error ?? 'Could not unmute user');
+            }
+          },
+        },
+      ],
+    );
+  }
 
   const renderContent = () => {
     if (loading) {
@@ -647,6 +677,14 @@ export default function PublicPassportScreen() {
           <View style={styles.reasonBadge}>
             <Text style={styles.reasonText}>✈ {social.reason}</Text>
           </View>
+        )}
+
+        {/* Muted badge — tappable, shown when the viewer has muted this profile */}
+        {!isOwn && isMutedByMe && (
+          <Pressable style={styles.mutedBadge} onPress={handleUnmuteFromBadge}>
+            <BellOff size={12} color={color.mute} />
+            <Text style={styles.mutedBadgeText}>Muted · tap to unmute</Text>
+          </Pressable>
         )}
 
         {/* Stats row */}
@@ -847,6 +885,14 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, alignSelf: 'flex-start',
   },
   followingText: { ...t.small, color: color.mute, fontSize: 12 },
+  mutedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    marginHorizontal: space.lg, marginTop: space.sm,
+    paddingVertical: 5, paddingHorizontal: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: color.haze, alignSelf: 'flex-start',
+  },
+  mutedBadgeText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 12 },
 
   actions: { gap: space.sm, marginHorizontal: space.lg, marginTop: space.md },
   incomingRow: { flexDirection: 'row', gap: space.sm },
