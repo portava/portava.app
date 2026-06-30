@@ -19,10 +19,12 @@ export function ReportPostSheet({
   postId,
   visible,
   onClose,
+  onReported,
 }: {
   postId: string;
   visible: boolean;
   onClose: () => void;
+  onReported?: () => void;
 }) {
   const [reason, setReason]       = useState<ReasonCode | null>(INITIAL_REPORT_SHEET_STATE.reason);
   const [detail, setDetail]       = useState(INITIAL_REPORT_SHEET_STATE.detail);
@@ -54,6 +56,7 @@ export function ReportPostSheet({
     setSubmitting(false);
     if (res.ok) {
       setDone(true);
+      onReported?.();
       setTimeout(() => handleClose(), 2500);
     } else {
       Alert.alert('Error', res.error ?? 'Could not submit report');
