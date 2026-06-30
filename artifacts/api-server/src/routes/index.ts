@@ -51,6 +51,7 @@ import mutesRouter from "./mutes";
 import savesRouter from "./saves";
 import reportsRouter from "./reports";
 import restrictRouter from "./restrict";
+import eventsRouter from "./events";
 
 const router: IRouter = Router();
 
@@ -106,5 +107,6 @@ router.use(mutesRouter);
 router.use(savesRouter);
 router.use(reportsRouter);
 router.use(restrictRouter);
+router.use(eventsRouter);
 
 export default router;
