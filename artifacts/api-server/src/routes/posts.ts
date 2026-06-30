@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { enrichSpans } from "../lib/enrichSpans";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
@@ -1306,9 +1307,10 @@ router.get("/posts/:postId/comments", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify post exists and caller has read access
-  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+  const isPostAuthor = (post as any).author_id === user.id;
 
   const { data: rows, error: listErr } = await sc
     .from("posts_comments")
@@ -1340,7 +1342,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
       body: c.body,
       createdAt: c.created_at,
       updatedAt: c.updated_at ?? null,
-      canDelete: c.user_id === user.id,
+      canDelete: c.user_id === user.id || isPostAuthor,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
       author: pr
@@ -1366,9 +1368,16 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: post } = await sc.from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting, sharing_disabled").eq("id", postId).eq("status", "active").maybeSingle();
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  // Enforce comments_setting (fail-open if column not yet migrated)
+  const commentsSetting = (post as any).comments_setting ?? "everyone";
+  if (commentsSetting === "disabled") {
+    sendError(res, "comments_disabled", "Comments are disabled on this post");
+    return;
+  }
 
   const { data: comment, error: insertErr } = await sc
     .from("posts_comments")
@@ -1455,7 +1464,14 @@ router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
     .from("posts_comments").select("id, user_id")
     .eq("id", commentId).eq("post_id", postId).is("deleted_at", null).maybeSingle();
   if (!existing) { sendError(res, "not_found", "Comment not found"); return; }
-  if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Cannot delete someone else's comment"); return; }
+
+  // Allow: comment author OR post owner
+  if ((existing as any).user_id !== user.id) {
+    const { data: postRow } = await sc.from("posts").select("author_id").eq("id", postId).maybeSingle();
+    if (!postRow || (postRow as any).author_id !== user.id) {
+      sendError(res, "forbidden", "Cannot delete someone else's comment"); return;
+    }
+  }
 
   await sc.from("posts_comments").update({ deleted_at: new Date().toISOString() }).eq("id", commentId);
 
@@ -1464,6 +1480,289 @@ router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
   await sc.from("posts").update({ comment_count: count ?? 0 }).eq("id", postId);
 
   res.status(200).json({ ok: true, commentCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * GET  /posts/:postId/reactions  — list emoji reactions + caller's reaction
+ * POST /posts/:postId/reactions  — upsert emoji reaction (idempotent)
+ * DELETE /posts/:postId/reactions — remove caller's reaction
+ * ============================================================================
+ */
+const VALID_REACTION_EMOJIS = new Set(["❤️", "😂", "😮", "😢", "😡", "👍", "🔥", "✈️"]);
+
+router.get("/posts/:postId/reactions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("post_reactions").select("emoji, user_id").eq("post_id", postId);
+
+  if (error) {
+    req.log.error({ err: error }, "reactions fetch failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const counts: Record<string, number> = {};
+  let myReaction: string | null = null;
+  for (const r of (rows ?? []) as any[]) {
+    counts[r.emoji] = (counts[r.emoji] ?? 0) + 1;
+    if (r.user_id === user.id) myReaction = r.emoji;
+  }
+
+  res.status(200).json({
+    reactions: Object.entries(counts).map(([emoji, count]) => ({ emoji, count })),
+    myReaction,
+    total: (rows ?? []).length,
+  });
+});
+
+router.post("/posts/:postId/reactions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const emoji = String(req.body?.emoji ?? "").trim();
+  if (!emoji || !VALID_REACTION_EMOJIS.has(emoji)) {
+    sendError(res, "invalid_payload", "Invalid or unsupported emoji");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc
+    .from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  const { error } = await sc
+    .from("post_reactions")
+    .upsert({ post_id: postId, user_id: user.id, emoji }, { onConflict: "post_id,user_id" });
+
+  if (error) {
+    req.log.error({ err: error }, "reaction upsert failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const { data: rows } = await sc.from("post_reactions").select("emoji, user_id").eq("post_id", postId);
+  const counts: Record<string, number> = {};
+  for (const r of (rows ?? []) as any[]) counts[r.emoji] = (counts[r.emoji] ?? 0) + 1;
+
+  res.status(200).json({
+    ok: true,
+    myReaction: emoji,
+    reactions: Object.entries(counts).map(([e, c]) => ({ emoji: e, count: c })),
+  });
+});
+
+router.delete("/posts/:postId/reactions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  await sc.from("post_reactions").delete().eq("post_id", postId).eq("user_id", user.id);
+
+  const { data: rows } = await sc.from("post_reactions").select("emoji, user_id").eq("post_id", postId);
+  const counts: Record<string, number> = {};
+  for (const r of (rows ?? []) as any[]) counts[r.emoji] = (counts[r.emoji] ?? 0) + 1;
+
+  res.status(200).json({
+    ok: true,
+    myReaction: null,
+    reactions: Object.entries(counts).map(([e, c]) => ({ emoji: e, count: c })),
+  });
+});
+
+/* ============================================================================
+ * PATCH /posts/:postId/settings  — owner controls
+ * ============================================================================
+ */
+const postSettingsSchema = z.object({
+  commentsSetting: z.enum(["everyone", "friends", "circle", "trip_crew", "verified", "disabled"]).optional(),
+  likesHidden: z.boolean().optional(),
+  sharingDisabled: z.boolean().optional(),
+  repostingDisabled: z.boolean().optional(),
+});
+
+router.patch("/posts/:postId/settings", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const parsed = postSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues.map((i) => i.message).join("; "));
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    sendError(res, "invalid_payload", "At least one setting must be provided");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc
+    .from("posts").select("id, author_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the post owner can change settings"); return;
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (parsed.data.commentsSetting !== undefined) patch.comments_setting = parsed.data.commentsSetting;
+  if (parsed.data.likesHidden !== undefined) patch.likes_hidden = parsed.data.likesHidden;
+  if (parsed.data.sharingDisabled !== undefined) patch.sharing_disabled = parsed.data.sharingDisabled;
+  if (parsed.data.repostingDisabled !== undefined) patch.reposting_disabled = parsed.data.repostingDisabled;
+
+  const { error } = await sc.from("posts").update(patch).eq("id", postId);
+  if (error) {
+    req.log.error({ err: error }, "post settings update failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true, ...parsed.data });
+});
+
+/* ============================================================================
+ * POST /posts/:postId/archive  — soft-archive (owner only)
+ * ============================================================================
+ */
+router.post("/posts/:postId/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc
+    .from("posts").select("id, author_id").eq("id", postId).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Post not found"); return; }
+  if ((existing as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the post owner can archive this post"); return;
+  }
+
+  const { error } = await sc.from("posts")
+    .update({ status: "hidden", updated_by: user.id }).eq("id", postId);
+  if (error) {
+    req.log.error({ err: error }, "post archive failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true, archived: true });
+});
+
+/* ============================================================================
+ * POST /posts/:postId/share  — record a share action; enforces sharing_disabled
+ * ============================================================================
+ */
+const VALID_SHARE_TARGETS = new Set(["dm", "group_chat", "trip_crew", "circle", "external", "copy_link"]);
+
+router.post("/posts/:postId/share", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const target = String(req.body?.target ?? "").trim();
+  if (!VALID_SHARE_TARGETS.has(target)) {
+    sendError(res, "invalid_payload", "Invalid share target"); return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post } = await sc
+    .from("posts").select("id, author_id, visibility, trip_id, sharing_disabled").eq("id", postId).eq("status", "active").maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  if ((post as any).sharing_disabled === true && user.id !== (post as any).author_id) {
+    sendError(res, "sharing_disabled", "Sharing is disabled for this post"); return;
+  }
+
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  try {
+    await sc.from("post_shares").insert({ post_id: postId, user_id: user.id, target });
+  } catch { /* non-fatal — table may not exist before migration runs */ }
+
+  res.status(200).json({ ok: true, target });
+});
+
+/* ============================================================================
+ * POST /posts/:postId/comments/:commentId/like  — like a comment (idempotent)
+ * DELETE /posts/:postId/comments/:commentId/like — unlike a comment
+ * ============================================================================
+ */
+router.post("/posts/:postId/comments/:commentId/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { commentId } = req.params;
+  if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: comment } = await sc
+    .from("posts_comments").select("id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (!comment) { sendError(res, "not_found", "Comment not found"); return; }
+
+  const { error } = await sc
+    .from("comment_likes")
+    .upsert({ comment_id: commentId, user_id: user.id }, { onConflict: "comment_id,user_id", ignoreDuplicates: true });
+
+  if (error) {
+    req.log.error({ err: error }, "comment like failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const { count } = await sc
+    .from("comment_likes").select("id", { count: "exact", head: true }).eq("comment_id", commentId);
+
+  res.status(200).json({ ok: true, likedByMe: true, likeCount: count ?? 0 });
+});
+
+router.delete("/posts/:postId/comments/:commentId/like", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { commentId } = req.params;
+  if (!isValidUuid(commentId)) { sendError(res, "invalid_payload", "Invalid comment id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  await sc.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", user.id);
+
+  const { count } = await sc
+    .from("comment_likes").select("id", { count: "exact", head: true }).eq("comment_id", commentId);
+
+  res.status(200).json({ ok: true, likedByMe: false, likeCount: count ?? 0 });
 });
 
 export default router;

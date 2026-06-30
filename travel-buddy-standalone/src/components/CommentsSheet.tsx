@@ -4,6 +4,8 @@
  * - Loads comments when opened
  * - Sticky input at the bottom, keyboard-aware
  * - Optimistically appends new comment while waiting for server
+ * - Comment like / unlike
+ * - Handles comments_disabled error gracefully
  * - Safe-area aware; does not clash with bottom nav
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -21,7 +23,7 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, SendHorizonal, Trash2 } from 'lucide-react-native';
+import { X, SendHorizonal, Trash2, Heart } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
 import { MentionSuggestionList } from './MentionSuggestionList';
@@ -30,6 +32,8 @@ import {
   listComments,
   addComment,
   deleteComment,
+  likeComment,
+  unlikeComment,
   type EngagementComment,
 } from '../services/postEngagement';
 import { RichText } from './RichText';
@@ -79,13 +83,43 @@ function AvatarFallback({ name, size = 32 }: { name: string; size?: number }) {
 
 function CommentItem({
   comment,
+  postId,
   onDelete,
+  onLikeChange,
 }: {
   comment: EngagementComment;
+  postId: string;
   onDelete: (id: string) => void;
+  onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
 }) {
   const [imgErr, setImgErr] = useState(false);
+  const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
+
+  const handleLike = useCallback(async () => {
+    if (liking) return;
+    setLiking(true);
+    const wasLiked = comment.likedByMe ?? false;
+    const prevCount = comment.likeCount ?? 0;
+
+    onLikeChange(comment.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
+
+    try {
+      const result = wasLiked
+        ? await unlikeComment(postId, comment.id)
+        : await likeComment(postId, comment.id);
+      if (result) {
+        onLikeChange(comment.id, result.likedByMe, result.likeCount);
+      } else {
+        onLikeChange(comment.id, wasLiked, prevCount);
+      }
+    } finally {
+      setLiking(false);
+    }
+  }, [liking, comment, postId, onLikeChange]);
+
+  const likedByMe = comment.likedByMe ?? false;
+  const likeCount = comment.likeCount ?? 0;
 
   return (
     <View style={s.commentRow}>
@@ -103,22 +137,47 @@ function CommentItem({
           <Text style={s.commentAuthor}>{comment.author.name}</Text>
           <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
         </View>
-        <RichText content={comment.body} tags={comment.tags} hashtagUsages={comment.hashtagUsages} currentUserId={currentUserId ?? undefined} style={s.commentText} />
+        <RichText
+          content={comment.body}
+          tags={comment.tags}
+          hashtagUsages={comment.hashtagUsages}
+          currentUserId={currentUserId ?? undefined}
+          style={s.commentText}
+        />
       </View>
-      {comment.canDelete && (
+      <View style={s.commentActions}>
         <Pressable
           hitSlop={8}
-          onPress={() =>
-            Alert.alert('Delete comment?', 'This cannot be undone.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
-            ])
-          }
-          style={s.deleteBtn}
+          onPress={handleLike}
+          disabled={liking}
+          style={s.likeBtn}
         >
-          <Trash2 size={14} color={color.faint} />
+          <Heart
+            size={13}
+            color={likedByMe ? color.signal : color.faint}
+            fill={likedByMe ? color.signal : 'transparent'}
+          />
+          {likeCount > 0 && (
+            <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>
+              {likeCount}
+            </Text>
+          )}
         </Pressable>
-      )}
+        {comment.canDelete && (
+          <Pressable
+            hitSlop={8}
+            onPress={() =>
+              Alert.alert('Delete comment?', 'This cannot be undone.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
+              ])
+            }
+            style={s.deleteBtn}
+          >
+            <Trash2 size={13} color={color.faint} />
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }
@@ -127,6 +186,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const insets = useSafeAreaInsets();
   const [comments, setComments] = useState<EngagementComment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [commentsDisabled, setCommentsDisabled] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const mentionRef = useRef<MentionInputHandle>(null);
@@ -143,6 +203,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
 
   useEffect(() => {
     if (visible) {
+      setCommentsDisabled(false);
       load();
       setText('');
     }
@@ -157,10 +218,17 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     }
     setSubmitting(true);
     const result = await addComment(postId, trimmed);
-    if (result) {
+    if (result && 'comment' in result) {
       setText('');
       setComments((prev) => [...prev, result.comment]);
       onCountChange(result.commentCount);
+    } else if (result && 'error' in result) {
+      if (result.error === 'comments_disabled') {
+        setCommentsDisabled(true);
+        Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+      } else if (result.error === 'comments_limited') {
+        Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+      }
     } else {
       Alert.alert('Could not post comment', 'Please try again.');
     }
@@ -176,6 +244,15 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
       }
     },
     [postId, onCountChange],
+  );
+
+  const handleLikeChange = useCallback(
+    (id: string, likedByMe: boolean, likeCount: number) => {
+      setComments((prev) =>
+        prev.map((c) => c.id === id ? { ...c, likedByMe, likeCount } : c),
+      );
+    },
+    [],
   );
 
   return (
@@ -211,7 +288,12 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
               data={comments}
               keyExtractor={(c) => c.id}
               renderItem={({ item }) => (
-                <CommentItem comment={item} onDelete={handleDelete} />
+                <CommentItem
+                  comment={item}
+                  postId={postId}
+                  onDelete={handleDelete}
+                  onLikeChange={handleLikeChange}
+                />
               )}
               ListEmptyComponent={
                 <View style={s.center}>
@@ -225,47 +307,56 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             />
           )}
 
+          {/* Disabled banner */}
+          {commentsDisabled && (
+            <View style={s.disabledBanner}>
+              <Text style={s.disabledText}>Comments have been turned off.</Text>
+            </View>
+          )}
+
           {/* Mention suggestions — above input row */}
           <MentionSuggestionList
             suggestions={mentionSuggestions}
             loading={mentionLoading}
             visible={mentionVisible}
-            onSelect={(s) => mentionRef.current?.insertTag(s)}
+            onSelect={(sg) => mentionRef.current?.insertTag(sg)}
           />
 
           {/* Input row */}
-          <View style={s.inputRow}>
-            <MentionInput
-              ref={mentionRef}
-              style={s.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="Add a comment…"
-              placeholderTextColor={color.faint}
-              multiline
-              maxLength={1000}
-              returnKeyType="default"
-              blurOnSubmit={false}
-              surface="comment"
-              onSuggestionsChange={(items, isLoading, trigger) => {
-                setMentionSuggestions(items);
-                setMentionLoading(isLoading);
-                setMentionVisible(!!trigger && (items.length > 0 || isLoading));
-              }}
-            />
-            <Pressable
-              style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
-              onPress={handleSubmit}
-              disabled={!text.trim() || submitting}
-              hitSlop={8}
-            >
-              {submitting ? (
-                <ActivityIndicator size="small" color={color.onInk} />
-              ) : (
-                <SendHorizonal size={18} color={color.onInk} />
-              )}
-            </Pressable>
-          </View>
+          {!commentsDisabled && (
+            <View style={s.inputRow}>
+              <MentionInput
+                ref={mentionRef}
+                style={s.input}
+                value={text}
+                onChangeText={setText}
+                placeholder="Add a comment…"
+                placeholderTextColor={color.faint}
+                multiline
+                maxLength={1000}
+                returnKeyType="default"
+                blurOnSubmit={false}
+                surface="comment"
+                onSuggestionsChange={(items, isLoading, trigger) => {
+                  setMentionSuggestions(items);
+                  setMentionLoading(isLoading);
+                  setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+                }}
+              />
+              <Pressable
+                style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
+                onPress={handleSubmit}
+                disabled={!text.trim() || submitting}
+                hitSlop={8}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={color.onInk} />
+                ) : (
+                  <SendHorizonal size={18} color={color.onInk} />
+                )}
+              </Pressable>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -325,6 +416,17 @@ const s = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: space.xl,
   },
+  disabledBanner: {
+    backgroundColor: color.haze,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.lg,
+    alignItems: 'center',
+  },
+  disabledText: {
+    fontSize: 13,
+    color: color.mute,
+    fontStyle: 'italic',
+  },
   commentRow: {
     flexDirection: 'row',
     gap: space.sm,
@@ -359,9 +461,27 @@ const s = StyleSheet.create({
     color: color.ink,
     lineHeight: 20,
   },
-  deleteBtn: {
+  commentActions: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 6,
     paddingTop: 2,
-    paddingLeft: space.sm,
+  },
+  likeBtn: {
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 4,
+  },
+  likeCount: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: color.faint,
+  },
+  likeCountActive: {
+    color: color.signal,
+  },
+  deleteBtn: {
+    paddingLeft: space.xs,
   },
   inputRow: {
     flexDirection: 'row',

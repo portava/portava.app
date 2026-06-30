@@ -1,5 +1,5 @@
 /**
- * Post engagement service — Like, Comment, Share
+ * Post engagement service — Like, Comment, Share, Reactions, Owner controls
  *
  * All mutations go through the API server (bearer token auth).
  * Mirrors the pattern from posts.ts: never call supabase directly.
@@ -22,6 +22,8 @@ export interface EngagementComment {
   createdAt: string;
   updatedAt: string | null;
   canDelete: boolean;
+  likeCount?: number;
+  likedByMe?: boolean;
   /** Saved @mention annotations — whitelist for RichText. */
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText. */
@@ -36,6 +38,24 @@ export interface LikeResult {
 export interface CommentResult {
   comment: EngagementComment;
   commentCount: number;
+}
+
+export interface ReactionCount {
+  emoji: string;
+  count: number;
+}
+
+export interface ReactionsResult {
+  reactions: ReactionCount[];
+  myReaction: string | null;
+  total: number;
+}
+
+export interface PostSettings {
+  commentsSetting?: 'everyone' | 'friends' | 'circle' | 'trip_crew' | 'verified' | 'disabled';
+  likesHidden?: boolean;
+  sharingDisabled?: boolean;
+  repostingDisabled?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,7 +85,7 @@ async function apiCall<T>(
   method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
   path: string,
   body?: object,
-): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+): Promise<{ ok: true; data: T } | { ok: false; message: string; code?: string }> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, message: 'Backend not configured' };
   }
@@ -83,7 +103,7 @@ async function apiCall<T>(
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { ok: false, message: err?.message ?? `HTTP ${res.status}` };
+      return { ok: false, message: err?.message ?? `HTTP ${res.status}`, code: err?.error };
     }
     if (res.status === 204) return { ok: true, data: null as unknown as T };
     return { ok: true, data: (await res.json()) as T };
@@ -105,6 +125,26 @@ export async function unlikePost(postId: string): Promise<LikeResult | null> {
   return res.ok ? res.data : null;
 }
 
+// ── Reactions ─────────────────────────────────────────────────────────────────
+
+export async function getReactions(postId: string): Promise<ReactionsResult | null> {
+  const res = await apiCall<ReactionsResult>('GET', `/api/posts/${postId}/reactions`);
+  return res.ok ? res.data : null;
+}
+
+export async function reactToPost(
+  postId: string,
+  emoji: string,
+): Promise<ReactionsResult | null> {
+  const res = await apiCall<ReactionsResult>('POST', `/api/posts/${postId}/reactions`, { emoji });
+  return res.ok ? res.data : null;
+}
+
+export async function removeReaction(postId: string): Promise<ReactionsResult | null> {
+  const res = await apiCall<ReactionsResult>('DELETE', `/api/posts/${postId}/reactions`);
+  return res.ok ? res.data : null;
+}
+
 // ── Comments ──────────────────────────────────────────────────────────────────
 
 export async function listComments(postId: string): Promise<EngagementComment[]> {
@@ -118,13 +158,16 @@ export async function listComments(postId: string): Promise<EngagementComment[]>
 export async function addComment(
   postId: string,
   body: string,
-): Promise<CommentResult | null> {
+): Promise<CommentResult | null | { error: 'comments_disabled' | 'comments_limited' }> {
   const trimmed = body.trim();
   if (!trimmed || trimmed.length > 1000) return null;
   const res = await apiCall<CommentResult>('POST', `/api/posts/${postId}/comments`, {
     body: trimmed,
   });
-  return res.ok ? res.data : null;
+  if (res.ok) return res.data;
+  if (!res.ok && (res as any).code === 'comments_disabled') return { error: 'comments_disabled' };
+  if (!res.ok && (res as any).code === 'comments_limited') return { error: 'comments_limited' };
+  return null;
 }
 
 export async function deleteComment(
@@ -136,4 +179,64 @@ export async function deleteComment(
     `/api/posts/${postId}/comments/${commentId}`,
   );
   return res.ok ? { commentCount: res.data.commentCount } : null;
+}
+
+// ── Comment Likes ─────────────────────────────────────────────────────────────
+
+export async function likeComment(
+  postId: string,
+  commentId: string,
+): Promise<{ likedByMe: boolean; likeCount: number } | null> {
+  const res = await apiCall<{ ok: boolean; likedByMe: boolean; likeCount: number }>(
+    'POST',
+    `/api/posts/${postId}/comments/${commentId}/like`,
+  );
+  return res.ok ? { likedByMe: res.data.likedByMe, likeCount: res.data.likeCount } : null;
+}
+
+export async function unlikeComment(
+  postId: string,
+  commentId: string,
+): Promise<{ likedByMe: boolean; likeCount: number } | null> {
+  const res = await apiCall<{ ok: boolean; likedByMe: boolean; likeCount: number }>(
+    'DELETE',
+    `/api/posts/${postId}/comments/${commentId}/like`,
+  );
+  return res.ok ? { likedByMe: res.data.likedByMe, likeCount: res.data.likeCount } : null;
+}
+
+// ── Post Settings (owner controls) ───────────────────────────────────────────
+
+export async function updatePostSettings(
+  postId: string,
+  settings: PostSettings,
+): Promise<boolean> {
+  const res = await apiCall<{ ok: boolean }>('PATCH', `/api/posts/${postId}/settings`, settings);
+  return res.ok;
+}
+
+// ── Archive ───────────────────────────────────────────────────────────────────
+
+export async function archivePost(postId: string): Promise<boolean> {
+  const res = await apiCall<{ ok: boolean }>('POST', `/api/posts/${postId}/archive`);
+  return res.ok;
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+
+export async function deletePost(postId: string): Promise<boolean> {
+  const res = await apiCall<null>('DELETE', `/api/posts/${postId}`);
+  return res.ok;
+}
+
+// ── Share ─────────────────────────────────────────────────────────────────────
+
+export type ShareTarget = 'dm' | 'group_chat' | 'trip_crew' | 'circle' | 'external' | 'copy_link';
+
+export async function recordShare(
+  postId: string,
+  target: ShareTarget,
+): Promise<boolean> {
+  const res = await apiCall<{ ok: boolean }>('POST', `/api/posts/${postId}/share`, { target });
+  return res.ok;
 }

@@ -12,6 +12,14 @@ import { ActionBar } from './ActionBar';
 import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
 import { ReportPostSheet } from './ReportPostSheet';
+import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu';
+
+const DEFAULT_SETTINGS: PostSettings = {
+  commentsSetting: 'everyone',
+  likesHidden: false,
+  sharingDisabled: false,
+  repostingDisabled: false,
+};
 
 /** Routes a post to the right card by kind. Hero falls back to standard if image too bright. */
 export function PostCard({ post }: { post: Post }) {
@@ -59,6 +67,8 @@ function Byline({ post, onInk }: { post: Post; onInk?: boolean }) {
 function HeroCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
 
   return (
@@ -68,11 +78,13 @@ function HeroCard({ post }: { post: Post }) {
       <View style={styles.heroTop}>
         <Stamp label={post.category} tone="onInk" />
       </View>
-      {!isOwnPost && (
-        <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.heroMoreBtn}>
-          <MoreVertical size={20} color={color.onInk} />
-        </Pressable>
-      )}
+      <Pressable
+        hitSlop={8}
+        onPress={() => isOwnPost ? setOwnerMenuOpen(true) : setReportOpen(true)}
+        style={styles.heroMoreBtn}
+      >
+        <MoreVertical size={20} color={color.onInk} />
+      </Pressable>
       <View style={styles.heroBottom}>
         <Locator post={post} onInk />
         <Text style={styles.heroTitle} numberOfLines={2}>{post.title}</Text>
@@ -91,6 +103,17 @@ function HeroCard({ post }: { post: Post }) {
       {!isOwnPost && (
         <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
       )}
+      {isOwnPost && (
+        <PostOwnerMenu
+          visible={ownerMenuOpen}
+          postId={post.id}
+          settings={settings}
+          onClose={() => setOwnerMenuOpen(false)}
+          onSettingsChange={setSettings}
+          onArchived={() => setOwnerMenuOpen(false)}
+          onDeleted={() => router.back()}
+        />
+      )}
     </Pressable>
   );
 }
@@ -99,6 +122,8 @@ function HeroCard({ post }: { post: Post }) {
 function StandardCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const hasMedia = post.media.length > 0;
   const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
   const hasFilterId = post.filterId && post.filterId !== 'original';
@@ -114,11 +139,13 @@ function StandardCard({ post }: { post: Post }) {
         <Byline post={post} />
         <View style={{ flex: 1 }} />
         <Locator post={post} />
-        {!isOwnPost && (
-          <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.moreBtn}>
-            <MoreVertical size={16} color={color.mute} />
-          </Pressable>
-        )}
+        <Pressable
+          hitSlop={8}
+          onPress={() => isOwnPost ? setOwnerMenuOpen(true) : setReportOpen(true)}
+          style={styles.moreBtn}
+        >
+          <MoreVertical size={16} color={color.mute} />
+        </Pressable>
       </View>
       {hasMedia && (
         <View>
@@ -142,7 +169,16 @@ function StandardCard({ post }: { post: Post }) {
           {post.safetyNote && <Stamp label="safety" tone="signal" rotate={2} />}
           {post.rating != null && <Stamp label={'★'.repeat(post.rating)} tone="deep" rotate={2} />}
         </View>
-        {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} currentUserId={currentUserId ?? undefined} style={styles.caption} numberOfLines={5} />}
+        {post.caption && (
+          <RichText
+            content={post.caption}
+            tags={post.tags}
+            hashtagUsages={post.hashtagUsages}
+            currentUserId={currentUserId ?? undefined}
+            style={styles.caption}
+            numberOfLines={5}
+          />
+        )}
         <ActionBar
           liked={post.liked} saved={post.saved}
           likeCount={post.likeCount} commentCount={post.commentCount} saveCount={post.saveCount}
@@ -150,6 +186,17 @@ function StandardCard({ post }: { post: Post }) {
       </View>
       {!isOwnPost && (
         <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+      )}
+      {isOwnPost && (
+        <PostOwnerMenu
+          visible={ownerMenuOpen}
+          postId={post.id}
+          settings={settings}
+          onClose={() => setOwnerMenuOpen(false)}
+          onSettingsChange={setSettings}
+          onArchived={() => setOwnerMenuOpen(false)}
+          onDeleted={() => router.back()}
+        />
       )}
     </View>
   );
@@ -159,6 +206,8 @@ function StandardCard({ post }: { post: Post }) {
 function QuestionCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
 
   return (
@@ -167,18 +216,29 @@ function QuestionCard({ post }: { post: Post }) {
         <Byline post={post} />
         <View style={{ flex: 1 }} />
         <Locator post={post} />
-        {!isOwnPost && (
-          <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.moreBtn}>
-            <MoreVertical size={16} color={color.mute} />
-          </Pressable>
-        )}
+        <Pressable
+          hitSlop={8}
+          onPress={() => isOwnPost ? setOwnerMenuOpen(true) : setReportOpen(true)}
+          style={styles.moreBtn}
+        >
+          <MoreVertical size={16} color={color.mute} />
+        </Pressable>
       </View>
       <View style={styles.qIconRow}>
         <MessageCircleQuestion size={18} color={color.deep} />
         <Text style={styles.qLabel}>Question</Text>
       </View>
       <Text style={styles.qTitle}>{post.title}</Text>
-      {post.caption && <RichText content={post.caption} tags={post.tags} hashtagUsages={post.hashtagUsages} currentUserId={currentUserId ?? undefined} style={styles.qBody} numberOfLines={4} />}
+      {post.caption && (
+        <RichText
+          content={post.caption}
+          tags={post.tags}
+          hashtagUsages={post.hashtagUsages}
+          currentUserId={currentUserId ?? undefined}
+          style={styles.qBody}
+          numberOfLines={4}
+        />
+      )}
       <View style={styles.qFooter}>
         <Text style={styles.qMeta}>{post.commentCount} answers</Text>
         <View style={{ flex: 1 }} />
@@ -193,6 +253,17 @@ function QuestionCard({ post }: { post: Post }) {
       {!isOwnPost && (
         <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
       )}
+      {isOwnPost && (
+        <PostOwnerMenu
+          visible={ownerMenuOpen}
+          postId={post.id}
+          settings={settings}
+          onClose={() => setOwnerMenuOpen(false)}
+          onSettingsChange={setSettings}
+          onArchived={() => setOwnerMenuOpen(false)}
+          onDeleted={() => router.back()}
+        />
+      )}
     </View>
   );
 }
@@ -201,6 +272,8 @@ function QuestionCard({ post }: { post: Post }) {
 function ItineraryCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
 
   return (
@@ -212,11 +285,13 @@ function ItineraryCard({ post }: { post: Post }) {
             <Stamp label="itinerary" tone="deep" />
             <Stamp label={`${post.dayCount} days`} rotate={2} />
           </View>
-          {!isOwnPost && (
-            <Pressable hitSlop={8} onPress={() => setReportOpen(true)} style={styles.moreBtn}>
-              <MoreVertical size={16} color={color.mute} />
-            </Pressable>
-          )}
+          <Pressable
+            hitSlop={8}
+            onPress={() => isOwnPost ? setOwnerMenuOpen(true) : setReportOpen(true)}
+            style={styles.moreBtn}
+          >
+            <MoreVertical size={16} color={color.mute} />
+          </Pressable>
         </View>
         <Text style={styles.itinTitle}>{post.title}</Text>
         <View style={styles.itinMetaRow}>
@@ -231,6 +306,17 @@ function ItineraryCard({ post }: { post: Post }) {
       </View>
       {!isOwnPost && (
         <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+      )}
+      {isOwnPost && (
+        <PostOwnerMenu
+          visible={ownerMenuOpen}
+          postId={post.id}
+          settings={settings}
+          onClose={() => setOwnerMenuOpen(false)}
+          onSettingsChange={setSettings}
+          onArchived={() => setOwnerMenuOpen(false)}
+          onDeleted={() => router.back()}
+        />
       )}
     </Pressable>
   );
