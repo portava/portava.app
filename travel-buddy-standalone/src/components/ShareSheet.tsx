@@ -2,11 +2,11 @@
  * ShareSheet — share options for a post.
  *
  * Options:
- *   Share Post  → native OS share sheet (includes copy, messaging, etc.)
- *   Copy Link   → native OS share with URL pre-filled
+ *   Share Post  → native OS share sheet → records target='external'
+ *   Copy Link   → copies/shares URL only → records target='copy_link'
  *
  * Uses React Native's built-in Share API — no extra packages needed.
- * Telegraph / Trip Chat share are planned TODOs.
+ * DM / Group Chat / Trip Crew / Circle share targets are planned TODOs.
  */
 import React, { useCallback } from 'react';
 import {
@@ -22,11 +22,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Link, X } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
 
+export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
+
 interface Props {
   visible: boolean;
   postId: string;
   onClose: () => void;
-  onShareSuccess?: () => void;
+  onShareSuccess?: (target: ShareTarget) => void;
 }
 
 function postPermalink(postId: string): string {
@@ -44,7 +46,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
         ...(Platform.OS === 'ios' ? { url: postPermalink(postId) } : {}),
       });
       if (result.action === Share.sharedAction) {
-        onShareSuccess?.();
+        onShareSuccess?.('external');
       }
     } catch (_) {
       // User cancelled or share unavailable — silent
@@ -58,7 +60,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
         message: postPermalink(postId),
         ...(Platform.OS === 'ios' ? { url: postPermalink(postId) } : {}),
       });
-      onShareSuccess?.();
+      onShareSuccess?.('copy_link');
     } catch (_) {
       // Silent
     }

@@ -112,6 +112,7 @@ function HeroCard({ post }: { post: Post }) {
           onSettingsChange={setSettings}
           onArchived={() => setOwnerMenuOpen(false)}
           onDeleted={() => router.back()}
+          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
         />
       )}
     </Pressable>
@@ -196,6 +197,7 @@ function StandardCard({ post }: { post: Post }) {
           onSettingsChange={setSettings}
           onArchived={() => setOwnerMenuOpen(false)}
           onDeleted={() => router.back()}
+          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
         />
       )}
     </View>
@@ -262,6 +264,7 @@ function QuestionCard({ post }: { post: Post }) {
           onSettingsChange={setSettings}
           onArchived={() => setOwnerMenuOpen(false)}
           onDeleted={() => router.back()}
+          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
         />
       )}
     </View>
@@ -316,6 +319,7 @@ function ItineraryCard({ post }: { post: Post }) {
           onSettingsChange={setSettings}
           onArchived={() => setOwnerMenuOpen(false)}
           onDeleted={() => router.back()}
+          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
         />
       )}
     </Pressable>

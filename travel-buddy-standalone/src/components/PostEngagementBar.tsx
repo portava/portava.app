@@ -18,7 +18,7 @@ import {
   type ReactionCount,
 } from '../services/postEngagement';
 import { CommentsSheet } from './CommentsSheet';
-import { ShareSheet } from './ShareSheet';
+import { ShareSheet, type ShareTarget } from './ShareSheet';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker';
 
 interface Props {
@@ -262,7 +262,7 @@ export function PostEngagementBar({
         visible={shareOpen}
         postId={postId}
         onClose={() => setShareOpen(false)}
-        onShareSuccess={() => recordShare(postId, 'external')}
+        onShareSuccess={(target: ShareTarget) => recordShare(postId, target)}
       />
       <ReactionPicker
         visible={pickerOpen}

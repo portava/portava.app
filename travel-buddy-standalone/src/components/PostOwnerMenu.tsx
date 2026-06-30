@@ -1,8 +1,15 @@
 /**
  * PostOwnerMenu — bottom sheet of owner-only actions for a post.
  *
- * Actions: Edit (TODO — opens edit sheet), Disable/Enable Comments,
- * Hide/Show Like Count, Disable/Enable Sharing, Archive, Delete.
+ * Actions:
+ *   - Edit Post
+ *   - Edit History
+ *   - Comment Audience (everyone / friends / circle / trip crew / verified / disabled)
+ *   - Hide/Show Like Count
+ *   - Disable/Enable Sharing
+ *   - Disable/Enable Reposting
+ *   - Archive
+ *   - Delete
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -13,11 +20,13 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  ActionSheetIOS,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  X, MessageCircleOff, MessageCircle, EyeOff, Eye,
-  Share2, ShareIcon, Archive, Trash2,
+  X, Pencil, Clock, Users, EyeOff, Eye,
+  Share2, Repeat2, Archive, Trash2, ChevronRight,
 } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../theme/tokens';
 import { updatePostSettings, archivePost, deletePost } from '../services/postEngagement';
@@ -37,6 +46,52 @@ interface Props {
   onSettingsChange: (s: PostSettings) => void;
   onArchived: () => void;
   onDeleted: () => void;
+  onEdit?: () => void;
+}
+
+const AUDIENCE_OPTIONS: PostSettings['commentsSetting'][] = [
+  'everyone', 'friends', 'circle', 'trip_crew', 'verified', 'disabled',
+];
+
+const AUDIENCE_LABELS: Record<PostSettings['commentsSetting'], string> = {
+  everyone: 'Everyone',
+  friends: 'Friends only',
+  circle: 'Circle members',
+  trip_crew: 'Trip crew',
+  verified: 'Verified accounts',
+  disabled: 'No one (disabled)',
+};
+
+function showAudiencePicker(
+  current: PostSettings['commentsSetting'],
+  onSelect: (v: PostSettings['commentsSetting']) => void,
+) {
+  const options = AUDIENCE_OPTIONS.map((k) => AUDIENCE_LABELS[k]);
+  const cancelIndex = options.length;
+
+  if (Platform.OS === 'ios') {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: 'Who can comment?',
+        options: [...options, 'Cancel'],
+        cancelButtonIndex: cancelIndex,
+        destructiveButtonIndex: AUDIENCE_OPTIONS.indexOf('disabled'),
+      },
+      (idx) => {
+        if (idx < AUDIENCE_OPTIONS.length) onSelect(AUDIENCE_OPTIONS[idx]);
+      },
+    );
+  } else {
+    const buttons: Array<{ text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }> = [
+      ...AUDIENCE_OPTIONS.map((k) => ({
+        text: AUDIENCE_LABELS[k],
+        onPress: () => onSelect(k),
+        style: k === 'disabled' ? ('destructive' as const) : undefined,
+      })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ];
+    Alert.alert('Who can comment?', undefined, buttons);
+  }
 }
 
 export function PostOwnerMenu({
@@ -47,6 +102,7 @@ export function PostOwnerMenu({
   onSettingsChange,
   onArchived,
   onDeleted,
+  onEdit,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
@@ -66,6 +122,31 @@ export function PostOwnerMenu({
     },
     [busy, postId, settings, onSettingsChange],
   );
+
+  const handleAudiencePicker = useCallback(() => {
+    onClose();
+    setTimeout(() => {
+      showAudiencePicker(settings.commentsSetting, async (value) => {
+        setBusy(true);
+        const next = { ...settings, commentsSetting: value };
+        const ok = await updatePostSettings(postId, { commentsSetting: value });
+        if (ok) {
+          onSettingsChange(next);
+        } else {
+          Alert.alert('Error', 'Could not update comment audience. Please try again.');
+        }
+        setBusy(false);
+      });
+    }, 400);
+  }, [postId, settings, onClose, onSettingsChange]);
+
+  const handleEditHistory = useCallback(() => {
+    Alert.alert(
+      'Edit History',
+      'Post edit history will be available in a future update.',
+      [{ text: 'OK' }],
+    );
+  }, []);
 
   const handleArchive = useCallback(async () => {
     Alert.alert(
@@ -112,8 +193,6 @@ export function PostOwnerMenu({
     );
   }, [postId, onClose, onDeleted]);
 
-  const commentsDisabled = settings.commentsSetting === 'disabled';
-
   return (
     <Modal
       visible={visible}
@@ -137,16 +216,28 @@ export function PostOwnerMenu({
           </View>
         )}
 
+        {onEdit && (
+          <MenuRow
+            icon={<Pencil size={20} color={color.ink} />}
+            label="Edit Post"
+            onPress={() => { onClose(); onEdit(); }}
+          />
+        )}
+
         <MenuRow
-          icon={
-            commentsDisabled
-              ? <MessageCircle size={20} color={color.ink} />
-              : <MessageCircleOff size={20} color={color.ink} />
-          }
-          label={commentsDisabled ? 'Enable Comments' : 'Disable Comments'}
-          onPress={() =>
-            toggle({ commentsSetting: commentsDisabled ? 'everyone' : 'disabled' })
-          }
+          icon={<Clock size={20} color={color.ink} />}
+          label="Edit History"
+          onPress={handleEditHistory}
+        />
+
+        <View style={s.divider} />
+
+        <MenuRow
+          icon={<Users size={20} color={color.ink} />}
+          label="Who can comment"
+          value={AUDIENCE_LABELS[settings.commentsSetting]}
+          onPress={handleAudiencePicker}
+          showChevron
         />
 
         <MenuRow
@@ -160,13 +251,15 @@ export function PostOwnerMenu({
         />
 
         <MenuRow
-          icon={
-            settings.sharingDisabled
-              ? <Share2 size={20} color={color.ink} />
-              : <ShareIcon size={20} color={color.ink} />
-          }
+          icon={<Share2 size={20} color={color.ink} />}
           label={settings.sharingDisabled ? 'Allow Sharing' : 'Disable Sharing'}
           onPress={() => toggle({ sharingDisabled: !settings.sharingDisabled })}
+        />
+
+        <MenuRow
+          icon={<Repeat2 size={20} color={color.ink} />}
+          label={settings.repostingDisabled ? 'Allow Reposts' : 'Disable Reposts'}
+          onPress={() => toggle({ repostingDisabled: !settings.repostingDisabled })}
         />
 
         <View style={s.divider} />
@@ -193,11 +286,15 @@ function MenuRow({
   icon,
   label,
   labelColor,
+  value,
+  showChevron,
   onPress,
 }: {
   icon: React.ReactNode;
   label: string;
   labelColor?: string;
+  value?: string;
+  showChevron?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -206,6 +303,10 @@ function MenuRow({
       <Text style={[s.rowLabel, labelColor ? { color: labelColor } : null]}>
         {label}
       </Text>
+      {value != null && (
+        <Text style={s.rowValue} numberOfLines={1}>{value}</Text>
+      )}
+      {showChevron && <ChevronRight size={16} color={color.faint} />}
     </Pressable>
   );
 }
@@ -273,5 +374,11 @@ const s = StyleSheet.create({
     fontWeight: '500',
     color: color.ink,
     flex: 1,
+  },
+  rowValue: {
+    fontSize: 13,
+    color: color.faint,
+    maxWidth: 120,
+    textAlign: 'right',
   },
 });
