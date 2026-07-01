@@ -113,6 +113,8 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const [legendOpen, setLegendOpen] = useState(false);
   const [resetToast, setResetToast] = useState(false);
   const resetToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether onLongPress just fired so onPress can be suppressed for that gesture.
+  const didLongPress = useRef(false);
 
   // Restore the last-used filter from AsyncStorage on mount.
   // Unrecognised or missing values fall back to 'all' silently.
@@ -245,8 +247,12 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             <Pressable
               key={opt.key}
               style={[s.filterBtn, active && s.filterBtnActive]}
-              onPress={() => setFilter(opt.key)}
-              onLongPress={active ? handleFilterReset : undefined}
+              onPress={() => {
+                // Suppress the onPress that React Native fires after onLongPress.
+                if (didLongPress.current) { didLongPress.current = false; return; }
+                setFilter(opt.key);
+              }}
+              onLongPress={active ? () => { didLongPress.current = true; handleFilterReset(); } : undefined}
               hitSlop={4}
             >
               <Text style={[s.filterBtnText, active && s.filterBtnTextActive]}>
