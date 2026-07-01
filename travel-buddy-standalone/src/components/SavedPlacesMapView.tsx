@@ -30,16 +30,17 @@ import {
   shouldShowNoPinsOverlay,
   computeBounds,
 } from './savedPlacesMapHelpers';
+import {
+  categoryStorageKey,
+  loadCategoryFilter,
+  saveCategoryFilter,
+} from './savedPlacesMapFilterStorage';
 
 // ── Map style ─────────────────────────────────────────────────────────────────
 
 const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
-
-// ── Category persistence ───────────────────────────────────────────────────────
-
-const CATEGORY_STORAGE_PREFIX = 'saved_places_map_cat_v1_';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -288,18 +289,15 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
   const counts     = useMemo(() => categoryCounts(mappable), [mappable]);
 
-  const storageKey = `${CATEGORY_STORAGE_PREFIX}${listId}`;
+  const storageKey = categoryStorageKey(listId);
 
   // Restore persisted category on mount (or when listId changes).
   useEffect(() => {
     let cancelled = false;
-    AsyncStorage.getItem(storageKey)
-      .then((stored) => {
-        if (cancelled) return;
-        const resolved = resolveStoredCategory(stored, categories);
-        if (resolved !== null) setActiveCategory(resolved);
-      })
-      .catch(() => {});
+    loadCategoryFilter(AsyncStorage, storageKey, categories).then((resolved) => {
+      if (cancelled) return;
+      if (resolved !== null) setActiveCategory(resolved);
+    });
     return () => {
       cancelled = true;
     };
@@ -341,11 +339,7 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   const handleCategoryChange = useCallback((cat: string | null) => {
     setActiveCategory(cat);
     setSelectedId(null);
-    if (cat !== null) {
-      AsyncStorage.setItem(storageKey, cat).catch(() => {});
-    } else {
-      AsyncStorage.removeItem(storageKey).catch(() => {});
-    }
+    saveCategoryFilter(AsyncStorage, storageKey, cat);
   }, [storageKey]);
 
   if (mappable.length === 0) {
