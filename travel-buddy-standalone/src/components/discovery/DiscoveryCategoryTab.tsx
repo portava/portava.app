@@ -218,6 +218,8 @@ interface DiscoveryCategoryTabProps {
   filters: DiscoveryFilters;
   /** Kept for back-compat; no longer called by this component. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
+  /** Padding applied to the list top so first items clear the floating chrome overlay. 0 for map mode. */
+  listTopInset?: number;
 }
 
 export function DiscoveryCategoryTab({
@@ -238,6 +240,7 @@ export function DiscoveryCategoryTab({
   userLng,
   fallbackZoom,
   filters,
+  listTopInset = 0,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -341,7 +344,7 @@ export function DiscoveryCategoryTab({
               onAddToRoute={onAddToRoute}
             />
           )}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={listTopInset > 0 ? [styles.list, { paddingTop: listTopInset }] : styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl

@@ -123,6 +123,7 @@ export default function DiscoveryHub() {
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [tabRowHeight, setTabRowHeight] = useState(46);
 
   // Deep-link from Pulse place cards: ?placeId=... opens PlaceDetailSheet
   useEffect(() => {
@@ -311,6 +312,9 @@ export default function DiscoveryHub() {
     setManualCity(place.city ?? place.name).catch(() => {});
   }, [setManualCity]);
 
+  // ── Map vs list mode ─────────────────────────────────────────────────────
+  const isMapMode = viewMode === 'map' || activeTab === 'for_you';
+
   // ── Filter badge count (all 5 dimensions) ─────────────────────────────────
   const totalActiveFilters = [
     contextMode !== 'in_city',
@@ -340,165 +344,10 @@ export default function DiscoveryHub() {
         )}
       </View>
 
-      {/* ── Tab bar: [Filters btn] | [tabs] | [List/Map] — all one row ── */}
-      <View style={styles.tabRow}>
-        <Pressable
-          style={[styles.filtersTabBtn, hasNonDefaultFilters && styles.filtersTabBtnActive]}
-          onPress={() => setFiltersExpanded((v) => !v)}
-          hitSlop={8}
-        >
-          <SlidersHorizontal size={14} color={hasNonDefaultFilters ? '#fff' : color.mute} />
-          {totalActiveFilters > 0 && (
-            <View style={styles.filtersTabBtnBadge}>
-              <Text style={styles.filtersTabBtnBadgeText}>{totalActiveFilters}</Text>
-            </View>
-          )}
-        </Pressable>
+      {/* ── Content area: map fills edge-to-edge, chrome floats on top ── */}
+      <View style={styles.contentArea}>
 
-        <View style={styles.tabDivider} />
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabBar}
-          contentContainerStyle={styles.tabBarContent}
-        >
-          {TABS.map((tab) => {
-            const active = tab.key === activeTab;
-            const count = categoryCounts[tab.key];
-            const isEmpty = !countsLoading && count !== undefined && count === 0;
-            const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
-            const countSuffix = !countsLoading && count !== undefined && count > 0 ? ` · ${count}` : '';
-            return (
-              <Pressable
-                key={tab.key}
-                style={[styles.tab, active && styles.tabActive, !active && isEmpty && styles.tabDim]}
-                onPress={() => handleTabChange(tab.key)}
-              >
-                <tab.Icon size={16} color={iconColor} />
-                <Text style={[styles.tabLabel, active && styles.tabLabelActive, !active && isEmpty && styles.tabLabelDim]}>
-                  {tab.label}{countSuffix}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {showMapToggle && (
-          <View style={styles.viewToggle}>
-            <Pressable
-              style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('list')}
-            >
-              <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>List</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('map')}
-            >
-              <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
-              <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>Map</Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
-
-      {/* ── Expanded filter panel (all filters in one place) ── */}
-      {filtersExpanded && (
-        <View style={styles.filtersPanel}>
-          {/* Context mode */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeBar} contentContainerStyle={styles.modeBarContent}>
-            {CONTEXT_MODES.map((m) => {
-              const active = m.key === contextMode;
-              return (
-                <Pressable key={m.key} style={[styles.modeChip, active && styles.modeChipActive]} onPress={() => setContextMode(m.key)}>
-                  <m.Icon size={12} color={active ? color.signal : color.mute} />
-                  <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>{m.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* Age filter */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ageFilterBar} contentContainerStyle={styles.ageFilterBarContent}>
-            {([
-              { key: 'any',        label: 'Any age' },
-              { key: 'open_to_me', label: 'Open to me' },
-              { key: '18_plus',    label: '18+' },
-              { key: '21_plus',    label: '21+' },
-              { key: 'under_30',   label: 'Under 30' },
-              { key: '30_plus',    label: '30+' },
-              { key: 'custom',     label: 'Custom' },
-            ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
-              const active = ageFilter === opt.key;
-              return (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.ageChip, active && styles.ageChipActive]}
-                  onPress={() => {
-                    setAgeFilter(opt.key);
-                    if (opt.key !== 'custom') { setCustomAgeRange({ min: null, max: null }); setDebouncedAgeRange({ min: null, max: null }); }
-                  }}
-                >
-                  {opt.key === 'open_to_me' && <Users size={10} color={active ? color.signal : color.mute} />}
-                  <Text style={[styles.ageChipLabel, active && styles.ageChipLabelActive]}>{opt.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* Custom age inputs */}
-          {ageFilter === 'custom' && (
-            <View style={styles.customRangeRow}>
-              <Text style={styles.customRangeLabel}>Min age</Text>
-              <TextInput style={styles.customRangeInput} value={customAgeRange.min != null ? String(customAgeRange.min) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, min: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 18" placeholderTextColor={color.mute} maxLength={3} />
-              <Text style={styles.customRangeLabel}>Max age</Text>
-              <TextInput style={styles.customRangeInput} value={customAgeRange.max != null ? String(customAgeRange.max) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, max: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 35" placeholderTextColor={color.mute} maxLength={3} />
-            </View>
-          )}
-
-          {/* Radius / Open now / Rating */}
-          <FilterStrip filters={activeFilters} onChange={setActiveFilters} />
-        </View>
-      )}
-
-      {/* ── Following highlights strip ── */}
-      {isAuthed && (
-        <FollowingHighlightsStrip
-          users={highlightUsers}
-          sessionViewedIds={sessionViewedIds}
-          onMarkViewed={markSessionViewed}
-        />
-      )}
-
-      {/* ── Trending hashtags strip ── */}
-      {trendingHashtags.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.trendingBar}
-          contentContainerStyle={styles.trendingBarContent}
-        >
-          {trendingHashtags.map((ht) => (
-            <Pressable
-              key={ht.id}
-              style={styles.trendingChip}
-              onPress={() => router.push(`/hashtag/${ht.slug}` as any)}
-            >
-              <Hash size={10} color={color.deep} />
-              <Text style={styles.trendingChipText}>{ht.slug}</Text>
-              {ht.usageCount > 0 && (
-                <Text style={styles.trendingChipCount}>
-                  {ht.usageCount >= 1000 ? `${(ht.usageCount / 1000).toFixed(1)}k` : String(ht.usageCount)}
-                </Text>
-              )}
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
-      {/* ── Active tab content ── */}
-      <View style={{ flex: 1 }}>
+        {/* Tab content fills the full content area */}
         {activeTab === 'for_you' ? (
           <ForYouTab
             key={`${destination}-${contextMode}-${communityRefreshKey}`}
@@ -533,8 +382,158 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             filters={activeFilters}
             fallbackZoom={destinationZoom}
+            listTopInset={isMapMode ? 0 : tabRowHeight}
           />
         )}
+
+        {/* Floating chrome: tab bar + filter panel + highlights/trending overlay */}
+        <View style={styles.floatingChrome} pointerEvents="box-none">
+
+          {/* Tab bar row — semi-transparent over map, solid over list */}
+          <View
+            style={[styles.tabRow, isMapMode && !filtersExpanded ? styles.tabRowSemi : styles.tabRowSolid]}
+            onLayout={(e) => setTabRowHeight(e.nativeEvent.layout.height)}
+            pointerEvents="auto"
+          >
+            <Pressable
+              style={[styles.filtersTabBtn, hasNonDefaultFilters && styles.filtersTabBtnActive]}
+              onPress={() => setFiltersExpanded((v) => !v)}
+              hitSlop={8}
+            >
+              <SlidersHorizontal size={14} color={hasNonDefaultFilters ? '#fff' : color.mute} />
+              {totalActiveFilters > 0 && (
+                <View style={styles.filtersTabBtnBadge}>
+                  <Text style={styles.filtersTabBtnBadgeText}>{totalActiveFilters}</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <View style={styles.tabDivider} />
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.tabBar}
+              contentContainerStyle={styles.tabBarContent}
+            >
+              {TABS.map((tab) => {
+                const active = tab.key === activeTab;
+                const count = categoryCounts[tab.key];
+                const isEmpty = !countsLoading && count !== undefined && count === 0;
+                const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
+                const countSuffix = !countsLoading && count !== undefined && count > 0 ? ` · ${count}` : '';
+                return (
+                  <Pressable
+                    key={tab.key}
+                    style={[styles.tab, active && styles.tabActive, !active && isEmpty && styles.tabDim]}
+                    onPress={() => handleTabChange(tab.key)}
+                  >
+                    <tab.Icon size={16} color={iconColor} />
+                    <Text style={[styles.tabLabel, active && styles.tabLabelActive, !active && isEmpty && styles.tabLabelDim]}>
+                      {tab.label}{countSuffix}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {showMapToggle && (
+              <View style={styles.viewToggle}>
+                <Pressable style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]} onPress={() => setViewMode('list')}>
+                  <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>List</Text>
+                </Pressable>
+                <Pressable style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]} onPress={() => setViewMode('map')}>
+                  <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
+                  <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>Map</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+
+          {/* Expanded filter panel — always fully opaque */}
+          {filtersExpanded && (
+            <View style={styles.filtersPanel} pointerEvents="auto">
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeBar} contentContainerStyle={styles.modeBarContent}>
+                {CONTEXT_MODES.map((m) => {
+                  const active = m.key === contextMode;
+                  return (
+                    <Pressable key={m.key} style={[styles.modeChip, active && styles.modeChipActive]} onPress={() => setContextMode(m.key)}>
+                      <m.Icon size={12} color={active ? color.signal : color.mute} />
+                      <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>{m.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ageFilterBar} contentContainerStyle={styles.ageFilterBarContent}>
+                {([
+                  { key: 'any',        label: 'Any age' },
+                  { key: 'open_to_me', label: 'Open to me' },
+                  { key: '18_plus',    label: '18+' },
+                  { key: '21_plus',    label: '21+' },
+                  { key: 'under_30',   label: 'Under 30' },
+                  { key: '30_plus',    label: '30+' },
+                  { key: 'custom',     label: 'Custom' },
+                ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
+                  const active = ageFilter === opt.key;
+                  return (
+                    <Pressable
+                      key={opt.key}
+                      style={[styles.ageChip, active && styles.ageChipActive]}
+                      onPress={() => {
+                        setAgeFilter(opt.key);
+                        if (opt.key !== 'custom') { setCustomAgeRange({ min: null, max: null }); setDebouncedAgeRange({ min: null, max: null }); }
+                      }}
+                    >
+                      {opt.key === 'open_to_me' && <Users size={10} color={active ? color.signal : color.mute} />}
+                      <Text style={[styles.ageChipLabel, active && styles.ageChipLabelActive]}>{opt.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {ageFilter === 'custom' && (
+                <View style={styles.customRangeRow}>
+                  <Text style={styles.customRangeLabel}>Min age</Text>
+                  <TextInput style={styles.customRangeInput} value={customAgeRange.min != null ? String(customAgeRange.min) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, min: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 18" placeholderTextColor={color.mute} maxLength={3} />
+                  <Text style={styles.customRangeLabel}>Max age</Text>
+                  <TextInput style={styles.customRangeInput} value={customAgeRange.max != null ? String(customAgeRange.max) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, max: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 35" placeholderTextColor={color.mute} maxLength={3} />
+                </View>
+              )}
+
+              <FilterStrip filters={activeFilters} onChange={setActiveFilters} />
+            </View>
+          )}
+
+          {/* Following highlights — float below filter panel */}
+          {isAuthed && (
+            <View pointerEvents="auto">
+              <FollowingHighlightsStrip
+                users={highlightUsers}
+                sessionViewedIds={sessionViewedIds}
+                onMarkViewed={markSessionViewed}
+              />
+            </View>
+          )}
+
+          {/* Trending hashtags */}
+          {trendingHashtags.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.trendingBar} contentContainerStyle={styles.trendingBarContent} pointerEvents="auto">
+              {trendingHashtags.map((ht) => (
+                <Pressable key={ht.id} style={styles.trendingChip} onPress={() => router.push(`/hashtag/${ht.slug}` as any)}>
+                  <Hash size={10} color={color.deep} />
+                  <Text style={styles.trendingChipText}>{ht.slug}</Text>
+                  {ht.usageCount > 0 && (
+                    <Text style={styles.trendingChipCount}>
+                      {ht.usageCount >= 1000 ? `${(ht.usageCount / 1000).toFixed(1)}k` : String(ht.usageCount)}
+                    </Text>
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+
+        </View>
       </View>
 
       {/* ── Place detail sheet ── */}
@@ -664,9 +663,33 @@ const styles = StyleSheet.create({
     borderBottomColor: color.haze,
     backgroundColor: color.paperRaised,
   },
+  contentArea: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  floatingChrome: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
   tabRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  tabRowSemi: {
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.10)',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  tabRowSolid: {
+    backgroundColor: color.paper,
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
   },
