@@ -45,11 +45,12 @@ const CAT_COLOR: Record<string, string> = {
   for_you:     '#4A90D9',
 };
 
-/** DB-sourced places (id starts with "db/") get a gold pin with a Star icon. */
+/** DB-sourced places (id starts with "db/") and community-submitted places
+ * (id starts with "comm/") get a gold pin with a Star icon. */
 const DB_PIN_COLOR = '#F59E0B';
 
 function isDbPlace(id: string): boolean {
-  return id.startsWith('db/');
+  return id.startsWith('db/') || id.startsWith('comm/');
 }
 
 // ── Viewport helper ───────────────────────────────────────────────────────────

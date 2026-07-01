@@ -203,7 +203,12 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       <>
         <DiscoveryMapView
           places={mapPlaces}
-          onSelectPlace={(p) => setDetail(p)}
+          onSelectPlace={(p) => {
+            // Strip "comm/" prefix so PlaceDetailSheet uses the bare UUID
+            // for save/bookmark calls — the prefix only exists for map rendering.
+            const id = p.id.startsWith('comm/') ? p.id.slice(5) : p.id;
+            setDetail(id === p.id ? p : { ...p, id });
+          }}
           fallbackLat={lat}
           fallbackLng={lng}
           userLat={userLat}

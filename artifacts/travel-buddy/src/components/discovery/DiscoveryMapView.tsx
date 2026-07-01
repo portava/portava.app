@@ -2,11 +2,14 @@
  * DiscoveryMapView — renders Discovery venue pins on a MapLibre Map.
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
+ *
+ * DB places (id prefixed "db/") are rendered with a distinct gold pin + Star
+ * icon so travelers can tell them apart from OSM-sourced venues at a glance.
  */
 import React, { useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
-import { MapPin, Navigation } from 'lucide-react-native';
+import { MapPin, Navigation, Star } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
@@ -42,6 +45,14 @@ const CAT_COLOR: Record<string, string> = {
   for_you:     '#4A90D9',
 };
 
+/** DB-sourced places (id starts with "db/") and community-submitted places
+ * (id starts with "comm/") get a gold pin with a Star icon. */
+const DB_PIN_COLOR = '#F59E0B';
+
+function isDbPlace(id: string): boolean {
+  return id.startsWith('db/') || id.startsWith('comm/');
+}
+
 // ── Viewport helper ───────────────────────────────────────────────────────────
 
 function computeViewport(places: DiscoveryPlace[]) {
@@ -74,6 +85,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
     ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
     : null;
   const vp = viewport ?? fallback;
+  const dbCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
   const cameraRef = useRef<any>(null);
   const hasUser = userLat != null && userLng != null;
   const recenterOnMe = () => {
@@ -110,18 +122,25 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             zoom: vp.zoom,
           }}
         />
-        {mappable.map((place) => (
-          <Marker
-            key={place.id}
-            lngLat={[place.lng!, place.lat!]}
-          >
-            <Pressable onPress={() => onSelectPlace(place)}>
-              <View style={[s.pin, { backgroundColor: CAT_COLOR[place.category] ?? color.signal }]}>
-                <MapPin size={10} color="#fff" />
-              </View>
-            </Pressable>
-          </Marker>
-        ))}
+        {mappable.map((place) => {
+          const db = isDbPlace(place.id);
+          const pinBg = db ? DB_PIN_COLOR : (CAT_COLOR[place.category] ?? color.signal);
+          return (
+            <Marker
+              key={place.id}
+              lngLat={[place.lng!, place.lat!]}
+            >
+              <Pressable onPress={() => onSelectPlace(place)}>
+                <View style={[s.pin, db && s.dbPin, { backgroundColor: pinBg }]}>
+                  {db
+                    ? <Star size={10} color="#fff" fill="#fff" />
+                    : <MapPin size={10} color="#fff" />
+                  }
+                </View>
+              </Pressable>
+            </Marker>
+          );
+        })}
               {hasUser && (
           <Marker key="me-marker" lngLat={[userLng as number, userLat as number]}>
             <View style={s.meDotOuter}>
@@ -130,11 +149,21 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           </Marker>
         )}
       </Map>
-      <View style={s.badge}>
-        <MapPin size={10} color="#fff" />
-        <Text style={s.badgeText}>
-          {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
-        </Text>
+      <View style={s.badgeRow}>
+        <View style={s.badge}>
+          <MapPin size={10} color="#fff" />
+          <Text style={s.badgeText}>
+            {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
+          </Text>
+        </View>
+        {dbCount > 0 && (
+          <View style={[s.badge, s.dbBadge]}>
+            <Star size={10} color="#fff" fill="#fff" />
+            <Text style={s.badgeText}>
+              {dbCount} traveler {dbCount === 1 ? 'pick' : 'picks'}
+            </Text>
+          </View>
+        )}
       </View>
       {hasUser && (
         <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
@@ -198,6 +227,16 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 3,
   },
+  dbPin: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2.5,
+    borderColor: '#fffbeb',
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 5,
+  },
   empty: {
     flex: 1,
     alignItems: 'center',
@@ -225,10 +264,15 @@ const s = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 260,
   },
-  badge: {
+  badgeRow: {
     position: 'absolute',
     bottom: 20,
     alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -236,6 +280,9 @@ const s = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 6,
+  },
+  dbBadge: {
+    backgroundColor: 'rgba(180,120,0,0.85)',
   },
   badgeText: {
     color: '#fff',

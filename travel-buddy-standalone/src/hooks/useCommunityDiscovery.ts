@@ -67,10 +67,16 @@ function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
   };
 }
 
-/** All community items converted to DiscoveryPlace[] for use with DiscoveryMapView. */
+/** All community items converted to DiscoveryPlace[] for use with DiscoveryMapView.
+ *
+ * IDs are prefixed with "comm/" so DiscoveryMapView can render them as gold star
+ * pins (the same treatment as merged-API DB places prefixed "db/").
+ * ForYouTab strips the prefix before passing a selected place to PlaceDetailSheet
+ * so that save/bookmark calls use the correct bare UUID.
+ */
 function toDiscoveryPlace(item: CommunityPlaceItem): DiscoveryPlace {
   return {
-    id:           item.id,
+    id:           `comm/${item.id}`,
     name:         item.name,
     category:     item.placeType === 'traveler_pick' ? 'for_you' : (item.category ?? 'for_you'),
     type:         item.tag ?? null,
