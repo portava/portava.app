@@ -21,10 +21,11 @@ jest.mock('../../services/discoveryBookmarks', () => ({
   toggleSave: jest.fn(),
 }));
 
-const { listSaved, clearAllSaved } =
+const { listSaved, clearAllSaved, toggleSave: toggleSaveMock } =
   jest.requireMock('../../services/discoveryBookmarks') as {
     listSaved: jest.Mock;
     clearAllSaved: jest.Mock;
+    toggleSave: jest.Mock;
   };
 
 function makePlace(id: string, overrides: Partial<BookmarkedPlace> = {}): BookmarkedPlace {
@@ -171,5 +172,134 @@ describe('useTripSavedPlaces — clearAll optimistic update timing', () => {
     // Reject storage — rollback sets places back to the original list
     await act(async () => { rejectStorage(new Error('disk error')); });
     expect(result.current.places).toHaveLength(2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// toggle — add success
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('useTripSavedPlaces — toggle add success', () => {
+  it('returns true when toggleSave resolves true', async () => {
+    const place = makePlace('p1');
+    const { result } = await renderAndLoad([]);
+    listSaved.mockResolvedValueOnce([place]);
+    toggleSaveMock.mockResolvedValue(true);
+
+    let returnVal!: boolean;
+    await act(async () => {
+      returnVal = await result.current.toggle(place);
+    });
+
+    expect(returnVal).toBe(true);
+  });
+
+  it('refreshes the list after a successful add', async () => {
+    const place = makePlace('p2');
+    const { result } = await renderAndLoad([]);
+    // Post-toggle load returns the newly added place
+    listSaved.mockResolvedValueOnce([place]);
+    toggleSaveMock.mockResolvedValue(true);
+
+    await act(async () => { await result.current.toggle(place); });
+
+    await waitFor(() => expect(result.current.places).toHaveLength(1));
+    expect(result.current.places[0].id).toBe('p2');
+  });
+
+  it('forwards the place and the hook-scoped tripId to toggleSave', async () => {
+    const place = makePlace('q1');
+    const { result } = await renderAndLoad([]);
+    listSaved.mockResolvedValueOnce([]);
+    toggleSaveMock.mockResolvedValue(true);
+
+    await act(async () => { await result.current.toggle(place); });
+
+    expect(toggleSaveMock).toHaveBeenCalledWith(place, 'trip-1');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// toggle — remove success
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('useTripSavedPlaces — toggle remove success', () => {
+  it('returns false when toggleSave resolves false', async () => {
+    const place = makePlace('r1');
+    const { result } = await renderAndLoad([place]);
+    listSaved.mockResolvedValueOnce([]);
+    toggleSaveMock.mockResolvedValue(false);
+
+    let returnVal!: boolean;
+    await act(async () => {
+      returnVal = await result.current.toggle(place);
+    });
+
+    expect(returnVal).toBe(false);
+  });
+
+  it('refreshes the list after a successful remove', async () => {
+    const place = makePlace('r2');
+    const { result } = await renderAndLoad([place]);
+    expect(result.current.places).toHaveLength(1);
+    // Post-toggle load returns empty (place removed from storage)
+    listSaved.mockResolvedValueOnce([]);
+    toggleSaveMock.mockResolvedValue(false);
+
+    await act(async () => { await result.current.toggle(place); });
+
+    await waitFor(() => expect(result.current.places).toHaveLength(0));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// toggle — storage error (silent-failure regression guard)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// If toggleSave throws, the error must reach the caller — silent swallowing
+// here would leave the UI in a stale state with no way to surface an error.
+
+describe('useTripSavedPlaces — toggle failure (storage error)', () => {
+  it('propagates the error so the caller can surface it', async () => {
+    const { result } = await renderAndLoad([makePlace('e1')]);
+    toggleSaveMock.mockRejectedValue(new Error('disk full'));
+
+    let caught: Error | undefined;
+    await act(async () => {
+      await result.current.toggle(makePlace('e1')).catch((e: Error) => { caught = e; });
+    });
+
+    expect(caught).toBeDefined();
+    expect(caught?.message).toBe('disk full');
+  });
+
+  it('does not trigger a list refresh when toggleSave throws', async () => {
+    // load() sits after `await toggleSave(...)` — a throw skips it entirely.
+    // Verifying this prevents a regression where a misplaced load() call could
+    // mask the error by triggering a silent state update.
+    const { result } = await renderAndLoad([makePlace('e2')]);
+    const callsBefore = listSaved.mock.calls.length;
+    toggleSaveMock.mockRejectedValue(new Error('fail'));
+
+    await act(async () => {
+      await result.current.toggle(makePlace('e2')).catch(() => {});
+    });
+
+    expect(listSaved.mock.calls.length).toBe(callsBefore);
+  });
+
+  it('leaves the existing places list intact when toggleSave throws', async () => {
+    const existing = [makePlace('s1'), makePlace('s2')];
+    const { result } = await renderAndLoad(existing);
+    expect(result.current.places).toHaveLength(2);
+    toggleSaveMock.mockRejectedValue(new Error('storage error'));
+
+    await act(async () => {
+      await result.current.toggle(makePlace('s1')).catch(() => {});
+    });
+
+    // State must not change — no partial update should have occurred
+    expect(result.current.places).toHaveLength(2);
+    expect(result.current.places.map((p) => p.id)).toEqual(['s1', 's2']);
   });
 });
