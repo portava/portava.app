@@ -19,6 +19,13 @@ import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { Layers, MapPin, Navigation, Star } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import {
+  loadMapFilter,
+  saveMapFilter,
+  FILTER_STORAGE_KEY,
+  type MapFilter,
+} from './discoverMapFilterStorage';
+export type { MapFilter } from './discoverMapFilterStorage';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
@@ -28,9 +35,6 @@ const MAP_STYLE = MAPTILER_KEY
   : 'https://demotiles.maplibre.org/style.json';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-/** Which layer of pins to show on the map. */
-export type MapFilter = 'all' | 'traveler' | 'osm';
 
 export interface DiscoveryMapViewProps {
   userLat?: number | null;
@@ -84,9 +88,6 @@ const FILTER_OPTIONS: { key: MapFilter; label: string }[] = [
   { key: 'osm',      label: '📍 Venues' },
 ];
 
-const FILTER_STORAGE_KEY = 'discovery_map_filter';
-const VALID_FILTERS = new Set<string>(['all', 'traveler', 'osm']);
-
 // ── Viewport helper ───────────────────────────────────────────────────────────
 
 function computeViewport(places: DiscoveryPlace[]) {
@@ -119,13 +120,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   // Restore the last-used filter from AsyncStorage on mount.
   // Unrecognised or missing values fall back to 'all' silently.
   useEffect(() => {
-    AsyncStorage.getItem(FILTER_STORAGE_KEY)
-      .then((stored) => {
-        if (stored && VALID_FILTERS.has(stored)) {
-          setFilterRaw(stored as MapFilter);
-        }
-      })
-      .catch(() => {}); // fail-open — show 'all' if storage is unavailable
+    loadMapFilter(AsyncStorage).then(setFilterRaw);
   }, []);
 
   // Clean up the toast timer when the component unmounts.
@@ -138,7 +133,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   // Persist filter selection and update local state.
   const setFilter = (f: MapFilter) => {
     setFilterRaw(f);
-    AsyncStorage.setItem(FILTER_STORAGE_KEY, f).catch(() => {}); // fire-and-forget
+    saveMapFilter(AsyncStorage, f);
   };
 
   // Long-pressing the active filter button resets to 'all' and clears the

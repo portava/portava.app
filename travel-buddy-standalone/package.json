@@ -14,7 +14,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/components/__tests__/ReportPostSheet.test.ts src/hooks/__tests__/useCityPulse.test.ts",
+    "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/components/__tests__/ReportPostSheet.test.ts src/hooks/__tests__/useCityPulse.test.ts src/components/discovery/__tests__/DiscoveryMapView.filter.test.ts",
     "test:component": "jest --forceExit"
   },
   "dependencies": {
