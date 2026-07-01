@@ -159,7 +159,25 @@ run_check "bundle-id-placeholder" \
     exit $ok
   '
 
-# ── 8. Version / build-number floor guard ────────────────────────────────────
+# ── 8. DB protection triggers ────────────────────────────────────────────────
+# Confirms the three BEFORE DELETE / BEFORE TRUNCATE triggers that protect the
+# collections and collection_items tables (migrations 0071–0073) are present in
+# the Supabase production database.
+#
+# Requires:
+#   SUPABASE_ACCESS_TOKEN  — Supabase personal access token (Management API)
+#                            https://supabase.com/dashboard/account/tokens
+#
+# The project ref is extracted automatically from SUPABASE_URL in
+# artifacts/api-server/.env so no extra config is needed.
+#
+# If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
+# release never ships without confirming the guards are live.
+run_check "db-triggers" \
+  "DB protection triggers (collections & collection_items — migrations 0071–0073)" \
+  bash scripts/check-db-triggers.sh
+
+# ── 9. Version / build-number floor guard ────────────────────────────────────
 # Fails if ios.buildNumber or android.versionCode still equal 1, which is the
 # first-submission default that Apple and Google have already seen.  Both
 # stores reject a binary whose build number is not strictly greater than the
@@ -239,6 +257,14 @@ for entry in "${results[@]}"; do
         ;;
       version-bump)
         printf '     fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json\n'
+        ;;
+      db-triggers)
+        printf '     fix: apply missing migrations via Supabase dashboard or psql:\n'
+        printf '            artifacts/api-server/src/migrations/0071_protect_default_collection.sql\n'
+        printf '            artifacts/api-server/src/migrations/0072_block_collections_truncate.sql\n'
+        printf '            artifacts/api-server/src/migrations/0073_block_collection_items_truncate.sql\n'
+        printf '          If SUPABASE_ACCESS_TOKEN is missing, generate one at:\n'
+        printf '            https://supabase.com/dashboard/account/tokens\n'
         ;;
     esac
   fi

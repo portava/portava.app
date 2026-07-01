@@ -54,6 +54,7 @@ Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 | `source-drift`         | `bash scripts/sync-standalone.sh --check-source` | Run `--fix-source` to re-sync |
 | `api-server-build`     | `pnpm --filter @workspace/api-server run build`  | Fix esbuild errors in `artifacts/api-server/src/` |
 | `lockfile-drift`       | `bash scripts/sync-standalone.sh --check-lockfile` | Run `--fix-lockfile` to re-sync resolved versions |
+| `db-triggers`          | `export SUPABASE_ACCESS_TOKEN=sbp_... && bash scripts/pre-release-check.sh` | Apply migrations 0071–0073 via Supabase dashboard or psql; token from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens) |
 
 ## Stack
 
