@@ -1,0 +1,1234 @@
+Travel Buddy — Full Event System Buildout, Frontend + Backend
+
+You are building the full Events system for Travel Buddy.
+
+Important product direction:
+Travel Buddy is a social media app for travelers. Events are core social objects that help travelers find things to do, meet people safely, create plans, join activities, post updates, message attendees, and connect events to Trips, Pulse, Discovery, Passport/Profile, Telegraph, Circles, Safe Return, Trust Score, and Rent a Buddy.
+
+Do not delete existing working systems.
+Do not fake events, users, places, RSVPs, reviews, ratings, comments, tickets, payments, or activity.
+Inspect what exists first.
+Patch/build only after inventory.
+Preserve auth/session behavior.
+Use real backend data.
+Everything must be cohesive with Pulse, Discovery, Trips, Passport/Profile, Telegraph, Rent a Buddy, Trust Score, verification, delayed posting, privacy, safety, and city/location-aware discovery.
+
+Primary goal:
+Build a complete Event system where users can:
+- create events
+- save draft events
+- resume/discard drafts
+- browse events nearby or by destination
+- join/request to join events
+- RSVP going/maybe
+- join waitlists when full
+- set event privacy and capacity
+- set age limits and trust/verification requirements
+- invite friends/trip crew/circle members
+- add cohosts
+- attach real places/venues
+- chat with attendees through Telegraph
+- post event updates
+- save events
+- add events to trips
+- connect events to circles
+- report/block unsafe events or users
+- receive reminders/notifications
+- earn stamps/badges from real event participation
+- moderate/admin-review events when needed
+- support future recurring events, tickets, and calendar view without faking them
+
+PHASE 0 — Inventory first
+
+Before making changes, search the repo for:
+- event
+- events
+- create event
+- join event
+- RSVP
+- attendee
+- host
+- cohost
+- invite
+- capacity
+- waitlist
+- age limit
+- age_filter
+- recurring
+- repeat
+- calendar
+- reminder
+- tickets
+- paid event
+- circles
+- trips
+- places
+- discovery_places
+- saved events
+- hidden gems
+- pulse
+- posts
+- postcards
+- comments
+- profile
+- passport
+- stamps
+- badges
+- trust
+- verification
+- telegraph
+- messages
+- group chat
+- safe return
+- check-in
+- rentABuddy
+- notifications
+- activity center
+- privacy
+- delayed posting
+- location
+- map
+- RLS
+- Supabase
+- migrations
+- moderation
+- reports
+- blocking
+- spam
+- duplicate
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Event data model
+
+Inspect existing tables first. Add migrations only if needed.
+
+Events must support:
+
+Core fields:
+- id
+- host_user_id
+- title
+- description
+- category
+- event_type
+- venue_name
+- place_id, if linked to real place/discovery_places/provider source
+- address, privacy-controlled
+- city
+- country
+- lat
+- lng
+- timezone
+- start_time
+- end_time
+- date
+- cover_image_url
+- status
+- visibility
+- capacity
+- attendee_count
+- waitlist_count
+- price_type
+- price_amount
+- currency
+- external_ticket_url, optional
+- created_at
+- updated_at
+
+Event categories:
+- food
+- cafe
+- nightlife
+- beach
+- outdoor
+- hiking
+- sightseeing
+- shopping
+- culture
+- concert
+- sports
+- coworking
+- language_exchange
+- meetup
+- group_trip
+- wellness
+- photo/content
+- custom
+
+Event types:
+- public_activity
+- private_activity
+- invite_only
+- trip_event
+- circle_event
+- rent_buddy_assisted
+- official/travelbuddy_featured, admin only if supported
+
+Event statuses:
+- draft
+- published
+- scheduled
+- active
+- completed
+- cancelled
+- postponed
+- archived
+- removed_by_admin
+
+Visibility:
+- public
+- friends_only
+- circle_only
+- trip_crew_only
+- invite_only
+- private
+
+Privacy/safety fields:
+- show_exact_location
+- show_attendee_list
+- allow_join_requests
+- allow_waitlist
+- allow_comments
+- allow_posts
+- delayed_posting_default
+- precise_location_visible false by default
+- require_verified_profile
+- minimum_trust_score
+- min_age
+- max_age, optional
+- age_visibility_mode
+- gender_preference, optional and privacy-controlled
+- safety_notes
+- host_rules
+
+Capacity fields:
+- capacity
+- waitlist_enabled
+- max_plus_ones
+- approval_required
+- rsvp_closed
+- join_deadline
+- cancellation_deadline
+
+Recurring/future-ready fields:
+- is_recurring
+- recurrence_rule
+- recurrence_end_date
+- parent_event_id
+- occurrence_date
+
+Payments/tickets/future-ready fields:
+- is_paid
+- ticketing_enabled
+- external_ticket_url
+- payment_provider
+- ticket_price
+- ticket_currency
+- ticket_status
+
+Default now:
+- support free events
+- allow external ticket URL only if safe
+- do not fake payment/ticket confirmation if payments are not implemented
+
+Related tables, if not already present:
+- events
+- event_attendees
+- event_invites
+- event_join_requests
+- event_waitlist
+- event_cohosts
+- event_posts
+- event_comments, if separate
+- event_media
+- event_reports
+- event_saves
+- event_activity_log
+- event_categories, optional
+- event_privacy_settings, if separate
+- event_notifications, if separate
+- event_telegraph_threads, if separate
+- event_share_links
+- event_reminders
+- event_reviews, optional/future-ready
+- event_drafts, if drafts are separate
+- event_occurrences, if recurring is implemented now
+
+Event attendees:
+- event_id
+- user_id
+- role: host / cohost / attendee / invited / waitlisted / viewer
+- status: going / maybe / requested / invited / declined / waitlisted / cancelled / removed / no_show / completed
+- joined_at
+- checked_in_at
+- permissions jsonb
+
+Event join requests:
+- event_id
+- requester_user_id
+- status: requested / approved / declined / cancelled / expired
+- note
+- answers jsonb, optional
+- created_at
+- resolved_at
+
+Event invites:
+- event_id
+- invited_user_id
+- invited_by_user_id
+- status: pending / accepted / declined / expired / cancelled
+- created_at
+
+Event activity log:
+- event_id
+- actor_user_id
+- action_type
+- metadata jsonb
+- created_at
+
+RLS:
+- Host can fully manage their events.
+- Cohosts can manage based on permissions.
+- Attendees can view event details according to visibility.
+- Public users can only view public published event summary fields.
+- Private/invite-only/circle/trip events must not leak.
+- Blocked users cannot view/interact/invite/join.
+- Users below age rules cannot join.
+- Admins can moderate.
+- Exact location should not be public unless explicitly allowed.
+- No private attendee, safety, report, payment, ticket, or moderation data should leak.
+
+PHASE 2 — Backend API routes
+
+Create or complete Events API routes.
+
+Required event routes:
+- GET /api/events
+- GET /api/events/nearby
+- GET /api/events/city/:city
+- GET /api/events/search
+- GET /api/events/me
+- GET /api/events/hosting
+- GET /api/events/joined
+- GET /api/events/saved
+- GET /api/events/invites
+- GET /api/events/requests
+- POST /api/events
+- GET /api/events/:eventId
+- PATCH /api/events/:eventId
+- POST /api/events/:eventId/publish
+- POST /api/events/:eventId/cancel
+- POST /api/events/:eventId/postpone
+- POST /api/events/:eventId/complete
+- POST /api/events/:eventId/archive
+- DELETE /api/events/:eventId or soft-delete/archive only
+
+Draft/autosave routes:
+- GET /api/events/drafts
+- POST /api/events/drafts
+- PATCH /api/events/drafts/:draftId
+- DELETE /api/events/drafts/:draftId
+- POST /api/events/drafts/:draftId/publish
+
+Attendance/RSVP routes:
+- POST /api/events/:eventId/rsvp
+- POST /api/events/:eventId/join
+- POST /api/events/:eventId/leave
+- POST /api/events/:eventId/maybe
+- POST /api/events/:eventId/waitlist
+- POST /api/events/:eventId/close-rsvps
+- POST /api/events/:eventId/reopen-rsvps
+- GET /api/events/:eventId/attendees
+- PATCH /api/events/:eventId/attendees/:userId/status
+- DELETE /api/events/:eventId/attendees/:userId
+
+Join request routes:
+- POST /api/events/:eventId/join-request
+- POST /api/events/:eventId/join-requests/:requestId/approve
+- POST /api/events/:eventId/join-requests/:requestId/decline
+- POST /api/events/:eventId/join-requests/:requestId/cancel
+
+Invite/cohost routes:
+- POST /api/events/:eventId/invite
+- POST /api/events/:eventId/invites/:inviteId/accept
+- POST /api/events/:eventId/invites/:inviteId/decline
+- POST /api/events/:eventId/cohosts
+- DELETE /api/events/:eventId/cohosts/:userId
+- PATCH /api/events/:eventId/cohosts/:userId/permissions
+
+Save/share routes:
+- POST /api/events/:eventId/save
+- DELETE /api/events/:eventId/save
+- POST /api/events/:eventId/share-link
+- DELETE /api/events/:eventId/share-link/:linkId
+- GET /api/events/share-link/:token/preview
+
+Event content routes:
+- GET /api/events/:eventId/posts
+- POST /api/events/:eventId/posts
+- GET /api/events/:eventId/media
+- POST /api/events/:eventId/media
+- GET /api/events/:eventId/comments
+- POST /api/events/:eventId/comments
+
+Trip/Circle/Telegraph routes:
+- POST /api/events/:eventId/add-to-trip
+- POST /api/events/:eventId/link-circle
+- POST /api/events/:eventId/telegraph-thread
+- GET /api/events/:eventId/telegraph-thread
+
+Reminder/calendar routes:
+- GET /api/events/:eventId/reminders
+- POST /api/events/:eventId/reminders
+- PATCH /api/events/:eventId/reminders/:reminderId
+- DELETE /api/events/:eventId/reminders/:reminderId
+- GET /api/events/:eventId/calendar-export, if calendar/export exists
+
+Safety/moderation routes:
+- POST /api/events/:eventId/report
+- POST /api/events/:eventId/report-user/:userId
+- POST /api/events/:eventId/block-user/:userId
+- GET /api/events/:eventId/activity
+- GET /api/events/:eventId/safety-summary, host/admin only if supported
+
+Backend behavior:
+- All write routes require authentication.
+- Public browse routes must respect privacy and blocks.
+- Event creation validates title, category, date/time, capacity, location, and safety fields.
+- End time cannot be before start time.
+- Draft events can be incomplete; published events cannot.
+- Joining must enforce capacity, RSVP-closed state, age limits, block status, visibility, trust score, verification requirements, and approval rules.
+- Duplicate joins/invites/requests must be prevented.
+- Cancelled/archived/removed events should not appear as active.
+- Public route must not leak private location or attendee data.
+- Major edits after RSVPs must notify attendees.
+- Admin/moderation actions are auditable.
+- Activity log records major actions.
+- Payment/ticket fields are honest and never imply payment succeeded without provider confirmation.
+
+PHASE 3 — Event drafts, autosave, and edit restrictions
+
+Create Event should support:
+- save draft
+- resume draft
+- discard draft
+- autosave where feasible
+
+Edit restrictions:
+- If attendees already joined, major changes should notify attendees.
+- Changing date/time/location after RSVPs should require confirmation.
+- Cancelled events should not be editable except archive/admin notes.
+- Completed events should not allow normal edits.
+- Removed-by-admin events should not be republished by host.
+- Host can close/reopen RSVPs unless event is cancelled/completed/removed.
+
+Major changes:
+- date
+- start/end time
+- location
+- visibility
+- capacity decrease below current attendees
+- age/trust requirement changes
+- cancellation/postponement
+
+PHASE 4 — Duplicate, spam, and prohibited content prevention
+
+Prevent:
+- duplicate event creation at same place/time by same host
+- spammy repeated events
+- unsafe/prohibited event categories
+- titles/descriptions with scams, adult services, escorting, off-app payments, illegal activity, drug purchasing, harassment, or dangerous meetups
+- external ticket URLs to obviously unsafe domains if URL validation exists
+
+If moderation/AI filters do not exist:
+- add basic validation and reportable flags
+- document follow-up
+- do not fake moderation
+
+PHASE 5 — Create Event frontend flow
+
+Build or complete the Create Event flow.
+
+Entry points:
+- Create tab: “Create Event”
+- Discovery: “Create event here”
+- Place card: “Host event here”
+- Trip detail: “Add event”
+- Circle detail: “Create circle event”
+- Passport/Profile: “Host event”
+- Empty Events screen: “Create your first event”
+
+Create Event steps:
+
+Step 1 — Event basics
+Fields:
+- title
+- description
+- category
+- event type
+- cover photo optional
+- host rules/safety notes optional
+
+Step 2 — Date and time
+Fields:
+- date
+- start time
+- end time
+- timezone
+- flexible time optional
+- recurring event controls if implemented
+- otherwise show recurring as future follow-up only, not fake
+
+Step 3 — Location
+Fields:
+- city
+- country
+- venue/place search
+- select real place from discovery_places/Google/OSM if available
+- custom location if allowed
+- show exact location toggle
+- privacy-safe map preview if available
+- online/virtual toggle optional if product supports it
+
+Step 4 — Capacity and join settings
+Fields:
+- capacity
+- approval required
+- allow join requests
+- allow waitlist
+- max plus-ones
+- invite-only toggle
+- join deadline
+- close RSVPs toggle/status if editing
+
+Step 5 — Age/trust/safety
+Fields:
+- minimum age
+- maximum age optional
+- verified users only
+- minimum trust score optional
+- gender preference optional/private only if already supported safely
+- safety agreement
+- public meetup recommendation
+- Safe Return suggestion if relevant
+
+Step 6 — Privacy
+Fields:
+- public
+- friends only
+- circle only
+- trip crew only
+- invite only
+- private
+- show attendee list
+- allow posts/comments
+- allow sharing
+- delayed posting default
+- precise location hidden by default
+
+Step 7 — Tickets/payment, honest mode
+Fields:
+- free event
+- external ticket URL, optional and validated
+- paid event future-ready if payments not enabled
+
+Rules:
+- Do not fake payment/ticket support.
+- If internal payments are not enabled, show “Internal event payments are not enabled yet.”
+
+Step 8 — Invite people
+Options:
+- skip
+- invite friends
+- invite trip crew
+- invite circle members
+- search users
+- add cohost
+- create Telegraph group chat when event is published or first attendee joins
+
+Step 9 — Preview and publish
+Show:
+- event card preview
+- date/time
+- location privacy
+- capacity
+- age/trust requirements
+- visibility
+- safety copy
+- ticket/free status
+- Publish button
+- Save Draft button
+
+After publish:
+- navigate to event detail
+- show success
+- allow sharing/inviting/saving to trip
+
+PHASE 6 — Events browse/discovery
+
+Events must appear where they belong.
+
+Discovery sections:
+- Events Nearby
+- Happening Today
+- This Weekend
+- Nightlife Events
+- Food & Cafe Meetups
+- Beach/Outdoor Events
+- Events Near Your Trip
+- Events from People You Follow
+- Circle Events
+- Saved Events
+- Featured/Official Events, admin only if supported
+
+Filters:
+- city
+- near me
+- date
+- today
+- tomorrow
+- this weekend
+- category
+- price/free
+- age range eligibility
+- verified host
+- friends attending
+- distance radius
+- capacity available
+- public/friends/circle/trip visibility where allowed
+
+Views:
+- list view required
+- date filter required
+- calendar/weekend view if simple
+- map pins if native map works
+
+Map behavior:
+- If native map works, show privacy-safe event map pins.
+- If web preview cannot render map, show list fallback.
+- Do not treat web map limitation as event failure.
+
+Event card should show:
+- cover image or category fallback
+- title
+- category
+- date/time
+- city/venue privacy-safe
+- host avatar/name clickable
+- verified/trust host badge
+- attendee count
+- capacity/waitlist state
+- friends attending if allowed
+- price/free
+- privacy badge
+- age requirement, if any
+- join/request/save button
+- “Add to Trip” button if applicable
+
+No blank screens:
+- No nearby events: “No events nearby yet — create one.”
+- City not live: “Events are not live in this city yet.”
+- Location missing: “Turn on location to see nearby events.”
+- Backend error: show retry.
+
+PHASE 7 — Event detail screen
+
+Event detail must be the full hub.
+
+Sections:
+- hero image
+- title/category
+- host/cohosts
+- date/time
+- city/venue/location privacy state
+- description
+- safety/rules
+- capacity/attendee count
+- attendee/friends strip, if visible
+- join/request/maybe/save/share buttons
+- RSVP/waitlist status
+- Telegraph event chat entry
+- Trip add/save entry
+- Circle link if applicable
+- Pulse/event posts
+- comments if allowed
+- map if allowed
+- reminders
+- ticket/free status
+- report/block menu
+- admin/moderation label if relevant
+
+Host actions:
+- edit event
+- publish/cancel/postpone/archive/complete
+- approve/decline join requests
+- invite users
+- add/remove cohosts
+- remove attendee
+- mark no-show if supported
+- close/reopen RSVPs
+- message attendees
+- change privacy/capacity if safe
+- view reports
+- feature event if admin only
+
+Attendee actions:
+- join/request
+- leave/cancel RSVP
+- maybe
+- save
+- add to trip
+- set reminder
+- message in event chat if allowed
+- post/comment if allowed
+- report event/user
+
+PHASE 8 — RSVP, join requests, capacity, waitlist
+
+Support RSVP states:
+- going
+- maybe
+- requested
+- invited
+- declined
+- waitlisted
+- cancelled
+- removed
+- no_show
+- completed
+
+Rules:
+- Public event with no approval: join directly if eligible and capacity exists.
+- Approval-required event: create join request.
+- Full event with waitlist: add to waitlist.
+- Full event without waitlist: show full state.
+- Invite-only event: only invited users can accept unless host changes settings.
+- Private/circle/trip event: only eligible linked members can join.
+- Host/cohost can approve/decline.
+- Capacity updates must be consistent.
+- Leaving event frees capacity or advances waitlist if implemented.
+- Age/trust/verification rules apply before join.
+- Blocked users cannot join or request.
+- Duplicate requests prevented.
+- RSVP closed prevents new joins except host/cohost/admin override if supported.
+
+PHASE 9 — Age limits and eligibility
+
+Events must support age limits.
+
+Age logic:
+- Store DOB/age verification privately on profile if available.
+- Event should use age eligibility without exposing exact DOB.
+- If user is not age-verified and event requires age, show verification prompt.
+- If user is below minimum age, disable join and explain.
+- If max age is used, enforce privately and carefully.
+- Hosts cannot see exact DOB unless admin/legal flow explicitly allows it.
+- Age filter must also apply to circles/trip-linked events if needed.
+
+UI:
+- Show “Age requirement: 21+” or similar on event card/detail.
+- Do not expose user ages publicly by default.
+
+PHASE 10 — Attendee management
+
+Host/cohost should be able to:
+- approve/decline requests
+- remove attendee
+- message attendees
+- mark no-show if supported
+- close RSVPs
+- reopen RSVPs
+- export/share attendee list only if privacy allows
+
+Rules:
+- attendee list visibility must follow event settings
+- removed attendees lose event chat access
+- blocked users lose access
+- no-show/completed states should connect to trust only if criteria are real
+
+PHASE 11 — Telegraph integration
+
+Event chat:
+- Create/link Telegraph group chat for event.
+- Access rules depend on event settings:
+  - host/cohost always
+  - accepted attendees
+  - invited users if allowed
+  - pending requests only if host allows pre-chat
+- Removed/declined/blocked users lose access.
+- Event context card appears in chat with date/time/location privacy badge.
+- Auto-translation uses Telegraph language settings if available.
+- Report/block available from chat.
+
+PHASE 12 — Pulse integration
+
+Events must connect to Pulse.
+
+Rules:
+- Event posts can appear in Pulse if event visibility and post privacy allow.
+- Event context chip appears on posts.
+- Delayed posting must be respected.
+- Exact event location should not leak unless event allows it.
+- Event comments/likes should respect privacy and blocked users.
+- Host announcements can appear in event detail and optionally Pulse.
+
+Pulse card examples:
+- “Draie is hosting a food crawl in Siargao”
+- “3 travelers joined a beach meetup”
+- “Event update from Tonight’s Night Market Walk”
+
+No fake activity.
+
+PHASE 13 — Passport/Profile integration
+
+Profiles should show real event activity.
+
+On profile, show:
+- hosted events
+- joined public events
+- upcoming events if privacy allows
+- past/completed events if privacy allows
+- event count
+- host badge/stamps if earned
+- mutual events with viewer if allowed
+
+Rules:
+- private/invite-only events hidden from public.
+- crew/circle events only shown to eligible viewers.
+- cancelled/archived events hidden unless owner/host viewing.
+- blocked users cannot see event activity.
+
+PHASE 14 — Trips integration
+
+Events must connect to Trips.
+
+From event:
+- Add to Trip
+- Save as trip item
+- Show if event overlaps trip city/dates
+- Invite Trip Crew to event
+- Create trip event from Trip Detail
+
+From trip:
+- show events near trip destination/dates
+- add event to itinerary
+- open event detail
+- event reminders inside trip
+
+Rules:
+- private trip details do not leak into event.
+- private event details do not leak into trip.
+- only eligible trip crew see trip-linked event info.
+
+PHASE 15 — Circles integration
+
+Events must connect to Circles if circles exist.
+
+Circle events:
+- create event for a circle
+- visibility circle_only
+- invite circle members
+- show event in circle detail
+- allow circle admins/moderators to cohost if permitted
+- Telegraph may use circle/event thread depending on design
+
+Rules:
+- non-circle members cannot see private circle event details.
+- blocked users cannot join.
+- age/trust rules still apply.
+
+PHASE 16 — Rent a Buddy integration
+
+Events should connect to Rent a Buddy.
+
+Use cases:
+- traveler can request a buddy for an event
+- buddy can help attend/guide at event
+- event host can suggest buddy support
+- confirmed buddy booking can attach to event/trip item
+
+Rules:
+- Rent a Buddy remains travel/social help only.
+- No dating/adult/escort framing.
+- Booking details private to booking parties and allowed trip/event context.
+- Off-app payment prohibited.
+- Safety copy visible.
+
+PHASE 17 — Places/venues/hidden gems integration
+
+Events must use real places when possible.
+
+Venue sources:
+- discovery_places
+- Google Places
+- OSM/Overpass
+- user-submitted hidden gems, if approved/visible
+- custom location only when allowed
+
+Rules:
+- no fake venues
+- preserve source/provider ID
+- do not fake ratings/reviews
+- show source-specific empty states
+- hidden gems must respect privacy/moderation
+- duplicate venue/event protection where possible
+
+PHASE 18 — Notifications/activity center
+
+Create notifications for:
+- event created/published
+- event invite received
+- join request received
+- join request approved/declined
+- RSVP accepted
+- waitlist changed
+- RSVP deadline
+- event reminder
+- event starting soon
+- event changed
+- event cancelled/postponed
+- host announcement
+- new event chat message
+- friend joined event
+- event added to trip
+- attendee removed
+- review/check-in after event
+- report/dispute update if applicable
+
+Use existing notification/activity center if available.
+
+PHASE 19 — Event reminders and calendar
+
+Add reminders for:
+- event starting soon
+- join request pending
+- RSVP deadline
+- event changed
+- event cancelled
+- leave review/check-in after event
+
+If calendar integration exists:
+- allow export/add-to-calendar.
+
+If not:
+- create internal notifications only
+- show honest state.
+
+PHASE 20 — Stamps/badges/trust integration
+
+Events can earn real stamps/badges.
+
+Examples:
+- First Event Joined
+- First Event Hosted
+- Nightlife Explorer
+- Food Crawl Host
+- Beach Meetup
+- Safe Host
+- Trusted Traveler
+- Top Event Host
+
+Event host reputation should consider:
+- successful hosted events
+- no-show host penalties
+- attendee reports
+- cancelled events count
+- response time to join requests
+- repeat safe hosting badges
+
+Rules:
+- badges/stamps derive from real completed/attended/hosted events.
+- no fake stamps.
+- no stamp until event completion/check-in criteria if required.
+- trust score can factor successful hosting, attendance, no-shows, reports, and reviews.
+
+PHASE 21 — Check-in and completion
+
+If check-in exists:
+- allow event check-in when event is active and user is eligible.
+- check-in should use privacy-safe location logic.
+- host can mark no-show or completed if appropriate.
+- event completion can trigger stamps/reviews/trust updates.
+
+If check-in does not exist:
+- build status fields and UI states.
+- do not fake attendance verification.
+
+PHASE 22 — Event reviews/feedback, optional but future-ready
+
+If feasible:
+- allow attendees to rate event/host after completion.
+- allow host to mark attendee behavior.
+- prevent review unless user attended/completed.
+- moderate reported reviews.
+- connect positive event behavior to trust.
+
+If not building now:
+- leave schema-ready or document follow-up.
+
+PHASE 23 — Event search/deep links
+
+Support:
+- search events by title
+- search by city
+- search by category
+- search by date
+- search by venue
+- search by host
+- deep link to event detail
+- share link privacy preview
+
+Respect:
+- private events
+- invite-only events
+- blocked users
+- age/trust requirements
+
+PHASE 24 — Admin/moderation
+
+If admin system exists, add/wire:
+- view all events
+- review reported events
+- remove unsafe event
+- cancel event
+- hide event from Discovery/Pulse
+- suspend abusive host
+- inspect event reports
+- inspect attendee reports
+- feature/unfeature event
+- manage official events if supported
+- view event activity log
+
+Moderation outcomes:
+- dismiss report
+- warn host
+- restrict event visibility
+- remove media/content
+- cancel/remove event
+- suspend host
+- ban user
+- restore event if incorrectly removed
+
+No private safety/location/user/payment/ticket data should leak to non-admins.
+
+PHASE 25 — Frontend UX polish
+
+Requirements:
+- event cards compact and clean
+- date/time readable
+- privacy badge clear
+- age requirement clear
+- join/request/save buttons obvious
+- no giant headers that block content
+- skeleton loading
+- retry states
+- honest empty states
+- keyboard-safe mobile forms
+- accessible touch targets
+- fast category/date filters
+- map gracefully hidden on web if unsupported
+- no blank screen without reason
+
+PHASE 26 — Final event edge-case QA
+
+Before complete, test:
+- event with no location
+- event with hidden exact location
+- event with full capacity
+- event with waitlist
+- event with age limit
+- event with blocked user
+- event with private visibility
+- event changed after users joined
+- event cancelled after users joined
+- event linked to trip
+- event linked to circle
+- event chat access after removal
+- event with external ticket URL
+- event with closed RSVPs
+- event draft resume/discard
+- event map fallback on web/native as applicable
+
+PHASE 27 — Tests
+
+Add tests for:
+- create draft event
+- publish event
+- update event
+- cancel/postpone/archive/complete event
+- event date/time validation
+- event edit restrictions after RSVP
+- duplicate/spam prevention where implemented
+- public event visibility
+- private event privacy
+- friends-only/circle/trip event privacy
+- invite-only privacy
+- RSVP join
+- RSVP close/reopen
+- approval-required join request
+- approve/decline join request
+- capacity full
+- waitlist behavior if implemented
+- age requirement enforcement
+- trust/verification requirement enforcement
+- blocked user cannot join/invite/view
+- attendee list privacy
+- event location privacy
+- event added to trip
+- event linked to circle if circles exist
+- event linked to Telegraph chat
+- event post delayed posting privacy
+- profile event visibility
+- save/unsave event
+- report event/user
+- event reminders where supported
+- RLS policies
+- no private event fields leaked
+
+Manual QA:
+- create public event
+- create draft and resume it
+- discard draft
+- create invite-only event
+- create friends-only/circle/trip event if supported
+- edit event
+- publish event
+- invite user
+- accept/decline invite
+- join public event
+- request to join approval-required event
+- approve/decline request
+- waitlist if capacity full
+- close/reopen RSVPs
+- test age-limited event
+- test blocked user behavior
+- add event to trip
+- link event to circle if available
+- open Telegraph event chat
+- post Pulse update linked to event
+- verify delayed posting
+- view event on profile
+- save/unsave event
+- set reminder
+- report event
+- cancel/postpone/archive event
+- admin moderation if available
+- map/list fallback
+- mobile layout check
+
+FINAL EVENT SYSTEM CONNECTION AUDIT
+
+Before marking complete, verify Events connect to:
+- Create tab
+- Discovery
+- Pulse
+- Trips
+- Passport/Profile
+- Telegraph
+- Circles
+- Rent a Buddy
+- Safe Return/check-in if available
+- notifications/activity center
+- privacy settings
+- blocking/reporting
+- stamps/badges
+- Trust Score
+- search/deep links
+- real places/venues
+- reminders/calendar if available
+- admin moderation
+
+FINAL EVENT SYSTEM DEFINITION OF DONE
+
+Do not mark Events complete unless all of the following pass:
+
+1. Create event
+- Logged-in user can create an event.
+- Draft, autosave/resume, discard, and publish states work where implemented.
+- Date/time/location/category save correctly.
+- Event appears in the right areas.
+
+2. Browse/discovery
+- Users can browse events by nearby/city/category/date.
+- Empty states are honest.
+- Real event data only.
+
+3. Event detail
+- Event detail loads real backend data.
+- Host, date, location privacy, capacity, join state, ticket/free state, and safety info display correctly.
+
+4. Join/RSVP
+- Join, maybe, request, invite, waitlist, leave states work as designed.
+- Capacity remains accurate.
+- Duplicate requests are prevented.
+- Closed RSVPs are enforced.
+
+5. Age/trust/privacy
+- Age limits work.
+- Verification/trust requirements work.
+- Private/friends/circle/trip/invite-only events enforce access.
+- Exact location and attendee data do not leak.
+
+6. Telegraph
+- Event chat opens only for allowed users.
+- Removed/blocked users lose access.
+- Event context appears in chat.
+
+7. Pulse/Profile/Trips
+- Event posts respect privacy and delayed posting.
+- Event activity appears on profile only when allowed.
+- Event can be added to a trip.
+- Trip/circle/private context does not leak.
+
+8. Safety/moderation
+- Report/block works.
+- Admin/moderation workflow exists if admin system exists.
+- Unsafe events can be hidden/removed.
+
+9. Backend/RLS/security
+- Public APIs return only allowed fields.
+- Private event fields do not leak.
+- RLS prevents unauthorized reads/writes.
+- Blocked users cannot interact.
+
+10. Performance
+- Event lists load fast.
+- Filters are responsive.
+- Heavy sections lazy load.
+- One slow section does not blank the whole screen.
+
+11. Tests
+Required tests pass for:
+- event create/update/cancel/postpone/archive
+- event drafts
+- event privacy
+- RSVP/join requests
+- age/trust requirements
+- capacity/waitlist
+- blocked user behavior
+- trip/profile/Pulse visibility
+- Telegraph access
+- RLS policies
+- no private field leakage
+
+Final deliverable:
+Return:
+- inventory report
+- files changed
+- migrations added
+- routes added/changed
+- screens/components added
+- tests added
+- tests passed/failed
+- manual QA pass/fail
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+The Event system must work end-to-end as a connected Travel Buddy core feature, not a disconnected create-event form.
