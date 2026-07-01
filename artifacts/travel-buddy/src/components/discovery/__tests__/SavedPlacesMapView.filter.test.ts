@@ -228,4 +228,22 @@ describe('saveCategoryFilter', () => {
     assert.doesNotThrow(() => saveCategoryFilter(storage, TEST_KEY, null));
     await new Promise((r) => setImmediate(r));
   });
+
+  it('removeItem receives the exact key for listId "global"', async () => {
+    const storage = fakeStorage({});
+    const key = categoryStorageKey('global');
+    saveCategoryFilter(storage, key, null);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(storage.removeItemCalls.length, 1);
+    assert.equal(storage.removeItemCalls[0], 'saved_places_map_cat_v1_global');
+  });
+
+  it('removeItem receives the exact key for a custom listId "trip-123"', async () => {
+    const storage = fakeStorage({});
+    const key = categoryStorageKey('trip-123');
+    saveCategoryFilter(storage, key, null);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(storage.removeItemCalls.length, 1);
+    assert.equal(storage.removeItemCalls[0], 'saved_places_map_cat_v1_trip-123');
+  });
 });
