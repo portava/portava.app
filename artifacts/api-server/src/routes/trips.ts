@@ -9,6 +9,28 @@ import { sendPushNotification } from "../lib/push.js";
 
 const router = Router();
 
+/** Canonical trip status — never let clients override this server-side logic. */
+function computeTripStatus(
+  title: string | null,
+  destinationCity: string | null,
+  startDate: string | null,
+  endDate: string | null,
+  currentStatus: string,
+): string {
+  if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
+  if (!title || !destinationCity) return "draft";
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  if (startDate) {
+    const start = new Date(startDate + "T00:00:00Z");
+    const end   = endDate ? new Date(endDate + "T00:00:00Z") : null;
+    if (today < start)          return "upcoming";
+    if (!end || today <= end)   return "active";
+    return "completed";
+  }
+  return "planning";
+}
+
 router.post("/trips", async (req, res) => {
   if (!isServiceClientReady) {
     res.status(503).json({ error: "Server not configured: SUPABASE_SERVICE_ROLE_KEY is missing" });
@@ -39,12 +61,15 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, status, visibility, coverUrl } = req.body;
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl } = req.body;
 
   if (!title || !destinationCity) {
     res.status(400).json({ error: "title and destinationCity are required" });
     return;
   }
+
+  // Status is server-authoritative — never accept client-supplied status on create.
+  const computedStatus = computeTripStatus(title, destinationCity, startDate ?? null, endDate ?? null, "planning");
 
   const { data, error } = await client
     .from("trips")
@@ -55,7 +80,7 @@ router.post("/trips", async (req, res) => {
       destination_country: destinationCountry ?? null,
       start_date: startDate ?? null,
       end_date: endDate ?? null,
-      status: status ?? "planning",
+      status: computedStatus,
       visibility: visibility ?? "private",
       cover_url: coverUrl ?? null,
     })
@@ -334,7 +359,10 @@ router.patch("/trips/:tripId", async (req, res) => {
   }
 
   if (status !== undefined && status !== (trip as any).status) {
-    const { error } = await sc.from("trips").update({ status, updated_at: new Date().toISOString() }).eq("id", tripId);
+    // Run through server-authoritative status logic so terminal states are honoured.
+    const t = trip as any;
+    const resolvedStatus = computeTripStatus(t.title, t.destination_city ?? t.destinationCity ?? null, t.start_date ?? null, t.end_date ?? null, status);
+    const { error } = await sc.from("trips").update({ status: resolvedStatus, updated_at: new Date().toISOString() }).eq("id", tripId);
     if (error) { sendError(res, "db_error", error.message); return; }
 
     // Post-attendance review prompt — fire-and-forget when trip transitions to completed
@@ -503,6 +531,14 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
+
+  // Blocked-user guard: cannot invite a user with an active block in either direction
+  const { data: blockRow } = await client
+    .from("blocks")
+    .select("id")
+    .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${userId}),and(blocker_id.eq.${userId},blocked_id.eq.${user.id})`)
+    .maybeSingle();
+  if (blockRow) { res.status(403).json({ error: "forbidden", message: "Cannot invite a blocked user" }); return; }
 
   // Idempotent: check existing membership
   const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();

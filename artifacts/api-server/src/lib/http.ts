@@ -149,7 +149,7 @@ export async function requireTripMember(
     .eq("user_id", userId);
 
   if (status === "accepted") {
-    query = (query as any).in("role", ["owner", "member"]);
+    query = (query as any).in("role", ["owner", "co_host", "member", "viewer"]);
   }
 
   const { data, error } = await (query as any).maybeSingle();

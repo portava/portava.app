@@ -707,7 +707,13 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
 
   const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can approve join requests"); return; }
+  const approveIsOwner = (trip as any).owner_id === user.id;
+  if (!approveIsOwner) {
+    const approveM = await requireTripMember(sc, tripId, user.id);
+    if (!approveM || !["owner", "co_host"].includes(approveM.role)) {
+      sendError(res, "forbidden", "Only the owner or co-host can approve join requests"); return;
+    }
+  }
 
   const { data: req_ } = await sc
     .from("trip_join_requests")
@@ -756,7 +762,13 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
 
   const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can decline join requests"); return; }
+  const declineIsOwner = (trip as any).owner_id === user.id;
+  if (!declineIsOwner) {
+    const declineM = await requireTripMember(sc, tripId, user.id);
+    if (!declineM || !["owner", "co_host"].includes(declineM.role)) {
+      sendError(res, "forbidden", "Only the owner or co-host can decline join requests"); return;
+    }
+  }
 
   const { data: req_ } = await sc
     .from("trip_join_requests")
@@ -1017,7 +1029,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
 // Budget routes (owner + co_host only — never public)
 // ===========================================================================
 
-// GET /api/trips/:tripId/budget
+// GET /api/trips/:tripId/budget  — owner + co_host only
 router.get("/trips/:tripId/budget", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1032,9 +1044,12 @@ router.get("/trips/:tripId/budget", async (req, res) => {
   const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership && (trip as any).owner_id !== user.id) {
-    sendError(res, "not_member", "Not a trip member"); return;
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!isOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership || !["owner", "co_host"].includes(membership.role)) {
+      sendError(res, "forbidden", "Budget is only visible to the trip owner and co-hosts"); return;
+    }
   }
 
   const { data: budget } = await sc
@@ -1165,6 +1180,54 @@ router.post("/trips/:tripId/documents", async (req, res) => {
   res.status(201).json(data);
 });
 
+// PATCH /api/trips/:tripId/documents/:docId  — update document
+router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, docId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(docId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const { data: doc } = await sc.from("trip_documents").select("creator_id").eq("id", docId).eq("trip_id", tripId).maybeSingle();
+  if (!doc) { sendError(res, "not_found", "Document not found"); return; }
+
+  const isOwner   = (trip as any).owner_id === user.id;
+  const isCreator = (doc as any).creator_id === user.id;
+  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot update this document"); return; }
+
+  const DocPatchSchema = z.object({
+    title:        z.string().min(1).max(200).optional(),
+    content:      z.string().nullable().optional(),
+    documentType: z.enum(["note","itinerary","packing_list","visa","insurance","other"]).optional(),
+    isPrivate:    z.boolean().optional(),
+  });
+  const parsed = DocPatchSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const b = parsed.data;
+
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (b.title        !== undefined) patch.title         = b.title;
+  if (b.content      !== undefined) patch.content       = b.content;
+  if (b.documentType !== undefined) patch.document_type = b.documentType;
+  if (b.isPrivate    !== undefined) patch.is_private    = b.isPrivate;
+
+  const { data: updated, error } = await sc
+    .from("trip_documents")
+    .update(patch)
+    .eq("id", docId)
+    .select("id, title, document_type, is_private, creator_id, created_at, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json(updated);
+});
+
 // DELETE /api/trips/:tripId/documents/:docId
 router.delete("/trips/:tripId/documents/:docId", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1261,6 +1324,52 @@ router.post("/trips/:tripId/notes", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.status(201).json(data);
+});
+
+// PATCH /api/trips/:tripId/notes/:noteId  — update note
+router.patch("/trips/:tripId/notes/:noteId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, noteId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(noteId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const { data: note } = await sc.from("trip_notes").select("author_id").eq("id", noteId).eq("trip_id", tripId).maybeSingle();
+  if (!note) { sendError(res, "not_found", "Note not found"); return; }
+
+  const isOwner  = (trip as any).owner_id === user.id;
+  const isAuthor = (note as any).author_id === user.id;
+  if (!isOwner && !isAuthor) { sendError(res, "forbidden", "Cannot update this note"); return; }
+
+  const NotePatchSchema = z.object({
+    title:     z.string().max(200).nullable().optional(),
+    content:   z.string().min(1).optional(),
+    isPrivate: z.boolean().optional(),
+  });
+  const parsed = NotePatchSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const b = parsed.data;
+
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (b.title     !== undefined) patch.title      = b.title;
+  if (b.content   !== undefined) patch.content    = b.content;
+  if (b.isPrivate !== undefined) patch.is_private = b.isPrivate;
+
+  const { data: updated, error } = await sc
+    .from("trip_notes")
+    .update(patch)
+    .eq("id", noteId)
+    .select("id, title, content, is_private, author_id, created_at, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json(updated);
 });
 
 // DELETE /api/trips/:tripId/notes/:noteId
@@ -1477,6 +1586,63 @@ router.post("/trips/:tripId/checklists", async (req, res) => {
   res.status(201).json({ ...(data as any), items: [] });
 });
 
+// PATCH /api/trips/:tripId/checklists/:checklistId  — rename checklist
+router.patch("/trips/:tripId/checklists/:checklistId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, checklistId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(checklistId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
+
+  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : undefined;
+  if (!title) { sendError(res, "invalid_payload", "title is required"); return; }
+
+  const { data, error } = await sc
+    .from("trip_checklists")
+    .update({ title })
+    .eq("id", checklistId)
+    .eq("trip_id", tripId)
+    .select("id, title, created_by, created_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Checklist not found"); return; }
+  res.json(data);
+});
+
+// DELETE /api/trips/:tripId/checklists/:checklistId  — delete checklist + items
+router.delete("/trips/:tripId/checklists/:checklistId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, checklistId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(checklistId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const { data: list } = await sc.from("trip_checklists").select("created_by").eq("id", checklistId).eq("trip_id", tripId).maybeSingle();
+  if (!list) { sendError(res, "not_found", "Checklist not found"); return; }
+
+  const isOwner   = (trip as any).owner_id === user.id;
+  const isCreator = (list as any).created_by === user.id;
+  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this checklist"); return; }
+
+  await sc.from("trip_checklist_items").delete().eq("checklist_id", checklistId);
+  await sc.from("trip_checklists").delete().eq("id", checklistId);
+  res.status(204).send();
+});
+
 // POST /api/trips/:tripId/checklists/:checklistId/items
 router.post("/trips/:tripId/checklists/:checklistId/items", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1514,6 +1680,41 @@ router.post("/trips/:tripId/checklists/:checklistId/items", async (req, res) => 
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.status(201).json(data);
+});
+
+// DELETE /api/trips/:tripId/checklists/:checklistId/items/:itemId
+router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, checklistId, itemId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(checklistId) || !UUID_RE.test(itemId)) {
+    sendError(res, "invalid_payload", "Invalid ID"); return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const { data: item } = await sc
+    .from("trip_checklist_items")
+    .select("id, assigned_to")
+    .eq("id", itemId)
+    .eq("checklist_id", checklistId)
+    .maybeSingle();
+  if (!item) { sendError(res, "not_found", "Checklist item not found"); return; }
+
+  const isOwner = (trip as any).owner_id === user.id;
+  const membership = isOwner ? null : await requireTripMember(sc, tripId, user.id);
+  if (!isOwner && (!membership || !["owner", "co_host", "member"].includes(membership.role))) {
+    sendError(res, "forbidden", "Not a trip member"); return;
+  }
+
+  await sc.from("trip_checklist_items").delete().eq("id", itemId);
+  res.status(204).send();
 });
 
 // PATCH /api/trips/:tripId/checklists/:checklistId/items/:itemId  — toggle/update
