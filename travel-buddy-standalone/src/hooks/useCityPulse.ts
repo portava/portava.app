@@ -5,6 +5,12 @@
  *
  * Pure fetch/map helpers live in ./cityPulseUtils so they can be unit-tested
  * without pulling in React, Expo, or Supabase.
+ *
+ * City-switching behaviour:
+ *   • Stale events are cleared immediately when the city slug changes.
+ *   • A 150 ms debounce absorbs rapid city-switch taps before fetching.
+ *   • After a successful fetch a TTL timer fires a background re-fetch so
+ *     events stay fresh without the user pulling to refresh.
  */
 import { useMemo, useState, useEffect } from 'react';
 import type { CityEvent, PulseBuckets, Interest } from '../types/models';
@@ -15,6 +21,13 @@ import { useAvailabilityStore } from '../context/AvailabilityStore';
 import { supabase } from '../lib/supabase';
 export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
 import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
+
+/** How long fetched events are considered fresh before a background re-fetch fires. */
+const TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** How long to wait for the city slug to settle before firing a fetch request.
+ * Absorbs rapid picker changes without hammering the API. */
+const DEBOUNCE_MS = 150;
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -33,7 +46,11 @@ export function useAvailability() {
   return { availability, loading: false, error: null };
 }
 
-export function useCityPulse(opts: {
+export function useCityPulse({
+  currentCitySlug,
+  interests,
+  categoryAffinities,
+}: {
   currentCitySlug?: string;
   interests?: Interest[];
   /**
@@ -50,7 +67,7 @@ export function useCityPulse(opts: {
   const [events, setEvents] = useState<CityEvent[]>([]);
 
   useEffect(() => {
-    const city = opts.currentCitySlug?.replace(/-/g, ' ') ?? '';
+    const city = currentCitySlug?.replace(/-/g, ' ') ?? '';
     if (!city) return;
     const base = apiBase();
     if (!base) {
@@ -58,37 +75,56 @@ export function useCityPulse(opts: {
       return;
     }
 
+    // Clear stale events immediately so the previous city's events are never
+    // shown under the new city's name while the debounce or fetch is in flight.
+    setEvents([]);
+
     let cancelled = false;
-    freshToken().then((token) => {
-      if (!token || cancelled) {
-        if (__DEV__) setEvents(mockEvents);
-        return;
-      }
-      fetchCityEvents(base, token, city, opts.currentCitySlug ?? '')
-        .then((fetched) => {
-          if (cancelled) return;
-          setEvents(resolveEventsOnSuccess(fetched));
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setEvents(resolveEventsOnError(__DEV__, mockEvents));
-        });
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.currentCitySlug]);
+    let ttlTimer: ReturnType<typeof setTimeout>;
+
+    function doFetch() {
+      freshToken().then((token) => {
+        if (!token || cancelled) {
+          if (__DEV__) setEvents(mockEvents);
+          return;
+        }
+        fetchCityEvents(base, token, city, currentCitySlug ?? '')
+          .then((fetched) => {
+            if (cancelled) return;
+            setEvents(resolveEventsOnSuccess(fetched));
+            // Schedule a background re-fetch once the TTL expires so events
+            // stay fresh without requiring the user to pull-to-refresh.
+            ttlTimer = setTimeout(doFetch, TTL_MS);
+          })
+          .catch(() => {
+            if (cancelled) return;
+            setEvents(resolveEventsOnError(__DEV__, mockEvents));
+          });
+      });
+    }
+
+    // Debounce: wait before triggering the fetch so rapid city-slug changes
+    // (e.g. scrolling through a city picker) only trigger one request for the
+    // final settled value.
+    const debounceTimer = setTimeout(doFetch, DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(debounceTimer);
+      clearTimeout(ttlTimer);
+    };
+  }, [currentCitySlug]);
 
   const buckets: PulseBuckets = useMemo(
     () => filterPulse(events, {
       availability,
-      currentCitySlug: opts.currentCitySlug,
-      interests: opts.interests,
-      categoryAffinities: opts.categoryAffinities,
+      currentCitySlug,
+      interests,
+      categoryAffinities,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [events, availability, opts.currentCitySlug, opts.interests, opts.categoryAffinities]
+    [events, availability, currentCitySlug, interests, categoryAffinities],
   );
 
-  const status = resolveStatus(availability, new Date().toISOString(), opts.currentCitySlug);
+  const status = resolveStatus(availability, new Date().toISOString(), currentCitySlug);
   return { buckets, availability, status, loading: false, error: null };
 }
