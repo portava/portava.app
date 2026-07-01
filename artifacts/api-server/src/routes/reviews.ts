@@ -536,14 +536,18 @@ router.post("/reviews/:id/report", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Verify review exists
+  // Verify review exists and has not been actioned (removed or hidden)
   const { data: review } = await sc
     .from("reviews")
-    .select("id, reviewer_id")
+    .select("id, reviewer_id, state")
     .eq("id", id)
     .maybeSingle();
 
   if (!review) { sendError(res, "not_found", "Review not found"); return; }
+  if ((review as any).state === "removed" || (review as any).state === "hidden") {
+    sendError(res, "not_found", "Review not found");
+    return;
+  }
   if ((review as any).reviewer_id === auth.user.id) {
     sendError(res, "invalid_payload", "Cannot report your own review");
     return;

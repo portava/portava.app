@@ -10,6 +10,7 @@
  * - POST /api/reviews: trust event fires (review_submitted), no direct score write
  * - GET  /api/trips/:id/reviews: returns published reviews with aggregate
  * - DELETE /api/reviews/:id: author can retract (state → hidden), admin removes (state → removed)
+ * - POST /api/reviews/:id/report: 404 when review is hidden or removed
  */
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -919,5 +920,82 @@ describe("avgRating lifecycle — create then refetch", () => {
     assert.equal(body.total, 1, "only the published review should count");
     assert.equal(body.avgRating, 5.0, "avgRating should only reflect published reviews");
     assert.equal(body.reviews.length, 1, "only one review should be returned");
+  });
+});
+
+// ── POST /api/reviews/:id/report ──────────────────────────────────────────────
+
+describe("POST /api/reviews/:id/report", () => {
+  let server: { url: string; close: () => Promise<void>; client: any };
+
+  afterEach(async () => { await server?.close(); });
+
+  it("404 not_found when the target review has state=hidden", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: OTHER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "hidden",   // author-retracted — should block reporting
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPost(
+      server.url,
+      `/api/reviews/${REVIEW_ID}/report`,
+      "reviewer-token",
+      { reason: "spam" },
+    );
+    assert.equal(status, 404);
+    assert.equal(body.error, "not_found");
+  });
+
+  it("404 not_found when the target review has state=removed", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: OTHER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "removed",  // admin-removed — should block reporting
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPost(
+      server.url,
+      `/api/reviews/${REVIEW_ID}/report`,
+      "reviewer-token",
+      { reason: "harassment" },
+    );
+    assert.equal(status, 404);
+    assert.equal(body.error, "not_found");
+  });
+
+  it("201 ok when the target review is published", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: OTHER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "published",
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPost(
+      server.url,
+      `/api/reviews/${REVIEW_ID}/report`,
+      "reviewer-token",
+      { reason: "spam" },
+    );
+    assert.equal(status, 201);
+    assert.equal(body.ok, true);
   });
 });
