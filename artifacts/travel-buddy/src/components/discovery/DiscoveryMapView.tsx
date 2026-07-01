@@ -111,6 +111,8 @@ function computeViewport(places: DiscoveryPlace[]) {
 export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
   const [filter, setFilterRaw] = useState<MapFilter>('all');
   const [legendOpen, setLegendOpen] = useState(false);
+  const [resetToast, setResetToast] = useState(false);
+  const resetToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Restore the last-used filter from AsyncStorage on mount.
   // Unrecognised or missing values fall back to 'all' silently.
@@ -124,10 +126,28 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
       .catch(() => {}); // fail-open — show 'all' if storage is unavailable
   }, []);
 
+  // Clean up the toast timer when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (resetToastTimer.current) clearTimeout(resetToastTimer.current);
+    };
+  }, []);
+
   // Persist filter selection and update local state.
   const setFilter = (f: MapFilter) => {
     setFilterRaw(f);
     AsyncStorage.setItem(FILTER_STORAGE_KEY, f).catch(() => {}); // fire-and-forget
+  };
+
+  // Long-pressing the active filter button resets to 'all' and clears the
+  // persisted preference, giving travelers an escape hatch if they end up
+  // with a filter that shows no pins in the current city.
+  const handleFilterReset = () => {
+    setFilterRaw('all');
+    AsyncStorage.removeItem(FILTER_STORAGE_KEY).catch(() => {});
+    setResetToast(true);
+    if (resetToastTimer.current) clearTimeout(resetToastTimer.current);
+    resetToastTimer.current = setTimeout(() => setResetToast(false), 1500);
   };
 
   // All places that have coordinates — used for viewport + empty-state check.
@@ -226,6 +246,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
               key={opt.key}
               style={[s.filterBtn, active && s.filterBtnActive]}
               onPress={() => setFilter(opt.key)}
+              onLongPress={active ? handleFilterReset : undefined}
               hitSlop={4}
             >
               <Text style={[s.filterBtnText, active && s.filterBtnTextActive]}>
@@ -235,6 +256,13 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           );
         })}
       </View>
+
+      {/* ── Reset toast ────────────────────────────────────────────────────── */}
+      {resetToast && (
+        <View style={s.resetToast} pointerEvents="none">
+          <Text style={s.resetToastText}>Filter reset</Text>
+        </View>
+      )}
 
       {/* ── Badge row ──────────────────────────────────────────────────────── */}
       <View style={s.badgeRow}>
@@ -493,5 +521,19 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#111827',
+  },
+  resetToast: {
+    position: 'absolute',
+    top: 62,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+  },
+  resetToastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
