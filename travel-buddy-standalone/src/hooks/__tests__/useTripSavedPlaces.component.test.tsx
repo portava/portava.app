@@ -19,15 +19,13 @@ jest.mock('../../services/discoveryBookmarks', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),
   toggleSave: jest.fn(),
-  removeSaved: jest.fn(),
 }));
 
-const { listSaved, clearAllSaved, toggleSave: toggleSaveMock, removeSaved: removeSavedMock } =
+const { listSaved, clearAllSaved, toggleSave: toggleSaveMock } =
   jest.requireMock('../../services/discoveryBookmarks') as {
     listSaved: jest.Mock;
     clearAllSaved: jest.Mock;
     toggleSave: jest.Mock;
-    removeSaved: jest.Mock;
   };
 
 function makePlace(id: string, overrides: Partial<BookmarkedPlace> = {}): BookmarkedPlace {
@@ -44,7 +42,6 @@ async function renderAndLoad(initial: BookmarkedPlace[]) {
 beforeEach(() => {
   jest.clearAllMocks();
   clearAllSaved.mockResolvedValue(undefined);
-  removeSavedMock.mockResolvedValue(undefined);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -312,7 +309,8 @@ describe('useTripSavedPlaces — toggle failure (storage error)', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove success', () => {
-  it('removes only the target place from the list after removeSaved resolves', async () => {
+  it('removes only the target place from the list after toggleSave resolves', async () => {
+    toggleSaveMock.mockResolvedValue(false);
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
     expect(result.current.places).toHaveLength(2);
 
@@ -322,16 +320,19 @@ describe('useTripSavedPlaces — remove success', () => {
     expect(result.current.places[0].id).toBe('p2');
   });
 
-  it('calls removeSaved with the place id', async () => {
-    const { result } = await renderAndLoad([makePlace('p1')]);
+  it('calls toggleSave with the place and the hook-scoped tripId', async () => {
+    toggleSaveMock.mockResolvedValue(false);
+    const place = makePlace('p1');
+    const { result } = await renderAndLoad([place]);
 
-    await act(async () => { await result.current.remove(makePlace('p1')); });
+    await act(async () => { await result.current.remove(place); });
 
-    expect(removeSavedMock).toHaveBeenCalledWith('p1');
-    expect(removeSavedMock).toHaveBeenCalledTimes(1);
+    expect(toggleSaveMock).toHaveBeenCalledWith(place, 'trip-1');
+    expect(toggleSaveMock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves an empty list when the last place is removed', async () => {
+    toggleSaveMock.mockResolvedValue(false);
     const { result } = await renderAndLoad([makePlace('only')]);
 
     await act(async () => { await result.current.remove(makePlace('only')); });
@@ -345,8 +346,8 @@ describe('useTripSavedPlaces — remove success', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove rollback on failure', () => {
-  it('restores the original places list when removeSaved rejects', async () => {
-    removeSavedMock.mockRejectedValue(new Error('disk full'));
+  it('restores the original places list when toggleSave rejects', async () => {
+    toggleSaveMock.mockRejectedValue(new Error('disk full'));
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
 
     await act(async () => {
@@ -358,7 +359,7 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
   });
 
   it('rethrows as remove_failed (not the raw storage error)', async () => {
-    removeSavedMock.mockRejectedValue(new Error('ENOENT'));
+    toggleSaveMock.mockRejectedValue(new Error('ENOENT'));
     const { result } = await renderAndLoad([makePlace('p1')]);
 
     let caught: Error | undefined;
@@ -370,7 +371,7 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
   });
 
   it('rollback preserves all original place fields', async () => {
-    removeSavedMock.mockRejectedValue(new Error('fail'));
+    toggleSaveMock.mockRejectedValue(new Error('fail'));
     const rich = makePlace('r1', { name: 'Full Place', category: 'restaurant', address: '1 Main St', type: 'food' });
     const { result } = await renderAndLoad([rich]);
 
@@ -388,9 +389,9 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove optimistic timing', () => {
-  it('drops the place from the list before removeSaved resolves', async () => {
-    let resolveRemove!: () => void;
-    removeSavedMock.mockReturnValue(new Promise<void>((res) => { resolveRemove = res; }));
+  it('drops the place from the list before toggleSave resolves', async () => {
+    let resolveToggle!: () => void;
+    toggleSaveMock.mockReturnValue(new Promise<boolean>((res) => { resolveToggle = () => res(false); }));
 
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
 
@@ -399,14 +400,14 @@ describe('useTripSavedPlaces — remove optimistic timing', () => {
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
 
     // Let storage complete — place stays gone on success
-    await act(async () => { resolveRemove(); });
+    await act(async () => { resolveToggle(); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
   });
 
   it('restores the place before the storage rejection is handled', async () => {
-    let rejectRemove!: (err: Error) => void;
-    removeSavedMock.mockReturnValue(
-      new Promise<void>((_, reject) => { rejectRemove = reject; }),
+    let rejectToggle!: (err: Error) => void;
+    toggleSaveMock.mockReturnValue(
+      new Promise<boolean>((_, reject) => { rejectToggle = reject; }),
     );
 
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
@@ -414,7 +415,7 @@ describe('useTripSavedPlaces — remove optimistic timing', () => {
     await act(() => { void result.current.remove(makePlace('p1')).catch(() => {}); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
 
-    await act(async () => { rejectRemove(new Error('disk error')); });
+    await act(async () => { rejectToggle(new Error('disk error')); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p1', 'p2']);
   });
 });

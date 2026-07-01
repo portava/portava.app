@@ -13,13 +13,20 @@
 
 import React from 'react';
 import { Alert } from 'react-native';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { TripSavedPlacesSection } from '../../components/TripPage';
 import { useTripSavedPlaces } from '../useTripSavedPlaces';
 import type { BookmarkedPlace } from '../../services/discoveryBookmarks';
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 // Mock useTripSavedPlaces so we control returned state without async effects.
+// discoveryBookmarks is also mocked so the real hook can be used in the
+// integrated describe block below without touching real AsyncStorage.
+jest.mock('../../services/discoveryBookmarks', () => ({
+  listSaved: jest.fn(),
+  toggleSave: jest.fn(),
+  clearAllSaved: jest.fn(),
+}));
 jest.mock('../useTripSavedPlaces', () => ({
   useTripSavedPlaces: jest.fn(),
 }));
@@ -221,5 +228,71 @@ describe('TripSavedPlacesSection — X button (individual place remove)', () => 
     await fireEvent.press(getByTestId('saved-place-remove-p2'));
 
     expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'p2' }));
+  });
+});
+
+// ── Integrated test: real hook + mocked storage ───────────────────────────────
+//
+// These tests do NOT mock useTripSavedPlaces. They swap in the real hook
+// implementation and mock only the underlying discoveryBookmarks storage layer.
+// This validates the full flow: optimistic remove → storage reject → rollback
+// → item reappears in UI → error Alert shown — all in one connected path.
+
+describe('TripSavedPlacesSection — integrated remove flow (real hook + mocked storage)', () => {
+  type DiscoveryMocks = { listSaved: jest.Mock; toggleSave: jest.Mock; clearAllSaved: jest.Mock };
+
+  beforeEach(() => {
+    // Outer beforeEach already cleared mocks. Now set up integration-specific state.
+    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    dm.listSaved.mockResolvedValue([makePlace('p1'), makePlace('p2')]);
+    dm.clearAllSaved.mockResolvedValue(undefined);
+
+    // Override the module-level hook mock with the real implementation so the
+    // component exercises the actual optimistic-remove + rollback logic.
+    const { useTripSavedPlaces: realHook } = jest.requireActual('../useTripSavedPlaces') as typeof import('../useTripSavedPlaces');
+    mockUseTripSavedPlaces.mockImplementation(realHook);
+  });
+
+  it('restores the item and shows an error Alert when storage rejects (end-to-end rollback)', async () => {
+    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    dm.toggleSave.mockRejectedValue(new Error('disk full'));
+
+    const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+
+    // Wait for the initial load to complete — both X buttons must be present
+    await waitFor(() => {
+      expect(getByTestId('saved-place-remove-p1')).toBeTruthy();
+      expect(getByTestId('saved-place-remove-p2')).toBeTruthy();
+    });
+
+    // Press X on p1 — triggers optimistic remove, then toggleSave rejects
+    await fireEvent.press(getByTestId('saved-place-remove-p1'));
+
+    // Rollback must restore p1 and the component must show the error Alert
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(alertSpy.mock.calls[0][0]).toBe('Something went wrong');
+
+    // p1 must be visible again (rollback landed)
+    await waitFor(() => expect(getByTestId('saved-place-remove-p1')).toBeTruthy());
+  });
+
+  it('removes the item permanently when storage succeeds (no Alert)', async () => {
+    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    dm.toggleSave.mockResolvedValue(false);
+
+    const { getByTestId, queryByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+
+    await waitFor(() => expect(getByTestId('saved-place-remove-p1')).toBeTruthy());
+
+    await fireEvent.press(getByTestId('saved-place-remove-p1'));
+
+    // Success: no error Alert
+    await new Promise<void>((res) => { Promise.resolve().then(() => Promise.resolve().then(res)); });
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    // p1 must be gone from the list
+    await waitFor(() => expect(queryByTestId('saved-place-remove-p1')).toBeNull());
   });
 });
