@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# check-db-triggers.sh — verify that the three DB protection triggers introduced
-# in migrations 0071–0073 are present in the Supabase production database.
+# check-db-triggers.sh — verify that the DB protection triggers introduced
+# in migrations 0071–0074 are present in the Supabase production database.
 #
 # Called by scripts/pre-release-check.sh as the "db-triggers" check.
 #
@@ -50,7 +50,7 @@ if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
   exit 1
 fi
 
-# ── query Management API for the three triggers ───────────────────────────────
+# ── query Management API for all required triggers ────────────────────────────
 # information_schema.triggers is always accessible via the Management API
 # regardless of PostgREST schema exposure settings.
 SQL="SELECT trigger_name, event_object_table \
@@ -59,7 +59,8 @@ WHERE trigger_schema = 'public' \
   AND trigger_name IN (\
 'enforce_default_collection_no_delete',\
 'block_collections_truncate',\
-'block_collection_items_truncate'\
+'block_collection_items_truncate',\
+'block_saved_places_truncate'\
 )"
 
 API_URL="https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query"

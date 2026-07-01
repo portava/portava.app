@@ -3,13 +3,13 @@
  *
  * Reads the JSON response from the Supabase Management API database/query
  * endpoint via the TRIGGER_RESPONSE environment variable and verifies that
- * the three DB protection triggers introduced in migrations 0071–0073 are
+ * the DB protection triggers introduced in migrations 0071–0074 are
  * all present.
  *
  * Called by scripts/check-db-triggers.sh.
  *
  * Exit codes:
- *   0  all three triggers confirmed
+ *   0  all triggers confirmed
  *   1  one or more triggers missing or response is malformed
  */
 
@@ -17,6 +17,7 @@ const REQUIRED = [
   { name: "enforce_default_collection_no_delete", table: "collections" },
   { name: "block_collections_truncate", table: "collections" },
   { name: "block_collection_items_truncate", table: "collection_items" },
+  { name: "block_saved_places_truncate", table: "saved_places" },
 ];
 
 const raw = process.env.TRIGGER_RESPONSE ?? "";
@@ -55,5 +56,6 @@ if (!allPresent) {
   console.error("       artifacts/api-server/src/migrations/0071_protect_default_collection.sql");
   console.error("       artifacts/api-server/src/migrations/0072_block_collections_truncate.sql");
   console.error("       artifacts/api-server/src/migrations/0073_block_collection_items_truncate.sql");
+  console.error("       artifacts/api-server/src/migrations/0074_protect_saved_places.sql");
   process.exit(1);
 }
