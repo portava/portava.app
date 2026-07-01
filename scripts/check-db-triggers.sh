@@ -85,12 +85,13 @@ fi
 printf "  ℹ  Using %s for Supabase Management API\n" "$TOKEN_SOURCE"
 
 # ── query Management API for all required triggers ────────────────────────────
-# information_schema.triggers is always accessible via the Management API
-# regardless of PostgREST schema exposure settings.
-SQL="SELECT trigger_name, event_object_table \
-FROM information_schema.triggers \
-WHERE trigger_schema = 'public' \
-  AND trigger_name IN (\
+# Use pg_trigger + pg_class directly — information_schema.triggers only surfaces
+# triggers the calling role owns, so it can miss triggers created by other roles
+# (e.g. postgres) when queried as the anon/service role via the Management API.
+SQL="SELECT t.tgname AS trigger_name, c.relname AS event_object_table \
+FROM pg_trigger t \
+JOIN pg_class c ON c.oid = t.tgrelid \
+WHERE t.tgname IN (\
 'enforce_default_collection_no_delete',\
 'block_collections_truncate',\
 'block_collection_items_truncate',\
@@ -108,7 +109,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
 HTTP_BODY=$(printf "%s" "$RESPONSE" | head -n -1)
 HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
 
-if [[ "$HTTP_CODE" != "200" ]]; then
+# The Supabase Management API returns 200 or 201 for successful queries.
+if [[ "$HTTP_CODE" != "200" && "$HTTP_CODE" != "201" ]]; then
   printf "  ✘  Supabase Management API returned HTTP %s\n" "$HTTP_CODE"
   printf "     Response: %s\n" "$HTTP_BODY"
   printf "     Verify %s is valid and has access to project %s.\n" "$TOKEN_SOURCE" "$PROJECT_REF"
