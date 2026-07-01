@@ -12,6 +12,7 @@
     "test:sync-check": "node --import tsx/esm --test ./src/sync-standalone-check.test.ts",
     "test:workflow-paths": "node --import tsx/esm --test ./src/workflow-paths.test.ts",
     "test:db-triggers": "node --import tsx/esm --test ./src/check-db-triggers.test.ts",
+    "test:truncate-guard": "node --import tsx/esm --test ./src/saved-places-truncate-guard.test.ts",
     "seed:profiles": "tsx ./src/seed-test-profiles.ts"
   },
   "devDependencies": {
