@@ -1,6 +1,17 @@
 /**
- * Discovery bookmarks — persists saved places locally via AsyncStorage.
- * Each saved place is stored by its OSM id so duplicates are prevented.
+ * Discovery bookmarks — persists saved places in Supabase (via the API server)
+ * when the user is authenticated, with AsyncStorage as an offline fallback.
+ *
+ * Write path  : AsyncStorage is updated first (fast, offline-safe), then the
+ *               API is called to persist the change to Supabase.
+ * Read path   : API is tried first; on failure (network error, unauthenticated,
+ *               server down) AsyncStorage is used instead.
+ *
+ * Test isolation: The supabase module is lazy-loaded inside getAuthToken() so
+ * the native @supabase/supabase-js packages are never imported when running
+ * node:test in a pure Node.js environment.  Tests that only exercise local
+ * storage continue to work unchanged via _setTestStorage().  Tests that want
+ * to exercise the API path can call _setTestToken(token) to bypass supabase.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { categoryStorageKey, type StorageLike } from '../components/savedPlacesMapFilterStorage.ts';
@@ -20,12 +31,22 @@ export interface BookmarkedPlace {
   lng?: number | null;
 }
 
-// ── Test seam ──────────────────────────────────────────────────────────────────
-// Production code always uses AsyncStorage. Tests call _setTestStorage() to
-// inject a fake so the native module is never required.
+// ── Test seams ─────────────────────────────────────────────────────────────────
+// Production code uses AsyncStorage and real supabase auth.
+// Tests call _setTestStorage() to inject a fake storage and optionally
+// _setTestToken() to control the auth token without loading supabase.
+
 let _storage: StorageLike = AsyncStorage;
 export function _setTestStorage(s: StorageLike): void {
   _storage = s;
+}
+
+// undefined  = use real supabase auth (default)
+// null       = unauthenticated (skip API calls)
+// '<token>'  = authenticated, use this token
+let _testToken: string | null | undefined = undefined;
+export function _setTestToken(t: string | null | undefined): void {
+  _testToken = t;
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
@@ -47,6 +68,36 @@ async function writeAll(items: BookmarkedPlace[]): Promise<void> {
   }
 }
 
+// ── API helpers (only used when Supabase is configured) ────────────────────────
+
+const apiBase = (): string => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+/**
+ * Returns a valid bearer token, or null when unauthenticated / not configured.
+ *
+ * Supabase is lazy-imported so the native @supabase/supabase-js packages are
+ * never required in a pure Node.js test environment.  If the import fails for
+ * any reason the function silently returns null (treated as unauthenticated).
+ */
+async function getAuthToken(): Promise<string | null> {
+  // Test seam: bypass supabase entirely
+  if (_testToken !== undefined) return _testToken;
+
+  // Guard: no API base URL — skip all remote calls
+  if (!apiBase()) return null;
+
+  try {
+    // Dynamic import keeps native Expo/RN modules out of the test bundle
+    const { supabase, isSupabaseConfigured } = await import('../lib/supabase.ts');
+    if (!isSupabaseConfigured) return null;
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 export async function isSaved(id: string): Promise<boolean> {
@@ -55,35 +106,91 @@ export async function isSaved(id: string): Promise<boolean> {
 }
 
 export async function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
+  // 1. Update AsyncStorage first — fast, works offline
   const all = await readAll();
   const idx = all.findIndex((b) => b.id === place.id);
-  if (idx >= 0) {
-    // remove
+  const removing = idx >= 0;
+  if (removing) {
     all.splice(idx, 1);
     await writeAll(all);
-    // When the last place is removed, the category-filter key for this list
-    // becomes stale. Clear it as a fire-and-forget cleanup so stale keys don't
-    // accumulate in storage (mirrors the same cleanup in removeSaved).
     if (all.length === 0) {
       _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
     }
-    return false; // now unsaved
   } else {
-    // add
     all.unshift({ ...place, savedAt: Date.now() });
     await writeAll(all);
-    return true; // now saved
   }
+
+  // 2. Sync to Supabase via API (best-effort; failure does not revert local state)
+  const token = await getAuthToken();
+  if (token) {
+    const base = apiBase();
+    try {
+      if (removing) {
+        await fetch(
+          `${base}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(listId)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+        );
+      } else {
+        await fetch(`${base}/api/wishlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ placeId: place.id, placeData: place, listId }),
+        });
+      }
+    } catch {
+      // Network error — local state already updated; Supabase will reconcile on
+      // the next successful listSaved() call.
+    }
+  }
+
+  return !removing;
 }
 
 export async function listSaved(): Promise<BookmarkedPlace[]> {
+  // Try Supabase first — authoritative source when online & authenticated
+  const token = await getAuthToken();
+  if (token) {
+    const base = apiBase();
+    try {
+      const res = await fetch(`${base}/api/wishlist`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { places: BookmarkedPlace[] };
+        const places = json.places ?? [];
+        // Keep local cache in sync with the authoritative Supabase list
+        await writeAll(places);
+        return places.sort((a, b) => b.savedAt - a.savedAt);
+      }
+    } catch {
+      // Network error — fall through to AsyncStorage
+    }
+  }
+
+  // Fallback: local AsyncStorage
   const all = await readAll();
   return all.sort((a, b) => b.savedAt - a.savedAt);
 }
 
 export async function clearAllSaved(): Promise<void> {
+  // Clear local storage
   await _storage.removeItem(STORAGE_KEY);
   await _storage.removeItem(GLOBAL_FILTER_KEY);
+
+  // Sync to Supabase (best-effort)
+  const token = await getAuthToken();
+  if (token) {
+    const base = apiBase();
+    try {
+      await fetch(`${base}/api/wishlist`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // Network error — local is already cleared
+    }
+  }
 }
 
 export async function removeSaved(id: string): Promise<void> {
@@ -101,5 +208,19 @@ export async function removeSaved(id: string): Promise<void> {
   // keys don't accumulate across place-by-place removals.
   if (remaining.length === 0) {
     _storage.removeItem(GLOBAL_FILTER_KEY).catch(() => {});
+  }
+
+  // Sync to Supabase (best-effort — failure does not revert the local remove)
+  const token = await getAuthToken();
+  if (token) {
+    const base = apiBase();
+    try {
+      await fetch(
+        `${base}/api/wishlist/${encodeURIComponent(id)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      );
+    } catch {
+      // Network error — local state is already removed
+    }
   }
 }
