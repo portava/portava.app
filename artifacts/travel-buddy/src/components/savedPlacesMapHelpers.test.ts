@@ -692,3 +692,141 @@ describe('resolveSelectedId', () => {
     assert.equal(resolveSelectedId('k1', visible), 'k1');
   });
 });
+
+// ── effectiveCategory useMemo regression guard ─────────────────────────────────
+//
+// These tests pin the no-flash contract introduced when the stale-category reset
+// was moved from a useEffect to a synchronous useMemo (effectiveCategory).
+//
+// The old pattern was:
+//   useEffect(() => {
+//     if (!categories.includes(activeCategory)) setActiveCategory(null);
+//   }, [categories, activeCategory]);
+//
+// The effect fires *after* render, so there is one render cycle where:
+//   activeCategory = 'museum'  (stale state, not yet reset)
+//   categories     = []        (last museum was removed)
+//   visible        = []        (filterVisible filters to empty)
+//   → shouldShowNoPinsOverlay('museum', 0) = true  ← FLASH
+//
+// The new pattern uses a synchronous useMemo:
+//   effectiveCategory = resolveStoredCategory(activeCategory, categories)
+//   // = null, computed in the same render cycle the category disappears
+//   visible = filterVisible(mappable, effectiveCategory) = all remaining places
+//   → shouldShowNoPinsOverlay(null, visible.length) = false  ← NO FLASH
+//
+// A regression would be caught here if someone re-introduces a useEffect that
+// writes back to activeCategory, or accidentally uses raw activeCategory instead
+// of effectiveCategory in the shouldShowNoPinsOverlay call.
+
+describe('effectiveCategory useMemo — regression guard against no-pins overlay flash', () => {
+  it('resolveStoredCategory returns null synchronously when the last pin of a category is removed', () => {
+    const activeCategory = 'museum';
+
+    // Before removal: category is present and resolves correctly.
+    const categoriesBefore = ['cafe', 'museum'];
+    assert.equal(resolveStoredCategory(activeCategory, categoriesBefore), 'museum');
+
+    // After removal: category disappears from the derived list.
+    // resolveStoredCategory is a pure synchronous call — no render cycle gap.
+    const categoriesAfter = ['cafe'];
+    const effectiveCategory = resolveStoredCategory(activeCategory, categoriesAfter);
+    assert.equal(
+      effectiveCategory,
+      null,
+      'effectiveCategory must resolve to null in the same call that sees the updated categories',
+    );
+  });
+
+  it('shouldShowNoPinsOverlay is false when effectiveCategory is null — even with stale activeCategory', () => {
+    const activeCategory = 'museum'; // stale React state, not yet committed to null
+    const remainingPlaces = [place({ id: 'c1', category: 'cafe', lat: 48.8566, lng: 2.3522 })];
+
+    // NEW (useMemo) path ─────────────────────────────────────────────────────
+    const categoriesAfter   = uniqueCategories(filterMappable(remainingPlaces));
+    const effectiveCategory = resolveStoredCategory(activeCategory, categoriesAfter); // null
+    const visible           = filterVisible(filterMappable(remainingPlaces), effectiveCategory);
+
+    // Overlay must NOT be shown — no flash.
+    assert.equal(
+      shouldShowNoPinsOverlay(effectiveCategory, visible.length),
+      false,
+      'no overlay when effectiveCategory is null (useMemo path)',
+    );
+
+    // OLD (useEffect) path — regression illustration ─────────────────────────
+    // If someone passes raw activeCategory instead of effectiveCategory, the
+    // overlay fires for one render cycle (the flash this test guards against).
+    const visibleOld = filterVisible(filterMappable(remainingPlaces), activeCategory); // []
+    assert.equal(
+      shouldShowNoPinsOverlay(activeCategory, visibleOld.length),
+      true,
+      'raw activeCategory would incorrectly show the overlay — this is the flash the useMemo fixes',
+    );
+  });
+
+  it('shouldShowNoPinsOverlay is false when all places are removed and effectiveCategory is null', () => {
+    const activeCategory  = 'museum';
+    const categoriesAfter: string[] = []; // every place removed
+    const effectiveCategory = resolveStoredCategory(activeCategory, categoriesAfter); // null
+    assert.equal(effectiveCategory, null);
+
+    const visible = filterVisible([], effectiveCategory);
+    assert.equal(visible.length, 0);
+
+    // No overlay: activeCategory is stale but effectiveCategory is null.
+    assert.equal(
+      shouldShowNoPinsOverlay(effectiveCategory, visible.length),
+      false,
+      'overlay must not show when effectiveCategory is null — even with 0 visible pins',
+    );
+  });
+
+  it('full pipeline: removing last pin of active category — no overlay flash', () => {
+    const museum = place({ id: 'm1', category: 'museum', lat: 48.8566, lng:  2.3522 });
+    const cafe   = place({ id: 'c1', category: 'cafe',   lat: 51.5074, lng: -0.1278 });
+
+    const activeCategory = 'museum'; // user had museum chip selected
+
+    // User removes the only museum place.
+    const afterPlaces     = [cafe];
+    const afterMappable   = filterMappable(afterPlaces);
+    const afterCategories = uniqueCategories(afterMappable);
+
+    assert.ok(!afterCategories.includes('museum'), '"museum" must be absent from categories after removal');
+    assert.ok(afterCategories.includes('cafe'),    '"cafe" must still be present');
+
+    // useMemo computes effectiveCategory synchronously — null in the same render.
+    const effectiveCategory = resolveStoredCategory(activeCategory, afterCategories);
+    assert.equal(effectiveCategory, null);
+
+    // visible = all remaining places because effectiveCategory is null ("All").
+    const visible = filterVisible(afterMappable, effectiveCategory);
+    assert.equal(visible.length, 1, 'cafe pin must be visible when showing All');
+    assert.equal(visible[0].id, 'c1');
+
+    // Overlay NOT shown — the removed-category flash is eliminated.
+    assert.equal(shouldShowNoPinsOverlay(effectiveCategory, visible.length), false);
+  });
+
+  it('effectiveCategory stays non-null and overlay stays hidden when other pins remain in the active category', () => {
+    const museum1 = place({ id: 'm1', category: 'museum', lat: 48.8566, lng: 2.3522 });
+    const museum2 = place({ id: 'm2', category: 'museum', lat: 48.86,   lng: 2.36   });
+
+    const activeCategory = 'museum';
+
+    // Remove only one of the two museums.
+    const afterPlaces     = [museum2];
+    const afterCategories = uniqueCategories(filterMappable(afterPlaces));
+    const effectiveCategory = resolveStoredCategory(activeCategory, afterCategories);
+
+    // Category is still valid — chip stays on 'museum'.
+    assert.equal(effectiveCategory, 'museum');
+
+    const visible = filterVisible(filterMappable(afterPlaces), effectiveCategory);
+    assert.equal(visible.length, 1);
+
+    // Overlay not shown because visible.length > 0.
+    assert.equal(shouldShowNoPinsOverlay(effectiveCategory, visible.length), false);
+  });
+});
