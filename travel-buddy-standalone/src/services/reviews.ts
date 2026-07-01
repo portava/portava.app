@@ -130,6 +130,10 @@ export async function reportReview(reviewId: string, reason: string): Promise<vo
 export interface MyReviewResult {
   exists: boolean;
   reviewId: string | null;
+  rating?: number;
+  body?: string | null;
+  tags?: string[];
+  anonymous?: boolean;
 }
 
 export async function getMyReview(
@@ -143,6 +147,39 @@ export async function getMyReview(
   if (!res.ok) {
     // Treat errors as "not reviewed" so the UI doesn't block the user
     return { exists: false, reviewId: null };
+  }
+  return res.json();
+}
+
+export interface UpdatedReview {
+  id: string;
+  rating: number;
+  body: string | null;
+  tags: string[];
+  anonymous: boolean;
+  updatedAt: string;
+}
+
+export async function updateReview(
+  reviewId: string,
+  params: {
+    rating?: number;
+    body?: string | null;
+    tags?: string[];
+    anonymous?: boolean;
+  },
+): Promise<UpdatedReview> {
+  const res = await fetch(api(`reviews/${reviewId}`), {
+    method: 'PATCH',
+    headers: await authHeaders(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw Object.assign(
+      new Error((json as any).message ?? 'Failed to update review'),
+      { code: (json as any).error },
+    );
   }
   return res.json();
 }

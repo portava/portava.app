@@ -91,7 +91,8 @@ async function checkEligibility(
 }
 
 // ── GET /api/reviews/my-review ────────────────────────────────────────────────
-// Returns whether the current user has already reviewed a given entity.
+// Returns whether the current user has already reviewed a given entity,
+// plus the full review payload so the composer can pre-fill for editing.
 // Query params: entityType (trip|rent_buddy_booking), entityId (uuid)
 
 router.get("/reviews/my-review", async (req, res) => {
@@ -109,7 +110,7 @@ router.get("/reviews/my-review", async (req, res) => {
 
   const { data, error } = await sc
     .from("reviews")
-    .select("id")
+    .select("id, rating, body, tags, visibility")
     .eq("entity_type", entityType)
     .eq("entity_id", entityId)
     .eq("reviewer_id", auth.user.id)
@@ -122,9 +123,18 @@ router.get("/reviews/my-review", async (req, res) => {
     return;
   }
 
+  if (!data) {
+    res.json({ exists: false, reviewId: null });
+    return;
+  }
+
   res.json({
-    exists:   !!data,
-    reviewId: (data as any)?.id ?? null,
+    exists:    true,
+    reviewId:  (data as any).id,
+    rating:    (data as any).rating,
+    body:      (data as any).body ?? null,
+    tags:      (data as any).tags ?? [],
+    anonymous: (data as any).visibility === "anonymous",
   });
 });
 
@@ -388,6 +398,76 @@ router.get("/users/:id/reviews", async (req, res) => {
     avgRating,
     reviewCount,
     reviews: merged,
+  });
+});
+
+// ── PATCH /api/reviews/:id ────────────────────────────────────────────────────
+// Author updates their own review (rating, body, tags, anonymous)
+
+const UpdateReviewSchema = z.object({
+  rating:    z.number().int().min(1).max(5).optional(),
+  body:      z.string().max(2000).optional().nullable(),
+  tags:      z.array(z.string().max(64)).max(10).optional(),
+  anonymous: z.boolean().optional(),
+});
+
+router.patch("/reviews/:id", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid review id"); return; }
+
+  const parsed = UpdateReviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues.map((i) => i.message).join("; "));
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Verify the review exists and belongs to the caller
+  const { data: existing, error: fetchError } = await sc
+    .from("reviews")
+    .select("id, reviewer_id, state")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (fetchError || !existing) { sendError(res, "not_found", "Review not found"); return; }
+  if ((existing as any).reviewer_id !== auth.user.id) {
+    res.status(403).json({ error: "forbidden", message: "Not your review" });
+    return;
+  }
+  if ((existing as any).state === "removed") {
+    sendError(res, "not_found", "Review not found");
+    return;
+  }
+
+  const { rating, body, tags, anonymous } = parsed.data;
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (rating    !== undefined) patch.rating     = rating;
+  if (body      !== undefined) patch.body        = body ?? null;
+  if (tags      !== undefined) patch.tags        = tags;
+  if (anonymous !== undefined) patch.visibility  = anonymous ? "anonymous" : "public";
+
+  const { data: updated, error } = await sc
+    .from("reviews")
+    .update(patch)
+    .eq("id", id)
+    .select("id, rating, body, tags, visibility, updated_at")
+    .single();
+
+  if (error) { req.log.error({ err: error }, "patch review"); sendError(res, "db_error", error.message); return; }
+
+  res.json({
+    id:        (updated as any).id,
+    rating:    (updated as any).rating,
+    body:      (updated as any).body ?? null,
+    tags:      (updated as any).tags ?? [],
+    anonymous: (updated as any).visibility === "anonymous",
+    updatedAt: (updated as any).updated_at,
   });
 });
 

@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,40 +14,12 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   createReview,
   createEventReview,
+  updateReview,
   getMyReview,
   REVIEW_TAGS,
   type ReviewEntityType,
 } from '../../../src/services/reviews';
 import { useSession } from '../../../src/context/SessionContext';
-
-// ── Inline toast banner ───────────────────────────────────────────────────────
-
-function DuplicateReviewBanner({ visible }: { visible: boolean }) {
-  const translateY = useRef(new Animated.Value(-80)).current;
-  const opacity    = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 180 }),
-        Animated.timing(opacity,    { toValue: 1, useNativeDriver: true, duration: 200 }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(translateY, { toValue: -80, useNativeDriver: true, duration: 200 }),
-        Animated.timing(opacity,    { toValue: 0,   useNativeDriver: true, duration: 200 }),
-      ]).start();
-    }
-  }, [visible]);
-
-  return (
-    <Animated.View style={[s.banner, { opacity, transform: [{ translateY }] }]}>
-      <Text style={s.bannerText}>
-        You've already submitted a review for this. Go back to edit it.
-      </Text>
-    </Animated.View>
-  );
-}
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -106,24 +77,34 @@ export default function ReviewComposerScreen() {
   const [tags, setTags]               = useState<string[]>([]);
   const [anonymous, setAnonymous]     = useState(false);
   const [saving, setSaving]           = useState(false);
-  const [showDuplicate, setDuplicate] = useState(false);
-  const [hasExisting, setHasExisting] = useState(false);
+  const [loading, setLoading]         = useState(false);
 
-  // On mount: check if the user has already reviewed this entity so we can
-  // warn them up-front rather than letting the server reject the submission.
+  // Edit-mode state
+  const [existingReviewId, setExistingReviewId] = useState<string | null>(null);
+  const isEditing = existingReviewId !== null;
+
+  // On mount: check if the user has already reviewed this entity.
+  // If so, pre-fill the form fields for editing.
   useEffect(() => {
     if (!isAuthed || !entityId || entityType === 'event') return;
     const validType = ['trip', 'rent_buddy_booking'].includes(entityType ?? '');
     if (!validType) return;
 
+    setLoading(true);
     getMyReview(entityType as ReviewEntityType, entityId)
       .then((result) => {
-        setHasExisting(result.exists);
-        setDuplicate(result.exists);
+        if (result.exists && result.reviewId) {
+          setExistingReviewId(result.reviewId);
+          if (result.rating)    setRating(result.rating);
+          if (result.body)      setBody(result.body);
+          if (result.tags)      setTags(result.tags);
+          if (result.anonymous !== undefined) setAnonymous(result.anonymous);
+        }
       })
       .catch(() => {
         // Fail open — let the user try; server will catch any actual duplicate
-      });
+      })
+      .finally(() => setLoading(false));
   }, [isAuthed, entityType, entityId]);
 
   const toggleTag = (value: string) => {
@@ -146,13 +127,26 @@ export default function ReviewComposerScreen() {
 
     setSaving(true);
     try {
-      if (entityType === 'event') {
+      if (isEditing && existingReviewId) {
+        await updateReview(existingReviewId, {
+          rating,
+          body:      body.trim() || null,
+          tags,
+          anonymous,
+        });
+        Alert.alert('Review updated', 'Your review has been updated.', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      } else if (entityType === 'event') {
         await createEventReview({
           eventId:   entityId,
           rating,
           body:      body.trim() || undefined,
           anonymous,
         });
+        Alert.alert('Review submitted', 'Thank you for your review!', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
       } else {
         await createReview({
           entityType: entityType as ReviewEntityType,
@@ -162,16 +156,14 @@ export default function ReviewComposerScreen() {
           tags,
           anonymous,
         });
+        Alert.alert('Review submitted', 'Thank you for your review!', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
       }
-      Alert.alert('Review submitted', 'Thank you for your review!', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
     } catch (e: any) {
       const code = (e as any).code;
       if (code === 'duplicate_review') {
-        // Surface the duplicate error as an inline toast banner
-        setDuplicate(true);
-        setHasExisting(true);
+        Alert.alert('Already reviewed', 'You have already submitted a review for this.');
       } else if (code === 'review_not_eligible') {
         Alert.alert('Not eligible', 'You need confirmed attendance to leave a review.');
       } else {
@@ -190,57 +182,62 @@ export default function ReviewComposerScreen() {
       ? 'Trip'
       : 'Booking';
 
+  if (loading) {
+    return (
+      <View style={s.loadingContainer}>
+        <ActivityIndicator size="large" color="#11110F" />
+      </View>
+    );
+  }
+
   return (
-    <View style={{ flex: 1 }}>
-      {/* Inline duplicate warning banner — slides in from top */}
-      <DuplicateReviewBanner visible={showDuplicate} />
+    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-
-        {/* Header */}
-        <View style={s.header}>
-          <Text style={s.title}>
-            {hasExisting ? 'Already reviewed' : 'Leave a Review'}
+      {/* Header */}
+      <View style={s.header}>
+        <Text style={s.title}>
+          {isEditing ? 'Edit Your Review' : 'Leave a Review'}
+        </Text>
+        <Text style={s.subtitle} numberOfLines={2}>
+          {entityLabel}: {displayName}
+        </Text>
+        {isEditing && (
+          <Text style={s.editNote}>
+            Your previous rating and comments are pre-filled below. Make any changes and tap "Update Review".
           </Text>
-          <Text style={s.subtitle} numberOfLines={2}>
-            {entityLabel}: {displayName}
+        )}
+      </View>
+
+      {/* Star rating */}
+      <View style={s.section}>
+        <Text style={s.label}>Overall Rating *</Text>
+        <StarRating value={rating} onChange={setRating} />
+        {rating > 0 && (
+          <Text style={s.ratingHint}>
+            {['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'][rating]}
           </Text>
-          {hasExisting && (
-            <Text style={s.existingNote}>
-              You've already left a review here. Go back to see or edit it.
-            </Text>
-          )}
-        </View>
+        )}
+      </View>
 
-        {/* Star rating */}
-        <View style={s.section}>
-          <Text style={s.label}>Overall Rating *</Text>
-          <StarRating value={rating} onChange={setRating} />
-          {rating > 0 && (
-            <Text style={s.ratingHint}>
-              {['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'][rating]}
-            </Text>
-          )}
-        </View>
+      {/* Written review */}
+      <View style={s.section}>
+        <Text style={s.label}>Your Review (optional)</Text>
+        <TextInput
+          style={s.textArea}
+          value={body}
+          onChangeText={setBody}
+          multiline
+          numberOfLines={5}
+          maxLength={2000}
+          placeholder="Share what made this experience memorable…"
+          placeholderTextColor="#9CA3AF"
+          textAlignVertical="top"
+        />
+        <Text style={s.charCount}>{body.length}/2000</Text>
+      </View>
 
-        {/* Written review */}
-        <View style={s.section}>
-          <Text style={s.label}>Your Review (optional)</Text>
-          <TextInput
-            style={s.textArea}
-            value={body}
-            onChangeText={setBody}
-            multiline
-            numberOfLines={5}
-            maxLength={2000}
-            placeholder="Share what made this experience memorable…"
-            placeholderTextColor="#9CA3AF"
-            textAlignVertical="top"
-          />
-          <Text style={s.charCount}>{body.length}/2000</Text>
-        </View>
-
-        {/* Tags */}
+      {/* Tags (not shown for events) */}
+      {entityType !== 'event' && (
         <View style={s.section}>
           <Text style={s.label}>Tags (optional)</Text>
           <View style={s.chipRow}>
@@ -254,94 +251,76 @@ export default function ReviewComposerScreen() {
             ))}
           </View>
         </View>
+      )}
 
-        {/* Anonymous toggle */}
-        <View style={s.section}>
-          <Pressable style={s.toggleRow} onPress={() => setAnonymous((v) => !v)}>
-            <View style={[s.toggle, anonymous && s.toggleOn]}>
-              <View style={[s.toggleThumb, anonymous && s.toggleThumbOn]} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.toggleLabel}>Post anonymously</Text>
-              <Text style={s.toggleSub}>Your name won't appear on the review</Text>
-            </View>
-          </Pressable>
-        </View>
+      {/* Anonymous toggle */}
+      <View style={s.section}>
+        <Pressable style={s.toggleRow} onPress={() => setAnonymous((v) => !v)}>
+          <View style={[s.toggle, anonymous && s.toggleOn]}>
+            <View style={[s.toggleThumb, anonymous && s.toggleThumbOn]} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.toggleLabel}>Post anonymously</Text>
+            <Text style={s.toggleSub}>Your name won't appear on the review</Text>
+          </View>
+        </Pressable>
+      </View>
 
-        {/* Submit */}
-        <TouchableOpacity
-          style={[s.submitBtn, (saving || rating === 0 || hasExisting) && s.submitBtnDisabled]}
-          onPress={submit}
-          disabled={saving || rating === 0 || hasExisting}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={s.submitBtnText}>
-              {hasExisting ? 'Already submitted' : 'Submit Review'}
-            </Text>
-          )}
-        </TouchableOpacity>
+      {/* Submit */}
+      <TouchableOpacity
+        style={[s.submitBtn, (saving || rating === 0) && s.submitBtnDisabled]}
+        onPress={submit}
+        disabled={saving || rating === 0}
+      >
+        {saving ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={s.submitBtnText}>
+            {isEditing ? 'Update Review' : 'Submit Review'}
+          </Text>
+        )}
+      </TouchableOpacity>
 
-        <TouchableOpacity style={s.cancelBtn} onPress={() => router.back()}>
-          <Text style={s.cancelBtnText}>Go back</Text>
-        </TouchableOpacity>
+      <TouchableOpacity style={s.cancelBtn} onPress={() => router.back()}>
+        <Text style={s.cancelBtnText}>Go back</Text>
+      </TouchableOpacity>
 
-      </ScrollView>
-    </View>
+    </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
-  banner: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    backgroundColor: '#1F2937',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderBottomLeftRadius: 10,
-    borderBottomRightRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  bannerText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 18,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FAF9F6',
   },
 
   container:    { flex: 1, backgroundColor: '#FAF9F6' },
   content:      { padding: 20, paddingBottom: 48 },
 
-  header:       { marginBottom: 24 },
-  title:        { fontSize: 22, fontWeight: '700', color: '#11110F', marginBottom: 4 },
-  subtitle:     { fontSize: 14, color: '#6B7280' },
-  existingNote: {
+  header:   { marginBottom: 24 },
+  title:    { fontSize: 22, fontWeight: '700', color: '#11110F', marginBottom: 4 },
+  subtitle: { fontSize: 14, color: '#6B7280' },
+  editNote: {
     fontSize: 13,
-    color: '#B45309',
-    backgroundColor: '#FEF3C7',
+    color: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
     borderRadius: 8,
     padding: 10,
     marginTop: 10,
     lineHeight: 18,
   },
 
-  section:      { marginBottom: 20 },
-  label:        { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
+  section:  { marginBottom: 20 },
+  label:    { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
 
-  stars:        { flexDirection: 'row', gap: 6 },
-  starBtn:      { padding: 4 },
-  star:         { fontSize: 36, color: '#E8E5DE' },
-  starFilled:   { color: '#F59E0B' },
-  ratingHint:   { fontSize: 13, color: '#6B7280', marginTop: 6 },
+  stars:      { flexDirection: 'row', gap: 6 },
+  starBtn:    { padding: 4 },
+  star:       { fontSize: 36, color: '#E8E5DE' },
+  starFilled: { color: '#F59E0B' },
+  ratingHint: { fontSize: 13, color: '#6B7280', marginTop: 6 },
 
   textArea: {
     borderWidth: 1,
@@ -368,8 +347,8 @@ const s = StyleSheet.create({
   chipText:         { fontSize: 13, color: '#374151' },
   chipTextSelected: { color: '#fff', fontWeight: '600' },
 
-  toggleRow:  { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  toggle:     {
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toggle:    {
     width: 44,
     height: 24,
     borderRadius: 12,
@@ -377,8 +356,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     padding: 2,
   },
-  toggleOn:   { backgroundColor: '#11110F' },
-  toggleThumb:{
+  toggleOn:      { backgroundColor: '#11110F' },
+  toggleThumb:   {
     width: 20,
     height: 20,
     borderRadius: 10,
@@ -389,9 +368,9 @@ const s = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  toggleThumbOn: { alignSelf: 'flex-end' },
-  toggleLabel:   { fontSize: 14, color: '#11110F', fontWeight: '600' },
-  toggleSub:     { fontSize: 12, color: '#6B7280', marginTop: 1 },
+  toggleThumbOn:  { alignSelf: 'flex-end' },
+  toggleLabel:    { fontSize: 14, color: '#11110F', fontWeight: '600' },
+  toggleSub:      { fontSize: 12, color: '#6B7280', marginTop: 1 },
 
   submitBtn:         {
     backgroundColor: '#11110F',
