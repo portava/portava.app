@@ -19,6 +19,12 @@ name: DB triggers check
 #                             Store: GitHub → Settings → Secrets and variables
 #                             → Actions → New repository secret
 #                             See docs/eas-runbook.md → "DB triggers check in CI"
+#                             for full setup instructions.
+#
+# Fork PRs: repository secrets are not available to fork pull requests on
+# GitHub.  The creds-check step below detects the missing token, emits a
+# warning annotation, and exits 0 so the PR is not blocked.  The check runs
+# automatically on pushes to main where secrets ARE available.
 
 on:
   push:
@@ -44,14 +50,38 @@ jobs:
         with:
           node-version: 24
 
-      - name: Write API server .env (provides SUPABASE_URL to the check script)
+      - name: Check whether Supabase credentials are available
+        id: creds-check
         run: |
+          if [[ -z "${SUPABASE_PROJECT_TOKEN}" ]]; then
+            echo "::warning::SUPABASE_PROJECT_TOKEN is not set — skipping DB trigger check."
+            echo "::warning::This is expected on fork PRs where repository secrets are unavailable."
+            echo "::warning::The check runs automatically on direct pushes to main where secrets are present."
+            echo "::warning::To enable the check on your fork, add SUPABASE_PROJECT_TOKEN and SUPABASE_URL"
+            echo "::warning::under your fork's Settings → Secrets and variables → Actions."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+
+      - name: Write API server .env (provides SUPABASE_URL to the check script)
+        if: steps.creds-check.outputs.skip != 'true'
+        run: |
+          if [[ -z "${SUPABASE_URL}" ]]; then
+            echo "::error::SUPABASE_URL secret is not set. Add it in GitHub → Settings → Secrets and variables → Actions."
+            echo "::error::(value: your Supabase project URL, e.g. https://<ref>.supabase.co)"
+            echo "::error::Run 'bash scripts/print-github-secrets.sh' locally to get the exact value."
+            exit 1
+          fi
           mkdir -p artifacts/api-server
           printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > artifacts/api-server/.env
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
 
       - name: Check DB triggers are present in production
+        if: steps.creds-check.outputs.skip != 'true'
         env:
           SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
         run: bash scripts/check-db-triggers.sh

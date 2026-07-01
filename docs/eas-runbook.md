@@ -342,8 +342,9 @@ The `pre-release-check.sh` step in CI must then pass the secret as an environmen
 
 ### If the check fails in CI
 
-| Error message | Likely cause | Fix |
-|---------------|-------------|-----|
+| Error message / symptom | Likely cause | Fix |
+|-------------------------|-------------|-----|
+| Job skipped with `::warning::` annotation | Fork PR — repository secrets unavailable | Expected; check runs on merge to main where secrets are present. Add the secrets to your fork's Settings → Secrets and variables → Actions to enable locally. |
 | `No Supabase token found` | Secret not set or not passed via `env:` | Add/verify `SUPABASE_PROJECT_TOKEN` in repository secrets and the `env:` block above |
 | `Management API returned HTTP 401` | Token invalid or revoked | Regenerate the project token and update the secret |
 | `Management API returned HTTP 403` | Token scope too narrow | Ensure the token was created with **Read** scope |

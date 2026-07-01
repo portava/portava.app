@@ -1,0 +1,415 @@
+Fix Travel Buddy Discovery + Pulse so the frontend actually pulls and displays the real backend places/events data that already exists.
+
+IMPORTANT:
+Do not mark this task complete unless the frontend visibly reflects the backend data. The database already has loaded locations/places, but Discovery and Pulse are not pulling them up. If I am in Miami, I should automatically see available Miami places, venues, events, and discovery content across the app.
+
+FIRST STEP — INSPECT BEFORE BUILDING:
+Before changing anything, inspect the existing implementation carefully:
+
+- discovery_places table/schema
+- seeded places data
+- place source fields
+- place category fields
+- lat/lng fields
+- city/region/country fields
+- existing indexes
+- Supabase RLS policies
+- backend Discovery routes/services
+- Pulse feed routes/services
+- frontend Discovery screen
+- frontend Pulse screen
+- map components
+- place cards
+- event cards
+- venue/location search
+- trip planning place picker
+- event creation location picker
+- memory location tagging
+- hooks/stores/query keys used by Discovery and Pulse
+- user location permission/state logic
+- city fallback logic
+- category filters
+- loading/empty/error states
+
+Do not duplicate existing systems. Reuse and repair what is already there.
+
+CORE PROBLEM:
+The backend has locations loaded, but the frontend is not surfacing them in Discovery or Pulse. The frontend must be wired to the real backend data, not placeholders, empty states, mock arrays, stale queries, or disconnected hooks.
+
+MAIN GOAL:
+Make Discovery and Pulse automatically show real available places, venues, events, and relevant location-based content based on the user’s current city/location or selected city.
+
+Example expected behavior:
+If the user is in Miami, Discovery should show Miami restaurants, cafes, bars/nightlife, landmarks, beaches, venues, events, hidden gems, and nearby places from the seeded/live place system.
+Pulse should also be able to surface Miami location-based posts, events, places, recommendations, and activity cards.
+
+SOURCE PRIORITY:
+Use this source priority:
+
+1. User-created/live app content where applicable:
+   - active events
+   - public posts
+   - trip/shared memories
+   - user recommended places
+   - user-created places
+
+2. Seeded database places:
+   - discovery_places or the canonical places table already loaded with real data
+
+3. Live/provider places if existing provider logic is already present:
+   - use only to fill gaps
+   - do not create fake places
+   - do not create fake reviews
+   - do not create fake users
+
+If live/provider logic is not already wired, do not block the fix on it. The seeded DB data must show first.
+
+BACKEND REQUIREMENTS:
+Create or repair backend endpoints/services so Discovery and Pulse can request real location-aware content.
+
+Add or fix endpoints as needed, such as:
+
+- GET /api/discovery/places
+- GET /api/discovery/feed
+- GET /api/discovery/nearby
+- GET /api/pulse/feed
+- GET /api/places/search
+- GET /api/places/:id
+- GET /api/events/nearby
+- GET /api/events/discovery
+
+Use the existing route conventions in the app.
+
+The backend must support query params like:
+
+- lat
+- lng
+- city
+- country
+- radiusKm
+- category
+- categories
+- limit
+- cursor/page
+- source
+- includeEvents
+- includePlaces
+- includePosts
+- includeMemories
+
+If user location is available, query by lat/lng + radius.
+If user location is not available, fall back to selected city.
+If selected city is not available, fall back to the user’s profile/home/trip city if present.
+If none of those exist, show beta/default cities or an honest “choose a city” state.
+
+LOCATION MATCHING:
+Fix city/location matching so places appear even if data has variations like:
+
+- Miami
+- Miami, FL
+- Miami Beach
+- South Beach
+- Fort Lauderdale nearby
+- Florida
+- United States/USA
+
+Use lat/lng radius matching as the primary method when coordinates exist.
+Use normalized city matching as fallback.
+Do not rely only on exact city string matching.
+
+CATEGORIES:
+Discovery should support and display real categories from the backend.
+
+At minimum support:
+
+- restaurants
+- cafes
+- bars/nightlife
+- landmarks
+- beaches
+- venues
+- hidden gems
+- events
+- traveler picks
+- saved places
+- nearby
+- trending/active if data exists
+
+If category names differ in the database, normalize them in one shared mapper instead of scattering frontend string hacks.
+
+FRONTEND REQUIREMENTS:
+Wire the Discovery frontend to real backend data.
+
+Discovery must:
+
+- request real places/events from backend
+- pass current location or selected city into the request
+- render real place cards
+- render real event cards where events exist
+- render category sections using backend results
+- render map markers from real places/events
+- allow category chips to filter real results
+- allow search to query real places/events
+- allow tapping a place card to open the correct place detail screen
+- allow saving a place
+- allow adding a place to a trip
+- allow using a place as an event location
+- show useful loading states
+- show honest empty states
+- show provider/backend error states
+- never silently show blank Discovery if data exists
+
+Pulse must:
+
+- request real location-aware feed data from backend
+- include nearby events and places where appropriate
+- include real user posts/memories only if they exist and privacy allows
+- include seeded places as recommendation cards when user content is thin
+- pass city/location context correctly
+- render real cards instead of empty feed or placeholders
+- make place/event cards tappable
+- respect privacy, block, age, trust, and visibility rules where already implemented
+
+SHARED QUERY / HOOK REQUIREMENTS:
+Fix frontend hooks/stores/query keys so data is not disconnected.
+
+Inspect and repair:
+
+- useDiscovery*
+- usePlaces*
+- useNearby*
+- usePulse*
+- React Query/SWR query keys
+- staleTime/cacheTime
+- selected city state
+- location permission state
+- profile city fallback
+- trip city fallback
+- map viewport state
+- category chip state
+- search state
+
+Make sure the hooks call the correct backend endpoints and actually pass the needed params.
+
+Do not leave frontend using:
+
+- mockPlaces
+- placeholderPlaces
+- hardcoded empty arrays
+- TODO arrays
+- static demo content
+- stale local JSON
+- disabled queries
+- query enabled: false when it should run
+- wrong query keys that prevent refresh
+- wrong base URL
+- wrong response shape parsing
+
+RESPONSE SHAPE:
+Standardize the backend response shape so frontend can reliably render.
+
+Example shape:
+
+{
+  "places": [],
+  "events": [],
+  "posts": [],
+  "memories": [],
+  "sections": [],
+  "nextCursor": null,
+  "sourceSummary": {
+    "seededDbCount": 0,
+    "userCreatedCount": 0,
+    "liveProviderCount": 0
+  }
+}
+
+If the app already uses another response shape, either preserve it or write a safe adapter. Do not break existing consumers.
+
+PLACE CARD REQUIREMENTS:
+Every place card should display real data where available:
+
+- name
+- category
+- city/area
+- distance if user location exists
+- source badge only if useful/admin/debug; do not clutter user UI
+- address if available
+- image if real image exists
+- fallback visual if no image exists
+- save button
+- add to trip button where supported
+- open details action
+- map marker action
+
+Do not invent ratings, reviews, photos, or popularity numbers.
+
+EVENT CARD REQUIREMENTS:
+Event cards should display real events where available:
+
+- title
+- date/time
+- location/place
+- host
+- attendee count if real
+- RSVP/join status
+- age/trust/verification requirements if set
+- save/share/join actions
+
+Do not invent events.
+
+PLACE DETAILS:
+Fix or create place detail loading so tapping any place from Discovery, Pulse, map, trip planning, event creation, or memory tagging opens the correct detail screen using the canonical place id.
+
+Place details should show:
+
+- name
+- category
+- location
+- address
+- map
+- saved state
+- add to trip
+- create event here
+- posts/memories/events connected to this place if real
+- source/canonical id only in debug/admin if needed
+
+MAP:
+Map views must use the same backend data as Discovery.
+
+Fix:
+
+- markers not appearing
+- wrong coordinate parsing
+- string lat/lng vs numeric lat/lng
+- missing marker keys
+- wrong viewport radius
+- wrong city filter
+- missing fallback when permission denied
+- tapping marker opens place/event detail
+
+PULSE:
+Pulse must not only show social posts. When user content is thin, it should still show real nearby seeded places and events as recommendation/discovery cards.
+
+For Miami, Pulse should be able to show real Miami places and any real Miami events.
+
+PRIVACY / SAFETY:
+Keep privacy and safety intact.
+
+Backend must enforce:
+
+- public/private visibility
+- blocked users
+- muted users
+- age restrictions for events
+- Trust Score requirements where already implemented
+- verification requirements where already implemented
+- delayed geotagged post publishing
+- removed/moderated content hidden
+
+Seeded places are public discovery content.
+User-created content must respect visibility rules.
+
+RLS / SUPABASE:
+If the issue is RLS, fix the policy or route architecture safely.
+
+Check:
+
+- whether discovery_places is readable by authenticated users
+- whether anon/auth roles can read needed public seeded places
+- whether frontend is querying directly and being blocked
+- whether backend service role should proxy the query
+- whether policies block city/category queries
+- whether lat/lng columns are exposed correctly
+
+Do not weaken private user content policies.
+It is acceptable for public seeded places to be readable.
+
+DEBUG / VERIFICATION:
+Add a developer-visible debug summary only where appropriate, not cluttering production UI.
+
+For testing/debugging, log or expose:
+
+- selected city
+- user lat/lng available or not
+- request params sent
+- backend count returned
+- seeded DB count
+- events count
+- response parse success/failure
+
+Remove noisy console spam before final if project standards require it.
+
+TESTING REQUIREMENTS:
+Add or update backend tests proving:
+
+- Miami seeded places are returned by city query
+- Miami seeded places are returned by lat/lng radius query
+- nearby places return when city string is missing
+- category filters return correct places
+- no duplicate places are returned
+- seeded places appear when no user content exists
+- provider/live errors do not blank seeded DB results
+- events and places can be returned together
+- private/blocked content is excluded
+- response shape matches frontend expectations
+
+Add or update frontend tests proving:
+
+- Discovery renders real backend places
+- Discovery category chips filter real results
+- Discovery search uses backend results
+- Pulse renders location-based place cards when posts are thin
+- map markers render from backend places
+- tapping a place opens place details
+- empty state only appears when backend actually returns no data
+- loading and error states work
+- Miami selected/current city shows Miami places
+
+Add integration/e2e test or a deterministic fixture/test seed if the project supports it.
+
+MANDATORY MANUAL/LOCAL VERIFICATION:
+Before passing the task, verify the frontend reflects backend data.
+
+Do not pass unless you can show:
+
+- backend query returns nonzero places for Miami
+- frontend Discovery receives nonzero Miami places
+- frontend Discovery renders those places
+- frontend Pulse receives or composes nonzero Miami place/event cards
+- frontend Pulse renders those cards
+- map markers appear for those places where map exists
+- category filtering still shows real results
+- place detail opens from a rendered card
+
+If tests pass but UI still shows blank, the task is not done.
+
+ACCEPTANCE CRITERIA:
+This task is only complete when:
+
+1. The loaded locations/places in the database show in Discovery.
+2. The loaded locations/places can show in Pulse as nearby/recommended cards.
+3. Miami shows available Miami places when user is in Miami or selected city is Miami.
+4. Discovery category chips pull real venue/place/event data.
+5. Search pulls real venue/place/event data.
+6. Map markers pull real venue/place/event data.
+7. Place cards open real place detail pages.
+8. Empty states only show when there is truly no backend data.
+9. No fake places, fake events, fake reviews, or fake users are added.
+10. Tests/typechecks pass.
+11. Existing app functionality is not broken.
+
+DELIVERABLE:
+Return a concise report with:
+
+- root cause found
+- what already existed
+- what was disconnected
+- what was fixed
+- backend endpoints/services changed
+- frontend screens/hooks/components changed
+- migrations/RLS changes if any
+- tests added/updated
+- exact test/typecheck results
+- manual verification proof that Discovery and Pulse now render backend places
+- screenshots or console/network evidence if available in the Replit environment
