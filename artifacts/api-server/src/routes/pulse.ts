@@ -45,6 +45,10 @@ const pulseQuerySchema = z.object({
   before: z.string().datetime().optional(),
   // airport tab: filter by airport city
   airportCity: z.string().max(100).optional(),
+  // location context — used to fill in place recommendation cards when posts are thin
+  city: z.string().max(200).optional(),
+  lat:  z.coerce.number().optional(),
+  lng:  z.coerce.number().optional(),
 });
 
 // Safe columns — exact GPS is never projected
@@ -68,7 +72,7 @@ router.get("/pulse", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
     return;
   }
-  const { tab, limit, before, airportCity } = parsed.data;
+  const { tab, limit, before, airportCity, city: cityParam, lat: latParam, lng: lngParam } = parsed.data;
 
   // For crew tab we need the followed-user IDs first
   let crewIds: string[] | null = null;
@@ -225,7 +229,40 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* Compass enrichment is non-fatal — return unmodified posts */ }
 
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts });
+  // Place recommendation cards — appended when live post count is below threshold.
+  // Queries discovery_places for the requested city so the Pulse Wall shows nearby
+  // places even when the social feed is thin. Non-fatal: always fails-open to [].
+  const PLACE_CARD_THRESHOLD = 5;
+  let placeCards: unknown[] = [];
+  try {
+    if (orderedPosts.length < PLACE_CARD_THRESHOLD && cityParam) {
+      const cityBase = cityParam.split(",")[0]?.trim() ?? cityParam;
+      const { data: nearbyPlaces } = await sc
+        .from("discovery_places")
+        .select("id, name, city, category, place_type, blurb, image_url, rating, lat, lng, neighborhood")
+        .or(`city.ilike.%${cityBase}%`)
+        .eq("status", "active")
+        .order("saved_count", { ascending: false })
+        .limit(10);
+
+      placeCards = ((nearbyPlaces ?? []) as any[]).map((p: any) => ({
+        type: "place_card",
+        id: `place_card_${p.id as string}`,
+        placeId: p.id as string,
+        name: p.name as string,
+        city: (p.city ?? cityParam) as string,
+        category: (p.category ?? p.place_type ?? null) as string | null,
+        blurb: (p.blurb ?? null) as string | null,
+        imageUrl: (p.image_url ?? null) as string | null,
+        rating: p.rating != null ? parseFloat(String(p.rating)) : null,
+        lat: p.lat != null ? parseFloat(String(p.lat)) : null,
+        lng: p.lng != null ? parseFloat(String(p.lng)) : null,
+        neighborhood: (p.neighborhood ?? null) as string | null,
+      }));
+    }
+  } catch { /* non-fatal — place cards degrade gracefully */ }
+
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards });
 });
 
 export default router;

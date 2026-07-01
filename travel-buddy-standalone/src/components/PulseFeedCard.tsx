@@ -389,6 +389,46 @@ function RentABuddyCard({ item }: { item: PulseFeedItem }) {
   );
 }
 
+/* ── Place recommendation card (type = 'place_card') ── */
+function PlaceRecommendationCard({ item }: { item: PulseFeedItem }) {
+  return (
+    <View style={[s.card, plc.card]}>
+      <View style={plc.badge}><Text style={plc.badgeText}>NEARBY PLACE</Text></View>
+      <Text style={plc.name} numberOfLines={2}>{item.title}</Text>
+      {(item.neighborhood ?? item.city) ? (
+        <View style={s.locationRow}>
+          <MapPin size={11} color={color.mute} />
+          <Text style={s.lineText} numberOfLines={1}>
+            {[item.neighborhood, item.city].filter(Boolean).join(', ')}
+          </Text>
+        </View>
+      ) : null}
+      {item.blurb ? <Text style={plc.blurb} numberOfLines={2}>{item.blurb}</Text> : null}
+      {item.tags?.length ? (
+        <View style={[s.tags, { marginTop: 2 }]}>
+          {item.tags.slice(0, 2).map((tag) => (
+            <View key={tag} style={s.tag}><Text style={s.tagText}>{tag}</Text></View>
+          ))}
+        </View>
+      ) : null}
+      <Pressable
+        style={plc.exploreBtn}
+        onPress={() => router.push({
+          pathname: '/(tabs)/discovery' as any,
+          params: {
+            placeId: item.placeId ?? '',
+            placeName: item.title ?? '',
+            placeCity: item.city ?? '',
+            placeBlurb: item.blurb ?? '',
+          },
+        })}
+      >
+        <Text style={plc.exploreBtnText}>See Place Details →</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 /* ── Unified renderer: switch on type ── */
 export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
   const [whyId, setWhyId] = useState<string | null>(null);
@@ -408,6 +448,7 @@ export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
     case 'city_note':          card = item.isProvisional ? <CityNoteCard item={item} /> : null; break;
     case 'safety':             card = item.blurb ? <SafetyCard item={item} /> : null; break;
     case 'rent_a_buddy':       card = <RentABuddyCard item={item} />; break;
+    case 'place_card':         card = <PlaceRecommendationCard item={item} />; break;
     default:                   card = null;
   }
 
@@ -492,6 +533,16 @@ const s = StyleSheet.create({
   safetyCard: { backgroundColor: '#FBF6EC', borderColor: '#EAD9B5' },
   safetyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   safetyLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.warn, letterSpacing: 1 },
+});
+
+const plc = StyleSheet.create({
+  card:           { backgroundColor: '#F0FBF4', borderColor: '#A8DFB8' },
+  badge:          { alignSelf: 'flex-start', backgroundColor: '#D1F0DC', paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.sm },
+  badgeText:      { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: '#276C43', letterSpacing: 0.5 },
+  name:           { ...t.heading, color: color.ink, fontSize: 16 },
+  blurb:          { ...t.small, color: color.mute },
+  exploreBtn:     { marginTop: 2, alignSelf: 'flex-start', backgroundColor: '#276C43', borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 7 },
+  exploreBtnText: { ...t.small, color: '#fff', fontWeight: '700', fontSize: 12 },
 });
 
 const rab = StyleSheet.create({

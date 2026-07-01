@@ -278,9 +278,14 @@ async function queryOverpass(
 
   // GET avoids Content-Type 406 issues with undici (Node built-in fetch).
   const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-  const res = await fetchWithTimeout(url, {
-    headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url, {
+      headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+    });
+  } catch {
+    return [];
+  }
 
   if (!res.ok) return [];
 
@@ -315,6 +320,119 @@ async function queryOverpass(
     })
     .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
     .slice(0, MAX_FETCH);
+}
+
+// ── Category mapper (DB → Discovery tab) ──────────────────────────────────────
+//
+// Maps a free-text category or place_type from discovery_places to one of the
+// 8 canonical Discovery tab categories so that category chips filter DB places.
+
+function mapDbCategory(raw: string): string {
+  const c = (raw ?? "").toLowerCase();
+  if (/food|restaurant|cafe|eat|dine|bistro|bakery|snack|eatery/.test(c)) return "food";
+  if (/beach|coast|ocean|sea|shore|bay|surf/.test(c)) return "beaches";
+  if (/night|club|bar|pub|cocktail|lounge|casino/.test(c)) return "nightlife";
+  if (/transport|bus|train|airport|transit|ferry|metro|subway/.test(c)) return "transport";
+  if (/event|festival|concert|theatre|show|perform|museum|gallery|art/.test(c)) return "events";
+  if (/sport|gym|activ|park|leisure|pool|fitness|hik|dive|surf|tour/.test(c)) return "activities";
+  return "places";
+}
+
+// ── DB places query ────────────────────────────────────────────────────────────
+//
+// Queries discovery_places by city name (case-insensitive). Results are merged
+// with OSM results and deduplicated by normalised place name so that traveler-
+// submitted places surface even when Overpass returns nothing for a destination.
+
+/** Test-only: override the DB query so tests can inject seeded rows without a live DB. */
+let _testDbOverride: ((dest: string, cat: string, lat: number | null, lng: number | null) => Promise<DiscoveryPlace[]>) | null = null;
+export function _setTestDbPlacesOverride(fn: typeof _testDbOverride): void {
+  _testDbOverride = fn;
+}
+
+async function queryDbPlaces(
+  destination: string,
+  category: string,
+  centerLat: number | null,
+  centerLng: number | null,
+): Promise<DiscoveryPlace[]> {
+  if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
+
+  const sc = getServiceClient();
+  if (!sc) return [];
+
+  // Normalise: "Miami, FL" → "Miami"; strip trailing country/state qualifiers
+  const cityBase = destination.split(",")[0]?.trim() ?? destination;
+
+  try {
+    const { data, error } = await sc
+      .from("discovery_places")
+      .select("id, city, name, place_type, category, neighborhood, blurb, image_url, rating, lat, lng, tag, verified, created_at")
+      .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
+      .eq("status", "active")
+      .order("saved_count", { ascending: false })
+      .limit(60);
+
+    if (error || !data) return [];
+
+    return (data as any[])
+      .filter((row: any) => {
+        if (category === "for_you") return true;
+        const mapped = mapDbCategory((row.category ?? row.place_type ?? "") as string);
+        return mapped === category;
+      })
+      .map((row: any): DiscoveryPlace => {
+        const lat = row.lat != null ? parseFloat(String(row.lat)) : null;
+        const lng = row.lng != null ? parseFloat(String(row.lng)) : null;
+        return {
+          id: `db/${row.id as string}`,
+          name: row.name as string,
+          category,
+          type: (row.place_type ?? null) as string | null,
+          description: (row.blurb ?? null) as string | null,
+          distanceKm:
+            centerLat != null && centerLng != null && lat != null && lng != null
+              ? Math.round(haversineKm(centerLat, centerLng, lat, lng) * 10) / 10
+              : null,
+          lat,
+          lng,
+          tags: [row.category, row.tag].filter(Boolean) as string[],
+          address: (row.neighborhood ?? null) as string | null,
+          website: null,
+          phone: null,
+          openingHours: null,
+          rating: row.rating != null ? parseFloat(String(row.rating)) : null,
+          isOpenNow: null,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+// ── Merge + deduplicate ────────────────────────────────────────────────────────
+//
+// OSM places take precedence. DB places whose normalised name already appears
+// in the OSM result are dropped to avoid showing the same venue twice.
+
+function mergeAndDedup(osmPlaces: DiscoveryPlace[], dbPlaces: DiscoveryPlace[]): DiscoveryPlace[] {
+  const seen = new Set(osmPlaces.map((p) => p.name.toLowerCase().trim()));
+  const uniqueDb = dbPlaces.filter((p) => !seen.has(p.name.toLowerCase().trim()));
+  // DB places are interleaved near the top — they are curated so should rank well
+  const merged: DiscoveryPlace[] = [];
+  let dbIdx = 0;
+  for (let i = 0; i < osmPlaces.length; i++) {
+    merged.push(osmPlaces[i]!);
+    // Interleave one DB place every 4 OSM places so traveler picks surface early
+    if ((i + 1) % 4 === 0 && dbIdx < uniqueDb.length) {
+      merged.push(uniqueDb[dbIdx++]!);
+    }
+  }
+  // Append any remaining DB places after OSM results
+  while (dbIdx < uniqueDb.length) {
+    merged.push(uniqueDb[dbIdx++]!);
+  }
+  return merged;
 }
 
 // ── Composite ranking ─────────────────────────────────────────────────────────
@@ -565,24 +683,38 @@ router.get("/discovery", async (req, res) => {
   };
 
   if (cached && isFresh(cached)) {
-    const filtered = applyFilters(cached.places);
-    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta });
+    // OSM results are cached; DB places are always re-queried (they change more often)
+    const dbPlaces = await queryDbPlaces(destination, category, clientCoords?.lat ?? null, clientCoords?.lng ?? null);
+    const merged   = mergeAndDedup(cached.places, dbPlaces);
+    const filtered = applyFilters(merged);
+    const slice    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    res.json({
+      places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: cached.places.length, userCreatedCount: 0 },
+    });
     return;
   }
 
   try {
     const coords = clientCoords ?? await geocode(destination);
     if (!coords) {
-      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta });
+      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
       return;
     }
 
-    const places = await queryOverpass(coords.lat, coords.lng, radiusM, category);
+    // Query OSM and DB in parallel for speed
+    const [osmPlaces, dbPlaces] = await Promise.all([
+      queryOverpass(coords.lat, coords.lng, radiusM, category),
+      queryDbPlaces(destination, category, coords.lat, coords.lng),
+    ]);
+
+    const places = mergeAndDedup(osmPlaces, dbPlaces);
+
     // Only cache when we have results — avoids locking out a destination for
     // 2 hours if Overpass timed out or returned nothing transiently.
-    if (places.length > 0) {
-      cache.set(key, { places, cachedAt: Date.now() });
+    if (osmPlaces.length > 0) {
+      cache.set(key, { places: osmPlaces, cachedAt: Date.now() });
     }
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
@@ -623,7 +755,8 @@ router.get("/discovery", async (req, res) => {
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-            res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta });
+            res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
             return;
           }
         } catch { /* fall through to normal rule-based path */ }
@@ -634,10 +767,143 @@ router.get("/discovery", async (req, res) => {
     const ranked  = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
     const filtered = applyFilters(ranked);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta });
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
-    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null });
+    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
+      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+  }
+});
+
+// ── Unified discovery feed ─────────────────────────────────────────────────────
+//
+// GET /api/discovery/feed
+//
+// A single, cursor-paginated endpoint that merges OSM + discovery_places DB
+// results and returns the unified envelope expected by the Discovery screen.
+//
+// Query params:
+//   city / destination  string  City name (synonyms)
+//   lat / lng           number  Skip geocoding when both provided
+//   category            string  Single category (default: for_you)
+//   categories          string  Comma-separated multi-category e.g. "food,beaches"
+//   radiusKm            number  1–100 (default: 10)
+//   limit               number  1–50 (default: 20)
+//   cursor              string  Opaque pagination cursor (base64url-encoded offset)
+//   includeEvents       0|1     Include events section (default: 1)
+//   includePlaces       0|1     Include places section (default: 1)
+//
+// Response:
+//   { places, events, posts, memories, sections, nextCursor, total,
+//     destination, context, sourceSummary: { seededDbCount, osmCount, userCreatedCount } }
+
+function encodeOffset(n: number): string {
+  return Buffer.from(String(n)).toString("base64url");
+}
+
+function decodeOffset(cursor: string): number {
+  try { return Math.max(0, parseInt(Buffer.from(cursor, "base64url").toString("utf8"), 10)); }
+  catch { return 0; }
+}
+
+router.get("/discovery/feed", async (req, res) => {
+  // ── Params ─────────────────────────────────────────────────────────────────
+  const cityParam    = ((req.query.city ?? req.query.destination) as string | undefined)?.trim() || undefined;
+  const latParam     = req.query.lat ? parseFloat(req.query.lat as string) : null;
+  const lngParam     = req.query.lng ? parseFloat(req.query.lng as string) : null;
+  const clientCoords =
+    latParam != null && !isNaN(latParam) && lngParam != null && !isNaN(lngParam)
+      ? { lat: latParam, lng: lngParam }
+      : null;
+
+  if (!cityParam && !clientCoords) {
+    sendError(res, "invalid_payload", "city or lat+lng is required");
+    return;
+  }
+
+  const rawCats = (req.query.categories as string | undefined)
+    ?.split(",").map((s) => s.trim()).filter((s) => VALID_CATEGORIES.includes(s)) ?? [];
+  const singleCat = VALID_CATEGORIES.includes(req.query.category as string)
+    ? (req.query.category as string)
+    : "for_you";
+  const effectiveCats = rawCats.length > 0 ? rawCats : [singleCat];
+
+  const radiusKm     = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || 10));
+  const limit        = Math.max(1, Math.min(50, parseInt(req.query.limit as string) || 20));
+  const offset       = req.query.cursor ? decodeOffset(req.query.cursor as string) : 0;
+  const includePlaces = req.query.includePlaces !== "0";
+  const radiusM      = Math.round(radiusKm * 1000);
+
+  // ── Resolve effective destination ──────────────────────────────────────────
+  let destination = cityParam;
+  let coords = clientCoords;
+
+  if (!coords) {
+    const geo = await geocode(destination!);
+    if (!geo) {
+      res.json({
+        places: [], events: [], posts: [], memories: [], sections: [],
+        nextCursor: null, total: 0, destination: destination ?? null, context: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+      });
+      return;
+    }
+    coords = { lat: geo.lat, lng: geo.lng };
+    if (!destination) destination = geo.display.split(",")[0]?.trim();
+  }
+
+  // ── Fetch places across all requested categories ───────────────────────────
+  try {
+    const categoryResults = await Promise.all(
+      effectiveCats.map(async (cat) => {
+        const [osmPlaces, dbPlaces] = includePlaces
+          ? await Promise.all([
+              queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
+              queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
+            ])
+          : [[], [] as DiscoveryPlace[]];
+        return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
+      }),
+    );
+
+    // Flatten, dedup across categories by id
+    const seen = new Set<string>();
+    const allPlaces: DiscoveryPlace[] = [];
+    let totalOsm = 0;
+    let totalDb  = 0;
+    for (const { osmPlaces, dbPlaces, merged } of categoryResults) {
+      totalOsm += osmPlaces.length;
+      totalDb  += dbPlaces.length;
+      for (const p of merged) {
+        if (!seen.has(p.id)) { seen.add(p.id); allPlaces.push(p); }
+      }
+    }
+
+    const total     = allPlaces.length;
+    const slice     = allPlaces.slice(offset, offset + limit).map(toPublic);
+    const nextOff   = offset + limit;
+    const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
+
+    res.json({
+      places: slice,
+      events:   [],
+      posts:    [],
+      memories: [],
+      sections: [],
+      nextCursor,
+      total,
+      destination: destination ?? null,
+      context: null,
+      sourceSummary: { seededDbCount: totalDb, osmCount: totalOsm, userCreatedCount: 0 },
+    });
+  } catch (err) {
+    req.log.error({ err }, "discovery/feed failed");
+    res.json({
+      places: [], events: [], posts: [], memories: [], sections: [],
+      nextCursor: null, total: 0, destination: destination ?? null, context: null,
+      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+    });
   }
 });
 

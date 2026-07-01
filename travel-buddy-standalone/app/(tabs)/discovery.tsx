@@ -86,7 +86,13 @@ export default function DiscoveryHub() {
   }, [currentCity]);
 
   // Deep-link: ?category=food navigates to that tab on mount
-  const params = useLocalSearchParams<{ category?: string }>();
+  const params = useLocalSearchParams<{
+    category?: string;
+    placeId?: string;
+    placeName?: string;
+    placeCity?: string;
+    placeBlurb?: string;
+  }>();
   const initialCategory = (
     VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)
       ? params.category as DiscoveryCategory
@@ -116,6 +122,31 @@ export default function DiscoveryHub() {
   const [debouncedAgeRange, setDebouncedAgeRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
+
+  // Deep-link from Pulse place cards: ?placeId=... opens PlaceDetailSheet
+  useEffect(() => {
+    if (!params.placeId) return;
+    const synthetic: DiscoveryPlace = {
+      id: params.placeId,
+      name: params.placeName ?? 'Place',
+      category: 'places',
+      type: null,
+      description: params.placeBlurb ?? null,
+      distanceKm: null,
+      lat: null,
+      lng: null,
+      tags: [],
+      address: params.placeCity ?? null,
+      website: null,
+      phone: null,
+      openingHours: null,
+      rating: null,
+      isOpenNow: null,
+    };
+    setSelectedPlace(synthetic);
+    setDetailVisible(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.placeId]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [routeBuilderDraft, setRouteBuilderDraft] = useState<RouteStopDraft | null>(null);

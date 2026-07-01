@@ -670,7 +670,7 @@ export interface TripDetail {
 export type PulseItemType =
   | 'post' | 'question' | 'plan' | 'hidden_gem' | 'itinerary'
   | 'circle_activity' | 'compass_suggestion' | 'city_note' | 'safety'
-  | 'rent_a_buddy';
+  | 'rent_a_buddy' | 'place_card';
 
 export type PulseSource = 'user' | 'circle' | 'compass' | 'seed' | 'editorial';
 
@@ -738,6 +738,8 @@ export interface PulseFeedItem {
   spanTags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
   spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
+  /** ID of the discovery_places row — set only when type = 'place_card'. */
+  placeId?: string | null;
 }
 
 export const PULSE_FILTERS = [

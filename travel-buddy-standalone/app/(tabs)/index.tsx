@@ -2,7 +2,6 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { posts as editorialPosts, me } from '../../src/data/cebu';
-import { pulseFeed } from '../../src/data/pulseFeed';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -11,12 +10,11 @@ import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/Puls
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
-import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
+import { useFollowingFeed } from '../../src/hooks/usePosts';
+import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
-import { filterPulseFeed } from '../../src/lib/recommend';
-import { PULSE_FILTERS } from '../../src/types/models';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -97,14 +95,19 @@ export default function Pulse() {
 
   const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: me.interests, categoryAffinities });
 
-  const realFeed = useGlobalFeed();
+  // Primary Pulse feed: real posts + place cards from /api/pulse.
+  const pulseFeed = usePulseFeed({
+    city: activeCity,
+    lat: locationState.coords?.lat,
+    lng: locationState.coords?.lng,
+  });
   const followingFeed = useFollowingFeed();
 
   useFocusEffect(
     useCallback(() => {
-      realFeed.reload();
+      pulseFeed.reload();
       if (feedMode === 'following') followingFeed.reload();
-    }, [realFeed.reload, followingFeed.reload, feedMode]),
+    }, [pulseFeed.reload, followingFeed.reload, feedMode]),
   );
 
   // When switching to Following, load it on first activation.
@@ -116,25 +119,26 @@ export default function Pulse() {
   const handleRefresh = useCallback(() => {
     setPeopleRefreshKey((k) => k + 1);
     if (feedMode === 'following') followingFeed.reload();
-    else realFeed.reload();
-  }, [feedMode, followingFeed.reload, realFeed.reload]);
+    else pulseFeed.reload();
+  }, [feedMode, followingFeed.reload, pulseFeed.reload]);
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
 
+  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed)
   const realItems = useMemo<PulseFeedItem[]>(
-    () => (realFeed.data ?? [])
-      .filter((p) => p.mediaUrls.length > 0)
-      .map(postRowToFeedItem),
-    [realFeed.data],
+    () => pulseFeed.items,
+    [pulseFeed.items],
   );
-  const mockFeed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
+
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
     const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
       : realItems.filter(() => false);
-    return [...filteredReal, ...mockFeed];
-  }, [realItems, mockFeed, active]);
+    // Place cards only shown in All / default view (not when a specific type filter is active)
+    const showPlaceCards = active.includes('All') && realItems.length < 5;
+    return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
+  }, [realItems, pulseFeed.placeCards, active]);
 
   const followingItems = useMemo<PulseFeedItem[]>(
     () => (followingFeed.data ?? []).map(postRowToFeedItem),
@@ -326,10 +330,10 @@ export default function Pulse() {
           <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
         ) : null
       )}
-      {/* Editorial inspiration — shown only in For You mode */}
-      {feedMode === 'forYou' && (
+      {/* Editorial inspiration — dev-only placeholder; never shown in production */}
+      {__DEV__ && feedMode === 'forYou' && (
         <>
-          <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
+          <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL (DEV)</Text>
           {editorialPosts.slice(0, 3).map((p) => (
             <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
           ))}
@@ -364,7 +368,7 @@ export default function Pulse() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
+            refreshing={feedMode === 'following' ? followingFeed.loading : pulseFeed.loading}
             onRefresh={handleRefresh}
             tintColor={color.signal}
           />
@@ -378,7 +382,7 @@ export default function Pulse() {
         onClear={() => setActive(['All'])}
         onClose={() => setSheetOpen(false)}
       />
-      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => realFeed.reload()} />
+      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => pulseFeed.reload()} />
 
       {/* Location overlays */}
       <LocationPermissionPrompt />

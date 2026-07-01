@@ -1,0 +1,167 @@
+/**
+ * Pulse service — calls /api/pulse and returns posts + place recommendation cards.
+ * This is the primary data source for the Pulse Wall; the static mock feed is not used.
+ */
+import { supabase } from '../lib/supabase';
+import type { PulseFeedItem } from '../types/models';
+
+const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+async function freshToken(): Promise<string | null> {
+  try {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export interface PulsePlaceCard {
+  type: 'place_card';
+  id: string;
+  placeId: string;
+  name: string;
+  city: string;
+  category: string | null;
+  blurb: string | null;
+  imageUrl: string | null;
+  rating: number | null;
+  lat: number | null;
+  lng: number | null;
+  neighborhood: string | null;
+}
+
+/** Shape of a post returned by /api/pulse (camelCase, matching the route's shape response). */
+export interface PulsePost {
+  id: string;
+  authorId: string;
+  tripId: string | null;
+  content: string;
+  mediaUrls: string[];
+  visibility: string;
+  createdAt: string;
+  locationName: string | null;
+  locationCity: string | null;
+  locationCountry: string | null;
+  locationDistrict: string | null;
+  venueName: string | null;
+  locationVisibility: string;
+  hotelBlurApplied: boolean;
+  author: { id: string; username: string; name: string; avatarUrl: string | null } | null;
+  likeCount: number;
+  commentCount: number;
+  likedByMe: boolean;
+  canLike: boolean;
+  canComment: boolean;
+  canShare: boolean;
+  spanTags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number }>;
+  spanHashtags: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+}
+
+export interface PulseResponse {
+  posts: PulsePost[];
+  total: number;
+  tab: string;
+  prompts: unknown[];
+  placeCards: PulsePlaceCard[];
+}
+
+/**
+ * Fetch pulse feed for a city. Returns both posts and nearby place recommendation cards.
+ * Place cards are returned when the live post count is below the threshold (handled server-side).
+ */
+export async function getPulseData(opts: {
+  city?: string;
+  lat?: number | null;
+  lng?: number | null;
+  limit?: number;
+  tab?: string;
+}): Promise<{ ok: true; data: PulseResponse } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  const params = new URLSearchParams({
+    tab: opts.tab ?? 'all',
+    limit: String(opts.limit ?? 20),
+  });
+  if (opts.city) params.set('city', opts.city);
+  if (opts.lat != null) params.set('lat', String(opts.lat));
+  if (opts.lng != null) params.set('lng', String(opts.lng));
+
+  try {
+    const res = await fetch(`${base}/api/pulse?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = (await res.json()) as PulseResponse;
+    return { ok: true, data: { ...data, placeCards: data.placeCards ?? [] } };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Convert a PulsePost from the backend into a PulseFeedItem for rendering.
+ */
+export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
+  return {
+    id: p.id,
+    type: 'post',
+    city: p.locationCity ?? 'Traveler Post',
+    author: {
+      id: p.authorId,
+      name: p.author?.name ?? 'Traveler',
+      avatarUrl: p.author?.avatarUrl ?? '',
+    },
+    createdAt: p.createdAt,
+    timeAgo: timeAgo(p.createdAt),
+    tags: [],
+    mediaUrl: p.mediaUrls[0],
+    caption: p.content,
+    source: 'user',
+    neighborhood: p.locationName ?? undefined,
+    visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
+    likeCount: p.likeCount ?? 0,
+    commentCount: p.commentCount ?? 0,
+    likedByMe: p.likedByMe ?? false,
+    canLike: p.canLike ?? true,
+    canComment: p.canComment ?? true,
+    canShare: p.canShare ?? true,
+    spanTags: p.spanTags ?? [],
+    spanHashtags: p.spanHashtags ?? [],
+  };
+}
+
+/**
+ * Convert a PulsePlaceCard from the backend into a PulseFeedItem
+ * for rendering in the Pulse Wall via PulseFeedCard.
+ */
+export function placeCardToFeedItem(card: PulsePlaceCard): PulseFeedItem {
+  return {
+    id: card.id,
+    type: 'place_card',
+    city: card.city,
+    tags: card.category ? [card.category] : [],
+    source: 'seed',
+    createdAt: new Date().toISOString(),
+    title: card.name,
+    blurb: card.blurb ?? undefined,
+    mediaUrl: card.imageUrl ?? undefined,
+    neighborhood: card.neighborhood ?? undefined,
+    placeId: card.placeId,
+  };
+}
