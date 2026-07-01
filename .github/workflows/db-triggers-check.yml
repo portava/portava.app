@@ -6,10 +6,9 @@ name: DB triggers check
 # production; catching that on review rather than at release time prevents
 # silent data-safety regressions.
 #
-# CONVENTION: always keep `.github/workflows/db-triggers-check.yml` in every
-# `paths` list below.  Without it, editing this file alone would not re-trigger
-# the workflow, silently skipping the new logic on the very commit that
-# introduced it.
+# This workflow runs on every PR — no paths filter — so PRs that drop triggers
+# indirectly (e.g. schema resets, bulk SQL files, or non-migration scripts)
+# are still caught even when no migration files changed.
 #
 # Required repository secrets:
 #   SUPABASE_URL            — https://<project-ref>.supabase.co
