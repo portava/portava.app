@@ -149,7 +149,11 @@ export async function requireTripMember(
     .eq("user_id", userId);
 
   if (status === "accepted") {
-    query = (query as any).in("role", ["owner", "co_host", "member", "viewer"]);
+    // Role filter: exclude pending "invited" rows.
+    // Status filter: accepted rows OR NULL (pre-migration rows have no status column yet).
+    query = (query as any)
+      .in("role", ["owner", "co_host", "member", "viewer"])
+      .or("status.eq.accepted,status.is.null");
   }
 
   const { data, error } = await (query as any).maybeSingle();

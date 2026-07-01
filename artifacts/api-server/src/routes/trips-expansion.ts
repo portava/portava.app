@@ -2008,26 +2008,45 @@ router.get("/trips/:tripId", async (req, res) => {
   const isMember = await requireTripMember(sc, tripId, user.id);
   const isOwner  = t.owner_id === user.id;
 
-  // Check block (blocked users get 403)
-  if (!isOwner && !isMember) {
-    const blocked = await isBlocked(sc, user.id, t.owner_id);
-    if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
-  }
-
-  // Private trips: non-members get 404 (don't reveal existence)
-  if (t.visibility === "private" && !isMember && !isOwner) {
-    sendError(res, "not_found", "Trip not found");
-    return;
-  }
-
-  // Members / owner: full shape
+  // Members / owner always get full shape regardless of visibility.
   if (isMember || isOwner) {
     res.json(toMemberTrip(t));
     return;
   }
 
-  // Public viewer: stripped shape
-  res.json(toPublicTrip(t));
+  // Non-member: blocked users never see the trip.
+  const blocked = await isBlocked(sc, user.id, t.owner_id);
+  if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
+
+  // Enforce visibility for non-members:
+  //   "public"  — anyone may see the stripped public shape
+  //   "buddies" — only mutual followers (friends) may see the stripped shape
+  //   "invite"  — only explicitly accepted members (already handled above); others → 404
+  //   "private" — members only (already handled above); others → 404
+  const vis = (t.visibility ?? "private") as string;
+
+  if (vis === "public") {
+    res.json(toPublicTrip(t));
+    return;
+  }
+
+  if (vis === "buddies") {
+    // Mutual-follow check: viewer follows owner AND owner follows viewer
+    const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
+      sc.from("follows").select("id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
+      sc.from("follows").select("id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
+    ]);
+    if (viewerFollowsOwner && ownerFollowsViewer) {
+      res.json(toPublicTrip(t));
+      return;
+    }
+    // Not a mutual friend: reveal nothing
+    sendError(res, "not_found", "Trip not found");
+    return;
+  }
+
+  // "invite", "private", or any other restrictive mode: non-members are excluded
+  sendError(res, "not_found", "Trip not found");
 });
 
 export default router;
