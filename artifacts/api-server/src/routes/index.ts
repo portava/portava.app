@@ -60,6 +60,7 @@ import appealsRouter from "./appeals";
 import collectionsRouter from "./collections";
 import wishlistRouter from "./wishlist";
 import profileTabsRouter from "./profileTabs";
+import tripsExpansionRouter from "./trips-expansion";
 
 const router: IRouter = Router();
 
@@ -124,5 +125,6 @@ router.use(appealsRouter);
 router.use(collectionsRouter);
 router.use(wishlistRouter);
 router.use(profileTabsRouter);
+router.use(tripsExpansionRouter);
 
 export default router;
