@@ -1,0 +1,994 @@
+Travel Buddy — Full Profile / Passport System Buildout, Frontend + Backend
+
+You are building the full Travel Buddy user profile system.
+
+Important product direction:
+Travel Buddy is a social media app for travelers. The profile is not just an account page. It is the user’s Passport — their public travel identity, trust layer, social graph, activity hub, travel history, badges, stamps, posts, trips, circles, and optional Rent a Buddy provider profile.
+
+Do not delete existing working systems.
+Do not fake users, posts, stamps, reviews, trips, bookings, or activity.
+Inspect what exists first.
+Patch/build only after inventory.
+Preserve auth/session behavior.
+Use real backend data.
+Everything must be cohesive with Pulse, Discovery, Trips, Telegraph, Rent a Buddy, Trust Score, verification, delayed posting, privacy, and safety.
+
+Primary goal:
+Build a complete profile system with:
+- public profile view
+- private “My Passport” view
+- editable profile settings
+- Passport-style travel identity
+- travel stats
+- stamps/badges
+- posts/postcards
+- trips/events/circles
+- friends/followers
+- profile search/discovery
+- trust/verification
+- privacy controls
+- blocking/reporting
+- clickable profile links everywhere
+- mini profile preview cards
+- account deactivation/deletion handling
+- admin moderation
+- Rent a Buddy provider section when approved
+- backend APIs, database, RLS, frontend screens, and tests
+
+PHASE 0 — Inventory first
+
+Before making changes, search the repo for:
+- profile
+- passport
+- user_profiles
+- users
+- auth
+- account
+- settings
+- avatar
+- photo
+- cover
+- bio
+- username
+- handle
+- follows
+- friends
+- followers
+- friend_requests
+- blocking
+- reports
+- moderation
+- stamps
+- badges
+- trust
+- verification
+- posts
+- postcards
+- trips
+- circles
+- events
+- rentABuddy
+- buddy profile
+- telegraph
+- messages
+- privacy
+- delayed posting
+- location
+- discovery
+- nearby travelers
+- RLS
+- storage
+- upload
+- Supabase
+- onboarding
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Profile model
+
+The Travel Buddy profile must support these layers:
+
+1. Account identity
+- user_id
+- email/private auth reference
+- username/handle
+- display name
+- avatar photo
+- cover photo/passport hero image
+- account created date
+- account status
+
+2. Public Passport profile
+- display name
+- handle
+- avatar
+- cover image
+- home country, if visible
+- current city, if visible
+- languages
+- bio
+- travel style
+- interests
+- visited countries/cities
+- upcoming trips, privacy-controlled
+- public stamps
+- public posts/postcards
+- trust badges
+- verification badge
+- social stats
+- Rent a Buddy badge if approved
+
+3. Private profile settings
+- real name, private
+- date of birth/age verification status, private
+- phone, private if used
+- emergency contact, private if used by Safe Return
+- blocked users
+- privacy settings
+- notification settings
+- location sharing settings
+- delayed posting settings
+- language/translation settings
+
+4. Social graph
+- friends
+- follows/followers
+- friend requests
+- block list
+- mute list
+- report history
+
+5. Travel activity
+- posts
+- postcards
+- stamps
+- trips
+- events joined/hosted
+- circles joined/hosted
+- hidden gems submitted
+- reviews left
+- reviews received
+
+6. Trust and safety
+- verification status
+- trust score
+- profile completeness
+- safety badges
+- report/block actions
+- account restrictions
+- moderation flags
+
+7. Rent a Buddy extension
+Only if user applies/is approved:
+- buddy profile card
+- services offered
+- cities served
+- languages
+- availability
+- rating
+- review count
+- completed bookings
+- response time
+- booking button
+- provider status
+
+PHASE 2 — Database and RLS
+
+Inspect existing tables first. Add migrations only if needed.
+
+Likely required tables:
+- user_profiles
+- profile_privacy_settings
+- profile_social_links
+- user_travel_preferences
+- user_languages
+- user_interests
+- user_visited_places
+- user_badges
+- user_stamps
+- follows
+- friend_requests
+- blocks
+- user_reports
+- profile_views, optional
+- user_media, optional
+- user_notification_settings, if not already present
+- user_location_privacy_settings, if not already present
+
+Required user_profiles fields:
+- id / profile_id
+- user_id
+- username
+- display_name
+- avatar_url
+- cover_url
+- bio
+- home_country
+- current_city
+- current_country
+- current_location_visible boolean
+- languages text/jsonb
+- interests text/jsonb
+- travel_style text/jsonb
+- visited_country_count
+- visited_city_count
+- trips_count
+- posts_count
+- stamps_count
+- followers_count
+- following_count
+- friends_count
+- trust_score
+- verification_status
+- is_verified
+- is_private
+- is_buddy_provider
+- profile_completeness_score
+- account_status
+- created_at
+- updated_at
+
+Privacy settings should include:
+- profile_visibility: public / friends_only / private
+- show_current_city
+- show_home_country
+- show_visited_places
+- show_upcoming_trips
+- show_past_trips
+- show_posts
+- show_stamps
+- show_friends
+- show_followers
+- allow_messages_from: everyone / friends / no_one / booking_only
+- allow_friend_requests
+- allow_follow
+- allow_tagging
+- allow_profile_discovery
+- delayed_posting_default
+- precise_location_visible: false by default
+- rent_buddy_booking_visibility
+
+RLS rules:
+- Users can read public profiles unless blocked/private.
+- Users can fully read/write their own private profile/settings.
+- Users cannot read private fields of other users.
+- Blocked users cannot view/interact/message/follow.
+- Private profiles expose limited preview only.
+- Admins can moderate all profiles.
+- Public can only see approved buddy provider fields.
+- No emergency contact, phone, real DOB, payment, verification document, or private safety data should be public.
+
+PHASE 3 — Backend API routes
+
+Create or complete profile API routes.
+
+Required routes:
+- GET /api/profile/me
+- PATCH /api/profile/me
+- GET /api/profile/:username
+- GET /api/profile/id/:userId
+- POST /api/profile/avatar
+- POST /api/profile/cover
+- GET /api/profile/search
+- GET /api/profile/:username/posts
+- GET /api/profile/:username/postcards
+- GET /api/profile/:username/stamps
+- GET /api/profile/:username/trips
+- GET /api/profile/:username/events
+- GET /api/profile/:username/circles
+- GET /api/profile/:username/friends
+- GET /api/profile/:username/followers
+- GET /api/profile/:username/following
+- POST /api/profile/:userId/follow
+- DELETE /api/profile/:userId/follow
+- POST /api/profile/:userId/friend-request
+- POST /api/profile/friend-request/:requestId/accept
+- POST /api/profile/friend-request/:requestId/decline
+- DELETE /api/profile/:userId/friend
+- POST /api/profile/:userId/block
+- DELETE /api/profile/:userId/block
+- POST /api/profile/:userId/report
+- PATCH /api/profile/privacy
+- GET /api/profile/privacy
+- PATCH /api/profile/travel-preferences
+- GET /api/profile/travel-preferences
+- GET /api/profile/:username/buddy
+- GET /api/profile/:username/social-summary
+- POST /api/profile/deactivate
+- POST /api/profile/reactivate, if supported
+- POST /api/profile/delete-request
+
+Backend behavior:
+- All routes must use authenticated user context when available.
+- Public profile route must respect privacy and blocks.
+- Own profile route must return private settings.
+- Other-user profile route must never leak private fields.
+- Username must be unique and normalized.
+- Profile edits must validate length, allowed characters, image URLs, and unsafe content.
+- Follow/friend/message actions must enforce block/privacy settings.
+- Report actions must create moderation records.
+- Profile media uploads must use Supabase storage or existing storage safely.
+
+PHASE 4 — Viewer relationship state
+
+Every public profile API response should include viewer-context fields:
+- is_me
+- is_following
+- is_follower
+- is_friend
+- has_pending_friend_request_sent
+- has_pending_friend_request_received
+- is_blocked_by_me
+- has_blocked_me
+- can_follow
+- can_friend_request
+- can_message
+- can_view_posts
+- can_view_trips
+- can_view_stamps
+- can_tag
+- can_report
+- can_book_as_buddy
+
+These states must drive frontend buttons and visibility.
+
+PHASE 5 — Username and handle rules
+
+Implement:
+- unique usernames
+- lowercase normalized handle
+- reserved usernames blocked: admin, support, travelbuddy, official, root, system, null, undefined, help, security, moderator, owner
+- profanity/abuse filter if available
+- impersonation report type
+- username change cooldown
+- username format validation
+- optional old username redirect/history if simple and safe
+
+PHASE 6 — Frontend profile screens
+
+Build/complete these screens:
+
+1. My Passport / My Profile
+Private owner view:
+- passport-style hero
+- avatar
+- cover image
+- display name
+- handle
+- verification badge
+- trust score
+- edit profile button
+- settings button
+- stats row
+- current city, if enabled
+- home country
+- languages
+- bio
+- interests
+- travel style
+- stamps strip
+- posts/postcards grid
+- trips/events/circles tabs
+- saved places if relevant
+- Rent a Buddy dashboard entry if provider
+- profile completeness prompts
+
+2. Public Profile
+Other-user view:
+- avatar/cover
+- display name/handle
+- verification/trust badge
+- follow/friend/message buttons
+- block/report menu
+- shared trips/circles if visible
+- bio/languages/interests
+- travel stats
+- posts/postcards
+- stamps
+- mutual friends/travelers
+- upcoming trips only if privacy allows
+- buddy provider card if approved
+- safe empty/private states
+
+3. Edit Profile
+Fields:
+- avatar
+- cover
+- display name
+- username/handle
+- bio
+- home country
+- current city
+- languages
+- interests
+- travel style
+- visited places/countries
+- social links if allowed
+- profile visibility
+- message permissions
+- tag permissions
+- location visibility
+- delayed posting default
+
+4. Profile Settings
+Sections:
+- Account
+- Privacy
+- Safety
+- Location
+- Messaging
+- Notifications
+- Language/translation
+- Blocked users
+- Verification
+- Rent a Buddy provider settings, if applicable
+- Deactivate/delete account
+
+5. Profile tabs
+Tabs on profile:
+- Posts
+- Postcards
+- Stamps
+- Trips
+- Events
+- Circles
+- Reviews, if relevant
+- Buddy, if approved
+
+Mobile UX:
+- Keep it clean and fast.
+- Avoid giant headers that waste space.
+- Passport hero should look premium but not make content unreachable.
+- Use compact stats row.
+- Use skeleton loading.
+- Use honest empty states.
+- Add retry on backend error.
+
+PHASE 7 — Passport design language
+
+Profile should visually feel like a travel passport.
+
+Design elements:
+- passport-style hero card
+- avatar/monogram fallback
+- verified stamp/badge
+- stamp strip
+- country/city chips
+- travel stats row
+- postcard grid
+- tabs styled like passport sections
+- subtle travel document feel
+- no clutter
+
+Stats row examples:
+- Countries
+- Cities
+- Trips
+- Posts
+- Stamps
+- Friends or Followers
+- Trust
+
+PHASE 8 — Profile search/discovery
+
+Build profile search and discovery:
+- search by username
+- search by display name
+- search by city
+- search by country
+- search by language
+- search by interests
+- search by travel style
+- nearby travelers, privacy-safe
+- travelers with upcoming trips to same city, privacy-controlled
+- Rent a Buddy providers by city/category/language
+
+Respect privacy:
+- private profiles appear only as limited previews
+- users who disabled discovery should not appear
+- blocked users should not appear
+- precise location must never be exposed
+
+PHASE 9 — Clickable profiles everywhere
+
+Every avatar, display name, username, tagged name, comment author, like user, event host, circle member, trip member, buddy provider, and Telegraph participant must open that user’s profile.
+
+Add this across:
+- Pulse
+- Discovery
+- post details
+- comments
+- likes/viewers
+- events
+- circles
+- trips
+- Telegraph
+- Rent a Buddy
+- notifications/activity center
+- search results
+
+PHASE 10 — Mini profile preview cards
+
+Add a reusable ProfilePreviewCard component:
+- avatar
+- display name
+- handle
+- verified/trust badge
+- current city if visible
+- mutual friends/trips if allowed
+- follow/friend/message buttons based on permissions
+- report/block menu
+- request buddy button if approved provider
+
+All actions must respect viewer relationship state and privacy.
+
+PHASE 11 — Posts/Postcards integration
+
+Profile must show user content from real posts only.
+
+Rules:
+- show published posts only to public viewers
+- respect delayed posting
+- do not show precise location if privacy disabled
+- hide posts from blocked users
+- owner can see draft/delayed posts with status label
+- public viewers only see visible posts
+
+Profile post grid:
+- image/video thumbnail
+- city/location chip if allowed
+- likes/comments count if visible
+- delayed/private status for owner
+- tap opens post detail
+
+PHASE 12 — Stamps and badges integration
+
+Profile must show earned stamps/badges.
+
+Stamp sources:
+- visited city/country
+- completed trips
+- attended events
+- hosted events
+- verified account
+- safe traveler
+- top reviewer
+- Rent a Buddy provider
+- hidden gem contributor
+- early user/beta user if applicable
+
+Rules:
+- no fake stamps
+- stamps derive from real qualifying actions
+- owner can hide selected stamps if privacy allows
+- public sees only visible stamps
+
+PHASE 13 — Trips/events/circles integration
+
+Profile must connect to travel activity.
+
+Show:
+- upcoming trips if privacy allows
+- past trips if privacy allows
+- hosted events
+- joined public events
+- circles joined/hosted
+- mutual trips/circles with viewer
+- private trip placeholder only to owner
+
+Respect:
+- invite-only trips
+- private circles
+- age filters
+- blocked users
+- safety/privacy rules
+
+PHASE 14 — Friends/follows/social graph
+
+Build/complete:
+- follow/unfollow
+- friend request
+- accept/decline
+- remove friend
+- followers/following list
+- friends list
+- mutual friends
+- blocked users
+- profile action menu
+
+Rules:
+- private profiles can require friend approval.
+- blocked users cannot follow/message/view private details.
+- users cannot follow themselves.
+- duplicate requests prevented.
+- accept/decline must update counts.
+- counts must be real and consistent.
+
+PHASE 15 — Telegraph integration
+
+From a profile:
+- Message button opens Telegraph.
+- Respect message permissions.
+- Respect blocked users.
+- Respect friendship/follow status if required.
+- If Rent a Buddy booking is required for provider messaging, show correct state.
+- If auto-translation exists, use viewer/sender language settings.
+
+States:
+- message allowed
+- friend-only messaging
+- booking-only messaging
+- blocked
+- private account
+- unavailable
+
+PHASE 16 — Rent a Buddy profile extension
+
+If the user is an approved Buddy provider, public profile should show:
+- Buddy provider badge
+- services/categories
+- cities served
+- languages
+- rating/review count
+- response time
+- available now
+- starting price
+- request booking button
+- safety boundary copy:
+  “Rent a Buddy is for travel help and social activities only. Dating, adult services, escorting, illegal activity, and off-app payments are not allowed.”
+
+If viewer is owner:
+- show Buddy dashboard entry
+- profile completion
+- application status
+- availability status
+- booking management entry
+
+If not approved:
+- do not show provider card publicly.
+
+PHASE 17 — Verification and Trust Score
+
+Profile must show:
+- verified identity badge if verified
+- trust score or trust tier if enabled
+- safety badges
+- account status indicators
+
+Trust factors can include:
+- ID verification
+- completed profile
+- successful trips/events
+- completed Rent a Buddy bookings
+- positive reviews
+- reports/disputes
+- blocked/report history
+- response behavior
+- community behavior
+
+Rules:
+- do not expose sensitive trust internals publicly.
+- show user-friendly trust tier/badge.
+- admins can see more detail if admin tooling exists.
+
+PHASE 18 — Privacy and safety
+
+Add profile privacy controls:
+- public/friends/private
+- hide likes/comments counts if feature exists
+- turn off comments if feature exists
+- hide followers/following
+- hide stamps
+- hide current city
+- hide upcoming trips
+- hide exact locations
+- delayed posting default
+- allow/disallow tagging
+- allow/disallow messages
+
+Safety controls:
+- report profile
+- block user
+- mute user if available
+- remove follower
+- restrict messages
+- profile moderation flags
+
+Every profile action must respect:
+- block list
+- private profile settings
+- age restrictions
+- event/circle privacy
+- delayed posting
+- precise location privacy
+
+PHASE 19 — Age and sensitive fields
+
+Support private age verification fields for:
+- event age filters
+- circle age filters
+- Rent a Buddy eligibility if needed
+
+Rules:
+- never expose exact date of birth publicly
+- public age display should be optional
+- gender should be optional and privacy-controlled
+- sensitive fields must not leak in public profile APIs
+
+PHASE 20 — Onboarding/profile completion
+
+If profile is incomplete, show prompts:
+- add avatar
+- add bio
+- select languages
+- select travel interests
+- set home country
+- choose privacy settings
+- verify account
+- add upcoming trip
+- apply for Rent a Buddy if interested
+
+Profile completeness should calculate from real fields.
+
+PHASE 21 — Account deactivation/deletion
+
+Support:
+- deactivate account
+- reactivate account if allowed
+- request account deletion
+- anonymize or hide public profile after deletion
+- preserve legal/payment/booking records where required
+- remove user from public discovery after deactivation
+- show “User unavailable” state where needed
+
+PHASE 22 — Admin moderation
+
+If admin system exists, add or wire:
+- view user profile
+- verify user
+- suspend user
+- ban user
+- restore user
+- remove profile photo/cover
+- remove or restrict bio
+- restrict messaging
+- restrict profile visibility
+- hide posts
+- review reports
+- dismiss report
+- warn user
+- resolve profile reports
+- view report history
+- view block/report patterns
+- view trust/safety summary
+- approve/reject verification if applicable
+- approve/reject Buddy provider extension if applicable
+
+No admin-only sensitive fields should leak to public API.
+
+PHASE 23 — Storage/media
+
+For avatar and cover:
+- use Supabase Storage or existing media system
+- validate file type
+- validate size
+- store public-safe URL
+- allow deleting/replacing
+- use fallback avatar/monogram
+- prevent unsafe upload paths
+
+PHASE 24 — Profile analytics
+
+Add private owner-only analytics if feasible:
+- profile views count
+- post views count
+- saves count
+- Rent a Buddy profile clicks
+- booking request conversion
+- follower growth
+
+Do not expose precise viewer identity unless the product intentionally supports viewer lists.
+
+PHASE 25 — Performance requirements
+
+Profiles must use:
+- pagination for posts/stamps/trips/followers
+- lazy loading tabs
+- image thumbnail optimization
+- skeleton states
+- retry states
+- no blocking full-profile load from slow tabs
+- cached social counts where safe
+- server-side count consistency
+
+One slow section must not block the entire profile.
+
+PHASE 26 — Tests
+
+Add tests for:
+- own profile returns private fields
+- public profile hides private fields
+- private profile limited preview
+- blocked user cannot view/interact
+- follow/unfollow
+- friend request/accept/decline
+- username uniqueness
+- username reserved words
+- username validation
+- profile update validation
+- privacy settings enforcement
+- public posts respect delayed posting
+- stamps visible only when allowed
+- message permissions respected
+- buddy provider card only for approved buddies
+- RLS policies
+- avatar/cover upload route authorization
+- report/block actions
+- profile search privacy
+- account deactivation
+- viewer relationship state
+
+Manual verification:
+- new user creates profile
+- user edits profile
+- user views another profile
+- user follows another user
+- user sends friend request
+- user accepts/declines friend request
+- user blocks another user
+- user reports another user
+- private profile hides content
+- delayed posts do not show publicly
+- profile posts/stamps/trips load
+- approved Buddy provider shows provider card
+- unapproved Buddy provider does not show provider card
+- Telegraph opens only when allowed
+- profile search respects privacy
+- clickable avatars/names work everywhere
+
+FINAL PROFILE DEFINITION OF DONE
+
+Do not mark the profile system complete unless all of the following pass:
+
+1. My Passport
+- Logged-in user can view their own profile.
+- Real profile data loads from backend.
+- Avatar, cover, bio, handle, stats, stamps, posts, trips, and settings load correctly.
+- Empty states are honest.
+
+2. Public profile
+- Any public/allowed user profile can be opened by username or user ID.
+- Private profiles show limited preview only.
+- Blocked users cannot view or interact.
+- Public profile never leaks private fields.
+
+3. Edit profile
+- User can update avatar, cover, display name, username, bio, home country, current city, languages, interests, travel style, and privacy settings.
+- Username uniqueness and reserved-name rules work.
+- Invalid edits show useful errors.
+
+4. Privacy
+- User can control visibility for current city, home country, trips, posts, stamps, friends/followers, messages, tagging, and profile discovery.
+- Delayed posting privacy is respected.
+- Precise location is never exposed publicly by default.
+
+5. Social graph
+- Follow/unfollow works.
+- Friend request, accept, decline, and remove friend work.
+- Block/report work.
+- Counts stay accurate.
+- Relationship state appears correctly on every profile.
+
+6. Clickable profiles everywhere
+- Avatar/name opens profile from Pulse, Discovery, posts, comments, likes, events, circles, trips, Telegraph, Rent a Buddy, notifications, and search.
+
+7. Profile preview cards
+- Mini profile preview works.
+- Follow/friend/message/report/block/request buddy actions respect permissions.
+
+8. Posts/Postcards/Stamps/Trips
+- Profile tabs show real data.
+- Delayed/private content is hidden from public viewers.
+- Owner sees their own draft/delayed/private content with labels.
+- Pagination/lazy loading works.
+
+9. Telegraph
+- Message button opens Telegraph only when allowed.
+- Friend-only, booking-only, blocked, and private-account states work.
+
+10. Rent a Buddy
+- Approved buddies show provider card.
+- Unapproved buddies do not show provider card publicly.
+- Request booking button works only when allowed.
+- Provider profile connects to availability, services, reviews, rating, and safety copy.
+
+11. Search/discovery
+- Users can search profiles by handle/name and supported filters.
+- Privacy-disabled users do not appear.
+- Blocked users do not appear.
+- Nearby traveler discovery is privacy-safe.
+
+12. Verification/trust
+- Verified badge displays only for verified users.
+- Trust badge/tier displays correctly.
+- Sensitive verification details are never public.
+
+13. Account status
+- Deactivated/suspended/deleted users are handled safely.
+- Public profile shows unavailable state when appropriate.
+- User is removed from discovery when deactivated/suspended.
+
+14. Admin/moderation
+- Admin can review reports.
+- Admin can warn, restrict, suspend, ban, restore, or remove profile media/content.
+- Admin-only data does not leak.
+
+15. Backend/RLS/security
+- Own profile API returns private fields.
+- Public profile API returns only allowed fields.
+- RLS prevents unauthorized reads/writes.
+- Storage upload rules are enforced.
+- No private phone, DOB, emergency contact, payment, verification document, or safety fields leak.
+
+16. Performance
+- Profile loads fast.
+- Heavy tabs are lazy loaded.
+- Posts/stamps/trips/followers are paginated.
+- Images use thumbnails or optimized URLs.
+- One slow section does not block the whole profile.
+
+17. Tests
+Required tests pass for:
+- own profile
+- public profile
+- private profile
+- blocked user
+- follow/friend actions
+- profile update validation
+- username rules
+- privacy enforcement
+- post visibility
+- stamp visibility
+- message permissions
+- buddy provider card visibility
+- RLS policies
+- avatar/cover upload auth
+- report/block actions
+- search privacy
+- account deactivation
+
+18. Manual QA
+Provide a final pass/fail table for:
+- new user profile creation
+- edit profile
+- public profile view
+- private profile view
+- follow/friend/block/report
+- profile search
+- clickable avatars/names everywhere
+- profile tabs
+- Telegraph from profile
+- Rent a Buddy provider profile
+- admin moderation
+- mobile layout
+
+Final deliverable:
+Return:
+- inventory report
+- files changed
+- migrations added
+- routes added/changed
+- screens/components added
+- tests added
+- tests passed/failed
+- manual QA pass/fail
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+The profile system must work end-to-end as Travel Buddy’s Passport identity system, not just a static profile page.
