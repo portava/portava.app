@@ -46,6 +46,10 @@ jobs:
 
       - name: Write API server .env (for db-triggers check)
         run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::error::SUPABASE_URL secret is not set. Add it in GitHub → Settings → Secrets and variables → Actions (value: your Supabase project URL, e.g. https://<ref>.supabase.co). Run 'bash scripts/print-github-secrets.sh' locally to get the exact value."
+            exit 1
+          fi
           mkdir -p artifacts/api-server
           printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > artifacts/api-server/.env
         env:
