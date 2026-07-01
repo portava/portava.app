@@ -123,6 +123,9 @@ STANDALONE_OWNED_FILES=(
   "src/components/discovery/DiscoveryMapView.tsx"
   "src/components/discovery/DiscoveryCategoryTab.tsx"
   "src/components/discovery/ForYouTab.tsx"
+  "src/hooks/__tests__/useTripSavedPlaces.component.test.tsx"
+  "src/hooks/__tests__/TripSavedPlacesSection.component.test.tsx"
+  "src/__mocks__/lucide-react-native.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
