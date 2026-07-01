@@ -50,6 +50,7 @@ export function useCityPulse({
   currentCitySlug,
   interests,
   categoryAffinities,
+  ttlMs = TTL_MS,
 }: {
   currentCitySlug?: string;
   interests?: Interest[];
@@ -60,6 +61,13 @@ export function useCityPulse({
    * interacted with recommendations — making the pulse improve over time.
    */
   categoryAffinities?: Record<string, number>;
+  /**
+   * How long fetched events are considered fresh before a background re-fetch
+   * fires automatically. Defaults to TTL_MS (5 minutes). Pass a shorter value
+   * in tests or high-frequency contexts; pass a longer value to reduce traffic
+   * when events are unlikely to change (e.g. late-night hours).
+   */
+  ttlMs?: number;
 }) {
   const { availability } = useAvailability();
   // Production: start with empty list and show real events only.
@@ -94,7 +102,7 @@ export function useCityPulse({
             setEvents(resolveEventsOnSuccess(fetched));
             // Schedule a background re-fetch once the TTL expires so events
             // stay fresh without requiring the user to pull-to-refresh.
-            ttlTimer = setTimeout(doFetch, TTL_MS);
+            ttlTimer = setTimeout(doFetch, ttlMs);
           })
           .catch(() => {
             if (cancelled) return;
@@ -113,7 +121,7 @@ export function useCityPulse({
       clearTimeout(debounceTimer);
       clearTimeout(ttlTimer);
     };
-  }, [currentCitySlug]);
+  }, [currentCitySlug, ttlMs]);
 
   const buckets: PulseBuckets = useMemo(
     () => filterPulse(events, {
