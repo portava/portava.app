@@ -1,0 +1,654 @@
+Travel Buddy — Rent a Buddy Full Functionality Buildout
+
+You are building the full Rent a Buddy system inside Travel Buddy.
+
+Important:
+Rent a Buddy is a verified local/traveler companion marketplace. It is NOT dating, escorting, adult services, or anything unsafe. It is for practical travel support and social travel help.
+
+Core use cases:
+- city help
+- arrival help
+- airport pickup coordination, if allowed
+- nightlife buddy
+- food crawl buddy
+- shopping buddy
+- content/photo help
+- language help
+- local navigation
+- event companion
+- beach/day-trip buddy
+- first-night-in-city support
+- group activity support
+- solo traveler social support
+
+Do not delete existing work.
+Inspect existing Rent a Buddy files, routes, tables, and UI first.
+Then build/repair/wire the complete system end-to-end.
+Use real users only.
+Do not seed fake buddies, fake reviews, fake bookings, fake ratings, or fake activity.
+
+PHASE 0 — Inventory first
+
+Search the repo for:
+- rentABuddy
+- rent_a_buddy
+- Rent a Buddy
+- buddy
+- marketplace
+- offers
+- requests
+- availability
+- available-now
+- booking
+- companion
+- verification
+- payout
+- payment
+- deposit
+- review
+- rating
+- report
+- dispute
+- safety
+- trust score
+- profile
+- passport
+- telegraph
+- messages
+- city_rollouts
+- city rollout
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Product rules and safety boundaries
+
+Rent a Buddy must clearly enforce these rules everywhere:
+
+Allowed:
+- travel help
+- local guidance
+- public social activities
+- nightlife guidance
+- food/drink exploration
+- shopping help
+- translation/language support
+- itinerary help
+- content/photo support
+- arrival support
+- group activities
+- event companionship
+- city orientation
+
+Not allowed:
+- dating services
+- escort services
+- adult services
+- sexual services
+- illegal activity
+- drug purchasing
+- private unsafe meetups
+- off-app payment requests
+- harassment
+- coercion
+- scams
+- unsafe transportation arrangements
+
+Add visible safety language:
+“Rent a Buddy is for travel help and social activities only. Dating, adult services, escorting, illegal activity, and off-app payments are not allowed.”
+
+Add report/block buttons throughout the flow.
+
+PHASE 2 — User roles
+
+Support two sides:
+
+1. Traveler / Booker
+Can:
+- browse buddies
+- filter by city, availability, language, category, price, rating, verification, gender preference if allowed
+- view buddy profile
+- request a booking
+- message after request or after booking, depending on safety setting
+- pay deposit or full booking amount
+- cancel within policy
+- leave review
+- report issue
+- save favorite buddies
+
+2. Buddy / Provider
+Can:
+- apply to become a buddy
+- complete verification steps
+- set cities served
+- set languages
+- set categories offered
+- set hourly/session price
+- set availability
+- toggle available now
+- accept/decline booking requests
+- message booked travelers
+- manage bookings
+- receive payout record/status
+- pause profile
+- view ratings/reviews
+- respond to disputes/admin requests
+
+PHASE 3 — Buddy application and verification
+
+Create or complete the buddy onboarding flow.
+
+Required fields:
+- display name
+- profile photo
+- home city / current city
+- cities served
+- languages
+- short bio
+- travel/local experience
+- categories offered
+- hourly or session rate
+- minimum booking duration
+- availability windows
+- available-now toggle
+- meeting preferences
+- safety agreement acceptance
+- non-dating/adult-services agreement acceptance
+- ID verification status
+- background/trust status if applicable
+- emergency contact optional, private
+- payout setup status
+
+Buddy statuses:
+- draft
+- submitted
+- under_review
+- approved
+- rejected
+- paused
+- suspended
+
+Only approved buddies should appear publicly.
+
+Verification requirements:
+- verified Travel Buddy profile
+- ID verification flag if available
+- trust score minimum
+- admin approval
+- safety agreement accepted
+- profile completeness
+
+If verification infrastructure does not exist yet, create the data fields and admin review queue, but do not fake verification.
+
+PHASE 4 — Marketplace browsing
+
+Build the Rent a Buddy marketplace screen.
+
+Sections:
+- Available Now
+- Top Rated
+- Near You
+- Language Help
+- Nightlife Buddies
+- Food & Cafe Buddies
+- Shopping Help
+- Content / Photo Help
+- Arrival Help
+- Local Experts
+- Saved Buddies
+
+Filters:
+- city
+- date
+- time
+- available now
+- category
+- language
+- price range
+- rating
+- verified only
+- group-friendly
+- solo traveler friendly
+- gender preference if supported safely
+- minimum trust score
+- distance radius
+
+Buddy card must show:
+- photo
+- name
+- verified badge
+- current city
+- categories
+- languages
+- price
+- rating/review count
+- available now status
+- response time
+- short bio
+- trust/safety badge
+- “Request” button
+- “Message” button only when allowed
+- “Save” button
+
+No approved buddies:
+Show honest empty state:
+“No verified buddies are available in this city yet. Check another city or request a buddy.”
+
+PHASE 5 — Buddy profile
+
+Buddy profile must include:
+- photo/header
+- name
+- verified badge
+- trust score
+- city/cities served
+- categories
+- languages
+- bio
+- pricing
+- availability
+- available-now status
+- best for
+- not for / boundaries
+- reviews
+- response time
+- safety rules
+- request booking button
+- report/block options
+
+Add clear boundary copy:
+“This buddy can help with travel and social activities only. Dating, adult services, illegal activity, and off-app payments are prohibited.”
+
+PHASE 6 — Booking request flow
+
+Create full booking flow.
+
+Traveler selects:
+- city
+- category
+- date
+- start time
+- duration
+- group size
+- meeting area
+- public meeting preference
+- notes
+- language preference
+- budget
+- deposit or full payment option, depending on configuration
+
+Booking statuses:
+- draft
+- requested
+- accepted
+- declined
+- expired
+- cancelled_by_traveler
+- cancelled_by_buddy
+- paid_deposit
+- paid_full
+- confirmed
+- in_progress
+- completed
+- disputed
+- refunded
+- no_show
+- closed
+
+Flow:
+1. Traveler sends request.
+2. Buddy receives request.
+3. Buddy accepts or declines.
+4. If accepted, traveler pays deposit or full amount.
+5. Booking becomes confirmed.
+6. Telegraph chat opens or unlocks for both sides.
+7. App sends reminders.
+8. Booking can be started/check-in.
+9. Booking can be completed.
+10. Traveler and buddy can review each other.
+11. Disputes/reporting available.
+
+Do not allow confirmed booking without required payment state unless admin config allows manual/free bookings.
+
+PHASE 7 — Payments, deposits, payouts
+
+Implement payment architecture safely.
+
+If payment provider exists:
+- wire to existing payment provider
+- create payment intent/session for booking
+- store payment status
+- handle webhook
+- update booking status
+- create payout ledger
+
+If payment provider does not exist:
+- build payment-ready data model and UI states
+- show “Payments not enabled yet” honestly
+- do not pretend payment succeeded
+- do not fake transaction IDs
+
+Payment options:
+- deposit required
+- full payment
+- admin-configurable deposit percentage
+- cancellation policy
+- refund policy
+- buddy payout status
+
+Tables/fields needed:
+- booking amount
+- platform fee
+- buddy earnings
+- deposit amount
+- payment status
+- payment provider
+- payment intent/session id
+- refund status
+- payout status
+- payout batch id
+- ledger records
+
+Keep payment logic server-side.
+Never expose secret keys to client.
+Never rely on client-only payment success.
+
+PHASE 8 — Telegraph messaging integration
+
+Integrate Rent a Buddy with Telegraph.
+
+Messaging rules:
+- before booking: optional limited pre-request questions, if allowed
+- after request: allow chat if admin setting allows
+- after confirmed payment: full booking chat unlocks
+- after completion: chat remains for a limited time or stays open based on settings
+
+Chat must show:
+- booking context card
+- date/time
+- category
+- meeting area
+- safety reminder
+- report/block buttons
+
+Auto-translation:
+If Telegraph auto-translation exists, use it for Rent a Buddy chats.
+
+Safety:
+- detect/report off-app payment phrases if moderation exists
+- allow users to report messages
+- block should prevent future requests/messages
+
+PHASE 9 — Availability system
+
+Buddy availability must support:
+- recurring weekly availability
+- date-specific overrides
+- vacation/unavailable days
+- available-now toggle
+- minimum notice period
+- max bookings per day
+- buffer time between bookings
+- timezone support
+- city-specific availability if buddy serves multiple cities
+
+Marketplace should only show buddies as available if:
+- approved
+- not suspended
+- available in selected city
+- matching selected date/time
+- not already booked
+- profile visible
+- meets trust/verification requirements
+
+PHASE 10 — Reviews and ratings
+
+After booking completion:
+Traveler reviews buddy:
+- rating
+- written review
+- category fit
+- safety/trust
+- punctuality
+- helpfulness
+
+Buddy reviews traveler:
+- respectful
+- on time
+- safe
+- would host again
+
+Rules:
+- only completed bookings can be reviewed
+- one review per booking per side
+- hide reviews under moderation if reported
+- do not allow fake reviews
+- review counts and average ratings must derive from real completed bookings
+
+PHASE 11 — Admin panel
+
+Build admin tools for Rent a Buddy.
+
+Admin can:
+- view buddy applications
+- approve/reject buddies
+- suspend buddies
+- pause buddy profiles
+- view bookings
+- view disputes
+- view reports
+- view payment states
+- view payout ledger
+- configure city rollout
+- configure deposit percentage
+- configure platform fee
+- configure allowed categories
+- configure cancellation/refund policy
+- configure message unlock policy
+- feature/unfeature buddies
+- inspect reviews
+- moderate reported content
+
+Admin queues:
+- pending buddy applications
+- reported buddies
+- disputed bookings
+- payment issues
+- suspicious off-app payment reports
+- city rollout requests
+
+PHASE 12 — City rollout
+
+Rent a Buddy must support city rollout without hiding everything accidentally.
+
+City rollout table/config should support:
+- city name
+- country
+- slug
+- enabled/disabled
+- marketplace_enabled
+- accepting_buddy_applications
+- accepting_bookings
+- min_required_buddies
+- visible_empty_state_copy
+
+Rules:
+- if city is not enabled, show “Rent a Buddy is not live here yet.”
+- if city is enabled but no buddies exist, show “No verified buddies available yet.”
+- if applications are open, show “Apply to become a buddy.”
+- city gating should not break unrelated Discovery/Pulse.
+
+PHASE 13 — Notifications
+
+Create notifications for:
+Traveler:
+- request sent
+- buddy accepted
+- buddy declined
+- payment needed
+- booking confirmed
+- upcoming booking reminder
+- buddy changed/cancelled
+- booking completed
+- review requested
+- dispute update
+
+Buddy:
+- new request
+- request expiring
+- booking confirmed
+- upcoming booking reminder
+- traveler cancelled
+- payment confirmed
+- booking completed
+- review received
+- admin action
+
+Admin:
+- new buddy application
+- new dispute
+- new report
+- payment issue
+
+Use existing notification/activity center if available.
+
+PHASE 14 — Safety and trust
+
+Add safety layers:
+- verified badge required for buddies
+- minimum trust score setting
+- report/block everywhere
+- booking safety reminder
+- public meetup recommendation
+- emergency/safe return integration if available
+- delayed location sharing rules
+- no precise live location exposure unless explicitly enabled
+- no off-app payment
+- no adult/dating service language
+
+If Safe Return exists, offer:
+“Enable Safe Return for this booking.”
+
+If Trust Score exists:
+- show it on buddy profile
+- factor it into ranking
+- hide/suppress low-trust buddies
+- allow admin override
+
+PHASE 15 — Data model
+
+Inspect existing tables first. Add migrations only if needed.
+
+Likely tables:
+- rent_buddy_profiles
+- rent_buddy_applications
+- rent_buddy_services
+- rent_buddy_availability
+- rent_buddy_availability_overrides
+- rent_buddy_bookings
+- rent_buddy_booking_messages or link to Telegraph thread
+- rent_buddy_reviews
+- rent_buddy_reports
+- rent_buddy_disputes
+- rent_buddy_payments
+- rent_buddy_payouts
+- rent_buddy_city_rollouts
+- rent_buddy_saved
+- rent_buddy_admin_actions
+
+All tables must have RLS.
+Users can only view/edit their own private records.
+Public can only see approved visible buddies.
+Admins can manage all.
+No sensitive verification/payment fields exposed publicly.
+
+PHASE 16 — Ranking logic
+
+Marketplace ranking should consider:
+- availability match
+- city match
+- category match
+- language match
+- verified status
+- rating
+- review count
+- response time
+- completed bookings
+- trust score
+- proximity, privacy-safe
+- profile completeness
+- admin featured boost
+- safety penalties
+
+Do not rank unapproved/suspended buddies.
+
+PHASE 17 — UX polish
+
+Rent a Buddy must feel native to Travel Buddy.
+
+Entry points:
+- Discovery card: “Need local help? Rent a Buddy”
+- Trips page: “Add a buddy to this trip”
+- City page: “Buddies in this city”
+- Passport profile: buddy badge if user is approved
+- Telegraph: booking chat context
+- Create tab: apply as buddy / request buddy
+
+Primary screens:
+- Rent a Buddy Home
+- Buddy Marketplace
+- Buddy Profile
+- Booking Request
+- Booking Checkout/Payment
+- My Buddy Bookings
+- Buddy Dashboard
+- Buddy Application
+- Admin Review Queue
+
+PHASE 18 — Tests and verification
+
+Add tests for:
+- approved buddies visible publicly
+- unapproved buddies hidden
+- suspended buddies hidden
+- city rollout gating
+- availability filtering
+- booking request creation
+- accept/decline flow
+- payment required before confirmation
+- review only after completed booking
+- report/block behavior
+- RLS policies
+- admin approval
+- no fake data
+- Telegraph booking chat unlock
+- cancellation status transitions
+
+Manual verification:
+- apply as buddy
+- admin approves buddy
+- buddy appears in marketplace
+- traveler requests booking
+- buddy accepts
+- traveler pays or sees honest payment-disabled state
+- booking confirms
+- Telegraph chat opens
+- booking completes
+- both sides can review
+- report/dispute works
+
+Acceptance criteria:
+- Rent a Buddy is fully usable from application to booking completion.
+- No unverified/unapproved buddy appears publicly.
+- No fake buddies/reviews/bookings are used.
+- City rollout states are honest.
+- Marketplace does not show blank screens without explanation.
+- Booking status machine is clear and safe.
+- Payment-disabled mode is honest if payment provider is not configured.
+- Telegraph integration works.
+- Admin can approve, suspend, review, and manage disputes.
+- Safety boundaries are visible and enforced.
+- Existing Travel Buddy app remains intact.
