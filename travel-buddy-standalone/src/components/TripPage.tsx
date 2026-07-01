@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
-  MessageCircle, ShieldCheck, ImagePlus, Info,
+  MessageCircle, ShieldCheck, ImagePlus, Info, X,
 } from 'lucide-react-native';
+import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces';
+import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
@@ -238,6 +240,132 @@ export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: stri
     </View>
   );
 }
+
+/* ── Trip Saved Places ──────────────────────────────────────────────────────
+ * Shows bookmarked Discovery places in the context of a specific trip.
+ * Removing a place calls toggleSave(place, tripId) so that when the last place
+ * is removed, categoryStorageKey(tripId) is cleared — not the global key.
+ * ─────────────────────────────────────────────────────────────────────────── */
+export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
+  const { places, loading, toggle } = useTripSavedPlaces(tripId);
+
+  return (
+    <View style={section.wrap}>
+      <SectionHead
+        title="Saved Places"
+        onViewAll={places.length > 0 ? () => router.push('/saved') : undefined}
+      />
+      {loading ? (
+        <View style={tsp.center}>
+          <ActivityIndicator size="small" color={color.signal} />
+        </View>
+      ) : places.length === 0 ? (
+        <View style={tsp.empty}>
+          <Text style={tsp.emptyText}>
+            Save places from Discovery to add them here.
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={tsp.strip}
+        >
+          {places.map((place: BookmarkedPlace) => (
+            <View key={place.id} style={tsp.card}>
+              <View style={tsp.cardIcon}>
+                <MapPin size={14} color={color.signal} />
+              </View>
+              <View style={tsp.cardBody}>
+                <Text style={tsp.name} numberOfLines={1}>{place.name}</Text>
+                {place.category ? (
+                  <Text style={tsp.category} numberOfLines={1}>{place.category}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                style={tsp.removeBtn}
+                hitSlop={8}
+                onPress={() => { void toggle(place); }}
+                accessibilityLabel={`Remove ${place.name} from saved places`}
+              >
+                <X size={13} color={color.mute} />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+const tsp = StyleSheet.create({
+  center: {
+    height: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  empty: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  emptyText: {
+    ...t.body,
+    color: color.faint,
+    fontSize: 13,
+  },
+  strip: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingVertical: space.sm,
+    paddingLeft: space.sm,
+    paddingRight: space.xs,
+    maxWidth: 200,
+    minWidth: 120,
+  },
+  cardIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: `${color.signal}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  cardBody: {
+    flex: 1,
+    gap: 2,
+  },
+  name: {
+    ...t.bodyStrong,
+    fontSize: 13,
+    color: color.ink,
+  },
+  category: {
+    ...t.small,
+    fontSize: 11,
+    color: color.mute,
+    textTransform: 'capitalize',
+  },
+  removeBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+});
 
 /* shared section header */
 export function SectionHead({ title, onViewAll }: { title: string; onViewAll?: () => void }) {

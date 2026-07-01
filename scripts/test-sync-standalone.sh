@@ -675,7 +675,7 @@ ec17=0
 out17="$(run_sync "$T17" --apply-deps --dry-run 2>&1)" || ec17=$?
 
 assert_exit         "17a: exits 1 in dry-run mode (action still required)"  1   "$ec17"
-assert_contains     "17b: dry-run flag shown in output"           "dry" "$out17"
+assert_contains     "17b: dry-run flag shown in output"           "DRY RUN" "$out17"
 assert_contains     "17c: new dep reported"                       "new-pkg" "$out17"
 assert_contains     "17d: typescript version drift reported"      "typescript" "$out17"
 

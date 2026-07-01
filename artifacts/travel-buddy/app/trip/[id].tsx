@@ -6,7 +6,7 @@ import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calen
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
-  TripHero, TodayNextUp, SavedIdeas,
+  TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
   TripCrewSection,
 } from '../../src/components/TripPage';
@@ -198,6 +198,7 @@ export default function TripDetail() {
           />
         ) : null}
         <SavedIdeas ideas={trip.savedIdeas} tripId={trip.id} />
+        <TripSavedPlacesSection tripId={trip.id} />
         <TripPlans plans={tripPlans} />
         <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />
 

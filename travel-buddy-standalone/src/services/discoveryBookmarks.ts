@@ -54,13 +54,19 @@ export async function isSaved(id: string): Promise<boolean> {
   return all.some((b) => b.id === id);
 }
 
-export async function toggleSave(place: BookmarkedPlace): Promise<boolean> {
+export async function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
   const all = await readAll();
   const idx = all.findIndex((b) => b.id === place.id);
   if (idx >= 0) {
     // remove
     all.splice(idx, 1);
     await writeAll(all);
+    // When the last place is removed, the category-filter key for this list
+    // becomes stale. Clear it as a fire-and-forget cleanup so stale keys don't
+    // accumulate in storage (mirrors the same cleanup in removeSaved).
+    if (all.length === 0) {
+      _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
+    }
     return false; // now unsaved
   } else {
     // add
