@@ -82,6 +82,14 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       },
       not(col: string, op: string, val: any) {
         if (op === "is") filters.push((r) => r[col] !== val);
+        if (op === "in") {
+          // val is like '("removed","hidden")' — strip parens, split, unquote
+          const items = String(val)
+            .replace(/^\(|\)$/g, "")
+            .split(",")
+            .map((s) => s.trim().replace(/^"|"$/g, ""));
+          filters.push((r) => !items.includes(r[col]));
+        }
         return obj;
       },
       in(col: string, vals: any[]) {
@@ -237,6 +245,15 @@ async function fetchDelete(url: string, path: string, token: string) {
   return { status: res.status, body: await res.json() };
 }
 
+async function fetchPatch(url: string, path: string, token: string, body: unknown) {
+  const res = await fetch(`${url}${path}`, {
+    method: "PATCH",
+    headers: authHeader(token),
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
 // ── Shared fixture: a completed trip with REVIEWER_ID as a member ─────────────
 
 function completedTripTables(extraReviews: Row[] = []): Record<string, FakeTable> {
@@ -291,6 +308,57 @@ describe("GET /api/reviews/my-review", () => {
     assert.equal(status, 200);
     assert.equal(body.exists, true);
     assert.equal(body.reviewId, REVIEW_ID);
+  });
+
+  it("returns full payload including rating, body, tags, anonymous mapping", async () => {
+    const existingReview = {
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        "Great trip overall",
+      tags:        ["friendly", "scenic"],
+      visibility:  "anonymous",
+      state:       "published",
+    };
+    server = await startServer(completedTripTables([existingReview]));
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/reviews/my-review?entityType=trip&entityId=${TRIP_ID}`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.exists, true);
+    assert.equal(body.reviewId, REVIEW_ID);
+    assert.equal(body.rating, 4);
+    assert.equal(body.body, "Great trip overall");
+    assert.deepEqual(body.tags, ["friendly", "scenic"]);
+    assert.equal(body.anonymous, true, "visibility=anonymous should map to anonymous:true");
+  });
+
+  it("maps visibility=public to anonymous:false", async () => {
+    const existingReview = {
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      3,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "published",
+    };
+    server = await startServer(completedTripTables([existingReview]));
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/reviews/my-review?entityType=trip&entityId=${TRIP_ID}`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.anonymous, false, "visibility=public should map to anonymous:false");
+    assert.equal(body.body, null);
+    assert.deepEqual(body.tags, []);
   });
 
   it("is scoped to the authenticated user — other user's review does not affect the check", async () => {
@@ -539,5 +607,157 @@ describe("DELETE /api/reviews/:id", () => {
     // OTHER_ID is not the author and not admin
     const { status } = await fetchDelete(server.url, `/api/reviews/${REVIEW_ID}`, "other-token");
     assert.equal(status, 403);
+  });
+});
+
+// ── PATCH /api/reviews/:id ────────────────────────────────────────────────────
+
+describe("PATCH /api/reviews/:id", () => {
+  let server: { url: string; close: () => Promise<void>; client: any };
+
+  afterEach(async () => { await server?.close(); });
+
+  it("200 succeeds and reflects changed fields in response", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      3,
+      body:        "Original body",
+      tags:        ["old_tag"],
+      visibility:  "public",
+      state:       "published",
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { rating: 5, body: "Updated body", tags: ["new_tag"], anonymous: true },
+    );
+    assert.equal(status, 200);
+    assert.equal(body.id, REVIEW_ID);
+    assert.equal(body.rating, 5);
+    assert.equal(body.body, "Updated body");
+    assert.deepEqual(body.tags, ["new_tag"]);
+    assert.equal(body.anonymous, true, "anonymous:true → visibility=anonymous round-trip");
+  });
+
+  it("200 partial update — only supplied fields change", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      3,
+      body:        "Stay the same",
+      tags:        ["keep"],
+      visibility:  "public",
+      state:       "published",
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { rating: 4 },      // only rating changes
+    );
+    assert.equal(status, 200);
+    assert.equal(body.rating, 4);
+    assert.equal(body.anonymous, false, "visibility unchanged, should still be public→false");
+  });
+
+  it("403 when a different user tries to edit the review", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,   // REVIEWER_ID is the owner
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "published",
+    }]);
+    server = await startServer(tables);
+    // OTHER_ID is NOT the author
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "other-token",
+      { rating: 1 },
+    );
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+  });
+
+  it("404 when the review state is 'removed'", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "removed",    // admin-removed — should be invisible to author
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { rating: 5 },
+    );
+    assert.equal(status, 404);
+    assert.equal(body.error, "not_found");
+  });
+
+  it("404 when the review state is 'hidden'", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      body:        null,
+      tags:        [],
+      visibility:  "public",
+      state:       "hidden",     // author-retracted — should block further edits
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { rating: 5 },
+    );
+    assert.equal(status, 404);
+    assert.equal(body.error, "not_found");
+  });
+
+  it("400 invalid_payload when rating is out of range", async () => {
+    server = await startServer(completedTripTables());
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { rating: 10 },   // max is 5
+    );
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
+  });
+
+  it("401 when unauthenticated", async () => {
+    server = await startServer(completedTripTables());
+    const { status } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "bad-token",
+      { rating: 3 },
+    );
+    assert.equal(status, 401);
   });
 });
