@@ -391,7 +391,7 @@ export default function DiscoveryHub() {
 
           {/* Tab bar row — semi-transparent over map, solid over list */}
           <View
-            style={[styles.tabRow, isMapMode && !filtersExpanded ? styles.tabRowSemi : styles.tabRowSolid]}
+            style={[styles.tabRow, filtersExpanded ? styles.tabRowSolid : styles.tabRowSemi]}
             onLayout={(e) => setTabRowHeight(e.nativeEvent.layout.height)}
             pointerEvents="auto"
           >
