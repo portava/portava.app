@@ -8,10 +8,12 @@
  *
  * A three-way segmented filter (All / Traveler Picks / Venues) floats at the
  * top of the map and re-renders visible pins without any network request.
- * Filter state is internal; pass a new `key` prop to reset it externally
- * (e.g. key={destination} in ForYouTab).
+ * The chosen filter is persisted to AsyncStorage (key: "discovery_map_filter")
+ * and restored on the next mount, so power users don't have to re-tap every
+ * session. Unrecognised stored values fall back to 'all' gracefully.
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Navigation, Star } from 'lucide-react-native';
@@ -61,13 +63,16 @@ function isDbPlace(id: string): boolean {
   return id.startsWith('db/') || id.startsWith('comm/');
 }
 
-// ── Filter options ─────────────────────────────────────────────────────────────
+// ── Filter options + persistence ───────────────────────────────────────────────
 
 const FILTER_OPTIONS: { key: MapFilter; label: string }[] = [
   { key: 'all',      label: 'All' },
   { key: 'traveler', label: '⭐ Picks' },
   { key: 'osm',      label: '📍 Venues' },
 ];
+
+const FILTER_STORAGE_KEY = 'discovery_map_filter';
+const VALID_FILTERS = new Set<string>(['all', 'traveler', 'osm']);
 
 // ── Viewport helper ───────────────────────────────────────────────────────────
 
@@ -91,7 +96,25 @@ function computeViewport(places: DiscoveryPlace[]) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
-  const [filter, setFilter] = useState<MapFilter>('all');
+  const [filter, setFilterRaw] = useState<MapFilter>('all');
+
+  // Restore the last-used filter from AsyncStorage on mount.
+  // Unrecognised or missing values fall back to 'all' silently.
+  useEffect(() => {
+    AsyncStorage.getItem(FILTER_STORAGE_KEY)
+      .then((stored) => {
+        if (stored && VALID_FILTERS.has(stored)) {
+          setFilterRaw(stored as MapFilter);
+        }
+      })
+      .catch(() => {}); // fail-open — show 'all' if storage is unavailable
+  }, []);
+
+  // Persist filter selection and update local state.
+  const setFilter = (f: MapFilter) => {
+    setFilterRaw(f);
+    AsyncStorage.setItem(FILTER_STORAGE_KEY, f).catch(() => {}); // fire-and-forget
+  };
 
   // All places that have coordinates — used for viewport + empty-state check.
   const mappable = useMemo(
