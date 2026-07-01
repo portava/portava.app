@@ -1,0 +1,1378 @@
+Travel Buddy — Full Memories / Posts / Postcards System Buildout, Frontend + Backend
+
+You are building the full Memories / Posts / Postcards system for Travel Buddy.
+
+Important product direction:
+Travel Buddy is a social media app for travelers. Posts are not generic social posts. They are travel memories: postcards, moments, videos, place recommendations, trip updates, event updates, hidden gems, city stories, and Passport-linked memories.
+
+Design correction:
+Do not copy Instagram’s post design. The goal is to make photos/postcards large, immersive, and social-media-friendly while still feeling unique to Travel Buddy.
+
+Travel Buddy memories should feel like a mix of:
+- travel postcard
+- passport page
+- city journal
+- photo diary
+- social feed
+- trip memory card
+
+Do not delete existing working systems.
+Do not fake posts, users, comments, likes, views, shares, places, reviews, trips, events, bookings, or activity.
+Inspect what exists first.
+Patch/build only after inventory.
+Preserve auth/session behavior.
+Use real backend data.
+Everything must be cohesive with Pulse, Discovery, Trips, Events, Passport/Profile, Telegraph, Circles, Rent a Buddy, Passport Stamps, Trust Score, verification, delayed posting, privacy, safety, hashtags, tagging, and location-aware discovery.
+
+Primary goal:
+Build a complete Memories/Post system where users can:
+- create travel posts
+- create postcard-style posts
+- upload photos/videos
+- add captions
+- tag real places
+- tag users
+- add hashtags
+- link posts to trips, events, circles, and Rent a Buddy bookings when allowed
+- recommend places
+- mark hidden gems
+- control privacy
+- use delayed posting for location safety
+- like, comment, save, share, and report posts
+- show posts in Pulse
+- show posts on Passport/Profile
+- show trip/event/city/place-linked memories
+- earn Passport Stamps from real activity
+- moderate unsafe content
+- preserve user safety and location privacy
+- display large immersive photo/postcard cards that feel uniquely Travel Buddy, not like an Instagram clone
+
+PHASE 0 — Inventory first
+
+Before making changes, search the repo for:
+- post
+- posts
+- postcard
+- postcards
+- memory
+- memories
+- pulse
+- feed
+- media
+- photo
+- video
+- upload
+- camera
+- gallery
+- caption
+- comments
+- likes
+- reactions
+- saves
+- shares
+- hashtags
+- tags
+- mentions
+- user_tags
+- place_tags
+- geotag
+- location
+- delayed posting
+- delayed_posting
+- privacy
+- trip
+- trips
+- events
+- circles
+- places
+- discovery_places
+- hidden gems
+- hidden_gems
+- passport
+- profile
+- stamps
+- trust
+- verification
+- telegraph
+- messages
+- rentABuddy
+- safe return
+- moderation
+- reports
+- blocking
+- RLS
+- Supabase
+- storage
+- migrations
+- notifications
+- activity center
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Product rules
+
+Memories / Posts must support several travel-native post types.
+
+Post types:
+- standard_post
+- postcard
+- photo_memory
+- video_memory
+- trip_update
+- event_update
+- place_recommendation
+- hidden_gem
+- review_like_memory
+- city_story
+- arrival_post
+- departure_post
+- rent_buddy_memory
+- circle_post
+
+Rules:
+- No fake posts or fake engagement.
+- Posts can be public, friends-only, followers-only, crew-only, circle-only, event-only, trip-only, private, draft, or delayed.
+- Location-sensitive posts must support delayed publishing.
+- User can earn geotagged/stamp credit immediately, but public visibility waits until delayed-posting safety rules pass.
+- Precise location must never be exposed by default.
+- Posts linked to private trips/events/circles must not leak private context.
+- Deleted/removed posts should not remain publicly visible.
+- Reported posts can be hidden or moderated based on severity.
+- Blocked users cannot see or interact with each other’s posts.
+- Comments/likes visibility must respect privacy settings.
+- Users can hide likes and turn off comments.
+- Users can choose who can comment and who can share when supported.
+- Tagging users must respect tag permissions.
+- Hashtags should be clickable and searchable.
+- Large media layouts must obey the same privacy/delayed posting rules as compact layouts.
+
+PHASE 2 — Data model
+
+Inspect existing tables first. Add migrations only if needed.
+
+Likely required tables:
+- posts
+- post_media
+- post_comments
+- post_likes
+- post_saves
+- post_shares
+- post_reports
+- post_mentions
+- post_hashtags
+- hashtags
+- post_place_tags
+- post_user_tags
+- post_trip_links
+- post_event_links
+- post_circle_links
+- post_visibility_rules
+- post_delayed_publish_queue
+- post_activity_log
+- post_moderation_actions
+- post_views, optional
+- post_reactions, optional if reactions beyond likes
+- hidden_gem_submissions, if not already present
+
+posts fields:
+- id
+- author_user_id
+- post_type
+- layout_type
+- caption
+- title, optional
+- status: draft / scheduled / delayed / published / archived / deleted / removed_by_admin
+- visibility: public / friends_only / followers_only / trip_only / crew_only / event_only / circle_only / private
+- city
+- country
+- place_id
+- place_source
+- place_name
+- lat private/internal
+- lng private/internal
+- location_precision: exact / area / city / country / hidden
+- show_location
+- delayed_posting_enabled
+- publish_after
+- left_geofence_at, optional
+- delay_reason
+- linked_trip_id
+- linked_event_id
+- linked_circle_id
+- linked_rent_buddy_booking_id
+- is_hidden_gem
+- is_place_recommendation
+- comments_enabled
+- comment_permission: everyone / friends / followers / linked_members / no_one
+- likes_visible
+- share_enabled
+- allow_tagging
+- moderation_status
+- like_count
+- comment_count
+- save_count
+- share_count
+- view_count, optional
+- pinned_to_passport boolean
+- created_at
+- updated_at
+- published_at
+- archived_at
+- deleted_at
+
+layout_type options:
+- standard_compact
+- large_photo
+- full_width_postcard
+- carousel
+- video_memory
+- place_recommendation
+- trip_memory
+- event_memory
+- hidden_gem
+- clean_travel_photo
+- passport_postcard
+- film_journal
+
+post_media fields:
+- id
+- post_id
+- user_id
+- media_type: image / video
+- media_url
+- thumbnail_url
+- feed_image_url
+- fullsize_url
+- storage_path
+- width
+- height
+- aspect_ratio
+- duration_seconds, for video
+- order_index
+- alt_text
+- filter_name
+- crop_settings jsonb
+- processing_status
+- created_at
+
+post_comments fields:
+- id
+- post_id
+- author_user_id
+- parent_comment_id, optional
+- body
+- status: visible / hidden / deleted / removed_by_admin
+- like_count
+- created_at
+- updated_at
+
+hashtags:
+- id
+- tag
+- normalized_tag
+- usage_count
+- city
+- country
+- created_at
+
+post_mentions / post_user_tags:
+- post_id
+- tagged_user_id
+- tagged_by_user_id
+- tag_type: mention / photo_tag / caption_tag
+- status: pending / accepted / rejected / removed
+- created_at
+
+post_place_tags:
+- post_id
+- place_id
+- source
+- name
+- city
+- country
+- lat private/internal
+- lng private/internal
+- display_location_precision
+- created_at
+
+post_delayed_publish_queue:
+- post_id
+- user_id
+- reason
+- geofence_lat
+- geofence_lng
+- geofence_radius_meters
+- safe_to_publish_at
+- left_geofence_at
+- status: waiting / ready / published / cancelled / failed
+- created_at
+- updated_at
+
+RLS:
+- Author can fully read/write own drafts/delayed/private posts.
+- Public can only read published public posts.
+- Friends/followers/crew/circle/event viewers can read only if eligible.
+- Blocked users cannot see or interact.
+- Users cannot see private lat/lng unless owner/admin.
+- Users can only edit/delete their own posts/comments.
+- Admins can moderate.
+- Comments, likes, saves, and shares must enforce post visibility.
+- Private linked trip/event/circle context must not leak.
+- Storage paths must not expose private media.
+- Large media URLs must not expose private content to ineligible viewers.
+
+PHASE 3 — Backend API routes
+
+Create or complete Post/Memories API routes.
+
+Post routes:
+- GET /api/posts/feed
+- GET /api/posts/pulse
+- GET /api/posts/me
+- GET /api/posts/drafts
+- GET /api/posts/delayed
+- GET /api/posts/archived
+- POST /api/posts
+- GET /api/posts/:postId
+- PATCH /api/posts/:postId
+- DELETE /api/posts/:postId
+- POST /api/posts/:postId/publish
+- POST /api/posts/:postId/archive
+- POST /api/posts/:postId/restore, if supported
+- POST /api/posts/:postId/pin-to-passport
+- DELETE /api/posts/:postId/pin-to-passport
+
+Media routes:
+- POST /api/posts/:postId/media
+- DELETE /api/posts/:postId/media/:mediaId
+- PATCH /api/posts/:postId/media/reorder
+- PATCH /api/posts/:postId/media/:mediaId/alt-text
+- PATCH /api/posts/:postId/media/:mediaId/crop
+- POST /api/posts/media/upload-url, if using signed uploads
+- POST /api/posts/media/complete-upload
+
+Engagement routes:
+- POST /api/posts/:postId/like
+- DELETE /api/posts/:postId/like
+- POST /api/posts/:postId/save
+- DELETE /api/posts/:postId/save
+- POST /api/posts/:postId/share
+- GET /api/posts/:postId/likes
+- GET /api/posts/:postId/saves, owner/admin if needed
+
+Comment routes:
+- GET /api/posts/:postId/comments
+- POST /api/posts/:postId/comments
+- PATCH /api/posts/:postId/comments/:commentId
+- DELETE /api/posts/:postId/comments/:commentId
+- POST /api/posts/:postId/comments/:commentId/like
+- DELETE /api/posts/:postId/comments/:commentId/like
+
+Tag/hashtag routes:
+- GET /api/hashtags/trending
+- GET /api/hashtags/:tag/posts
+- POST /api/posts/:postId/mentions
+- DELETE /api/posts/:postId/mentions/:mentionId
+- POST /api/posts/:postId/place-tags
+- DELETE /api/posts/:postId/place-tags/:placeTagId
+
+Linked context routes:
+- GET /api/trips/:tripId/posts
+- POST /api/trips/:tripId/posts
+- GET /api/events/:eventId/posts
+- POST /api/events/:eventId/posts
+- GET /api/circles/:circleId/posts
+- POST /api/circles/:circleId/posts
+- GET /api/places/:placeId/posts
+- GET /api/cities/:city/posts
+
+Delayed posting routes:
+- GET /api/posts/delayed/status
+- POST /api/posts/:postId/delay
+- POST /api/posts/:postId/mark-left-location
+- POST /api/posts/:postId/cancel-delayed
+- POST /api/posts/process-delayed, server/admin scheduled job only
+
+Moderation/safety routes:
+- POST /api/posts/:postId/report
+- POST /api/posts/:postId/media/:mediaId/report
+- POST /api/posts/:postId/comments/:commentId/report
+- POST /api/posts/:postId/hide
+- POST /api/posts/:postId/unhide
+- GET /api/posts/:postId/activity, owner/admin if needed
+
+Backend behavior:
+- All write routes require auth.
+- Feed routes must respect visibility, privacy, blocks, deleted status, delayed status, and moderation.
+- Public routes must never leak private lat/lng or private linked context.
+- Draft/delayed/private posts visible to owner only unless explicitly shared.
+- Like/comment/save/share must fail if viewer cannot view post.
+- Comments must fail if comments disabled.
+- Comment permission must be enforced.
+- Like counts can be hidden based on post/user settings.
+- Mentions/tags must enforce target user tag permissions.
+- Place tags must preserve real source/provider id.
+- Delayed publish processing must be server-side and idempotent.
+- No client should be able to force-publish location-sensitive post before safety rules allow it.
+- Large media/feed URLs must be returned only when viewer can access the post.
+
+PHASE 4 — Create Post frontend flow
+
+Build or complete a full create-memory flow.
+
+Entry points:
+- Create tab: “Post Memory”
+- Pulse composer
+- Passport/Profile: “Add Postcard”
+- Trip detail: “Post trip update”
+- Event detail: “Post event update”
+- Place card: “Recommend this place”
+- Hidden Gem: “Submit hidden gem”
+- Rent a Buddy booking: “Share memory”, if allowed
+- Camera/gallery entry if supported
+
+Create flow steps:
+
+Step 1 — Choose post type
+Options:
+- Post
+- Postcard
+- Large Photo Memory
+- Video Memory
+- Trip Update
+- Event Update
+- Place Recommendation
+- Hidden Gem
+
+Step 2 — Choose layout/style
+Options:
+- Clean Travel Photo
+- Passport Postcard
+- Film Journal
+- Hidden Gem Card
+- Trip Memory Card
+- Event Memory Card
+- Place Recommendation Card
+- Standard Compact Card
+
+Default:
+- Photo posts default to large photo card.
+- Postcards default to large postcard/photo card, not a tiny tile.
+- Trip/event/place posts default to travel-context cards.
+
+Step 3 — Add media
+- camera capture
+- gallery upload
+- multiple images if supported
+- short video if supported
+- reorder media
+- remove media
+- thumbnail preview
+- preview crop/fit if feasible
+- support square, portrait, and landscape
+- filters/effects if already available
+- alt text optional
+
+Step 4 — Caption and style
+- caption
+- title optional for postcard/hidden gem
+- hashtags
+- tag users
+- choose postcard style/template if postcard
+- choose city/vibe tags if supported
+
+Step 5 — Location/place
+- tag real place
+- tag city/country
+- use current location only with permission
+- choose location precision: exact / area / city / hidden
+- recommend place toggle
+- hidden gem toggle
+- warning if exact location is public
+
+Step 6 — Link context
+Allow linking to:
+- trip
+- event
+- circle
+- Rent a Buddy booking if allowed
+- place/hidden gem
+
+Rules:
+- private trip/event/circle context cannot leak publicly.
+- if linked object is private, default post visibility should match or be more restrictive.
+
+Step 7 — Privacy and safety
+Options:
+- public
+- friends only
+- followers only
+- trip only
+- crew only
+- event only
+- circle only
+- private
+- comments on/off
+- who can comment
+- likes visible/hidden
+- allow sharing on/off
+- delayed posting on/off
+- precise location hidden by default
+
+Step 8 — Preview and publish
+- preview large memory card
+- preview compact/profile grid version
+- show privacy badge
+- show delayed-posting status if enabled
+- Save Draft
+- Publish / Schedule / Delay Publish
+
+After create:
+- if published, navigate to post detail or Pulse
+- if delayed, show “Your memory will publish after you leave this area.”
+- if draft, show saved draft state
+
+PHASE 5 — Unique Travel Buddy large memory layout
+
+Do not copy Instagram’s exact layout, icon arrangement, typography, spacing, or interaction pattern.
+
+The media should be large and beautiful like a modern social post, but the structure, chips, stamps, map/place context, and travel details should make it feel uniquely Travel Buddy.
+
+Large Memory Card layout:
+- author row at top with avatar, name, handle, verified/trust badge, and trip/city context
+- large media area as the main focus
+- subtle passport/postcard frame treatment, not heavy borders
+- city/country stamp chip layered lightly on the media or below it
+- place tag chip: “📍 General Luna, Siargao” or linked real place
+- trip/event/circle context chip if allowed
+- delayed-posting/privacy badge visible to owner
+- action row: like/comment/save/share/telegraph
+- caption and hashtags below media
+- comments preview below caption
+- “Add to Trip” or “Save Place” action when the post is place/travel-related
+
+Unique Travel Buddy elements:
+- Passport Stamp chip
+- Postcard date mark
+- City Pulse badge
+- Trip memory ribbon
+- Hidden Gem marker
+- Trust/verified traveler badge
+- “Been Here” / “Want to Go” action, if supported
+- “Save to Trip” action
+- “Ask in Telegraph” share option
+- Compass/context note if AI suggestions exist
+
+Rules:
+- Keep the photo large and immersive.
+- Keep actions familiar enough that users understand them.
+- Make postcard elements subtle so they do not shrink or overpower the image.
+- Feed cards should feel premium and travel-native, not generic social media.
+- The same post should look compact in grids, immersive in feed, and full-size in detail view.
+
+PHASE 6 — Postcard/photo variants
+
+Postcard variants:
+
+1. Clean Travel Photo
+- minimal layout
+- large media
+- small city/place chips
+- best for normal travel photos
+
+2. Passport Postcard
+- subtle passport-paper background
+- stamp-style city mark
+- best for city/country memories
+
+3. Film Journal
+- soft film-frame style
+- date/location strip
+- best for photo diary feel
+
+4. Hidden Gem Card
+- large media
+- place details
+- “Hidden Gem” badge
+- save-to-trip/discovery action
+
+5. Trip Memory Card
+- linked trip ribbon
+- date range
+- crew avatars if visible
+- best for trip updates
+
+6. Event Memory Card
+- linked event chip
+- attendee/social context if visible
+- best for event posts
+
+7. Place Recommendation Card
+- large media
+- place tag
+- quick why/recommendation text
+- Save Place / Add to Trip action
+
+PHASE 7 — Media sizing and presentation
+
+Feed display modes:
+- standard compact card
+- large photo card
+- full-width postcard
+- carousel post
+- video memory card
+- place recommendation card
+- trip/event update card
+- hidden gem card
+
+Large postcard/photo requirements:
+- image/media should be the visual focus
+- support large square, portrait, and landscape ratios
+- support full-width feed layout on mobile
+- avoid tiny postcard thumbnails as the only view
+- caption appears under media like a social memory post
+- author/profile row appears above media
+- location/place/trip/event chip appears under or over media depending design
+- actions row below media
+- comments preview below actions/caption
+- privacy/delayed badge visible to owner
+- no giant decorative border that shrinks the photo too much
+
+Supported media ratios:
+- square 1:1
+- portrait 4:5
+- landscape 1.91:1
+- story-style 9:16 only if used in viewer/detail, not forced in feed
+- original aspect ratio with safe max height if feasible
+
+Rules:
+- Do not crop important image content aggressively.
+- Use object-fit/resize behavior that preserves the photo.
+- Allow user to preview crop/fit before posting if feasible.
+- Use thumbnails in grids, but large media in feed/detail.
+- Feed card should feel like a premium travel memory, not a generic copy of another app.
+- Postcard design elements should decorate the post, not overpower the photo.
+
+PHASE 8 — Media carousel
+
+Support multiple images/videos per post if feasible:
+- swipeable carousel
+- media count indicator
+- reorder before posting
+- remove media before posting
+- each media item can have optional alt text
+- detail view supports full-size viewing
+
+If carousel is not feasible now:
+- support one large image now
+- keep schema ready for multiple media
+- document follow-up.
+
+PHASE 9 — Full-screen media viewer
+
+Add full-screen viewer:
+- tap image to open larger view
+- swipe between carousel items
+- pinch-to-zoom if feasible
+- show caption/details overlay or below
+- report media option
+- close button
+- respects privacy and blocked-user rules
+
+PHASE 10 — Postcard design system
+
+Postcards should feel travel-native.
+
+Postcard card should include:
+- large media
+- city/country stamp
+- caption
+- place tag if allowed
+- trip/event context chip if allowed
+- author
+- date/postcard date mark
+- privacy badge for owner
+- likes/comments/saves if visible
+
+Postcard styles:
+- classic postcard
+- clean photo
+- film frame
+- passport mark
+- beach
+- nightlife
+- food
+- city
+- hidden gem
+- trip memory
+- event memory
+
+Rules:
+- visual styles are templates only.
+- no fake government/passport marks.
+- no copyrighted brand marks.
+- post remains readable in feed/profile.
+- postcard styling must not reduce photo impact.
+
+PHASE 11 — Profile grid vs feed display
+
+Profile grid:
+- compact square/thumbnail grid
+- separate tabs for Posts/Postcards/Hidden Gems if available
+- tap opens large post detail
+
+Feed/Pulse:
+- large media cards by default for photo memories and postcards
+- compact cards only for text/lightweight updates
+
+Post detail:
+- largest readable view
+- full caption/comments
+- full actions
+- full media viewer access
+
+Trip/Event/Place memories:
+- medium-to-large cards, not tiny thumbnails only
+
+PHASE 12 — Image quality and performance
+
+Requirements:
+- upload original safely
+- generate/display optimized feed-size image
+- generate thumbnail for grids
+- lazy load feed media
+- cache images where safe
+- show loading skeleton
+- avoid blurry over-compressed feed images
+- prevent huge original files from slowing feed
+- keep one slow image from blanking the feed
+- image failure fallback must not break the post card
+
+PHASE 13 — Video memories
+
+If video is supported:
+- show large video card
+- muted autoplay only if product allows and performance is okay
+- tap to play/pause
+- duration badge
+- thumbnail fallback
+- upload/progress state
+- reasonable max duration/size
+
+If video is not supported:
+- show honest “Video posts not enabled yet.”
+- do not fake video uploads.
+
+PHASE 14 — Pulse/feed integration
+
+Pulse must show real posts.
+
+Feed ranking can consider:
+- recency
+- followed users
+- same city/current trip city
+- nearby but privacy-safe
+- event/trip/circle relevance
+- engagement
+- trust score/quality
+- hidden gem quality
+- safety/moderation status
+
+Pulse sections:
+- Following
+- Nearby
+- City Pulse
+- Trip Updates
+- Events
+- Hidden Gems
+- Postcards
+- For You / Compass-supported if available
+
+Rules:
+- no fake activity
+- delayed/private/deleted/removed posts hidden
+- blocked users filtered
+- exact location hidden unless allowed
+- empty states honest
+- large post layouts must not slow or blank Pulse
+
+PHASE 15 — Post detail screen
+
+Every post card, postcard grid tile, Pulse item, profile post, trip memory, event post, place memory, hidden gem, and notification should open the same Post Detail screen.
+
+Post detail must show:
+- large media carousel/video
+- author clickable profile
+- caption
+- hashtags clickable
+- tagged users clickable
+- place tag clickable
+- trip/event/circle context chip if allowed
+- city/country display
+- privacy/delayed state for owner
+- likes/comments/save/share/report actions
+- comments list
+- related posts if safe
+- edit/archive/delete menu for owner
+- moderation label if relevant
+
+PHASE 16 — Comments, likes, saves, shares
+
+Likes:
+- like/unlike
+- count updates
+- likes visible/hidden based on settings
+- liked users list only if allowed
+
+Comments:
+- add/edit/delete own comment
+- threaded replies optional
+- comments on/off
+- choose who can comment
+- comment reports
+- blocked users filtered
+- unsafe comments reportable/moderated
+
+Saves:
+- save/unsave post
+- saved memories list
+- saved place recommendations can optionally save to trip
+
+Shares:
+- share public post link if allowed
+- share to Telegraph if allowed
+- share to trip/event/circle if allowed
+- copy/share post link only when privacy allows
+- prevent sharing private/delayed posts publicly
+
+PHASE 17 — Edit, archive, delete, restore
+
+Support:
+- edit post after publishing
+- archive post without deleting
+- delete post with confirmation
+- restore archived post if supported
+- owner-only drafts manager
+- owner-only delayed posts manager
+- report media separately from post
+- pin post to Passport if feasible
+
+Rules:
+- edits must preserve privacy rules
+- editing location/privacy should re-check delayed-posting safety
+- archived posts hidden publicly
+- deleted posts hidden and not shown in feeds
+- restored posts must re-enforce privacy and moderation
+
+PHASE 18 — Tagging and hashtags
+
+Hashtags:
+- parse hashtags from caption
+- normalize tags
+- clickable hashtag pages
+- city-level hashtag trends
+- prevent abusive/prohibited hashtags where possible
+- update usage counts from real posts only
+
+User tagging:
+- @mentions in caption
+- photo tags if supported
+- tagged user notification
+- respect allow_tagging setting
+- tagged user can remove tag
+- blocked users cannot tag each other
+
+Place tagging:
+- tag real places
+- preserve provider/source ID
+- show place page/discovery card
+- place recommendations can appear in Discovery if public/approved
+
+PHASE 19 — Delayed posting and location safety
+
+This is required.
+
+Delayed posting behavior:
+- User can create geotagged post and earn private geotag/stamp credit.
+- Post should not publish publicly until the user leaves the location/geofence or delay rule is satisfied.
+- Owner can see delayed post with label.
+- Public cannot see delayed post.
+- Pulse/Discovery/Profile should not show delayed post publicly.
+- If user cancels delayed post, do not publish.
+- If location permission unavailable, use time-based delay fallback if configured.
+- Exact geofence/lat/lng must remain private.
+
+Delayed states:
+- delayed_waiting
+- delayed_ready
+- published
+- cancelled
+- failed
+
+UI:
+- clear “Delayed for your safety” label
+- explanation in create flow
+- delayed posts manager
+- manual cancel
+- publish-now only if safe and allowed by settings
+
+PHASE 20 — Profile/Passport integration
+
+Profile should show:
+- Posts tab
+- Postcards tab
+- Hidden Gems tab if public
+- Saved posts private to owner
+- Draft/delayed posts visible to owner only
+- post count from real published posts
+- privacy-respecting grids
+- pinned Passport posts if implemented
+
+Rules:
+- private/friends/trip/event/circle posts hidden from ineligible viewers
+- delayed posts hidden publicly
+- removed/deleted posts hidden
+- blocked users cannot see each other’s posts
+- owner sees status labels
+- grid opens large Post Detail
+
+PHASE 21 — Trips integration
+
+Trip posts:
+- user can post update from trip detail
+- post links to trip
+- trip privacy controls post default visibility
+- trip-only posts visible only to trip owner/crew based on settings
+- trip posts appear in trip detail
+- public trip posts can appear in Pulse if allowed
+- delayed posting still applies
+- trip memory can contribute to trip/stamp progress
+- Save Post to Trip when relevant
+
+PHASE 22 — Events integration
+
+Event posts:
+- attendee/host can post event update if allowed
+- host announcements supported
+- event-only posts visible only to eligible event viewers
+- public event posts can appear in Pulse if allowed
+- removed attendees lose access to private event posts
+- delayed posting applies if location sensitive
+
+PHASE 23 — Circles integration
+
+Circle posts:
+- circle-only visibility
+- circle members can post based on permissions
+- circle moderators/admins can moderate if supported
+- non-members cannot view private circle posts
+- blocked users filtered
+
+PHASE 24 — Discovery/places/hidden gems integration
+
+Place recommendations:
+- public approved place recommendation posts can appear under place/discovery
+- hidden gems can be submitted from post flow
+- hidden gem may require approval before appearing publicly
+- no fake reviews/ratings
+- duplicate hidden gem submissions prevented where possible
+- report unsafe/inaccurate place content
+- “Been Here” / “Want to Go” actions if supported
+- “Save to Trip” action where relevant
+
+Discovery sections:
+- Traveler Recommended
+- Hidden Gems
+- Trending Postcards
+- City Memories
+- Near Your Trip
+- Food/Nightlife/Beach posts by category
+
+PHASE 25 — Rent a Buddy integration
+
+Rent a Buddy memories:
+- traveler can post memory after completed booking if allowed
+- buddy can be tagged only if tag permissions allow
+- booking details private by default
+- no off-app payment/adult/dating framing
+- completed booking can contribute to stamp if real
+- disputed/refunded bookings should not count until resolved
+
+PHASE 26 — Passport Stamps integration
+
+Posts can award stamps from real activity:
+- First Postcard
+- Storyteller
+- Hidden Gem Contributor
+- City Postcard
+- Food/Nightlife/Beach memory
+- Event/Trip-linked memory stamps
+
+Rules:
+- stamp engine must award server-side only
+- delayed posts can earn private progress but public stamp sharing waits until safe
+- deleted/removed posts may revoke or reduce progress based on policy
+
+PHASE 27 — Notifications/activity center
+
+Create notifications for:
+- comment on post
+- like on post, if enabled
+- save/share milestone if enabled
+- user tagged you
+- place recommendation approved
+- hidden gem approved/rejected
+- post reported/moderated
+- delayed post published
+- stamp earned from post
+- friend posted in your trip/circle/event
+- reply to comment
+
+Notification privacy:
+- do not notify in a way that leaks private posts to ineligible users
+- respect blocked users
+
+PHASE 28 — Telegraph sharing
+
+If Telegraph sharing exists:
+- share post to Telegraph
+- share place recommendation to chat
+- share trip/event memory to related group chat
+- show compact preview card in Telegraph
+- respect post privacy
+- prevent sharing private/delayed posts to unauthorized chats
+
+If Telegraph sharing is not ready:
+- show honest unavailable state
+- document follow-up
+
+PHASE 29 — Moderation and safety
+
+Add moderation/reporting for:
+- post
+- comment
+- media
+- user tag
+- place tag
+- hashtag
+- hidden gem
+
+Report reasons:
+- spam/scam
+- harassment
+- nudity/adult content
+- escort/dating solicitation if relevant
+- illegal activity
+- dangerous meetup
+- off-app payment
+- hate/abuse
+- misinformation about place
+- privacy/location exposure
+- other
+
+Admin/moderator can:
+- hide post
+- remove post
+- restore post
+- remove media
+- remove comment
+- remove tag/hashtag
+- restrict user posting
+- suspend user
+- approve/reject hidden gem
+- review post reports
+- view moderation history
+
+Safety:
+- detect/report off-app payment/adult-service phrases if moderation exists
+- block users
+- remove followers from post access if privacy changes
+- prevent precise live location leaks
+
+PHASE 30 — Media storage and processing
+
+Media requirements:
+- Supabase Storage or existing media system
+- signed upload if needed
+- validate file type
+- validate file size
+- image thumbnails
+- optimized feed-size images
+- full-size protected image where appropriate
+- video thumbnails if supported
+- video duration limits
+- media order
+- delete media from storage when post deleted if safe
+- fallback if media fails
+- upload progress UI
+- retry failed upload
+- no unsafe upload paths
+- no private media public URLs unless post visibility allows
+
+If media processing is not available:
+- support image upload first
+- show video upload unavailable honestly
+- document follow-up
+
+PHASE 31 — Search/deep links
+
+Support:
+- post deep link
+- hashtag deep link
+- place-tagged posts
+- city posts
+- trip/event/circle posts where viewer has access
+- search captions/hashtags/users/place tags if search exists
+
+Respect privacy:
+- private/delayed/deleted posts do not appear
+- blocked users filtered
+- private context does not leak in preview
+
+PHASE 32 — Analytics, optional/private
+
+If feasible:
+- owner-only post views
+- saves count
+- shares count
+- reach by city, privacy-safe
+- profile clicks from post
+- place card clicks
+
+Rules:
+- do not expose stalker-like viewer identity unless product intentionally supports viewer lists
+- respect privacy and blocking
+
+PHASE 33 — Frontend UX polish
+
+Requirements:
+- fast composer
+- save draft
+- upload progress
+- graceful retry
+- skeleton loading
+- empty states
+- compact feed cards where appropriate
+- premium large travel memory cards
+- premium postcard cards
+- media carousel
+- full-screen media viewer
+- video player if supported
+- keyboard-safe caption input
+- privacy badges
+- delayed posting label
+- no blank screens
+- no giant headers
+- accessible touch targets
+- reduce-motion support for animations
+
+PHASE 34 — Tests
+
+Add tests for:
+- create draft post
+- publish post
+- edit post
+- archive/delete/restore post
+- delayed post hidden publicly
+- delayed post owner visible
+- delayed publish processing
+- private/friends/trip/event/circle visibility
+- blocked user cannot view/interact
+- like/unlike
+- comments on/off
+- comment permission
+- comment create/delete/report
+- save/unsave
+- share rules
+- hashtag parsing
+- mention/tag permissions
+- tagged user remove tag
+- place tag source preserved
+- post linked to trip
+- post linked to event
+- post linked to circle
+- profile post visibility
+- Pulse feed visibility
+- large media layout renders
+- profile grid opens large detail
+- media carousel if implemented
+- full-screen viewer if implemented
+- hidden gem approval if implemented
+- media upload authorization
+- media delete authorization
+- RLS policies
+- no private lat/lng leakage
+- no private linked context leakage
+- moderation hide/remove
+- stamp trigger from post if implemented
+
+Manual QA:
+- create text/photo post
+- create large photo memory
+- create postcard
+- create video post if supported
+- save draft
+- publish post
+- edit post
+- archive/delete post
+- create delayed geotagged post
+- confirm public cannot see delayed post
+- cancel delayed post
+- publish after safe condition/fallback
+- tag user
+- remove tag
+- add hashtag
+- open hashtag page
+- tag real place
+- create place recommendation
+- submit hidden gem
+- like/comment/save/share
+- turn comments off
+- hide likes
+- view post on profile
+- open profile grid tile into large detail
+- view post in Pulse as large Travel Buddy memory card
+- link post to trip
+- link post to event
+- share to Telegraph if supported
+- report post/comment/media
+- block user and confirm post hidden
+- upload failure retry
+- test square/portrait/landscape images
+- test image failure fallback
+- mobile layout check
+
+FINAL MEMORY/POST SYSTEM CONNECTION AUDIT
+
+Before marking complete, verify posts connect to:
+- Pulse
+- Profile/Passport
+- Trips
+- Events
+- Circles
+- Discovery
+- Places
+- Hidden Gems
+- Rent a Buddy
+- Passport Stamps
+- Notifications/activity center
+- Telegraph sharing if supported
+- Privacy settings
+- Blocking/reporting
+- Delayed posting
+- Hashtags
+- User tagging
+- Media storage
+- Admin moderation
+- Search/deep links
+- Post Detail from every entry point
+
+FINAL MEMORY/POST SYSTEM DEFINITION OF DONE
+
+Do not mark Memories/Posts/Postcards complete unless all of the following pass:
+
+1. Create post
+- Logged-in user can create post/postcard.
+- Caption, media, privacy, tags, hashtags, and place link save correctly.
+- Draft and publish states work.
+
+2. Large Travel Buddy memory design
+- Photo posts can display large in Pulse/feed.
+- Postcards are not limited to tiny tiles.
+- Posts feel unique to Travel Buddy, not like a direct Instagram clone.
+- Travel context is obvious through stamps, chips, trip/place/city context, and Travel Buddy-specific actions.
+- Photos remain the main focus.
+
+3. Media
+- Image upload works.
+- Square, portrait, and landscape images display well.
+- Profile grid opens large post detail.
+- Video support is honest: works if implemented, clearly unavailable if not.
+- Media thumbnails/fallbacks work.
+- Upload errors have retry.
+- Large media does not break feed performance.
+
+4. Delayed posting
+- Location-sensitive post can be delayed.
+- Owner sees delayed post.
+- Public cannot see delayed post.
+- Delayed publish is server-safe and idempotent.
+- Private lat/lng does not leak.
+
+5. Pulse/Profile
+- Published allowed posts appear in Pulse.
+- Profile tabs show real posts/postcards.
+- Private/delayed/deleted/removed posts are hidden from ineligible viewers.
+- All post entry points open the same Post Detail screen.
+
+6. Engagement
+- Likes/comments/saves/shares work.
+- Comments off and likes hidden settings work.
+- Counts are real and consistent.
+
+7. Tags/hashtags/places
+- Hashtags are parsed and clickable.
+- User tagging respects permissions.
+- Place tags use real place data.
+- Hidden gem flow is honest and moderated if required.
+
+8. Trip/Event/Circle context
+- Linked posts show in allowed trip/event/circle contexts.
+- Private context does not leak.
+- Removed/ineligible users lose access.
+
+9. Safety/moderation
+- Report/block works.
+- Admin/moderation workflow exists if admin system exists.
+- Unsafe posts/comments/media can be hidden/removed.
+
+10. Backend/RLS/security
+- Public APIs return only allowed fields.
+- Private fields do not leak.
+- RLS prevents unauthorized reads/writes.
+- Blocked users cannot interact.
+- No fake engagement or activity.
+
+11. Performance
+- Feed loads fast.
+- Media is optimized where possible.
+- Heavy sections lazy load.
+- One slow media item does not blank the whole feed.
+
+12. Tests
+Required tests pass for:
+- create/publish/draft/edit/archive/delete/delay
+- privacy
+- delayed posting
+- engagement
+- comments
+- tagging/hashtags
+- place tags
+- trip/event/profile/Pulse visibility
+- large media layouts
+- media auth
+- moderation
+- RLS policies
+- no private field leakage
+
+Final deliverable:
+Return:
+- inventory report
+- files changed
+- migrations added
+- routes added/changed
+- screens/components added
+- layout/design components added
+- tests added
+- tests passed/failed
+- manual QA pass/fail
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+The Memories / Posts / Postcards system must work end-to-end as Travel Buddy’s travel social content layer, with large immersive Travel Buddy-native memory cards — not as a disconnected generic posting form and not as a direct clone of Instagram.
