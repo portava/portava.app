@@ -4,19 +4,33 @@
  * Run via:
  *   node --import tsx/esm --test src/components/discovery/__tests__/DiscoveryMapView.filter.test.ts
  *
- * All six behaviours from the task spec are covered:
+ * All six behaviours from the original task spec are covered, plus nine cache
+ * behaviours added in the follow-up task:
  *   1. Valid stored value ('traveler') is returned and passed to the setter
  *   2. Invalid stored value ('unknown') falls back to 'all'
  *   3. Missing key (null) falls back to 'all' gracefully
  *   4. AsyncStorage.getItem rejection falls back to 'all'
  *   5. setFilter calls AsyncStorage.setItem with the correct key + value
  *   6. AsyncStorage.setItem rejection does not propagate (fire-and-forget)
+ *
+ * Cache / getCachedFilter tests:
+ *   C1. getCachedFilter() returns null before any load/save
+ *   C2. loadMapFilter with valid stored value → getCachedFilter() returns that value
+ *   C3. loadMapFilter with invalid stored value → getCachedFilter() unchanged (not overwritten)
+ *   C4. loadMapFilter rejection → getCachedFilter() unchanged
+ *   C5. saveMapFilter → getCachedFilter() returns the saved value synchronously
+ *   C6. removeMapFilter → getCachedFilter() returns null after call
+ *   C7. removeMapFilter calls storage.removeItem with the correct key
+ *   C8. Full lifecycle: save('traveler') → remove → getCachedFilter() === null
+ *   C9. Full lifecycle: save('osm') → load → getCachedFilter() === 'osm'
  */
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   loadMapFilter,
   saveMapFilter,
+  removeMapFilter,
+  getCachedFilter,
   FILTER_STORAGE_KEY,
 } from '../discoverMapFilterStorage.ts';
 import type { StorageLike } from '../discoverMapFilterStorage.ts';
@@ -27,10 +41,16 @@ function fakeStorage(opts: {
   getResult?: string | null;
   getError?: Error;
   setError?: Error;
-}): StorageLike & { setItemCalls: Array<{ key: string; value: string }> } {
+  removeError?: Error;
+} = {}): StorageLike & {
+  setItemCalls: Array<{ key: string; value: string }>;
+  removeItemCalls: string[];
+} {
   const setItemCalls: Array<{ key: string; value: string }> = [];
+  const removeItemCalls: string[] = [];
   return {
     setItemCalls,
+    removeItemCalls,
     getItem(_key: string): Promise<string | null> {
       if (opts.getError) return Promise.reject(opts.getError);
       return Promise.resolve(opts.getResult ?? null);
@@ -38,6 +58,11 @@ function fakeStorage(opts: {
     setItem(key: string, value: string): Promise<void> {
       setItemCalls.push({ key, value });
       if (opts.setError) return Promise.reject(opts.setError);
+      return Promise.resolve();
+    },
+    removeItem(key: string): Promise<void> {
+      removeItemCalls.push(key);
+      if (opts.removeError) return Promise.reject(opts.removeError);
       return Promise.resolve();
     },
   };
@@ -96,6 +121,7 @@ describe('loadMapFilter', () => {
         return Promise.resolve('traveler');
       },
       setItem() { return Promise.resolve(); },
+      removeItem() { return Promise.resolve(); },
     };
     await loadMapFilter(storage);
     assert.equal(capturedKey, FILTER_STORAGE_KEY);
@@ -139,5 +165,140 @@ describe('saveMapFilter', () => {
     const storage = fakeStorage({ setError: new Error('disk full') });
     const result = saveMapFilter(storage, 'traveler');
     assert.equal(result, undefined);
+  });
+});
+
+// ── getCachedFilter / memory cache ────────────────────────────────────────────
+//
+// _memoryCache is module-level state, so each test resets it via removeMapFilter
+// in beforeEach/afterEach to prevent ordering dependencies.
+
+describe('getCachedFilter and memory cache', () => {
+  beforeEach(() => {
+    removeMapFilter(fakeStorage());
+  });
+
+  afterEach(() => {
+    removeMapFilter(fakeStorage());
+  });
+
+  it('C1. returns null before any load or save', () => {
+    assert.equal(getCachedFilter(), null);
+  });
+
+  it('C2. loadMapFilter with a valid stored value populates the cache', async () => {
+    const storage = fakeStorage({ getResult: 'traveler' });
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'traveler');
+  });
+
+  it('C2b. loadMapFilter with "osm" populates the cache with "osm"', async () => {
+    const storage = fakeStorage({ getResult: 'osm' });
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'osm');
+  });
+
+  it('C3. loadMapFilter with an invalid stored value leaves the cache unchanged', async () => {
+    saveMapFilter(fakeStorage(), 'traveler');
+    assert.equal(getCachedFilter(), 'traveler');
+    const storage = fakeStorage({ getResult: 'unknown' });
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'traveler');
+  });
+
+  it('C3b. loadMapFilter with null stored value leaves the cache unchanged', async () => {
+    saveMapFilter(fakeStorage(), 'osm');
+    assert.equal(getCachedFilter(), 'osm');
+    const storage = fakeStorage({ getResult: null });
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'osm');
+  });
+
+  it('C4. loadMapFilter rejection leaves the cache unchanged', async () => {
+    saveMapFilter(fakeStorage(), 'traveler');
+    assert.equal(getCachedFilter(), 'traveler');
+    const storage = fakeStorage({ getError: new Error('io error') });
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'traveler');
+  });
+
+  it('C5. saveMapFilter updates the cache synchronously before setItem resolves', () => {
+    const storage = fakeStorage({});
+    saveMapFilter(storage, 'traveler');
+    assert.equal(getCachedFilter(), 'traveler');
+  });
+
+  it('C5b. saveMapFilter with "osm" sets the cache to "osm" synchronously', () => {
+    const storage = fakeStorage({});
+    saveMapFilter(storage, 'osm');
+    assert.equal(getCachedFilter(), 'osm');
+  });
+
+  it('C5c. saveMapFilter with "all" sets the cache to "all" synchronously', () => {
+    const storage = fakeStorage({});
+    saveMapFilter(storage, 'all');
+    assert.equal(getCachedFilter(), 'all');
+  });
+
+  it('C6. removeMapFilter clears the cache to null', () => {
+    const storage = fakeStorage({});
+    saveMapFilter(storage, 'traveler');
+    assert.equal(getCachedFilter(), 'traveler');
+    removeMapFilter(storage);
+    assert.equal(getCachedFilter(), null);
+  });
+
+  it('C8. full lifecycle: save → remove → getCachedFilter() === null', () => {
+    const storage = fakeStorage({});
+    saveMapFilter(storage, 'traveler');
+    removeMapFilter(storage);
+    assert.equal(getCachedFilter(), null);
+  });
+
+  it('C9. full lifecycle: save("osm") → load → getCachedFilter() === "osm"', async () => {
+    const storage = fakeStorage({ getResult: 'osm' });
+    saveMapFilter(storage, 'osm');
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'osm');
+  });
+});
+
+// ── removeMapFilter ───────────────────────────────────────────────────────────
+
+describe('removeMapFilter', () => {
+  beforeEach(() => {
+    removeMapFilter(fakeStorage());
+  });
+
+  afterEach(() => {
+    removeMapFilter(fakeStorage());
+  });
+
+  it('C7. calls storage.removeItem with the correct key', async () => {
+    const storage = fakeStorage({});
+    removeMapFilter(storage);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(storage.removeItemCalls.length, 1);
+    assert.equal(storage.removeItemCalls[0], FILTER_STORAGE_KEY);
+  });
+
+  it('does not propagate a removeItem rejection (fire-and-forget)', async () => {
+    const storage = fakeStorage({ removeError: new Error('disk error') });
+    assert.doesNotThrow(() => removeMapFilter(storage));
+    await new Promise((r) => setImmediate(r));
+  });
+
+  it('does not return a promise that the caller must handle', () => {
+    const storage = fakeStorage({});
+    const result = removeMapFilter(storage);
+    assert.equal(result, undefined);
+  });
+
+  it('clears the cache even when removeItem rejects', async () => {
+    const storage = fakeStorage({ removeError: new Error('disk error') });
+    saveMapFilter(fakeStorage(), 'traveler');
+    removeMapFilter(storage);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(getCachedFilter(), null);
   });
 });
