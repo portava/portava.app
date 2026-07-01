@@ -125,6 +125,8 @@ export interface SubmitPlacePayload {
 export interface SubmitPlaceResult {
   ok: true;
   place: { id: string; name: string; city: string; place_type: string; status: string; created_at: string };
+  /** True when the server successfully geocoded the place name and stored coordinates. */
+  geocoded?: boolean;
 }
 
 export async function submitCommunityPlace(

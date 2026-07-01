@@ -1199,6 +1199,33 @@ router.post("/discovery/community", async (req, res) => {
     return;
   }
 
+  // Auto-geocode the place name + city when the caller didn't supply coordinates.
+  // A 4-second timeout prevents this from blocking the response when Nominatim is slow.
+  // If geocoding fails or times out, we insert with null coords — the place still appears
+  // in the list view; it just won't be pinned on the map.
+  let finalLat = latNum;
+  let finalLng = lngNum;
+  let geocoded = false;
+  if (finalLat === null || finalLng === null) {
+    try {
+      const neighborhoodStr = typeof neighborhood === "string" && neighborhood.trim()
+        ? `${neighborhood.trim()}, `
+        : "";
+      const geoQuery = `${(name as string).trim()}, ${neighborhoodStr}${(city as string).trim()}`;
+      const geoResult = await Promise.race([
+        geocode(geoQuery),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000)),
+      ]);
+      if (geoResult) {
+        finalLat = geoResult.lat;
+        finalLng = geoResult.lng;
+        geocoded = true;
+      }
+    } catch {
+      /* non-fatal — insert without coordinates */
+    }
+  }
+
   try {
     const { data, error } = await sc
       .from("discovery_places")
@@ -1212,8 +1239,8 @@ router.post("/discovery/community", async (req, res) => {
         tag:          typeof tag === "string" ? tag.trim() || null : null,
         note:         typeof note === "string" ? note.trim() || null : null,
         rating:       ratingNum,
-        lat:          latNum,
-        lng:          lngNum,
+        lat:          finalLat,
+        lng:          finalLng,
         submitted_by: auth.user.id,
         source:       "traveler",
         status:       "active",
@@ -1228,7 +1255,7 @@ router.post("/discovery/community", async (req, res) => {
       return;
     }
 
-    res.status(201).json({ ok: true, place: data });
+    res.status(201).json({ ok: true, place: data, geocoded });
   } catch (err) {
     req.log.error({ err }, "discovery/community POST unexpected error");
     res.status(500).json({ ok: false, reason: "unexpected_error" });

@@ -1,13 +1,19 @@
 /**
  * SubmitPlaceSheet — lets authenticated users submit a hidden gem or traveler pick
  * for the current city. Calls POST /api/discovery/community via submitCommunityPlace().
+ *
+ * Coordinates: the server auto-geocodes the place name + city via Nominatim when
+ * no lat/lng are supplied. Users can also enter exact coordinates manually in the
+ * "Set exact location" section (e.g. copied from Google Maps) to override.
+ * Either way, a place with coordinates becomes a gold star pin on the map after
+ * the next pull-to-refresh.
  */
 import React, { useState } from 'react';
 import {
   View, Text, Modal, Pressable, TextInput, ScrollView, StyleSheet,
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { X, MapPin, Star } from 'lucide-react-native';
+import { X, MapPin, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { submitCommunityPlace } from '../../services/discovery';
 
@@ -38,9 +44,14 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
   const [note, setNote]                 = useState('');
   const [rating, setRating]             = useState<number | null>(null);
 
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError]           = useState<string | null>(null);
-  const [success, setSuccess]       = useState(false);
+  const [latText, setLatText]           = useState('');
+  const [lngText, setLngText]           = useState('');
+  const [showExactLoc, setShowExactLoc] = useState(false);
+
+  const [submitting, setSubmitting]     = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+  const [success, setSuccess]           = useState(false);
+  const [pinned, setPinned]             = useState(false);
 
   const reset = () => {
     setPlaceType('hidden_gem');
@@ -51,8 +62,12 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
     setTag('');
     setNote('');
     setRating(null);
+    setLatText('');
+    setLngText('');
+    setShowExactLoc(false);
     setError(null);
     setSuccess(false);
+    setPinned(false);
   };
 
   const handleClose = () => {
@@ -62,6 +77,18 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError('Place name is required.'); return; }
+
+    const latVal = latText.trim() ? parseFloat(latText.trim()) : null;
+    const lngVal = lngText.trim() ? parseFloat(lngText.trim()) : null;
+
+    if (latVal !== null && (isNaN(latVal) || latVal < -90 || latVal > 90)) {
+      setError('Latitude must be a number between -90 and 90.');
+      return;
+    }
+    if (lngVal !== null && (isNaN(lngVal) || lngVal < -180 || lngVal > 180)) {
+      setError('Longitude must be a number between -180 and 180.');
+      return;
+    }
 
     setSubmitting(true);
     setError(null);
@@ -76,6 +103,8 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
       tag:          tag.trim() || undefined,
       note:         note.trim() || undefined,
       rating:       rating,
+      lat:          latVal,
+      lng:          lngVal,
     });
 
     setSubmitting(false);
@@ -85,11 +114,12 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
       return;
     }
 
+    setPinned(Boolean(result.geocoded) || (latVal !== null && lngVal !== null));
     setSuccess(true);
     onSubmitted?.();
     setTimeout(() => {
       handleClose();
-    }, 1800);
+    }, 2200);
   };
 
   return (
@@ -121,9 +151,13 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
 
           {success ? (
             <View style={styles.successBox}>
-              <Text style={styles.successEmoji}>🎉</Text>
+              <Text style={styles.successEmoji}>{pinned ? '📍' : '🎉'}</Text>
               <Text style={styles.successTitle}>Thanks for sharing!</Text>
-              <Text style={styles.successDesc}>Your spot is now live for other travellers to discover.</Text>
+              <Text style={styles.successDesc}>
+                {pinned
+                  ? 'Your spot is now live and pinned on the map for other travellers to discover.'
+                  : 'Your spot is now live for other travellers to discover. It may appear on the map once we locate it.'}
+              </Text>
             </View>
           ) : (
             <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
@@ -157,6 +191,9 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
                 placeholderTextColor={color.faint}
                 maxLength={120}
               />
+              <Text style={styles.geocodeHint}>
+                📍 We'll try to locate this on the map automatically.
+              </Text>
 
               {/* Category */}
               <Text style={styles.label}>Category</Text>
@@ -247,6 +284,56 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
                   <Text style={styles.ratingValue}>{rating}/5</Text>
                 )}
               </View>
+
+              {/* Exact location — optional accordion */}
+              <Pressable
+                style={styles.exactLocToggle}
+                onPress={() => setShowExactLoc((v) => !v)}
+                hitSlop={8}
+              >
+                <MapPin size={14} color={color.mute} />
+                <Text style={styles.exactLocToggleText}>
+                  {showExactLoc ? 'Hide exact location' : 'Set exact location (optional)'}
+                </Text>
+                {showExactLoc
+                  ? <ChevronUp size={14} color={color.mute} />
+                  : <ChevronDown size={14} color={color.mute} />}
+              </Pressable>
+
+              {showExactLoc && (
+                <View style={styles.exactLocSection}>
+                  <Text style={styles.exactLocHint}>
+                    Paste coordinates from Google Maps or any map app.
+                    Long-press a location on Google Maps → copy the numbers shown (e.g. 48.8566, 2.3522).
+                  </Text>
+                  <View style={styles.coordRow}>
+                    <View style={styles.coordField}>
+                      <Text style={styles.coordLabel}>Latitude</Text>
+                      <TextInput
+                        style={styles.coordInput}
+                        value={latText}
+                        onChangeText={setLatText}
+                        placeholder="e.g. 10.3157"
+                        placeholderTextColor={color.faint}
+                        keyboardType="numeric"
+                        maxLength={12}
+                      />
+                    </View>
+                    <View style={styles.coordField}>
+                      <Text style={styles.coordLabel}>Longitude</Text>
+                      <TextInput
+                        style={styles.coordInput}
+                        value={lngText}
+                        onChangeText={setLngText}
+                        placeholder="e.g. 123.8854"
+                        placeholderTextColor={color.faint}
+                        keyboardType="numeric"
+                        maxLength={13}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
 
               {error && (
                 <View style={styles.errorBox}>
@@ -378,6 +465,13 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     paddingTop: space.md,
   },
+  geocodeHint: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    marginTop: 4,
+    lineHeight: 16,
+  },
   chipScroll: {
     flexGrow: 0,
   },
@@ -420,6 +514,61 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 12,
     marginLeft: space.xs,
+  },
+  exactLocToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    marginTop: space.lg,
+    paddingVertical: space.xs,
+  },
+  exactLocToggleText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 12,
+    flex: 1,
+  },
+  exactLocSection: {
+    marginTop: space.sm,
+    padding: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    gap: space.sm,
+  },
+  exactLocHint: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  coordRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  coordField: {
+    flex: 1,
+    gap: 4,
+  },
+  coordLabel: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  coordInput: {
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs + 2,
+    ...t.body,
+    color: color.ink,
+    backgroundColor: color.paper,
+    fontSize: 13,
   },
   errorBox: {
     marginTop: space.md,
