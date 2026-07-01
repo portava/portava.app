@@ -44,6 +44,13 @@ jobs:
         working-directory: travel-buddy-standalone
         run: pnpm install --frozen-lockfile
 
+      - name: Write API server .env (for db-triggers check)
+        run: |
+          mkdir -p artifacts/api-server
+          printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > artifacts/api-server/.env
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
       - name: Test pre-release fix hints
         run: bash scripts/test-pre-release-hints.sh
 
