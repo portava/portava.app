@@ -13,8 +13,8 @@ import { filterPulse } from '../lib/recommend';
 import { resolveStatus } from '../lib/availability';
 import { useAvailabilityStore } from '../context/AvailabilityStore';
 import { supabase } from '../lib/supabase';
-export { mapApiEvent, fetchCityEvents } from './cityPulseUtils';
-import { fetchCityEvents } from './cityPulseUtils';
+export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
+import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -67,15 +67,11 @@ export function useCityPulse(opts: {
       fetchCityEvents(base, token, city, opts.currentCitySlug ?? '')
         .then((fetched) => {
           if (cancelled) return;
-          // Only update state when the backend returned actual events.
-          // If the backend returns an empty list, show nothing (not mock data) —
-          // this is a valid "no events right now" state, not a failure.
-          if (fetched.length > 0) setEvents(fetched);
-          // else: leave events as [] → empty state UI is shown in production
+          setEvents(resolveEventsOnSuccess(fetched));
         })
         .catch(() => {
-          // Network / server error — use mockEvents in dev, empty list in prod
-          if (__DEV__) setEvents(mockEvents);
+          if (cancelled) return;
+          setEvents(resolveEventsOnError(__DEV__, mockEvents));
         });
     });
     return () => { cancelled = true; };

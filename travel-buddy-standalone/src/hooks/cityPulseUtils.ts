@@ -45,6 +45,31 @@ export function mapApiEvent(
 }
 
 /**
+ * Decide which events to display after a successful API fetch.
+ *
+ * Returns `fetched` when the API returned at least one event (live data).
+ * Returns an empty array when the API returned nothing — this is a valid
+ * "no events right now" state, NOT a signal to show mock data.
+ *
+ * This is the hook's primary dispatch branch so it can be tested without React.
+ */
+export function resolveEventsOnSuccess(fetched: CityEvent[]): CityEvent[] {
+  return fetched.length > 0 ? fetched : [];
+}
+
+/**
+ * Decide which events to display when the API fetch threw or returned a
+ * non-ok status.
+ *
+ * In dev (`isDev = true`) we show `fallback` (mock data) so the screen isn't
+ * blank while developing. In production we show an empty list — the empty
+ * state UI is shown instead of mock data, which would be misleading to users.
+ */
+export function resolveEventsOnError(isDev: boolean, fallback: CityEvent[]): CityEvent[] {
+  return isDev ? fallback : [];
+}
+
+/**
  * Fetch live events from /api/events and return them as CityEvent[].
  * Throws on any non-ok HTTP status so callers can fall back gracefully.
  *
