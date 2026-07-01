@@ -8,9 +8,9 @@
  *
  * Uses a fake StorageLike so the native AsyncStorage module is never required.
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { toggleSave, _setTestStorage } from '../discoveryBookmarks.ts';
+import { toggleSave, clearAllSaved, _setTestStorage, _setTestToken } from '../discoveryBookmarks.ts';
 import { categoryStorageKey } from '../../components/savedPlacesMapFilterStorage.ts';
 
 const GLOBAL_FILTER_KEY = categoryStorageKey('global');
@@ -55,6 +55,10 @@ function makePlace(id: string) {
 
 function serialise(...ids: string[]): string {
   return JSON.stringify(ids.map(makePlace));
+}
+
+function serialiseWithListId(listId: string, ...ids: string[]): string {
+  return JSON.stringify(ids.map((id) => ({ ...makePlace(id), listId })));
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -164,7 +168,7 @@ describe('toggleSave — stale filter key cleanup with trip-specific listId', ()
   });
 
   it('clears the trip filter key (not the global one) when the last place is removed', async () => {
-    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    storage.store.set(BOOKMARKS_KEY, serialiseWithListId(TRIP_ID, 'place-1'));
     storage.store.set(TRIP_FILTER_KEY, 'beach');
     storage.store.set(GLOBAL_FILTER_KEY, 'food');
 
@@ -198,7 +202,7 @@ describe('toggleSave — stale filter key cleanup with trip-specific listId', ()
   });
 
   it('clears the correct trip filter key even when no filter was set', async () => {
-    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    storage.store.set(BOOKMARKS_KEY, serialiseWithListId(TRIP_ID, 'place-1'));
 
     await toggleSave(makePlace('place-1'), TRIP_ID);
 
@@ -218,5 +222,127 @@ describe('toggleSave — stale filter key cleanup with trip-specific listId', ()
       0,
       'removeItem must not be called when adding a place',
     );
+  });
+});
+
+// ── Supabase sync-failure: local-first contract ────────────────────────────────
+//
+// These tests verify the "local-first" guarantee: AsyncStorage is written
+// *before* the API fetch fires, so a network error or non-2xx response never
+// reverts the user's wishlist changes.
+//
+// _setTestToken injects a fake bearer token so getAuthToken() returns a truthy
+// string, which causes toggleSave / clearAllSaved to attempt the fetch call.
+// globalThis.fetch is replaced with a stub that rejects or returns a non-ok
+// response; the original is restored in afterEach.
+
+describe('toggleSave — local state persists when Supabase sync fetch fails', () => {
+  let storage: FakeStorage;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+    _setTestToken('fake-bearer-token'); // exercise the fetch code path
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setTestToken(undefined); // restore real supabase auth for other suites
+  });
+
+  it('adds a place to local storage even when the POST fetch rejects (network error)', async () => {
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('network error'));
+
+    const result = await toggleSave(makePlace('net-add'));
+
+    assert.equal(result, true, 'toggleSave must return true (added)');
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].id, 'net-add');
+  });
+
+  it('removes a place from local storage even when the DELETE fetch rejects', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('net-del'));
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('connection refused'));
+
+    const result = await toggleSave(makePlace('net-del'));
+
+    assert.equal(result, false, 'toggleSave must return false (removed)');
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as unknown[];
+    assert.equal(stored.length, 0);
+  });
+
+  it('adds a place to local storage even when the POST fetch returns 500', async () => {
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 500 } as Response);
+
+    const result = await toggleSave(makePlace('srv-err'));
+
+    assert.equal(result, true);
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
+    assert.equal(stored[0].id, 'srv-err');
+  });
+
+  it('does not throw when the API call fails — error is absorbed', async () => {
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('timeout'));
+
+    await assert.doesNotReject(() => toggleSave(makePlace('no-throw')));
+  });
+});
+
+describe('clearAllSaved — local state cleared even when Supabase DELETE fails', () => {
+  let storage: FakeStorage;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+    _setTestToken('fake-bearer-token');
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setTestToken(undefined);
+  });
+
+  it('removes the bookmarks key from local storage even when fetch rejects', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('a', 'b'));
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('network error'));
+
+    await clearAllSaved();
+
+    assert.ok(
+      storage.removedKeys.includes(BOOKMARKS_KEY),
+      'removeItem(BOOKMARKS_KEY) must be called before the fetch fires',
+    );
+    assert.equal(storage.store.get(BOOKMARKS_KEY), undefined);
+  });
+
+  it('removes the global filter key from local storage even when fetch rejects', async () => {
+    storage.store.set(GLOBAL_FILTER_KEY, 'food');
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('network error'));
+
+    await clearAllSaved();
+
+    assert.ok(
+      storage.removedKeys.includes(GLOBAL_FILTER_KEY),
+      'removeItem(GLOBAL_FILTER_KEY) must be called regardless of API outcome',
+    );
+  });
+
+  it('does not throw when the API DELETE returns a non-ok response', async () => {
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 401 } as Response);
+
+    await assert.doesNotReject(() => clearAllSaved());
+  });
+
+  it('does not throw when the API DELETE fetch rejects outright', async () => {
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('server down'));
+
+    await assert.doesNotReject(() => clearAllSaved());
   });
 });
