@@ -282,7 +282,7 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
       ) : places.length === 0 ? (
         <View style={tsp.empty}>
           <Text style={tsp.emptyText}>
-            Save places from Discovery to add them here.
+            No places saved yet — explore Discovery to add some.
           </Text>
         </View>
       ) : (
@@ -300,6 +300,9 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
                 <Text style={tsp.name} numberOfLines={1}>{place.name}</Text>
                 {place.category ? (
                   <Text style={tsp.category} numberOfLines={1}>{place.category}</Text>
+                ) : null}
+                {place.address ? (
+                  <Text style={tsp.address} numberOfLines={1}>{place.address}</Text>
                 ) : null}
               </View>
               <Pressable
@@ -376,6 +379,11 @@ const tsp = StyleSheet.create({
     fontSize: 11,
     color: color.mute,
     textTransform: 'capitalize',
+  },
+  address: {
+    ...t.small,
+    fontSize: 11,
+    color: color.faint,
   },
   removeBtn: {
     width: 24,
