@@ -1033,7 +1033,7 @@ router.get("/discovery/community", async (req, res) => {
         created_at,
         lat,
         lng,
-        profiles:submitted_by ( id, name, avatar_url )
+        profiles:submitted_by!left ( id, name, avatar_url )
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
