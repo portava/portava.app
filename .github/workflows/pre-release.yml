@@ -53,6 +53,7 @@ jobs:
       - name: Run pre-release checks
         env:
           SKIP_EAS_PREFLIGHT: "1"
+          SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
         run: bash scripts/pre-release-check.sh
 
   eas-build:
