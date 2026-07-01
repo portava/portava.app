@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { checkSaved, toggleSave } from '../../services/collections';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 import { categoryColor } from './PlaceCard';
+import { TripWishlistPicker } from './TripWishlistPicker';
 
 interface PlaceDetailSheetProps {
   place: DiscoveryPlace | null;
@@ -16,7 +17,8 @@ interface PlaceDetailSheetProps {
 }
 
 export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: PlaceDetailSheetProps) {
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved]               = useState(false);
+  const [pickerVisible, setPickerVisible] = useState(false);
 
   useEffect(() => {
     if (place) {
@@ -214,12 +216,26 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
             <Navigation size={18} color={color.deep} />
             <Text style={styles.dirText}>Directions</Text>
           </Pressable>
+          <Pressable
+            style={styles.wishlistBtn}
+            onPress={() => setPickerVisible(true)}
+          >
+            <ListPlus size={18} color={color.deep} />
+            <Text style={styles.wishlistText}>Save to Trip</Text>
+          </Pressable>
           <Pressable style={styles.addBtn} onPress={() => onAddToPlan(place)}>
             <Plus size={18} color={color.onInk} />
-            <Text style={styles.addText}>Add to Plan</Text>
+            <Text style={styles.addText}>Plan</Text>
           </Pressable>
         </View>
       </View>
+
+      <TripWishlistPicker
+        place={place}
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onSaved={() => setPickerVisible(false)}
+      />
     </Modal>
   );
 }
@@ -410,12 +426,29 @@ const styles = StyleSheet.create({
     color: color.deep,
     fontWeight: '700',
   },
+  wishlistBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    flex: 1,
+    borderRadius: radius.md,
+    paddingVertical: space.md + 2,
+    borderWidth: 1.5,
+    borderColor: color.deep,
+  },
+  wishlistText: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontWeight: '700',
+    fontSize: 13,
+  },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.sm,
-    flex: 2,
+    flex: 1,
     backgroundColor: color.signal,
     borderRadius: radius.md,
     paddingVertical: space.md + 2,

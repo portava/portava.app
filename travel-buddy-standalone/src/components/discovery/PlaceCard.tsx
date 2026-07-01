@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections';
 import { usePlanPicker } from '../PlanPickerController';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
+import { TripWishlistPicker } from './TripWishlistPicker';
 
 interface PlaceCardProps {
   place: DiscoveryPlace;
@@ -15,7 +16,8 @@ interface PlaceCardProps {
 }
 
 export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCardProps) {
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved]               = useState(false);
+  const [pickerVisible, setPickerVisible] = useState(false);
   const accent = categoryColor(place.category);
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -160,8 +162,23 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
           >
             <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
           </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
+            onPress={() => setPickerVisible(true)}
+            hitSlop={6}
+          >
+            <ListPlus size={14} color={color.deep} />
+          </Pressable>
         </View>
       </View>
+
+      <TripWishlistPicker
+        place={place}
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onSaved={() => setPickerVisible(false)}
+      />
     </Pressable>
   );
 }
@@ -320,6 +337,14 @@ const styles = StyleSheet.create({
   },
   saveBtnActive: {
     backgroundColor: color.signal + '18',
+  },
+  wishlistBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: color.deep + '14',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 
