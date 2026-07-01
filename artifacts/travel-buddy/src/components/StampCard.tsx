@@ -4,8 +4,8 @@
  * Shimmer animation for epic/legendary stamps (respects reduced-motion).
  * Locked → grayscale + lock icon overlay.
  */
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Animated, AccessibilityInfo } from 'react-native';
 import {
   MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Lock, Sparkles,
 } from 'lucide-react-native';
@@ -41,10 +41,18 @@ export function StampCard({ stamp, size = 88, rotate = 0, onPress }: StampCardPr
   const labelSize = Math.round(size * 0.12);
   const captionSize = Math.round(size * 0.095);
 
-  // Shimmer sweep animation for epic/legendary
+  // Reduced-motion gate — respects system accessibility setting
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+
+  // Shimmer sweep animation for epic/legendary (skipped when reduceMotion is on)
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (!art.hasShimmer) return;
+    if (!art.hasShimmer || reduceMotion) return;
     const loop = Animated.loop(
       Animated.timing(shimmerAnim, {
         toValue: 1,
@@ -54,7 +62,7 @@ export function StampCard({ stamp, size = 88, rotate = 0, onPress }: StampCardPr
     );
     loop.start();
     return () => loop.stop();
-  }, [art.hasShimmer, shimmerAnim]);
+  }, [art.hasShimmer, shimmerAnim, reduceMotion]);
 
   const shimmerTranslate = shimmerAnim.interpolate({
     inputRange: [0, 1],

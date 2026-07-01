@@ -4,8 +4,8 @@
  * Animated shimmer for epic/legendary. Outer glow ring for legendary.
  * Locked stamps show grayscale + "Keep traveling to unlock" message.
  */
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated, AccessibilityInfo } from 'react-native';
 import {
   MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Lock, Sparkles, Star,
 } from 'lucide-react-native';
@@ -41,10 +41,18 @@ export function StampDetailArtwork({ stamp, size = 148 }: StampDetailArtworkProp
   const rarityColor = STAMP_RARITY_COLORS[art.rarity];
   const rarityLabel = STAMP_RARITY_LABELS[art.rarity];
 
-  // Shimmer animation
+  // Reduced-motion gate — respects system accessibility setting
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+
+  // Shimmer animation (skipped when reduceMotion is on)
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (!art.hasShimmer) return;
+    if (!art.hasShimmer || reduceMotion) return;
     const loop = Animated.loop(
       Animated.timing(shimmerAnim, {
         toValue: 1,
@@ -54,17 +62,17 @@ export function StampDetailArtwork({ stamp, size = 148 }: StampDetailArtworkProp
     );
     loop.start();
     return () => loop.stop();
-  }, [art.hasShimmer, shimmerAnim]);
+  }, [art.hasShimmer, shimmerAnim, reduceMotion]);
 
   const shimmerTranslate = shimmerAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [-size * 0.8, size * 2],
   });
 
-  // Glow pulse animation for legendary
+  // Glow pulse animation for legendary (skipped when reduceMotion is on)
   const glowAnim = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
-    if (!art.hasGlow) return;
+    if (!art.hasGlow || reduceMotion) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(glowAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
@@ -73,7 +81,7 @@ export function StampDetailArtwork({ stamp, size = 148 }: StampDetailArtworkProp
     );
     loop.start();
     return () => loop.stop();
-  }, [art.hasGlow, glowAnim]);
+  }, [art.hasGlow, glowAnim, reduceMotion]);
 
   return (
     <View style={styles.container} accessible accessibilityLabel={art.accessibilityLabel} accessibilityRole="image">

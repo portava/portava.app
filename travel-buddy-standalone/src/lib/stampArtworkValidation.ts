@@ -108,6 +108,37 @@ export function validateAccessibilityLabel(
   return { valid: errors.length === 0, errors };
 }
 
+/* ── Icon name allowlist ─────────────────────────────────────────────────── */
+
+/**
+ * Lucide icon names that are registered in the stamp icon resolver.
+ * Artwork definitions submitted via the admin API must use one of these names
+ * so the mobile app can actually render the icon.
+ */
+export const ALLOWED_ICON_NAMES = new Set([
+  'MapPin', 'Users', 'Gem', 'ShieldCheck', 'Crown', 'Ticket',
+  'Sparkles', 'Star', 'Lock', 'QrCode', 'Compass', 'Plane', 'Globe',
+  'Heart', 'Camera', 'Mountain', 'Waves', 'Building2', 'TreePine',
+  'Utensils', 'Music', 'Coffee', 'Ship', 'Train', 'Bus', 'Bike',
+]);
+
+/**
+ * Validate that an icon name is in the allowed set.
+ * Returns `{ valid: false, errors }` if the name is not recognised.
+ */
+export function validateIconName(iconName: string | undefined | null): ValidationResult {
+  const errors: string[] = [];
+  if (!iconName || !iconName.trim()) {
+    errors.push('Icon name is required');
+  } else if (!ALLOWED_ICON_NAMES.has(iconName.trim())) {
+    errors.push(
+      `Icon "${iconName}" is not in the allowed set. ` +
+      `Allowed: ${[...ALLOWED_ICON_NAMES].sort().join(', ')}`,
+    );
+  }
+  return { valid: errors.length === 0, errors };
+}
+
 /* ── Combined validator ──────────────────────────────────────────────────── */
 
 export interface ArtworkAssetInput {
@@ -119,6 +150,8 @@ export interface ArtworkAssetInput {
   mimeType?: string;
   /** Accessibility label from the artwork definition. */
   accessibilityLabel?: string;
+  /** Lucide icon name (validated against the allowlist when provided). */
+  iconName?: string;
 }
 
 /**
@@ -140,6 +173,11 @@ export function validateArtworkAsset(input: ArtworkAssetInput): ValidationResult
 
   const labelResult = validateAccessibilityLabel(input.accessibilityLabel);
   allErrors.push(...labelResult.errors);
+
+  if (input.iconName !== undefined) {
+    const iconResult = validateIconName(input.iconName);
+    allErrors.push(...iconResult.errors);
+  }
 
   return { valid: allErrors.length === 0, errors: allErrors };
 }
