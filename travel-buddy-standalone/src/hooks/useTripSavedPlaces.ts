@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   listSaved,
   toggleSave,
+  clearAllSaved,
   type BookmarkedPlace,
 } from '../services/discoveryBookmarks';
 
@@ -25,6 +26,9 @@ export interface UseTripSavedPlacesResult {
   loading: boolean;
   toggle: (place: BookmarkedPlace) => Promise<boolean>;
   refresh: () => void;
+  /** Optimistically clears all saved places. Rolls back and throws if the
+   *  storage call fails so the caller can surface an error to the user. */
+  clearAll: () => Promise<void>;
 }
 
 export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
@@ -52,5 +56,18 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     [tripId, load],
   );
 
-  return { places, loading, toggle, refresh: load };
+  const clearAll = useCallback(async (): Promise<void> => {
+    const snapshot = places;
+    // Optimistic: empty the list immediately so the UI responds instantly.
+    setPlaces([]);
+    try {
+      await clearAllSaved();
+    } catch {
+      // Rollback so the caller can surface an error.
+      setPlaces(snapshot);
+      throw new Error('clear_failed');
+    }
+  }, [places]);
+
+  return { places, loading, toggle, refresh: load, clearAll };
 }

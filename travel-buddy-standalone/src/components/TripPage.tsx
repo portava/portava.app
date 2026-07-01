@@ -247,13 +247,33 @@ export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: stri
  * is removed, categoryStorageKey(tripId) is cleared — not the global key.
  * ─────────────────────────────────────────────────────────────────────────── */
 export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
-  const { places, loading, toggle } = useTripSavedPlaces(tripId);
+  const { places, loading, toggle, clearAll } = useTripSavedPlaces(tripId);
+
+  const handleClearAll = () => {
+    Alert.alert(
+      'Clear all saved places?',
+      'This will remove all places from your wishlist. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear all',
+          style: 'destructive',
+          onPress: () => {
+            clearAll().catch(() => {
+              Alert.alert('Something went wrong', "Couldn't clear your saved places. Please try again.");
+            });
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <View style={section.wrap}>
       <SectionHead
         title="Saved Places"
         onViewAll={places.length > 0 ? () => router.push('/saved') : undefined}
+        onClearAll={places.length > 0 ? handleClearAll : undefined}
       />
       {loading ? (
         <View style={tsp.center}>
@@ -368,11 +388,24 @@ const tsp = StyleSheet.create({
 });
 
 /* shared section header */
-export function SectionHead({ title, onViewAll }: { title: string; onViewAll?: () => void }) {
+export function SectionHead({
+  title,
+  onViewAll,
+  onClearAll,
+}: {
+  title: string;
+  onViewAll?: () => void;
+  onClearAll?: () => void;
+}) {
   return (
     <View style={section.head}>
       <Text style={section.title}>{title}</Text>
       <View style={{ flex: 1 }} />
+      {onClearAll && (
+        <Pressable style={section.clearAll} onPress={onClearAll} hitSlop={6}>
+          <Text style={section.clearAllText}>Clear all</Text>
+        </Pressable>
+      )}
       {onViewAll && (
         <Pressable style={section.viewAll} onPress={onViewAll} hitSlop={6}>
           <Text style={section.viewAllText}>View all</Text>
@@ -671,6 +704,8 @@ const section = StyleSheet.create({
   title: { ...t.title, color: color.ink, fontSize: 20 },
   viewAll: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   viewAllText: { ...t.small, color: color.signal, fontWeight: '700' },
+  clearAll: { marginRight: space.md },
+  clearAllText: { ...t.small, color: '#DC2626', fontWeight: '600' },
 });
 
 const nx = StyleSheet.create({
