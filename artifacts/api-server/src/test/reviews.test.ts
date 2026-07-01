@@ -761,3 +761,143 @@ describe("PATCH /api/reviews/:id", () => {
     assert.equal(status, 401);
   });
 });
+
+// ── avgRating lifecycle — create then refetch ─────────────────────────────────
+// Verifies GET /api/trips/:id/reviews returns an up-to-date avgRating immediately
+// after a review is created. Both calls share the same in-memory fake-client state,
+// so the POST insert is visible to the subsequent GET — exactly mirroring the
+// focus-based refetch that ReviewsSection performs on screen re-entry.
+
+describe("avgRating lifecycle — create then refetch", () => {
+  let server: { url: string; close: () => Promise<void>; client: any };
+
+  afterEach(async () => { await server?.close(); });
+
+  it("avgRating is null and total is 0 when no reviews exist", async () => {
+    server = await startServer(completedTripTables());
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/trips/${TRIP_ID}/reviews`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.avgRating, null);
+    assert.equal(body.total, 0);
+    assert.deepEqual(body.reviews, []);
+  });
+
+  it("avgRating equals the first review's rating after POST then GET (0→1 edge case)", async () => {
+    server = await startServer(completedTripTables());
+
+    // Submit the first review — no prior reviews, so this is the 0→1 transition
+    const postRes = await fetchPost(server.url, "/api/reviews", "reviewer-token", {
+      entityType: "trip",
+      entityId:   TRIP_ID,
+      rating:     4,
+      body:       "First review ever",
+    });
+    assert.equal(postRes.status, 201, "first review should be created");
+
+    // Refetch the trip reviews — avgRating should now equal the single submitted rating
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/trips/${TRIP_ID}/reviews`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.total, 1);
+    assert.equal(body.avgRating, 4.0, "avgRating should equal the single submitted rating");
+    assert.equal(body.reviews.length, 1);
+    assert.equal(body.reviews[0].rating, 4);
+  });
+
+  it("avgRating is the rounded mean after a second review is added", async () => {
+    // Seed one existing published review (rating 3)
+    const existingReviews: Row[] = [
+      {
+        id:          "rev-x1",
+        reviewer_id: OTHER_ID,
+        entity_type: "trip",
+        entity_id:   TRIP_ID,
+        rating:      3,
+        body:        null,
+        tags:        [],
+        visibility:  "public",
+        state:       "published",
+        created_at:  "2026-01-01T00:00:00Z",
+      },
+    ];
+    server = await startServer(completedTripTables(existingReviews));
+
+    // POST a second review by REVIEWER_ID (rating 5)
+    const postRes = await fetchPost(server.url, "/api/reviews", "reviewer-token", {
+      entityType: "trip",
+      entityId:   TRIP_ID,
+      rating:     5,
+    });
+    assert.equal(postRes.status, 201, "second review should be created");
+
+    // Refetch: 2 reviews, ratings [3, 5] → mean 4.0
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/trips/${TRIP_ID}/reviews`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.total, 2);
+    assert.equal(body.avgRating, 4.0, "avgRating should be the mean of both ratings");
+  });
+
+  it("avgRating uses only published reviews — excludes removed and hidden", async () => {
+    // One published review (rating 5) + one removed (rating 1) + one hidden (rating 1)
+    // Only the published rating should contribute to the average
+    const reviews: Row[] = [
+      {
+        id:          "rev-pub",
+        reviewer_id: OTHER_ID,
+        entity_type: "trip",
+        entity_id:   TRIP_ID,
+        rating:      5,
+        body:        null,
+        tags:        [],
+        visibility:  "public",
+        state:       "published",
+        created_at:  "2026-01-01T00:00:00Z",
+      },
+      {
+        id:          "rev-removed",
+        reviewer_id: ADMIN_ID,
+        entity_type: "trip",
+        entity_id:   TRIP_ID,
+        rating:      1,
+        body:        null,
+        tags:        [],
+        visibility:  "public",
+        state:       "removed",
+        created_at:  "2026-01-02T00:00:00Z",
+      },
+      {
+        id:          "rev-hidden",
+        reviewer_id: REVIEWER_ID,
+        entity_type: "trip",
+        entity_id:   TRIP_ID,
+        rating:      1,
+        body:        null,
+        tags:        [],
+        visibility:  "public",
+        state:       "hidden",
+        created_at:  "2026-01-03T00:00:00Z",
+      },
+    ];
+    server = await startServer(completedTripTables(reviews));
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/trips/${TRIP_ID}/reviews`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.total, 1, "only the published review should count");
+    assert.equal(body.avgRating, 5.0, "avgRating should only reflect published reviews");
+    assert.equal(body.reviews.length, 1, "only one review should be returned");
+  });
+});
