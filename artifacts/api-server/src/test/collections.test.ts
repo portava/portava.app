@@ -968,6 +968,60 @@ describe("Collections & Saves", () => {
     assert.equal(body.ok, true);
   });
 
+  // ── Default collection re-created after corruption ────────────────────────
+  //
+  // Simulates the corruption scenario: the default "Saved" collection row was
+  // deleted (e.g. bypassing the guard trigger by first toggling is_default=FALSE,
+  // then deleting the row).  POST /saves must detect the absence, call
+  // ensureDefaultCollection(), re-create the row, and complete the save — all
+  // in a single request with no change to the caller.
+  it("POST /saves re-creates missing default collection and saves item successfully", async () => {
+    // Start with an empty collections table — the default row was deleted (corruption).
+    // collection_items is also empty so there is nothing left from the old collection.
+    const tables: Record<string, FakeTable> = {
+      collections:      { rows: [] },
+      collection_items: { rows: [] },
+    };
+    ({ url, close } = await startServer(tables));
+
+    // POST /saves — should succeed even though there is no default collection
+    const saveRes = await fetch(`${url}/api/saves`, {
+      method: "POST",
+      headers: auth("owner-token"),
+      body: JSON.stringify({ entity_type: "trip", entity_id: ENTITY_ID }),
+    });
+    assert.equal(saveRes.status, 200, "save should succeed after corruption re-creates default");
+    const saveBody = await saveRes.json();
+    assert.equal(saveBody.saved, true, "saved flag should be true");
+    assert.ok(saveBody.collectionId, "should return the new default collectionId");
+
+    // A new default collection row must now exist in the fake DB
+    const newDefault = tables.collections.rows.find(
+      (r) => r.owner_id === OWNER_ID && r.is_default === true,
+    );
+    assert.ok(newDefault, "a new default collection should have been created in collections table");
+    assert.equal(newDefault!.name, "Saved", "re-created collection should be named 'Saved'");
+
+    // The saved item must appear in the collection_items table
+    const savedItem = tables.collection_items.rows.find(
+      (r) => r.entity_type === "trip" && r.entity_id === ENTITY_ID,
+    );
+    assert.ok(savedItem, "item should be present in collection_items after save");
+
+    // GET /users/me/saves must also confirm saved:true
+    const checkRes = await fetch(
+      `${url}/api/users/me/saves?entity_type=trip&entity_id=${ENTITY_ID}`,
+      { headers: auth("owner-token") },
+    );
+    assert.equal(checkRes.status, 200);
+    const checkBody = await checkRes.json();
+    assert.equal(checkBody.saved, true, "GET /users/me/saves should report saved:true after re-creation");
+    assert.ok(
+      Array.isArray(checkBody.collectionIds) && checkBody.collectionIds.includes(saveBody.collectionId),
+      "collectionIds should include the newly created default collection id",
+    );
+  });
+
   // ── isSaved hydration: check is scoped by entity_type ────────────────────
   it("saved:true for post entity does not bleed into event check", async () => {
     const POST_ID = "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
