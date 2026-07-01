@@ -692,4 +692,123 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
   res.json({ stamps });
 });
 
+// ── Admin artwork preview endpoint ────────────────────────────────────────────
+
+/**
+ * GET /admin/passport/stamps/preview
+ * Returns the resolved artwork definition for a stamp type and rarity.
+ * Used by the admin panel to preview stamp visuals before publishing artwork
+ * overrides. Requires admin role (checked via service-role auth).
+ *
+ * Query params:
+ *   ?type=city           stamp_type (required)
+ *   ?rarity=rare         rarity tier (optional, defaults to type's default)
+ *   ?label=CEBU          label text to include in accessibilityLabel preview
+ *   ?sublabel=PH+%C2%B7+2026  sublabel (optional)
+ *   ?locked=false        whether to preview locked state
+ */
+router.get("/admin/passport/stamps/preview", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured");
+    return;
+  }
+
+  // Admin check: must have a valid service-role Bearer token
+  const authHeader = req.headers.authorization ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) {
+    sendError(res, "forbidden", "Admin Bearer token required");
+    return;
+  }
+  const { data: adminCheck } = await sc.auth.getUser(token);
+  if (!adminCheck?.user) {
+    sendError(res, "forbidden", "Invalid token");
+    return;
+  }
+
+  const stampType = String(req.query.type ?? "city");
+  const label = String(req.query.label ?? stampType.toUpperCase());
+  const sublabel = req.query.sublabel ? String(req.query.sublabel) : undefined;
+  const locked = req.query.locked === "true";
+
+  // Map stamp_type → StampKind for the mobile resolver
+  const typeToKind: Record<string, string> = {
+    city: "city", neighborhood: "city", plan: "plan",
+    host: "host", hidden_gem: "gem", safe_return: "safe",
+    activity: "perk", trip_crew: "plan", compass_ai: "plan",
+    qr_checkin: "perk", gem: "gem", safe: "safe", perk: "perk",
+  };
+  const kind = (typeToKind[stampType] ?? "city") as string;
+
+  // Check DB for a custom artwork definition for this type
+  const { data: dbArt } = await sc
+    .from("stamp_artwork_definitions")
+    .select("*")
+    .eq("stamp_type", stampType)
+    .maybeSingle();
+
+  // Inline artwork defaults (mirrors stampArtworkResolver.ts in the mobile app).
+  // Keeping this self-contained avoids a cross-package import boundary.
+  const INLINE_THEMES: Record<string, { accent: string; bg: string; icon: string; label: string; shape: string; rarity: string; borderStyle: string; borderWeight: number; pattern: string; texture: string; shimmer: boolean }> = {
+    city:      { accent: "#0A3D4A", bg: "#EFF5F5", icon: "MapPin",      label: "CITY",  shape: "oval",    rarity: "rare",     borderStyle: "sawtooth", borderWeight: 2, pattern: "radial",   texture: "worn",  shimmer: false },
+    plan:      { accent: "#FF4D2E", bg: "#FFF0F3", icon: "Users",       label: "PLAN",  shape: "rect",    rarity: "uncommon", borderStyle: "double",   borderWeight: 2, pattern: "diagonal", texture: "paper", shimmer: false },
+    host:      { accent: "#11110F", bg: "#F0F0EE", icon: "Crown",       label: "HOST",  shape: "rect",    rarity: "epic",     borderStyle: "wave",     borderWeight: 3, pattern: "solid",    texture: "ink",   shimmer: true  },
+    gem:       { accent: "#7A4DBF", bg: "#F5F0FF", icon: "Gem",         label: "GEM",   shape: "hexagon", rarity: "rare",     borderStyle: "sawtooth", borderWeight: 2, pattern: "dots",     texture: "worn",  shimmer: false },
+    safe:      { accent: "#2E7D5B", bg: "#F0F8F5", icon: "ShieldCheck", label: "SAFE",  shape: "round",   rarity: "uncommon", borderStyle: "double",   borderWeight: 2, pattern: "grid",     texture: "paper", shimmer: false },
+    perk:      { accent: "#C8851A", bg: "#FFF8F0", icon: "Ticket",      label: "PERK",  shape: "round",   rarity: "common",   borderStyle: "single",   borderWeight: 1, pattern: "diagonal", texture: "paper", shimmer: false },
+  };
+  const theme = INLINE_THEMES[kind] ?? INLINE_THEMES.city;
+  const isLocked = locked;
+  const resolvedArtwork = {
+    shape:             isLocked ? "oval"          : theme.shape,
+    borderStyle:       isLocked ? "single"        : theme.borderStyle,
+    borderWeight:      isLocked ? 1               : theme.borderWeight,
+    accent:            isLocked ? "#D1D5DB"       : theme.accent,
+    background:        isLocked ? "#F3F4F6"       : theme.bg,
+    pattern:           isLocked ? "solid"         : theme.pattern,
+    texture:           isLocked ? "worn"          : theme.texture,
+    iconKey:           theme.icon,
+    categoryLabel:     theme.label,
+    rarity:            theme.rarity,
+    hasShimmer:        !isLocked && theme.shimmer,
+    hasGlow:           false,
+    locked:            isLocked,
+    accessibilityLabel: isLocked
+      ? `Locked ${theme.label} stamp — not yet earned`
+      : `${label}${sublabel ? " — " + sublabel : ""} ${theme.label} stamp`,
+  };
+
+  // Merge DB override if available
+  const dbOverride = dbArt
+    ? {
+        shape: (dbArt as any).shape,
+        borderStyle: (dbArt as any).border_style,
+        borderWeight: (dbArt as any).border_weight,
+        accent: (dbArt as any).accent,
+        background: (dbArt as any).background,
+        pattern: (dbArt as any).pattern,
+        texture: (dbArt as any).texture,
+        iconKey: (dbArt as any).icon_key,
+        categoryLabel: (dbArt as any).category_label,
+        captionText: (dbArt as any).caption_text ?? undefined,
+        hasShimmer: Boolean((dbArt as any).has_shimmer) && !locked,
+        hasGlow: Boolean((dbArt as any).has_glow) && !locked,
+      }
+    : {};
+
+  const artwork = { ...resolvedArtwork, ...dbOverride };
+
+  res.json({
+    preview: {
+      stampType,
+      label,
+      sublabel,
+      locked,
+      artwork,
+      source: dbArt ? "db_override" : "js_defaults",
+    },
+  });
+});
+
 export default router;

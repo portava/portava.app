@@ -1,0 +1,147 @@
+Add this execution guidance to Task #1050 — Memories / Posts / Postcards full system buildout.
+
+Before coding:
+Inspect existing files first. Do not rebuild or duplicate the current posts/memories system. The backend already has a strong foundation, including posts.ts, memories.ts, pulse.ts, hashtags.ts, hiddenGems.ts, saves.ts, reports.ts, tagging service hooks, delayed geotag logic, and existing DB tables. Work surgically and wire what exists into the real app.
+
+Known existing foundation:
+- Backend posts.ts is already substantial.
+- PulseCreate.tsx already exists and supports basic post creation.
+- PostCard.tsx, PulseFeedCard.tsx, and PostcardsTab.tsx already exist.
+- app/post/[id].tsx exists but currently uses fixture/mock Cebu data instead of the real backend.
+- Tables already exist for posts, passport_postcards, posts_likes, posts_comments, delayed_post_location_events, pulse_geo_tags, and memories.
+- Hashtag, hidden gem, save, and report route files already exist.
+
+Primary gaps to close:
+
+1. Replace mock post detail data
+- app/post/[id].tsx must stop using src/data/cebu fixture data.
+- Load the real post by ID from the backend.
+- Wire real like, comment, save, report, share, author profile navigation, media, location, tags, hashtags, and linked trip/event/circle metadata.
+- Handle loading, empty, deleted, private, blocked, reported, and error states honestly.
+
+2. Complete post interactions end-to-end
+- Verify backend endpoints for likes, comments, saves, reports, and shares.
+- If missing, add only the missing endpoints.
+- Make PostCard, PulseFeedCard, PostcardsTab, profile grids, and post detail all use the same interaction state.
+- No optimistic UI that lies permanently after failed sync. If a network failure occurs, show honest retry/error state and preserve local state where applicable.
+
+3. Build travel-native post card variants
+Current card variants are too generic. Add unique Travel Buddy-style layouts without copying Instagram:
+- Postcard layout
+- Film journal layout
+- Hidden gem card
+- Trip memory card
+- Event recap card
+- Circle moment card
+- Review/recommendation card
+- Question/advice card
+- Itinerary/story card
+
+Cards should support:
+- Large Instagram-style media presentation, but with distinct Travel Buddy visual identity
+- Multi-image carousel
+- Video thumbnail/play state where supported
+- Location chip
+- Stamp/Passport tie-in
+- Tagged users
+- Hashtags
+- Linked trip/event/circle
+- Delayed-posting/privacy indicators
+- Comment/like/save counts
+- Viewer-safe controls based on privacy and relationship state
+
+4. Complete create flow
+Enhance PulseCreate.tsx without rewriting it.
+Add:
+- Layout picker
+- Multi-image support
+- Full media preview carousel
+- Trip link
+- Event link
+- Circle link
+- Hidden gem/place link
+- Hashtag suggestions
+- User tagging suggestions
+- Privacy controls
+- Comments on/off
+- Likes hidden toggle
+- Delayed posting/geofence status
+- Draft-safe error handling
+- Clear validation before submit
+
+5. Wire posts into other systems
+Posts must not stand alone. Add real post sections to:
+- Trip detail
+- Event detail
+- Circle detail
+- Passport/profile
+- Discovery place/detail pages where relevant
+- Pulse feed
+- Hidden Gems
+- Memories/Postcards tab
+
+A user should be able to create a post connected to a trip/event/circle/place and then see it appear in that connected system.
+
+6. Multi-image carousel and viewer
+Add:
+- Swipeable media carousel on cards and detail
+- Full-screen media viewer
+- Safe video handling where supported
+- Proper loading/error states for broken media
+- Accessibility labels and tap targets
+
+7. Profile grid and Passport integration
+- Postcards/memories should show on Passport/profile.
+- Large postcards should feel like a travel journal grid, not a generic square Instagram clone.
+- Support filters: All, Postcards, Stamps, Trips, Events, Hidden Gems, Reviews, Tagged.
+- Respect privacy, blocked users, and relationship visibility.
+
+8. Delayed posting and location privacy
+Verify delayed geotag posting works end-to-end:
+- User can create geotagged post.
+- User earns geotagged credit/stamp logic where appropriate.
+- Public post does not publish until the user leaves the geofence/location.
+- UI clearly shows pending/delayed status to the author.
+- Other users must not see real-time sensitive location.
+
+9. Admin/moderation
+Wire reporting and moderation:
+- Report post
+- Report comment
+- Hide/remove post
+- Hide/remove comment
+- Blocked users cannot interact or view restricted content
+- Deleted/private posts render honest states, not crashes
+
+10. Testing and validation
+Add/extend tests for:
+- Real post detail loading
+- No fixture data on post detail
+- Like/comment/save state wiring
+- Failed interaction sync behavior
+- Multi-image rendering
+- Create flow validation
+- Trip/event/circle linked posts
+- Privacy toggles
+- Hidden likes/comments-off behavior
+- Delayed posting visibility
+- Blocked/private/deleted post states
+
+Validation required:
+- Run focused post/memory tests
+- Run relevant backend route tests
+- Run mobile/component tests
+- Run typecheck
+- Run drift/source check if repo uses one
+- Do not mark complete until frontend behavior reflects backend data
+
+Acceptance criteria:
+- app/post/[id].tsx uses real backend data, not fixture/mock data.
+- Posts created from PulseCreate can appear in Pulse, Passport, Trips, Events, Circles, Discovery/places where applicable.
+- Likes/comments/saves/reports work consistently across card, detail, and profile surfaces.
+- Multi-image and full-screen viewer work.
+- Large postcard-style posts are supported and feel unique to Travel Buddy.
+- Delayed posting/location privacy works and is visible to the author.
+- Privacy controls are enforced.
+- No fake users, fake reviews, fake posts, or fake places are introduced.
+- All tests and validations pass.

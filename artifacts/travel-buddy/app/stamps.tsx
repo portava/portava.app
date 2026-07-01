@@ -3,7 +3,8 @@ import { View, Text, ScrollView, Pressable, Modal, StyleSheet } from 'react-nati
 import { X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Chip, Stamp } from '../src/components/ui';
-import { StampBadge } from '../src/components/PassportStamps';
+import { StampArtwork } from '../src/components/StampArtwork';
+import { StampDetailArtwork } from '../src/components/StampDetailArtwork';
 import { motifFor } from '../src/lib/stampMotif';
 import { usePassport } from '../src/hooks/usePassport';
 import type { PassportStamp, StampKind } from '../src/types/models';
@@ -51,7 +52,7 @@ export default function StampsPage() {
       <ScrollView contentContainerStyle={styles.grid}>
         {shown.map((s, i) => (
           <View key={s.id} style={styles.cell}>
-            <StampBadge stamp={s} size={96} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
+            <StampArtwork stamp={s} size={96} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
             <Text style={styles.cellName} numberOfLines={1}>{s.label}</Text>
             {s.locked ? <Text style={styles.cellLocked}>Locked</Text> : null}
           </View>
@@ -69,8 +70,7 @@ export default function StampsPage() {
             </Pressable>
             {selected && (
               <View style={{ alignItems: 'center', gap: space.md }}>
-                <StampBadge stamp={selected} size={120} />
-                <Text style={styles.detailName}>{selected.label}</Text>
+                <StampDetailArtwork stamp={selected} size={148} />
                 <View style={styles.detailStamps}>
                   <Stamp label={selected.kind} tone="deep" />
                   {selected.sublabel ? <Stamp label={selected.sublabel} rotate={2} /> : null}

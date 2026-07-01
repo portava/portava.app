@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import type { PassportStamp } from '../types/models';
 import type { PassportStampNew, StampVisibility } from '../services/passportStamps';
 import { getMyPassportStamps, updateStampVisibility } from '../services/passportStamps';
-import { StampBadge } from './PassportStamps';
+import { StampArtwork } from './StampArtwork';
 import { color, space, radius, type as t } from '../theme/tokens';
 
 const STAMP_TYPES = [
@@ -140,7 +140,7 @@ export function StampsTab({ stamps: legacyStamps }: StampsTabProps) {
         <View style={st.grid}>
           {displayStamps.map((s, i) => (
             <View key={s.id} style={st.cell}>
-              <StampBadge stamp={s} size={80} rotate={((i % 3) - 1) * 4} onPress={() => router.push('/stamps')} />
+              <StampArtwork stamp={s} size={80} rotate={((i % 3) - 1) * 4} onPress={() => router.push('/stamps')} />
             </View>
           ))}
         </View>
