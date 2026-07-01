@@ -88,4 +88,5 @@ export const Layers = icon('Layers');
 export const Grid = icon('Grid');
 export const List = icon('List');
 export const LayoutGrid = icon('LayoutGrid');
+export const ListPlus = icon('ListPlus');
 export default icon('default');
