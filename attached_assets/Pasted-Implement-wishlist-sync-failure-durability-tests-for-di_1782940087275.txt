@@ -1,0 +1,60 @@
+Implement wishlist sync-failure durability tests for discoveryBookmarks.ts.
+
+Goal:
+Make sure saved/wishlist data is never lost locally when Supabase/API sync fails after a local-first write.
+
+Context:
+clearAllSaved and toggleSave in discoveryBookmarks.ts intentionally update AsyncStorage first, then attempt Supabase sync via fetch when a token exists. If fetch fails because of network error, 401, 500, or non-ok response, local AsyncStorage should remain the source of truth and should not be reverted, cleared, or corrupted.
+
+Important:
+Do not rewrite discoveryBookmarks.ts unless a real bug is found.
+Do not change product behavior unless tests reveal data loss.
+Do not remove existing tests.
+Inspect the existing implementation and test patterns first.
+Keep standalone and artifacts copies in sync if this repo uses drift checks.
+No fake server success assumptions — explicitly test failure paths.
+
+Tasks:
+
+1. Inspect:
+- artifacts/travel-buddy/src/services/discoveryBookmarks.ts
+- artifacts/travel-buddy/src/services/__tests__/discoveryBookmarks.test.ts
+- any standalone mirror test file if present
+- package scripts for drift/source checks
+
+2. Add tests proving toggleSave local-first durability:
+- When saving a place and Supabase sync throws/rejects, the place remains saved in AsyncStorage.
+- When saving a place and Supabase returns non-ok, the place remains saved in AsyncStorage.
+- When removing/toggling off a saved place and Supabase sync throws/rejects, the local removal remains committed.
+- When removing/toggling off and Supabase returns non-ok, the local removal remains committed.
+- Assert the local AsyncStorage write happens before or regardless of fetch failure.
+- Cover token-present branch using _setTestToken or the existing test helper.
+
+3. Add tests proving clearAllSaved local-first durability:
+- Seed multiple saved places locally.
+- Call clearAllSaved with a token present.
+- Mock fetch to reject/network fail.
+- Assert AsyncStorage remains cleared locally after the failed sync.
+- Repeat for non-ok API response.
+- Confirm no old saved items are resurrected after failure.
+
+4. Add tests for trip-scoped/list-scoped saved places if supported:
+- Seed saved places with listId/tripId correctly.
+- Verify failed sync does not remove unrelated saved places.
+- Verify failed sync does not re-add removed trip-scoped items.
+- Use existing serializer/helper patterns so fixtures match the real stored shape.
+
+5. Validation:
+Run the focused discoveryBookmarks tests first.
+Then run the full relevant service test suite.
+Then run typecheck.
+Then run drift/source check if present.
+If a pre-existing fixture issue appears, fix it only if it is clearly wrong and explain the fix.
+
+Acceptance criteria:
+- All discoveryBookmarks sync-failure tests pass.
+- Existing race-condition tests still pass.
+- Existing local-first behavior remains unchanged.
+- No wishlist item can be silently lost locally because Supabase sync failed.
+- Validation passes cleanly.
+- Final report includes exact tests added, files changed, and pass/fail counts.

@@ -1,0 +1,684 @@
+Travel Buddy — Full System QA Audit + Interconnection Fix Pass
+
+You are performing a full QA audit and fix pass across Travel Buddy.
+
+Important:
+Do not rebuild the app.
+Do not restart from scratch.
+Do not delete working systems.
+Do not replace working systems with new disconnected versions.
+Do not fake users, posts, trips, events, places, reviews, bookings, stamps, or activity.
+Do not patch one screen in a way that breaks another.
+Do not create duplicate routes/tables/components if working ones already exist.
+Inspect first, prove what exists, then fix only what is broken or disconnected.
+
+Product direction:
+Travel Buddy is a social media app for travelers. All systems must work together as one connected product:
+
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport/Profile
+- Memories / Posts / Postcards
+- Events
+- Passport Stamps
+- Rent a Buddy
+- Telegraph messaging
+- Circles, if present
+- Safe Return
+- Trust Score / verification
+- Notifications / activity center
+- Real places / hidden gems
+- Privacy / blocking / reporting
+- Delayed posting
+- Admin / moderation
+- Settings
+- City rollout / real data seeding
+
+Goal:
+Audit the whole app, identify what does not work, and fix broken wiring without rebuilding or creating isolated systems. Every core feature must connect to the other relevant features and behave as intended.
+
+PHASE 0 — Rules of engagement
+
+Before editing:
+1. Run an inventory.
+2. Identify existing files/routes/tables/components.
+3. Classify each issue.
+4. Fix only confirmed gaps or broken wiring.
+5. Preserve working behavior.
+6. Add tests or verification for every fix.
+7. Return exact files changed and proof.
+
+Issue classes:
+- Broken frontend screen
+- Broken backend route
+- Missing database/RLS policy
+- Frontend not consuming backend
+- Backend returns wrong shape
+- Feature exists but not connected
+- Privacy/security leak
+- Empty data/gating issue
+- Missing honest empty state
+- Duplicate/dead code
+- Missing tests
+- Mobile layout issue
+- Web preview limitation
+- Performance issue
+- Admin/moderation gap
+- Needs follow-up, not safe to fix now
+
+Severity:
+- P0 security/privacy/data leak
+- P1 app-breaking core flow
+- P2 major feature broken/disconnected
+- P3 UX/empty-state/polish issue
+- P4 future enhancement
+
+Do not mark work complete with unresolved P0/P1 items.
+
+PHASE 1 — Full inventory
+
+Search the repo for all core systems:
+
+Navigation / shell:
+- tabs
+- navigation
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+- Telegraph
+- settings
+- onboarding
+
+Profile / Passport:
+- profile
+- passport
+- user_profiles
+- privacy
+- avatar
+- cover
+- followers
+- friends
+- blocks
+- reports
+- verification
+- trust
+
+Posts / Memories:
+- posts
+- postcard
+- memories
+- media
+- comments
+- likes
+- saves
+- hashtags
+- mentions
+- tags
+- delayed posting
+- hidden gems
+
+Trips:
+- trip
+- trips
+- itinerary
+- trip crew
+- saved places
+- safe return
+- trip posts
+- trip invites
+
+Events:
+- event
+- events
+- RSVP
+- attendee
+- invite
+- capacity
+- age limit
+- waitlist
+- event posts
+
+Passport Stamps:
+- stamp
+- stamps
+- badges
+- achievements
+- stamp definitions
+- award engine
+- stamp artwork
+
+Rent a Buddy:
+- rentABuddy
+- rent_a_buddy
+- buddy
+- bookings
+- marketplace
+- availability
+- reviews
+- payments
+- payouts
+- disputes
+
+Messaging:
+- telegraph
+- messages
+- threads
+- group chat
+- message requests
+- translation
+
+Discovery / Places:
+- discovery
+- discovery_places
+- places
+- Google Places
+- OSM
+- hidden gems
+- city rollout
+- nearby
+- map
+
+Notifications:
+- notifications
+- activity center
+- activity
+- unread
+- push
+- reminders
+
+Safety/admin:
+- safe return
+- reports
+- moderation
+- admin
+- RLS
+- policies
+- Supabase
+- migrations
+
+Return inventory table:
+
+System | Existing files/routes/tables | Working evidence | Broken/missing evidence | Risk | Next action
+
+Do not edit until this inventory is complete.
+
+PHASE 2 — Route/API health audit
+
+For every backend route that exists or is expected for core systems, verify:
+
+- route is registered
+- route uses auth where required
+- route returns expected shape
+- route handles missing/invalid input
+- route respects privacy
+- route does not leak private fields
+- route returns useful errors
+- route is consumed by frontend or documented unused
+- route has tests or add tests if missing
+
+Audit these API groups:
+
+Profile:
+- /api/profile/me
+- /api/profile/:username
+- /api/profile/search
+- profile privacy
+- follow/friend/block/report
+- profile tabs
+
+Posts:
+- /api/posts/feed
+- /api/posts/pulse
+- create/edit/delete/archive
+- comments/likes/saves/shares
+- media upload
+- hashtags/tags
+- delayed posting
+- post reports
+
+Trips:
+- /api/trips/me
+- create/edit/cancel/archive
+- trip detail
+- trip items
+- trip crew
+- trip invites
+- save place to trip
+- trip posts
+- privacy
+
+Events:
+- browse/search
+- create/edit/publish/cancel
+- RSVP/join request
+- invites
+- attendees
+- save event
+- add to trip
+- event posts
+- age/trust/capacity
+
+Stamps:
+- definitions
+- user stamps
+- award engine
+- visibility
+- admin award/revoke
+- artwork fields
+- profile display
+
+Rent a Buddy:
+- marketplace
+- buddy application
+- profile
+- availability
+- booking request
+- accept/decline
+- payment/deposit states
+- reviews
+- reports/disputes
+- city rollout
+
+Telegraph:
+- 1:1 threads
+- group chats
+- trip/event/circle/booking chats
+- message requests
+- blocking
+- translation if present
+
+Discovery:
+- places
+- nearby
+- hidden gems
+- saved places
+- events nearby
+- people nearby privacy-safe
+- city rollout
+
+Notifications:
+- list
+- unread count
+- mark read
+- activity items
+- reminders
+
+Fix rules:
+- If route exists but shape is wrong, adapt the route or frontend mapper with minimal change.
+- If frontend calls nonexistent route, wire to existing route if possible.
+- If route missing and feature requires it, add the smallest compatible route.
+- Do not create duplicate route families if a usable one exists.
+
+PHASE 3 — Frontend screen audit
+
+Audit every main screen:
+
+Main tabs:
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+
+Core screens:
+- My Passport
+- Public Profile
+- Edit Profile
+- Profile Settings
+- Post composer
+- Post detail
+- Full-screen media viewer
+- Trips list
+- Add Trip
+- Trip detail
+- Create Event
+- Event detail
+- Event browse
+- Passport Stamps tab/detail
+- Rent a Buddy marketplace
+- Buddy profile
+- Buddy booking flow
+- Telegraph inbox/thread
+- Notifications/activity center
+- Settings
+- Admin screens if present
+
+For each screen verify:
+- loads without crashing
+- loading state exists
+- empty state exists
+- backend error state exists
+- retry exists where needed
+- uses real backend data
+- no fake placeholder data
+- navigation works
+- primary actions work
+- privacy badges show correctly
+- mobile layout is clean
+- no giant headers block content
+- web/native map limitations are handled honestly
+- screen connects to related systems
+
+Return table:
+
+Screen | Data source | Current behavior | Broken/missing | Fix applied | Verification
+
+PHASE 4 — End-to-end interconnection audit
+
+Every feature must connect where it logically belongs.
+
+Profile/Passport connections:
+- Profile shows user posts/postcards.
+- Profile shows trips based on privacy.
+- Profile shows events based on privacy.
+- Profile shows stamps based on visibility.
+- Profile shows Rent a Buddy provider card only if approved.
+- Profile actions connect to follow/friend/message/block/report.
+- Avatar/name opens profile everywhere.
+
+Posts/Memories connections:
+- Posts show in Pulse if visible.
+- Posts show on Profile if visible.
+- Posts can link to trips/events/circles/places.
+- Posts can tag users/hashtags/places.
+- Posts can trigger stamps only through backend.
+- Delayed posts do not show publicly.
+- Comments/likes/saves/shares respect privacy.
+- Place recommendation posts appear in Discovery only if allowed.
+
+Trips connections:
+- Trip appears in Trips tab.
+- Trip can show on Profile if privacy allows.
+- Trip can have posts.
+- Trip can save places/events/hidden gems.
+- Trip can invite crew.
+- Trip can open Telegraph group chat.
+- Trip can use Safe Return if available.
+- Trip can request/attach Rent a Buddy booking.
+- Trip can influence Discovery recommendations.
+
+Events connections:
+- Events appear in Discovery/Event browse.
+- Event can be added to Trip.
+- Event appears on Profile if privacy allows.
+- Event can have posts.
+- Event can open Telegraph event chat.
+- Event RSVP/join works.
+- Event age/trust/capacity rules work.
+- Event participation can trigger stamps only when criteria met.
+
+Stamps connections:
+- Stamps appear on Passport/Profile.
+- Stamps are earned from real actions only.
+- Stamps respect privacy.
+- Stamp detail links to source only if viewer can access source.
+- Stamp artwork renders with fallback.
+- Admin award/revoke is audited.
+
+Rent a Buddy connections:
+- Marketplace shows only approved providers.
+- Buddy profile links to user Passport.
+- Booking flow works or honestly shows payment-disabled state.
+- Booking chat opens in Telegraph when allowed.
+- Booking can attach to Trip/Event where allowed.
+- Completed booking can trigger review/stamp only if real.
+
+Telegraph connections:
+- Profile message button opens 1:1 chat when allowed.
+- Trip crew chat works.
+- Event chat works.
+- Circle chat works if circles exist.
+- Rent a Buddy booking chat works.
+- Blocked users cannot message.
+- Message requests work for unknown users if supported.
+
+Discovery connections:
+- Real places load or honest city/source empty state shows.
+- Save to Trip works.
+- Create Event here works.
+- Place recommendation/hidden gem posts can appear.
+- Nearby events/travelers respect privacy.
+- Map fallback works on web/native limitations.
+
+Notifications connections:
+- Actions create notifications where expected.
+- Notification opens the right object.
+- Unread count works.
+- Privacy does not leak through notification text.
+
+Return table:
+
+Connection | Expected behavior | Current state | Fix applied | Verification
+
+PHASE 5 — Privacy, RLS, and safety audit
+
+This is mandatory.
+
+Verify:
+- Public profile does not leak private fields.
+- Private profiles show limited preview.
+- Blocked users cannot view/interact/message.
+- Posts do not leak private lat/lng.
+- Delayed posts are hidden publicly.
+- Private trips/events/circles do not leak context.
+- Event attendee lists respect visibility.
+- Trip members/budget/documents do not leak.
+- Rent a Buddy payment/verification/private booking details do not leak.
+- Stamp source/private location does not leak.
+- Admin-only fields do not leak.
+- Users cannot edit/delete others’ content.
+- Users cannot self-award stamps.
+- Users cannot bypass event age/trust rules.
+- Users cannot message when blocked or disallowed.
+
+Fix all P0 privacy/security issues immediately.
+
+Add/repair tests for:
+- RLS policies
+- public vs owner API shape
+- blocked-user access
+- delayed posting
+- private trip/event/circle visibility
+- stamp visibility
+- Rent a Buddy provider visibility
+- admin-only data protection
+
+PHASE 6 — Empty data, city rollout, and real source audit
+
+Verify why any screen is empty.
+
+For each empty screen, classify cause:
+- no real data
+- city disabled
+- feature flag disabled
+- frontend query wrong
+- backend route broken
+- Supabase/RLS blocking data
+- map/web limitation
+- seed/source missing
+- error swallowed
+- loading state stuck
+
+Fix:
+- If wiring broken, repair wiring.
+- If data missing, show honest empty state.
+- If city rollout blocking, show correct city rollout state.
+- If real places missing, wire to existing discovery_places/Google/OSM if available.
+- Do not seed fake content.
+- Do not hide broken screens behind fake placeholders.
+
+Required beta city checks:
+- Siargao
+- Cebu
+- Tokyo
+- Bangkok
+- Miami
+- Da Nang if configured
+
+Return table:
+
+Screen/City | Expected data | Actual data | Cause | Fix | Remaining limitation
+
+PHASE 7 — User action QA matrix
+
+Run or manually verify these critical flows:
+
+Account/profile:
+- new user can complete profile
+- edit profile works
+- public profile opens
+- private profile hides content
+- follow/friend/block/report works
+- message from profile respects permissions
+
+Posts:
+- create photo memory
+- create postcard
+- large Travel Buddy memory card displays
+- draft works
+- delayed post works
+- public cannot see delayed post
+- like/comment/save/share works
+- comments off/likes hidden works
+- tag user/place/hashtag works
+- report post works
+
+Trips:
+- create trip
+- edit trip
+- save place to trip
+- add event to trip
+- invite crew
+- Telegraph trip chat opens
+- trip appears on profile if allowed
+- private trip hidden from public
+- archive/cancel works
+
+Events:
+- create event
+- publish event
+- browse event
+- RSVP/join/request works
+- age/trust/capacity enforced
+- add event to trip
+- event chat opens
+- event appears in profile/Pulse/Discovery if allowed
+- cancel/archive works
+
+Stamps:
+- stamp definitions load
+- stamp artwork renders
+- earning trigger works for at least one real action
+- duplicate stamp not awarded
+- stamp privacy works
+- public profile shows only allowed stamps
+
+Rent a Buddy:
+- apply as buddy
+- admin approval if present
+- marketplace only shows approved buddies
+- request booking
+- accept/decline
+- payment disabled/honest state if no provider
+- booking chat opens
+- review/report works where implemented
+
+Telegraph:
+- 1:1 message
+- message request unknown user
+- trip chat
+- event chat
+- booking chat
+- block stops messaging
+
+Discovery:
+- real places load or honest empty state
+- save to trip works
+- create event from place works
+- hidden gem/recommendation appears if allowed
+- map fallback works
+
+Notifications:
+- notification generated for key actions
+- notification opens correct object
+- unread/read works
+- no private info leaks
+
+Return QA matrix:
+
+Flow | Pass/Fail | Issue | Fix applied | Evidence
+
+PHASE 8 — Fix strategy
+
+When fixing:
+- Prefer wiring existing systems together over building new ones.
+- Prefer adapting frontend mappers over changing DB unless DB is wrong.
+- Prefer adding missing RLS/tests over broad rewrites.
+- Prefer small targeted migrations over large schema replacements.
+- Preserve existing data.
+- Preserve existing route contracts unless broken.
+- Add compatibility shims only if necessary and documented.
+- Remove duplicate/dead code only if proven unused and safe.
+- Never break auth/session.
+- Never break Pulse/Discovery/Profile/Trips while fixing another feature.
+
+For every fix, write:
+- issue
+- root cause
+- files changed
+- why this is the smallest safe fix
+- how you verified it did not break connected systems
+
+PHASE 9 — Regression tests
+
+Add or repair tests for all touched areas.
+
+Minimum required test groups:
+- Profile privacy and viewer relationship state
+- Posts feed visibility and delayed posting
+- Trip create/privacy/crew/save-to-trip
+- Event create/RSVP/privacy/age/capacity
+- Stamp award/idempotency/visibility
+- Rent a Buddy approved-provider/booking visibility
+- Telegraph access/blocking
+- Discovery empty states/save-to-trip
+- Notifications open target/privacy
+- RLS/no private field leakage
+
+Run existing tests.
+Run typecheck/lint/build as available.
+If any test cannot run because of environment limits, report exactly why.
+
+PHASE 10 — Final report
+
+Return a final report with:
+
+1. Inventory summary
+2. P0/P1/P2/P3 issue list
+3. Fixes applied
+4. Files changed
+5. Migrations added
+6. Routes changed
+7. Screens changed
+8. Tests added/updated
+9. Tests passed/failed
+10. Manual QA pass/fail table
+11. Remaining known limitations
+12. Follow-up tasks, only if not safe to fix now
+13. Confirmation that no fake data was introduced
+14. Confirmation that privacy/RLS checks passed
+15. Confirmation that core systems are interconnected
+
+Final acceptance:
+- No P0 privacy/security issues remain.
+- No P1 app-breaking core flow remains.
+- Main tabs load: Pulse, Discovery, Create, Trips, Passport.
+- Profile, Posts, Trips, Events, Stamps, Rent a Buddy, Telegraph, Discovery, Notifications connect where intended.
+- Empty screens explain the real reason.
+- No fake data is used.
+- No standalone disconnected feature remains for the systems audited.
+- Fixes are targeted, not a rebuild.

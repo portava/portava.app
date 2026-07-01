@@ -346,3 +346,118 @@ describe('clearAllSaved — local state cleared even when Supabase DELETE fails'
     await assert.doesNotReject(() => clearAllSaved());
   });
 });
+
+// ── Trip-scoped sync-failure: cross-list isolation ─────────────────────────────
+//
+// These tests verify that a failed Supabase sync when adding/removing a place
+// in one list (trip or global) does not disturb places that belong to other
+// lists.  The write-path updates AsyncStorage atomically for the (place, listId)
+// pair; network failure must never spill into unrelated entries.
+
+describe('toggleSave — trip-scoped sync-failure: unrelated places survive', () => {
+  let storage: FakeStorage;
+  let originalFetch: typeof globalThis.fetch;
+
+  const TRIP_A = 'trip-aaa';
+  const TRIP_B = 'trip-bbb';
+
+  function seedMixed(): void {
+    storage.store.set(
+      BOOKMARKS_KEY,
+      JSON.stringify([
+        { ...makePlace('global-1'), listId: 'global' },
+        { ...makePlace('trip-a-1'), listId: TRIP_A },
+        { ...makePlace('trip-a-2'), listId: TRIP_A },
+        { ...makePlace('trip-b-1'), listId: TRIP_B },
+      ]),
+    );
+  }
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+    _setTestToken('fake-bearer-token');
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setTestToken(undefined);
+  });
+
+  it('failed POST fetch when adding to a trip does not disturb global or other-trip places', async () => {
+    seedMixed();
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('network error'));
+
+    const result = await toggleSave(makePlace('trip-a-new'), TRIP_A);
+
+    assert.equal(result, true, 'must return true (added)');
+
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{
+      id: string;
+      listId?: string;
+    }>;
+
+    assert.equal(stored.length, 5, 'original 4 + 1 new');
+    assert.ok(stored.some((p) => p.id === 'trip-a-new' && p.listId === TRIP_A), 'new place must be saved under TRIP_A');
+    assert.ok(stored.some((p) => p.id === 'global-1' && p.listId === 'global'), 'global entry must be untouched');
+    assert.ok(stored.some((p) => p.id === 'trip-b-1' && p.listId === TRIP_B), 'TRIP_B entry must be untouched');
+    assert.ok(stored.some((p) => p.id === 'trip-a-1' && p.listId === TRIP_A), 'other TRIP_A entry must be untouched');
+  });
+
+  it('failed DELETE fetch when removing from a trip does not disturb other lists', async () => {
+    seedMixed();
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('connection refused'));
+
+    const result = await toggleSave(makePlace('trip-a-1'), TRIP_A);
+
+    assert.equal(result, false, 'must return false (removed)');
+
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{
+      id: string;
+      listId?: string;
+    }>;
+
+    assert.equal(stored.length, 3, 'removed 1 of 4 → 3 remain');
+    assert.ok(!stored.some((p) => p.id === 'trip-a-1'), 'removed place must be gone from storage');
+    assert.ok(stored.some((p) => p.id === 'trip-a-2' && p.listId === TRIP_A), 'sibling TRIP_A entry must survive');
+    assert.ok(stored.some((p) => p.id === 'global-1' && p.listId === 'global'), 'global entry must survive');
+    assert.ok(stored.some((p) => p.id === 'trip-b-1' && p.listId === TRIP_B), 'TRIP_B entry must survive');
+  });
+
+  it('failed sync does not re-add a trip-scoped item that was locally removed', async () => {
+    storage.store.set(
+      BOOKMARKS_KEY,
+      serialiseWithListId(TRIP_A, 'trip-a-only'),
+    );
+    (globalThis as { fetch: unknown }).fetch = () => Promise.reject(new Error('server down'));
+
+    const result = await toggleSave(makePlace('trip-a-only'), TRIP_A);
+
+    assert.equal(result, false, 'must return false (removed)');
+
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
+    assert.equal(stored.length, 0, 'storage must be empty — item must not be re-added by a failed sync');
+    assert.ok(!stored.some((p) => p.id === 'trip-a-only'), 'removed item must not reappear');
+  });
+
+  it('non-ok response when removing from a trip does not revert the local remove', async () => {
+    storage.store.set(
+      BOOKMARKS_KEY,
+      JSON.stringify([
+        { ...makePlace('trip-a-del'), listId: TRIP_A },
+        { ...makePlace('global-keep') },
+      ]),
+    );
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 500 } as Response);
+
+    const result = await toggleSave(makePlace('trip-a-del'), TRIP_A);
+
+    assert.equal(result, false, 'must return false (removed)');
+
+    const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
+    assert.ok(!stored.some((p) => p.id === 'trip-a-del'), 'removed place must stay gone despite 500 response');
+    assert.ok(stored.some((p) => p.id === 'global-keep'), 'unrelated global place must survive');
+  });
+});
