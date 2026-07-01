@@ -1,0 +1,57 @@
+name: DB triggers check
+
+# Verify that the DB protection triggers from migrations 0071–0074 are present
+# in the production Supabase database on every push and PR targeting main or
+# release branches.  A missing trigger means a migration was never applied to
+# production; catching that on review rather than at release time prevents
+# silent data-safety regressions.
+#
+# CONVENTION: always keep `.github/workflows/db-triggers-check.yml` in every
+# `paths` list below.  Without it, editing this file alone would not re-trigger
+# the workflow, silently skipping the new logic on the very commit that
+# introduced it.
+#
+# Required repository secrets:
+#   SUPABASE_URL            — https://<project-ref>.supabase.co
+#   SUPABASE_PROJECT_TOKEN  — project-scoped, read-only Supabase API token
+#                             Create: Supabase dashboard → Project Settings →
+#                             API → Project API tokens (scope: read)
+#                             Store: GitHub → Settings → Secrets and variables
+#                             → Actions → New repository secret
+#                             See docs/eas-runbook.md → "DB triggers check in CI"
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+      - "release-*"
+  pull_request:
+    branches:
+      - main
+      - "release/**"
+      - "release-*"
+
+jobs:
+  db-triggers-check:
+    name: DB triggers (migrations 0071–0074)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Write API server .env (provides SUPABASE_URL to the check script)
+        run: |
+          mkdir -p artifacts/api-server
+          printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" > artifacts/api-server/.env
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+      - name: Check DB triggers are present in production
+        env:
+          SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+        run: bash scripts/check-db-triggers.sh
