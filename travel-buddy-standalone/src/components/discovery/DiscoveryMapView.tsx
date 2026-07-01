@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
-import { MapPin, Navigation, Star } from 'lucide-react-native';
+import { Layers, MapPin, Navigation, Star } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
@@ -63,6 +63,19 @@ function isDbPlace(id: string): boolean {
   return id.startsWith('db/') || id.startsWith('comm/');
 }
 
+// ── Legend entries — order determines display order in the panel ───────────────
+
+const LEGEND_ENTRIES: { key: string; color: string; label: string }[] = [
+  { key: 'food',       color: CAT_COLOR.food,       label: 'Food & Drink' },
+  { key: 'nightlife',  color: CAT_COLOR.nightlife,  label: 'Nightlife' },
+  { key: 'places',     color: CAT_COLOR.places,     label: 'Places' },
+  { key: 'activities', color: CAT_COLOR.activities, label: 'Activities' },
+  { key: 'events',     color: CAT_COLOR.events,     label: 'Events' },
+  { key: 'beaches',    color: CAT_COLOR.beaches,    label: 'Beaches' },
+  { key: 'transport',  color: CAT_COLOR.transport,  label: 'Transport' },
+  { key: 'for_you',    color: CAT_COLOR.for_you,    label: 'For You' },
+];
+
 // ── Filter options + persistence ───────────────────────────────────────────────
 
 const FILTER_OPTIONS: { key: MapFilter; label: string }[] = [
@@ -97,6 +110,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
   const [filter, setFilterRaw] = useState<MapFilter>('all');
+  const [legendOpen, setLegendOpen] = useState(false);
 
   // Restore the last-used filter from AsyncStorage on mount.
   // Unrecognised or missing values fall back to 'all' silently.
@@ -245,6 +259,39 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
           <Navigation size={18} color={color.signal} />
         </Pressable>
+      )}
+
+      {/* ── Legend button ───────────────────────────────────────────────────── */}
+      <Pressable
+        style={s.legendBtn}
+        onPress={() => setLegendOpen((o) => !o)}
+        hitSlop={8}
+      >
+        <Layers size={18} color={legendOpen ? color.signal : color.mute} />
+      </Pressable>
+
+      {/* ── Legend dismiss overlay + panel ──────────────────────────────────── */}
+      {legendOpen && (
+        <>
+          {/* Transparent overlay — tap anywhere outside the panel to close */}
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setLegendOpen(false)} />
+
+          <View style={s.legendPanel}>
+            {/* Traveler picks entry listed first per spec */}
+            <View style={s.legendRow}>
+              <View style={[s.legendDot, { backgroundColor: DB_PIN_COLOR }]}>
+                <Star size={8} color="#fff" fill="#fff" />
+              </View>
+              <Text style={s.legendLabel}>⭐ Traveler picks</Text>
+            </View>
+            {LEGEND_ENTRIES.map((entry) => (
+              <View key={entry.key} style={s.legendRow}>
+                <View style={[s.legendDot, { backgroundColor: entry.color }]} />
+                <Text style={s.legendLabel}>{entry.label}</Text>
+              </View>
+            ))}
+          </View>
+        </>
       )}
     </View>
   );
@@ -395,5 +442,56 @@ const s = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
+  },
+  legendBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  legendPanel: {
+    position: 'absolute',
+    top: 58,
+    right: 14,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+    minWidth: 164,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  legendDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.7)',
+  },
+  legendLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#111827',
   },
 });
