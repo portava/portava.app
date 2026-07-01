@@ -15,7 +15,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
-import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
+import { DiscoveryCategoryTab, FilterStrip } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
 import { DestinationBar } from '../../src/components/discovery/DestinationBar';
@@ -243,9 +243,6 @@ export default function DiscoveryHub() {
     setActiveFilters({ radiusKm: 10, openNow: false, minRating: null });
   };
 
-  const handleFiltersChange = useCallback((filters: DiscoveryFilters) => {
-    setActiveFilters(filters);
-  }, []);
 
   // Map toggle is shown on all native tabs (category tabs + for_you).
   const showMapToggle = Platform.OS !== 'web';
@@ -314,17 +311,15 @@ export default function DiscoveryHub() {
     setManualCity(place.city ?? place.name).catch(() => {});
   }, [setManualCity]);
 
-  // ── Filter summary helpers ────────────────────────────────────────────────
-  const activeContextMode = CONTEXT_MODES.find((m) => m.key === contextMode);
-  const contextLabel = activeContextMode?.label ?? 'In City';
-  const ActiveContextIcon = activeContextMode?.Icon ?? MapPin;
-  const AGE_LABELS: Record<DiscoveryAgeFilter, string> = {
-    any: 'Any age', open_to_me: 'Open to me', '18_plus': '18+',
-    '21_plus': '21+', under_30: 'Under 30', '30_plus': '30+', custom: 'Custom',
-  };
-  const ageLabel = AGE_LABELS[ageFilter];
-  const hasNonDefaultFilters = contextMode !== 'in_city' || ageFilter !== 'any';
-  const activeFilterCount = [contextMode !== 'in_city', ageFilter !== 'any'].filter(Boolean).length;
+  // ── Filter badge count (all 5 dimensions) ─────────────────────────────────
+  const totalActiveFilters = [
+    contextMode !== 'in_city',
+    ageFilter !== 'any',
+    activeFilters.radiusKm !== 10,
+    activeFilters.openNow,
+    activeFilters.minRating !== null,
+  ].filter(Boolean).length;
+  const hasNonDefaultFilters = totalActiveFilters > 0;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -345,149 +340,23 @@ export default function DiscoveryHub() {
         )}
       </View>
 
-      {/* ── Compact filter bar (always visible) ── */}
-      <View style={styles.filterBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.filterBarContent}
-        >
-          <Pressable
-            style={[styles.filterSummaryChip, contextMode !== 'in_city' && styles.filterSummaryChipActive]}
-            onPress={() => setFiltersExpanded((v) => !v)}
-          >
-            <ActiveContextIcon size={10} color={contextMode !== 'in_city' ? color.signal : color.mute} />
-            <Text style={[styles.filterSummaryChipText, contextMode !== 'in_city' && styles.filterSummaryChipTextActive]}>
-              {contextLabel}
-            </Text>
-          </Pressable>
-          {ageFilter !== 'any' && (
-            <Pressable
-              style={[styles.filterSummaryChip, styles.filterSummaryChipActive]}
-              onPress={() => setFiltersExpanded((v) => !v)}
-            >
-              {ageFilter === 'open_to_me' && <Users size={10} color={color.signal} />}
-              <Text style={[styles.filterSummaryChipText, styles.filterSummaryChipTextActive]}>
-                {ageLabel}
-              </Text>
-            </Pressable>
-          )}
-        </ScrollView>
+      {/* ── Tab bar: [Filters btn] | [tabs] | [List/Map] — all one row ── */}
+      <View style={styles.tabRow}>
         <Pressable
-          style={[styles.filtersToggleBtn, hasNonDefaultFilters && styles.filtersToggleBtnActive]}
+          style={[styles.filtersTabBtn, hasNonDefaultFilters && styles.filtersTabBtnActive]}
           onPress={() => setFiltersExpanded((v) => !v)}
           hitSlop={8}
         >
-          <SlidersHorizontal size={12} color={hasNonDefaultFilters ? '#fff' : color.mute} />
-          <Text style={[styles.filtersToggleBtnText, hasNonDefaultFilters && styles.filtersToggleBtnTextActive]}>
-            Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
-          </Text>
-          <ChevronDown
-            size={11}
-            color={hasNonDefaultFilters ? '#fff' : color.mute}
-            style={{ transform: [{ rotate: filtersExpanded ? '180deg' : '0deg' }] }}
-          />
-        </Pressable>
-      </View>
-
-      {/* ── Expanded filter panel ── */}
-      {filtersExpanded && (
-        <View style={styles.filtersPanel}>
-          {/* Context mode row */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.modeBar}
-            contentContainerStyle={styles.modeBarContent}
-          >
-            {CONTEXT_MODES.map((m) => {
-              const active = m.key === contextMode;
-              return (
-                <Pressable
-                  key={m.key}
-                  style={[styles.modeChip, active && styles.modeChipActive]}
-                  onPress={() => setContextMode(m.key)}
-                >
-                  <m.Icon size={12} color={active ? color.signal : color.mute} />
-                  <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>
-                    {m.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* Age filter row */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.ageFilterBar}
-            contentContainerStyle={styles.ageFilterBarContent}
-          >
-            {([
-              { key: 'any',        label: 'Any age' },
-              { key: 'open_to_me', label: 'Open to me' },
-              { key: '18_plus',    label: '18+' },
-              { key: '21_plus',    label: '21+' },
-              { key: 'under_30',   label: 'Under 30' },
-              { key: '30_plus',    label: '30+' },
-              { key: 'custom',     label: 'Custom' },
-            ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
-              const active = ageFilter === opt.key;
-              return (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.ageChip, active && styles.ageChipActive]}
-                  onPress={() => {
-                    setAgeFilter(opt.key);
-                    if (opt.key !== 'custom') {
-                      setCustomAgeRange({ min: null, max: null });
-                      setDebouncedAgeRange({ min: null, max: null });
-                    }
-                  }}
-                >
-                  {opt.key === 'open_to_me' && (
-                    <Users size={10} color={active ? color.signal : color.mute} />
-                  )}
-                  <Text style={[styles.ageChipLabel, active && styles.ageChipLabelActive]}>
-                    {opt.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* Custom age inputs */}
-          {ageFilter === 'custom' && (
-            <View style={styles.customRangeRow}>
-              <Text style={styles.customRangeLabel}>Min age</Text>
-              <TextInput
-                style={styles.customRangeInput}
-                value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
-                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
-                keyboardType="number-pad"
-                placeholder="e.g. 18"
-                placeholderTextColor={color.mute}
-                maxLength={3}
-              />
-              <Text style={styles.customRangeLabel}>Max age</Text>
-              <TextInput
-                style={styles.customRangeInput}
-                value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
-                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
-                keyboardType="number-pad"
-                placeholder="e.g. 35"
-                placeholderTextColor={color.mute}
-                maxLength={3}
-              />
+          <SlidersHorizontal size={14} color={hasNonDefaultFilters ? '#fff' : color.mute} />
+          {totalActiveFilters > 0 && (
+            <View style={styles.filtersTabBtnBadge}>
+              <Text style={styles.filtersTabBtnBadgeText}>{totalActiveFilters}</Text>
             </View>
           )}
-        </View>
-      )}
+        </Pressable>
 
-      {/* ── Tab bar + list/map toggle ── */}
-      <View style={styles.tabRow}>
+        <View style={styles.tabDivider} />
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -497,8 +366,6 @@ export default function DiscoveryHub() {
           {TABS.map((tab) => {
             const active = tab.key === activeTab;
             const count = categoryCounts[tab.key];
-            // Only dim when the full batch has resolved; suppress dimming while loading
-            // to prevent any tab flickering to "0" before all responses arrive.
             const isEmpty = !countsLoading && count !== undefined && count === 0;
             const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
             const countSuffix = !countsLoading && count !== undefined && count > 0 ? ` · ${count}` : '';
@@ -523,22 +390,77 @@ export default function DiscoveryHub() {
               style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
               onPress={() => setViewMode('list')}
             >
-              <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>
-                List
-              </Text>
+              <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>List</Text>
             </Pressable>
             <Pressable
               style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]}
               onPress={() => setViewMode('map')}
             >
               <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
-              <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>
-                Map
-              </Text>
+              <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>Map</Text>
             </Pressable>
           </View>
         )}
       </View>
+
+      {/* ── Expanded filter panel (all filters in one place) ── */}
+      {filtersExpanded && (
+        <View style={styles.filtersPanel}>
+          {/* Context mode */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeBar} contentContainerStyle={styles.modeBarContent}>
+            {CONTEXT_MODES.map((m) => {
+              const active = m.key === contextMode;
+              return (
+                <Pressable key={m.key} style={[styles.modeChip, active && styles.modeChipActive]} onPress={() => setContextMode(m.key)}>
+                  <m.Icon size={12} color={active ? color.signal : color.mute} />
+                  <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>{m.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* Age filter */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ageFilterBar} contentContainerStyle={styles.ageFilterBarContent}>
+            {([
+              { key: 'any',        label: 'Any age' },
+              { key: 'open_to_me', label: 'Open to me' },
+              { key: '18_plus',    label: '18+' },
+              { key: '21_plus',    label: '21+' },
+              { key: 'under_30',   label: 'Under 30' },
+              { key: '30_plus',    label: '30+' },
+              { key: 'custom',     label: 'Custom' },
+            ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
+              const active = ageFilter === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  style={[styles.ageChip, active && styles.ageChipActive]}
+                  onPress={() => {
+                    setAgeFilter(opt.key);
+                    if (opt.key !== 'custom') { setCustomAgeRange({ min: null, max: null }); setDebouncedAgeRange({ min: null, max: null }); }
+                  }}
+                >
+                  {opt.key === 'open_to_me' && <Users size={10} color={active ? color.signal : color.mute} />}
+                  <Text style={[styles.ageChipLabel, active && styles.ageChipLabelActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* Custom age inputs */}
+          {ageFilter === 'custom' && (
+            <View style={styles.customRangeRow}>
+              <Text style={styles.customRangeLabel}>Min age</Text>
+              <TextInput style={styles.customRangeInput} value={customAgeRange.min != null ? String(customAgeRange.min) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, min: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 18" placeholderTextColor={color.mute} maxLength={3} />
+              <Text style={styles.customRangeLabel}>Max age</Text>
+              <TextInput style={styles.customRangeInput} value={customAgeRange.max != null ? String(customAgeRange.max) : ''} onChangeText={(v) => setCustomAgeRange((p) => ({ ...p, max: v ? parseInt(v, 10) || null : null }))} keyboardType="number-pad" placeholder="e.g. 35" placeholderTextColor={color.mute} maxLength={3} />
+            </View>
+          )}
+
+          {/* Radius / Open now / Rating */}
+          <FilterStrip filters={activeFilters} onChange={setActiveFilters} />
+        </View>
+      )}
 
       {/* ── Following highlights strip ── */}
       {isAuthed && (
@@ -609,7 +531,7 @@ export default function DiscoveryHub() {
             lng={destinationLng}
             userLat={locationState.coords?.lat ?? null}
             userLng={locationState.coords?.lng ?? null}
-            onFiltersChange={handleFiltersChange}
+            filters={activeFilters}
             fallbackZoom={destinationZoom}
           />
         )}
@@ -699,66 +621,43 @@ const styles = StyleSheet.create({
     fontSize: 20,
     flexShrink: 0,
   },
-  filterBar: {
-    flexDirection: 'row',
+  filtersTabBtn: {
+    width: 38,
+    height: 38,
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: color.haze,
-    paddingVertical: space.xs,
-    paddingRight: space.md,
-  },
-  filterBarContent: {
-    paddingHorizontal: space.md,
-    gap: space.xs,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  filterSummaryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: space.sm,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
+    justifyContent: 'center',
+    marginLeft: space.sm,
+    borderRadius: radius.md,
     backgroundColor: color.haze,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  filterSummaryChipActive: {
-    backgroundColor: color.signal + '14',
-    borderColor: color.signal + '40',
-  },
-  filterSummaryChipText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-    color: color.mute,
-  },
-  filterSummaryChipTextActive: {
-    color: color.signal,
-  },
-  filtersToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: space.sm + 2,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    backgroundColor: color.haze,
-    borderWidth: 1,
-    borderColor: color.haze,
     flexShrink: 0,
   },
-  filtersToggleBtnActive: {
+  filtersTabBtnActive: {
     backgroundColor: color.signal,
-    borderColor: color.signal,
   },
-  filtersToggleBtnText: {
-    fontSize: 11,
-    fontWeight: '700' as const,
-    color: color.mute,
+  filtersTabBtnBadge: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
   },
-  filtersToggleBtnTextActive: {
-    color: '#fff',
+  filtersTabBtnBadgeText: {
+    fontSize: 9,
+    fontWeight: '800' as const,
+    color: color.signal,
+  },
+  tabDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: color.haze,
+    marginHorizontal: space.xs,
+    alignSelf: 'center',
+    flexShrink: 0,
   },
   filtersPanel: {
     borderBottomWidth: 1,

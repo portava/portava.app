@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch,
 } from 'react-native';
-import { Search, SlidersHorizontal, ChevronDown } from 'lucide-react-native';
+import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
 import { getDiscoveryPlaces } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
@@ -31,7 +31,7 @@ interface FilterStripProps {
   onChange: (f: DiscoveryFilters) => void;
 }
 
-function FilterStrip({ filters, onChange }: FilterStripProps) {
+export function FilterStrip({ filters, onChange }: FilterStripProps) {
   return (
     <View style={fs.wrap}>
       {/* Radius chips */}
@@ -214,7 +214,9 @@ interface DiscoveryCategoryTabProps {
   userLat?: number | null;
   userLng?: number | null;
   fallbackZoom?: number;
-  /** Called whenever the user changes radius, open-now, or min-rating. */
+  /** Controlled filters — passed from the parent (discovery.tsx owns the state). */
+  filters: DiscoveryFilters;
+  /** Kept for back-compat; no longer called by this component. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
 }
 
@@ -235,7 +237,7 @@ export function DiscoveryCategoryTab({
   userLat,
   userLng,
   fallbackZoom,
-  onFiltersChange,
+  filters,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -243,12 +245,7 @@ export function DiscoveryCategoryTab({
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);
-  const [filters, setFilters]       = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const loadingMore                 = useRef(false);
-
-  // Notify parent whenever the filter strip changes so it can refresh count badges.
-  useEffect(() => { onFiltersChange?.(filters); }, [filters, onFiltersChange]);
 
   const applyClientFilters = (raw: DiscoveryPlace[]): DiscoveryPlace[] => {
     let result = raw;
@@ -304,41 +301,14 @@ export function DiscoveryCategoryTab({
     load(page + 1, filters, false);
   };
 
-  const handleFilterChange = (f: DiscoveryFilters) => {
-    setFilters(f);
-    setPlaces([]);
-    setPage(1);
-  };
-
   if (!destination) {
     return (
       <NoDestinationView onPickCity={(city) => onPickDestination?.(city)} />
     );
   }
 
-  const hasActiveFilters = filters.radiusKm !== 10 || filters.openNow || filters.minRating !== null;
-  const activeFilterCount = [filters.radiusKm !== 10, filters.openNow, filters.minRating !== null].filter(Boolean).length;
-
   return (
     <View style={{ flex: 1 }}>
-      {/* Collapsed filter toggle */}
-      <View style={styles.filterToggleRow}>
-        <Pressable
-          style={[styles.filterToggleBtn, hasActiveFilters && styles.filterToggleBtnActive]}
-          onPress={() => setFiltersOpen((v) => !v)}
-        >
-          <SlidersHorizontal size={12} color={hasActiveFilters ? color.signal : color.mute} />
-          <Text style={[styles.filterToggleBtnText, hasActiveFilters && styles.filterToggleBtnTextActive]}>
-            {hasActiveFilters ? `Filters (${activeFilterCount})` : 'Filters'}
-          </Text>
-          <ChevronDown
-            size={11}
-            color={hasActiveFilters ? color.signal : color.mute}
-            style={{ transform: [{ rotate: filtersOpen ? '180deg' : '0deg' }] }}
-          />
-        </Pressable>
-      </View>
-      {filtersOpen && <FilterStrip filters={filters} onChange={handleFilterChange} />}
 
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
@@ -408,38 +378,6 @@ function isLikelyOpen(hours: string): boolean {
 }
 
 const styles = StyleSheet.create({
-  filterToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: space.md,
-    paddingVertical: space.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: color.haze,
-    gap: space.sm,
-  },
-  filterToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: space.sm + 2,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    backgroundColor: color.haze,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  filterToggleBtnActive: {
-    backgroundColor: color.signal + '14',
-    borderColor: color.signal + '40',
-  },
-  filterToggleBtnText: {
-    fontSize: 11,
-    fontWeight: '700' as const,
-    color: color.mute,
-  },
-  filterToggleBtnTextActive: {
-    color: color.signal,
-  },
   center: {
     flex: 1,
     alignItems: 'center',
