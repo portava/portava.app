@@ -30,6 +30,7 @@ import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { getUserReviews, type Review } from '../../src/services/reviews';
+import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
@@ -477,6 +478,67 @@ function StarLine({ rating }: { rating: number }) {
   );
 }
 
+function BuddySection({ userId }: { userId: string }) {
+  const [loading, setLoading] = useState(false);
+  const [buddy, setBuddy] = useState<BuddyProfile | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getBuddyProfileByUserId(userId)
+      .then((res) => {
+        setLoading(false);
+        if (res.ok && res.data?.buddy) setBuddy(res.data.buddy);
+      })
+      .catch(() => setLoading(false));
+  }, [userId]);
+
+  if (loading) return <ActivityIndicator size="small" color={color.mute} style={{ marginVertical: space.md }} />;
+  if (!buddy) return null;
+
+  return (
+    <View style={buddyCardStyles.card}>
+      <View style={buddyCardStyles.headerRow}>
+        <View style={buddyCardStyles.badge}>
+          <Text style={buddyCardStyles.badgeText}>Rent-a-Buddy</Text>
+        </View>
+        {buddy.averageRating != null && (
+          <Text style={buddyCardStyles.rating}>★ {buddy.averageRating.toFixed(1)}</Text>
+        )}
+      </View>
+      <Text style={buddyCardStyles.title} numberOfLines={2}>
+        {buddy.tagline ?? 'Available as your travel buddy'}
+      </Text>
+      <Pressable
+        style={({ pressed }) => [buddyCardStyles.btn, pressed && { opacity: 0.75 }]}
+        onPress={() => router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any)}
+      >
+        <Text style={buddyCardStyles.btnText}>View buddy profile</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const buddyCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    padding: space.lg, gap: space.sm,
+  },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  badge: {
+    backgroundColor: color.deep, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 4,
+  },
+  badgeText: { ...t.stamp, color: color.onInk, fontWeight: '700', fontSize: 10 },
+  rating: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
+  title: { ...t.body, color: color.ink },
+  btn: {
+    backgroundColor: color.ink, borderRadius: radius.pill,
+    paddingVertical: 10, alignItems: 'center', marginTop: 4,
+  },
+  btnText: { ...t.small, color: color.onInk, fontWeight: '700' },
+});
+
 function HostReviewsSummary({ userId }: { userId: string }) {
   const [data, setData]     = useState<{ avgRating: number | null; reviewCount: number; reviews: Review[] } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -828,7 +890,7 @@ export default function PublicPassportScreen() {
 
         <View style={{ marginTop: space.md }}>
           {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} />}
-          {tab === 'stamps' && <StampsTab stamps={[]} />}
+          {tab === 'stamps' && <StampsTab stamps={profile?.stamps ?? []} />}
           {tab === 'map' && <MapTab postcards={postcards} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
@@ -867,6 +929,9 @@ export default function PublicPassportScreen() {
               )}
               {profile.id && (
                 <HostReviewsSummary userId={profile.id} />
+              )}
+              {profile.id && (
+                <BuddySection userId={profile.id} />
               )}
             </View>
           )}

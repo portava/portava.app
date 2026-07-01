@@ -221,6 +221,17 @@ export async function getBuddyProfile(buddyId: string): Promise<ApiResult<{
   return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}`);
 }
 
+export async function getBuddyProfileByUserId(userId: string): Promise<ApiResult<{
+  buddy: BuddyProfile | null;
+  packages: BuddyPackage[];
+  addons: BuddyAddon[];
+  reviews: BuddyReview[];
+  availability: BuddyAvailability[];
+  savedByMe: boolean;
+}>> {
+  return apiFetch(`/api/rent-a-buddy/by-user/${encodeURIComponent(userId)}`);
+}
+
 export async function getBuddyAvailability(
   buddyId: string,
   month?: string,

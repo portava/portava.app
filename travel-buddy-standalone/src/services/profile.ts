@@ -65,6 +65,7 @@ export interface UpdateProfileInput {
   bio?: string;
   homeCity?: string;
   homeCountry?: string;
+  currentCity?: string;
   interests?: string[];
   passportVisibility?: 'public' | 'followers_only' | 'private';
   avatarUrl?: string;
@@ -362,6 +363,116 @@ export async function removePostcard(id: string): Promise<ProfileResult<null>> {
     if (res.status === 204) return { ok: true, data: null };
     const body = await res.json().catch(() => ({}));
     return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+// ── Privacy settings ──────────────────────────────────────────────────────────
+
+export interface PrivacySettings {
+  profile_visibility: 'public' | 'followers_only' | 'private';
+  show_current_city: boolean;
+  show_home_country: boolean;
+  show_visited_places: boolean;
+  show_upcoming_trips: boolean;
+  show_past_trips: boolean;
+  show_posts: boolean;
+  show_stamps: boolean;
+  show_friends: boolean;
+  show_followers: boolean;
+  allow_messages_from: 'everyone' | 'friends' | 'followers' | 'nobody';
+  allow_friend_requests: boolean;
+  allow_follow: boolean;
+  allow_tagging: boolean;
+  allow_profile_discovery: boolean;
+  delayed_posting_default: boolean;
+  precise_location_visible: boolean;
+}
+
+export async function getPrivacySettings(): Promise<ProfileResult<PrivacySettings>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/profile/me/privacy`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export async function updatePrivacySettings(
+  fields: Partial<PrivacySettings>,
+): Promise<ProfileResult<PrivacySettings>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/profile/me/privacy`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+// ── Account controls ──────────────────────────────────────────────────────────
+
+export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/profile/me/deactivate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export async function requestAccountDeletion(): Promise<ProfileResult<{ requested: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/profile/me/delete-request`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };

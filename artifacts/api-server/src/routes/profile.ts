@@ -143,6 +143,7 @@ const patchProfileSchema = z.object({
   bio: z.string().max(300).optional(),
   homeCity: z.string().max(100).optional(),
   homeCountry: z.string().max(100).optional(),
+  currentCity: z.string().max(100).optional(),
   interests: z.array(z.string().max(50)).max(20).optional(),
   passportVisibility: z.enum(["public", "followers_only", "private"]).optional(),
   avatarUrl: z.string().url().optional(),
@@ -183,6 +184,7 @@ router.patch("/me/profile", async (req, res) => {
   if (p.bio !== undefined) row.bio = p.bio;
   if (p.homeCity !== undefined) row.home_city = p.homeCity;
   if (p.homeCountry !== undefined) row.home_country = p.homeCountry;
+  if (p.currentCity !== undefined) row.current_city = p.currentCity;
   if (p.interests !== undefined) row.interests = p.interests;
   if (p.passportVisibility !== undefined) row.passport_visibility = p.passportVisibility;
   if (p.avatarUrl !== undefined) row.avatar_url = p.avatarUrl;

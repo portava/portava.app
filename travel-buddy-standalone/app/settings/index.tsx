@@ -8,6 +8,7 @@ import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
+import { getPrivacySettings, updatePrivacySettings, deactivateAccount, requestAccountDeletion, type PrivacySettings } from '../../src/services/profile';
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
@@ -46,6 +47,9 @@ export default function Settings() {
 
   const live = configured && isAuthed;
 
+  const [privacyLoading, setPrivacyLoading] = useState(false);
+  const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
+
   const loadPrefs = useCallback(async () => {
     if (!live) return;
     setPrefLoading(true);
@@ -64,6 +68,69 @@ export default function Settings() {
   }, [live]);
 
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
+
+  useEffect(() => {
+    if (!live) return;
+    setPrivacyLoading(true);
+    getPrivacySettings().then((res) => {
+      setPrivacyLoading(false);
+      if (res.ok && res.data) setPrivacy(res.data);
+    }).catch(() => setPrivacyLoading(false));
+  }, [live]);
+
+  async function handlePrivacyChange<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {
+    if (!privacy) return;
+    const previous = privacy;
+    setPrivacy({ ...privacy, [key]: value });
+    const res = await updatePrivacySettings({ [key]: value } as Partial<PrivacySettings>);
+    if (!res.ok) {
+      setPrivacy(previous);
+      Alert.alert('Error', res.message ?? 'Could not update setting. Try again.');
+    }
+  }
+
+  async function handleDeactivate() {
+    Alert.alert(
+      'Deactivate account?',
+      'Your profile will be hidden from other users. You can reactivate by signing back in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Deactivate', style: 'destructive',
+          onPress: async () => {
+            const res = await deactivateAccount();
+            if (res.ok) {
+              await signOut();
+              router.replace('/(auth)/sign-in');
+            } else {
+              Alert.alert('Error', res.message ?? 'Could not deactivate. Try again.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleRequestDeletion() {
+    Alert.alert(
+      'Request account deletion?',
+      'Your account will be permanently deleted within 30 days. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Request deletion', style: 'destructive',
+          onPress: async () => {
+            const res = await requestAccountDeletion();
+            if (res.ok) {
+              Alert.alert('Request submitted', 'We will contact you to confirm. Your account will be deleted within 30 days.');
+            } else {
+              Alert.alert('Error', res.message ?? 'Could not submit request. Try again.');
+            }
+          },
+        },
+      ],
+    );
+  }
 
   async function savePref(patch: Record<string, any>) {
     if (!live) return;
@@ -180,11 +247,8 @@ export default function Settings() {
     await updateTelegraphChatSettings({ [key]: value }).catch(() => {});
   }
 
-  const BASIC_GROUPS = [
-    { h: 'Privacy', items: ['Close Friends', 'Hide current location', 'Hide upcoming trips', 'Private account', 'Nearby visibility', 'Message permissions'] },
-    { h: 'Safety', items: ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Report history', 'Muted words'] },
-    { h: 'Account', items: ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals', 'Log out'] },
-  ];
+  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Report history', 'Muted words'];
+  const ACCOUNT_ITEMS = ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];
   const FOOD_OPTIONS = ['street food', 'seafood', 'vegetarian', 'vegan', 'local cuisine', 'fine dining', 'coffee'];
@@ -444,25 +508,141 @@ export default function Settings() {
           </View>
         )}
 
-        {/* Standard settings groups */}
-        {BASIC_GROUPS.map((g) => (
-          <View key={g.h} style={{ gap: space.sm }}>
-            <Text style={styles.h}>{g.h}</Text>
-            {g.items.map((i) => {
-              const isLogout = i === 'Log out';
-              if (isLogout && !(configured && isAuthed)) return null;
-              return (
-                <Pressable
-                  key={i}
-                  style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-                  onPress={() => onItem(i)}
-                >
-                  <Text style={[styles.item, isLogout && styles.logout]}>{i}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
+        {/* Privacy section */}
+        <View style={{ gap: space.sm }}>
+          <Text style={styles.h}>Privacy</Text>
+
+          {privacyLoading && (
+            <View style={styles.loadRow}><ActivityIndicator size="small" color={color.mute} /></View>
+          )}
+
+          {privacy && (
+            <>
+              {/* Profile visibility */}
+              <View style={{ gap: 6 }}>
+                <Text style={styles.prefLabel}>Who can see your profile</Text>
+                {[
+                  { value: 'public', label: 'Public', sub: 'Anyone can view your profile' },
+                  { value: 'followers_only', label: 'Followers only', sub: 'Only followers can view' },
+                  { value: 'private', label: 'Private', sub: 'Only you can view' },
+                ].map((opt) => (
+                  <Pressable
+                    key={opt.value}
+                    style={[styles.radioRow, privacy.profile_visibility === opt.value && styles.radioRowActive]}
+                    onPress={() => handlePrivacyChange('profile_visibility', opt.value as PrivacySettings['profile_visibility'])}
+                  >
+                    <View style={[styles.radio, privacy.profile_visibility === opt.value && styles.radioChecked]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.radioLabel}>{opt.label}</Text>
+                      <Text style={styles.radioSub}>{opt.sub}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* Boolean visibility toggles */}
+              {([
+                { key: 'show_stamps' as const, label: 'Show stamps', sub: 'Others can see your collected stamps' },
+                { key: 'show_current_city' as const, label: 'Show current city', sub: 'Display your current city on your profile' },
+                { key: 'show_upcoming_trips' as const, label: 'Show upcoming trips', sub: 'Others can see your travel plans' },
+                { key: 'show_friends' as const, label: 'Show friends list', sub: 'Others can see who you are friends with' },
+                { key: 'allow_friend_requests' as const, label: 'Allow friend requests', sub: 'People can send you friend requests' },
+                { key: 'allow_follow' as const, label: 'Allow follows', sub: 'People can follow you' },
+                { key: 'allow_tagging' as const, label: 'Allow tagging', sub: 'Others can @mention you in posts' },
+                { key: 'allow_profile_discovery' as const, label: 'Discoverable', sub: 'Appear in search and suggestions' },
+              ] as Array<{ key: keyof PrivacySettings; label: string; sub: string }>).map((toggle) => (
+                <View key={String(toggle.key)} style={styles.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>{toggle.label}</Text>
+                    <Text style={styles.toggleSub}>{toggle.sub}</Text>
+                  </View>
+                  <Switch
+                    value={privacy[toggle.key] as boolean}
+                    onValueChange={(v) => handlePrivacyChange(toggle.key, v as any)}
+                    trackColor={{ true: color.deep }}
+                    thumbColor={color.onInk}
+                  />
+                </View>
+              ))}
+
+              {/* Who can message you */}
+              <View style={{ gap: 6 }}>
+                <Text style={styles.prefLabel}>Who can message you</Text>
+                {(['everyone', 'friends', 'followers', 'nobody'] as const).map((opt) => (
+                  <Pressable
+                    key={opt}
+                    style={[styles.radioRow, privacy.allow_messages_from === opt && styles.radioRowActive]}
+                    onPress={() => handlePrivacyChange('allow_messages_from', opt)}
+                  >
+                    <View style={[styles.radio, privacy.allow_messages_from === opt && styles.radioChecked]} />
+                    <Text style={styles.radioLabel}>
+                      {opt === 'everyone' ? 'Everyone' : opt === 'friends' ? 'Friends only' : opt === 'followers' ? 'Followers only' : 'Nobody'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
+
+          {/* Close Friends nav link */}
+          <Pressable
+            style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+            onPress={() => onItem('Close Friends')}
+          >
+            <Text style={styles.item}>Close Friends</Text>
+          </Pressable>
+        </View>
+
+        {/* Safety section */}
+        <View style={{ gap: space.sm }}>
+          <Text style={styles.h}>Safety</Text>
+          {SAFETY_ITEMS.map((i) => (
+            <Pressable
+              key={i}
+              style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => onItem(i)}
+            >
+              <Text style={styles.item}>{i}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Account section */}
+        <View style={{ gap: space.sm }}>
+          <Text style={styles.h}>Account</Text>
+          {ACCOUNT_ITEMS.map((i) => (
+            <Pressable
+              key={i}
+              style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => onItem(i)}
+            >
+              <Text style={styles.item}>{i}</Text>
+            </Pressable>
+          ))}
+
+          {(configured && isAuthed) && (
+            <>
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={handleDeactivate}
+              >
+                <Text style={[styles.item, { color: color.mute }]}>Deactivate account</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={handleRequestDeletion}
+              >
+                <Text style={[styles.item, { color: color.signal }]}>Delete account</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => onItem('Log out')}
+              >
+                <Text style={[styles.item, styles.logout]}>Log out</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
       </ScrollView>
     </View>
   );

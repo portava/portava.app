@@ -454,6 +454,7 @@ export interface PublicProfile {
   followingCount?: number;
   isFollowing?: boolean;
   isOwnProfile?: boolean;
+  stamps?: PassportStamp[];
 }
 
 /* ───────────────────────────────────────────────────────────────────────

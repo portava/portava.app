@@ -538,6 +538,27 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   });
 });
 
+router.get("/api/rent-a-buddy/by-user/:userId", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ buddy: null });
+
+  const enabled = await checkRentBuddyEnabled(serviceClient);
+  if (!enabled) return res.json({ buddy: null });
+
+  const { userId } = req.params;
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error || !data) return res.json({ buddy: null });
+
+  return res.json({ buddy: mapProfile(data) });
+});
+
 router.get("/api/rent-a-buddy/buddies/:buddyId/availability", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ availability: [] });

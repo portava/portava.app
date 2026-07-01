@@ -56,6 +56,24 @@ function languageLabel(code: string | null): string {
   return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
 }
 
+const SPOKEN_LANGUAGE_OPTIONS = [
+  'English', 'Spanish', 'French', 'German', 'Portuguese', 'Italian',
+  'Dutch', 'Swedish', 'Polish', 'Russian', 'Turkish', 'Arabic',
+  'Hindi', 'Japanese', 'Korean', 'Mandarin', 'Thai', 'Vietnamese',
+  'Indonesian', 'Filipino',
+];
+
+const TRAVEL_STYLE_OPTIONS = [
+  'Adventure', 'Culture', 'Luxury', 'Backpacking', 'Slow travel',
+  'Road trips', 'City breaks', 'Beach & sun', 'Photography',
+  'Food & drink', 'Wildlife', 'Hiking',
+];
+
+const SOCIAL_INTEREST_OPTIONS = [
+  'Food', 'Photography', 'Nightlife', 'Wellness', 'Shopping',
+  'Nature', 'History', 'Architecture', 'Music', 'Art', 'Sport', 'Reading',
+];
+
 interface FormState {
   displayName: string;
   username: string;
@@ -70,6 +88,10 @@ interface FormState {
   tagPermission: TagPermission;
   homeCity: string;
   homeCountry: string;
+  currentCity: string;
+  spokenLanguages: string[];
+  travelStyles: string[];
+  interests: string[];
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -89,6 +111,10 @@ export default function EditProfileScreen() {
     visibility: 'public',
     homeCity: '',
     homeCountry: '',
+    currentCity: '',
+    spokenLanguages: [],
+    travelStyles: [],
+    interests: [],
     avatarUri: null,
     coverUri: null,
     avatarUrl: null,
@@ -123,7 +149,11 @@ export default function EditProfileScreen() {
     form.dateOfBirth !== originalForm.dateOfBirth ||
     form.tagPermission !== originalForm.tagPermission ||
     form.homeCity !== originalForm.homeCity ||
-    form.homeCountry !== originalForm.homeCountry
+    form.homeCountry !== originalForm.homeCountry ||
+    form.currentCity !== originalForm.currentCity ||
+    form.spokenLanguages.join(',') !== originalForm.spokenLanguages.join(',') ||
+    form.travelStyles.join(',') !== originalForm.travelStyles.join(',') ||
+    form.interests.join(',') !== originalForm.interests.join(',')
   );
 
   useEffect(() => {
@@ -148,6 +178,10 @@ export default function EditProfileScreen() {
           visibility: p.passportVisibility ?? 'public',
           homeCity: p.homeCity ?? '',
           homeCountry: p.homeCountry ?? '',
+          currentCity: p.currentCity ?? '',
+          spokenLanguages: p.spokenLanguages ?? [],
+          travelStyles: p.travelStyles ?? [],
+          interests: p.interests ?? [],
           avatarUri: null,
           coverUri: null,
           avatarUrl: p.avatarUrl,
@@ -306,6 +340,18 @@ export default function EditProfileScreen() {
     }
     if (form.homeCountry !== (originalForm?.homeCountry ?? '')) {
       patch.homeCountry = form.homeCountry.trim() || undefined;
+    }
+    if (form.currentCity !== (originalForm?.currentCity ?? '')) {
+      patch.currentCity = form.currentCity.trim() || undefined;
+    }
+    if (form.spokenLanguages.join(',') !== (originalForm?.spokenLanguages ?? []).join(',')) {
+      patch.spokenLanguages = form.spokenLanguages;
+    }
+    if (form.travelStyles.join(',') !== (originalForm?.travelStyles ?? []).join(',')) {
+      patch.travelStyles = form.travelStyles;
+    }
+    if (form.interests.join(',') !== (originalForm?.interests ?? []).join(',')) {
+      patch.interests = form.interests;
     }
     if (form.visibility !== (originalForm?.visibility ?? 'public')) {
       patch.passportVisibility = form.visibility;
@@ -591,6 +637,94 @@ export default function EditProfileScreen() {
                   autoCapitalize="words"
                   returnKeyType="next"
                 />
+              </View>
+
+              {/* Current City */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Current City</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={form.currentCity}
+                  onChangeText={(text) => setForm((f) => ({ ...f, currentCity: text }))}
+                  placeholder="Where are you right now?"
+                  placeholderTextColor={color.faint}
+                  maxLength={100}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+                <Text style={styles.fieldHint}>Shown on your profile when enabled in privacy settings.</Text>
+              </View>
+
+              {/* Languages */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Languages I speak</Text>
+                <View style={styles.chipGrid}>
+                  {SPOKEN_LANGUAGE_OPTIONS.map((lang) => {
+                    const active = form.spokenLanguages.includes(lang);
+                    return (
+                      <Pressable
+                        key={lang}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          const next = active
+                            ? form.spokenLanguages.filter((l) => l !== lang)
+                            : [...form.spokenLanguages, lang];
+                          setForm((f) => ({ ...f, spokenLanguages: next }));
+                        }}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{lang}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Travel Styles */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Travel style</Text>
+                <View style={styles.chipGrid}>
+                  {TRAVEL_STYLE_OPTIONS.map((style) => {
+                    const active = form.travelStyles.includes(style);
+                    return (
+                      <Pressable
+                        key={style}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          const next = active
+                            ? form.travelStyles.filter((s) => s !== style)
+                            : [...form.travelStyles, style];
+                          setForm((f) => ({ ...f, travelStyles: next }));
+                        }}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{style}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Interests */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Interests</Text>
+                <View style={styles.chipGrid}>
+                  {SOCIAL_INTEREST_OPTIONS.map((interest) => {
+                    const active = form.interests.includes(interest);
+                    return (
+                      <Pressable
+                        key={interest}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          const next = active
+                            ? form.interests.filter((i) => i !== interest)
+                            : [...form.interests, interest];
+                          setForm((f) => ({ ...f, interests: next }));
+                        }}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{interest}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
 
               {/* Date of Birth */}
@@ -914,6 +1048,15 @@ const styles = StyleSheet.create({
   visibilityLabel: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
   visibilityLabelActive: { color: color.ink },
   visibilityDesc: { ...t.stamp, color: color.faint, marginTop: 2 },
+
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.xs },
+  chip: {
+    paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+  },
+  chipActive: { backgroundColor: color.deep, borderColor: color.deep },
+  chipText: { ...t.small, color: color.ink, fontSize: 12, fontWeight: '600' },
+  chipTextActive: { color: color.onInk },
 
   langPickerRow: {
     flexDirection: 'row',

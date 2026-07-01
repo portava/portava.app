@@ -27,7 +27,9 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { X, SendHorizonal, Trash2, Heart, CornerDownRight } from 'lucide-react-native';
+import { ProfilePreviewCard } from './ProfilePreviewCard';
 import { color, space, radius, shadow } from '../theme/tokens';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
 import { MentionSuggestionList } from './MentionSuggestionList';
@@ -45,6 +47,8 @@ import {
 } from '../services/postEngagement';
 import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
+
+const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
 
 interface Props {
   visible: boolean;
@@ -159,6 +163,7 @@ function ReplyRow({
 }) {
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
+  const onAuthorPress = React.useContext(AuthorPressCtx);
   const likedByMe = reply.likedByMe ?? false;
   const likeCount = reply.likeCount ?? 0;
 
@@ -185,7 +190,9 @@ function ReplyRow({
       <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
       <View style={s.commentBody}>
         <View style={s.commentMeta}>
-          <Text style={s.commentAuthor}>{reply.author.name}</Text>
+          <Pressable onPress={() => onAuthorPress(reply.author.handle)} hitSlop={4}>
+            <Text style={s.commentAuthor}>{reply.author.name}</Text>
+          </Pressable>
           <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
         </View>
         <RichText
@@ -251,6 +258,7 @@ function CommentItem({
 }) {
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
+  const onAuthorPress = React.useContext(AuthorPressCtx);
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
 
@@ -285,7 +293,9 @@ function CommentItem({
         <CommentAvatar uri={comment.author.avatarUrl} name={comment.author.name} size={32} />
         <View style={s.commentBody}>
           <View style={s.commentMeta}>
-            <Text style={s.commentAuthor}>{comment.author.name}</Text>
+            <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4}>
+              <Text style={s.commentAuthor}>{comment.author.name}</Text>
+            </Pressable>
             <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
           </View>
           <RichText
@@ -353,6 +363,8 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [repliesLoaded, setRepliesLoaded] = useState<Set<string>>(new Set());
   const [repliesOpen, setRepliesOpen] = useState<Set<string>>(new Set());
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
+
+  const [previewHandle, setPreviewHandle] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -499,6 +511,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
   return (
+    <AuthorPressCtx.Provider value={setPreviewHandle}>
     <Modal
       visible={visible}
       animationType="slide"
@@ -624,6 +637,12 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
         </View>
       </KeyboardAvoidingView>
     </Modal>
+    <ProfilePreviewCard
+      username={previewHandle}
+      visible={previewHandle !== null}
+      onClose={() => setPreviewHandle(null)}
+    />
+    </AuthorPressCtx.Provider>
   );
 }
 
