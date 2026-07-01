@@ -82,7 +82,9 @@ export function TripWishlistPicker({
 
   useEffect(() => {
     if (visible) {
-      setSavedIds(new Set());
+      // Do NOT reset savedIds here — keep the last-known state so the picker
+      // shows correct chips while the reload is in flight instead of flashing
+      // all rows as unsaved. savedIds is updated once load() resolves.
       setErrorIds(new Set());
       load();
     }
