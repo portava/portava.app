@@ -3,14 +3,11 @@
  * Each saved place is stored by its OSM id so duplicates are prevented.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { StorageLike } from '../components/savedPlacesMapFilterStorage';
+import { categoryStorageKey, type StorageLike } from '../components/savedPlacesMapFilterStorage.ts';
 
 const STORAGE_KEY = 'discovery_bookmarks_v1';
 
-// The per-list category filter key for the global bookmark list.
-// Must stay in sync with CATEGORY_STORAGE_PREFIX + 'global' in
-// savedPlacesMapFilterStorage.ts.
-const GLOBAL_FILTER_KEY = 'saved_places_map_cat_v1_global';
+const GLOBAL_FILTER_KEY = categoryStorageKey('global');
 
 export interface BookmarkedPlace {
   id: string;

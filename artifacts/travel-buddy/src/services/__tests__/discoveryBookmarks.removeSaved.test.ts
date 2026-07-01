@@ -10,11 +10,9 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { removeSaved, _setTestStorage } from '../discoveryBookmarks.ts';
+import { categoryStorageKey } from '../../components/savedPlacesMapFilterStorage.ts';
 
-// The key that discoveryBookmarks clears when the last place is removed.
-// Must stay in sync with CATEGORY_STORAGE_PREFIX + 'global' in
-// savedPlacesMapFilterStorage.ts and GLOBAL_FILTER_KEY in discoveryBookmarks.ts.
-const GLOBAL_FILTER_KEY = 'saved_places_map_cat_v1_global';
+const GLOBAL_FILTER_KEY = categoryStorageKey('global');
 const BOOKMARKS_KEY = 'discovery_bookmarks_v1';
 
 // ── Fake storage factory ───────────────────────────────────────────────────────
