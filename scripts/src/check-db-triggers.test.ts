@@ -13,6 +13,12 @@
  *    block_saved_places_truncate is present in the SQL IN (...) filter — the
  *    exact regression the task calls out.
  *
+ *    Also covers HTTP 401 / 403 responses (expired or revoked token) to
+ *    confirm the script exits 1 with a clear diagnostic rather than silently
+ *    passing.  The fake curl reads MOCK_HTTP_STATUS (default "200") so each
+ *    test can inject any HTTP status without creating separate workspace
+ *    fixtures.
+ *
  * 2. Real-database integration suite
  *    Provisions a dedicated schema in the local PostgreSQL instance
  *    (postgresql://postgres@helium:5432/heliumdb), creates the four protection
@@ -114,7 +120,7 @@ function makeWorkspace(
       '    CAPTURE_NEXT=1',
       '  fi',
       'done',
-      'printf "%s\\n200" "$MOCK_TRIGGER_RESPONSE"',
+      'printf "%s\\n${MOCK_HTTP_STATUS:-200}" "$MOCK_TRIGGER_RESPONSE"',
     ].join('\n') + '\n',
   );
   chmodSync(fakeCurl, 0o755);
@@ -127,22 +133,28 @@ function runCheck(opts: {
   bin: string;
   captureFile: string;
   triggerResponse: string;
+  /** HTTP status code the fake curl should return. Defaults to 200. */
+  mockHttpStatus?: string;
 }): { status: number; stdout: string; stderr: string } {
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    // Redirect workspace root to the temp directory with our fake .env.
+    CHECK_TRIGGERS_WORKSPACE_ROOT: opts.root,
+    // Dummy token so the script doesn't bail on missing credentials.
+    SUPABASE_ACCESS_TOKEN: 'test-token-not-used',
+    // JSON the fake curl will emit as the response body.
+    MOCK_TRIGGER_RESPONSE: opts.triggerResponse,
+    // File the fake curl writes its --data-raw payload to.
+    CURL_CAPTURE_FILE: opts.captureFile,
+    // Prepend our fake curl so it shadows the real one.
+    PATH: `${opts.bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+  };
+  if (opts.mockHttpStatus !== undefined) {
+    env['MOCK_HTTP_STATUS'] = opts.mockHttpStatus;
+  }
   const r = spawnSync('bash', [CHECK_SCRIPT], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      // Redirect workspace root to the temp directory with our fake .env.
-      CHECK_TRIGGERS_WORKSPACE_ROOT: opts.root,
-      // Dummy token so the script doesn't bail on missing credentials.
-      SUPABASE_ACCESS_TOKEN: 'test-token-not-used',
-      // JSON the fake curl will emit as the response body.
-      MOCK_TRIGGER_RESPONSE: opts.triggerResponse,
-      // File the fake curl writes its --data-raw payload to.
-      CURL_CAPTURE_FILE: opts.captureFile,
-      // Prepend our fake curl so it shadows the real one.
-      PATH: `${opts.bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-    },
+    env,
   });
   return {
     status: r.status ?? 1,
@@ -300,6 +312,70 @@ describe('check-db-triggers.sh + verify-db-triggers.mjs pipeline (mock curl)', (
       1,
       `Expected exit 1 for malformed JSON response but got ${result.status}.\n` +
         `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+  });
+
+  // ── expired / revoked token (HTTP 401 / 403) ─────────────────────────────────
+  // The Supabase Management API returns 401 for an expired token and 403 for a
+  // token that has been revoked or lacks permissions.  The script must exit 1
+  // with a message that includes the HTTP status code and tells the operator
+  // which token variable to check.
+
+  test('exits 1 with an actionable message when the API returns HTTP 401 (expired token)', () => {
+    const { root, bin, captureFile } = makeWorkspace(tmpBase, 'http-401');
+    const errorBody = JSON.stringify({ message: 'JWT expired' });
+
+    const result = runCheck({
+      root,
+      bin,
+      captureFile,
+      triggerResponse: errorBody,
+      mockHttpStatus: '401',
+    });
+
+    assert.equal(
+      result.status,
+      1,
+      `Expected exit 1 for HTTP 401 but got ${result.status}.\n` +
+        `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+    const combined = result.stdout + result.stderr;
+    assert.ok(
+      combined.includes('401'),
+      `Expected "401" in output for expired-token case.\nCombined:\n${combined}`,
+    );
+    assert.ok(
+      combined.includes('Verify'),
+      `Expected "Verify" guidance in output for expired-token case.\nCombined:\n${combined}`,
+    );
+  });
+
+  test('exits 1 with an actionable message when the API returns HTTP 403 (revoked token)', () => {
+    const { root, bin, captureFile } = makeWorkspace(tmpBase, 'http-403');
+    const errorBody = JSON.stringify({ message: 'Forbidden' });
+
+    const result = runCheck({
+      root,
+      bin,
+      captureFile,
+      triggerResponse: errorBody,
+      mockHttpStatus: '403',
+    });
+
+    assert.equal(
+      result.status,
+      1,
+      `Expected exit 1 for HTTP 403 but got ${result.status}.\n` +
+        `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+    const combined = result.stdout + result.stderr;
+    assert.ok(
+      combined.includes('403'),
+      `Expected "403" in output for revoked-token case.\nCombined:\n${combined}`,
+    );
+    assert.ok(
+      combined.includes('Verify'),
+      `Expected "Verify" guidance in output for revoked-token case.\nCombined:\n${combined}`,
     );
   });
 });
