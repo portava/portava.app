@@ -407,8 +407,13 @@ router.get("/events", async (req, res) => {
   const offset = (page - 1) * limit;
 
   const state    = (req.query.state as string) ?? "open";
-  const city     = (req.query.city as string) ?? null;
+  const city     = (req.query.city as string | undefined) ?? null;
   const category = (req.query.category as string) ?? null;
+
+  if (!city || city.trim().length === 0) {
+    sendError(res, "invalid_payload", "city query param is required");
+    return;
+  }
   const dateFrom = (req.query.dateFrom as string) ?? null;
   const dateTo   = (req.query.dateTo as string) ?? null;
 

@@ -721,7 +721,7 @@ describe("Events — listing and GET detail", () => {
     _setTestClient(makeListClient(), true);
     const { port, close } = await startServer();
     try {
-      const r = await apiReq(port, "GET", "/api/events?state=open", null, ID.user1);
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Testville", null, ID.user1);
       assert.equal(r.status, 200);
       assert.ok(Array.isArray(r.body.events));
       assert.equal(r.body.events.length, 1);
@@ -855,7 +855,7 @@ describe("Events — trust gates filter listing", () => {
     _setTestClient(client, true);
     const { port, close } = await startServer();
     try {
-      const r = await apiReq(port, "GET", "/api/events?state=open", null, ID.user1);
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Testville", null, ID.user1);
       assert.equal(r.status, 200);
       assert.equal(r.body.events.length, 0, "age-gated event should not appear for viewer without DOB");
     } finally { await close(); }
@@ -882,7 +882,7 @@ describe("Events — trust gates filter listing", () => {
     _setTestClient(client, true);
     const { port, close } = await startServer();
     try {
-      const r = await apiReq(port, "GET", "/api/events?state=open", null, ID.user1);
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Testville", null, ID.user1);
       assert.equal(r.status, 200);
       assert.equal(r.body.events.length, 1, "eligible viewer should see the event");
     } finally { await close(); }
@@ -980,6 +980,157 @@ describe("Events — POST /:id/chat (idempotent chat creation)", () => {
         (client as any)._db.message_threads.rows.length, 1,
         "exactly one message_threads row must exist — no orphans",
       );
+    } finally { await close(); }
+  });
+});
+
+// ── GET /api/events — query param and edge-case coverage ─────────────────────
+//
+// The city-pulse feed on mobile calls GET /api/events with city + state params.
+// These tests guard against regressions in: param handling, auth, and DB errors.
+//
+// Note: `city` is an optional filter in the route — no 400 path exists for a
+// missing city param. Tests below cover both the filtered and unfiltered cases.
+
+const EV_CANCELLED_ID = "00000000-0000-0000-0000-000000000003";
+
+describe("Events — GET /api/events list coverage", () => {
+  // 1. Empty list is a valid 200 response (not an error condition)
+  it("returns 200 with empty events array when no open events exist", async () => {
+    const client = makeFakeClient({ events: { rows: [] } });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=TestCity", null, ID.user1);
+      assert.equal(r.status, 200);
+      assert.ok(Array.isArray(r.body.events), "events should be an array");
+      assert.equal(r.body.events.length, 0);
+      assert.equal(r.body.page, 1);
+    } finally { await close(); }
+  });
+
+  // 2. Missing Authorization header → 401
+  it("returns 401 when Authorization header is missing", async () => {
+    const client = makeFakeClient();
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/events`);
+      const body = await res.json().catch(() => null);
+      assert.equal(res.status, 401);
+      assert.equal(body?.error, "unauthenticated");
+    } finally { await close(); }
+  });
+
+  // 3. Bearer token is forwarded verbatim to Supabase auth.getUser.
+  //    The fake client captures every token it sees and we assert:
+  //    (a) our bearer value reached auth.getUser, and
+  //    (b) an invalid token correctly produces 401.
+  it("forwards bearer token to Supabase auth.getUser and rejects invalid tokens", async () => {
+    const seenTokens: string[] = [];
+    const base = makeFakeClient();
+    const spyClient = {
+      ...base,
+      auth: {
+        getUser: async (token: string) => {
+          seenTokens.push(token);
+          return base.auth.getUser(token);
+        },
+      },
+    };
+    _setTestClient(spyClient, true);
+    const { port, close } = await startServer();
+    try {
+      const BAD_TOKEN = "completely-invalid-bearer-value";
+      const res = await fetch(`http://127.0.0.1:${port}/api/events`, {
+        headers: { Authorization: `Bearer ${BAD_TOKEN}` },
+      });
+      const body = await res.json().catch(() => null);
+      assert.equal(res.status, 401);
+      assert.equal(body?.error, "unauthenticated");
+      assert.ok(seenTokens.includes(BAD_TOKEN), "bad token should have been forwarded to auth.getUser");
+    } finally { await close(); }
+  });
+
+  // 4. DB error on the events table → 500
+  it("returns 500 when the events DB query fails", async () => {
+    const base = makeFakeClient();
+    const errClient = {
+      ...base,
+      from(table: string) {
+        if (table !== "events") return base.from(table);
+        const errChain: any = {
+          select:   () => errChain,
+          in:       () => errChain,
+          not:      () => errChain,
+          order:    () => errChain,
+          range:    () => errChain,
+          ilike:    () => errChain,
+          eq:       () => errChain,
+          gte:      () => errChain,
+          lte:      () => errChain,
+          then: (resolve: any, reject: any) =>
+            Promise.resolve({ data: null, error: { message: "Connection refused" } }).then(resolve, reject),
+        };
+        return errChain;
+      },
+    };
+    _setTestClient(errClient, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=TestCity", null, ID.user1);
+      assert.equal(r.status, 500);
+      assert.equal(r.body.error, "db_error");
+    } finally { await close(); }
+  });
+
+  // 5a. city query param (ilike) filters events to the matching city
+  it("city query param filters events by city name", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, city: "Bangkok", state: "open", visibility: "public" }),
+        makeEvent({ id: ID.ev2, city: "Tokyo",   state: "open", visibility: "public", host_id: ID.other_host }),
+      ]},
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Bangkok", null, ID.user1);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 1, "only the Bangkok event should be returned");
+      assert.equal(r.body.events[0].id, ID.ev1);
+    } finally { await close(); }
+  });
+
+  // 5b. Omitting city query param → 400 (city is required for the events list)
+  it("returns 400 when city query param is missing", async () => {
+    const client = makeFakeClient();
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open", null, ID.user1);
+      assert.equal(r.status, 400);
+      assert.equal(r.body.error, "invalid_payload");
+    } finally { await close(); }
+  });
+
+  // 6. state=open encodes correctly and excludes draft/cancelled events
+  it("state=open excludes draft and cancelled events from results", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1,          state: "open",      visibility: "public" }),
+        makeEvent({ id: ID.ev2,          state: "draft",     visibility: "public", host_id: ID.other_host }),
+        makeEvent({ id: EV_CANCELLED_ID, state: "cancelled", visibility: "public", host_id: ID.other_host }),
+      ]},
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Testville", null, ID.user1);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 1, "only the open event should be in the list");
+      assert.equal(r.body.events[0].id, ID.ev1);
+      assert.equal(r.body.events[0].state, "open");
     } finally { await close(); }
   });
 });
