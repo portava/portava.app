@@ -215,6 +215,8 @@ function CategoryChips({ categories, counts, totalCount, selected, onSelect }: C
       contentContainerStyle={chips.content}
     >
       <Pressable
+        testID="map-chip-all"
+        accessibilityLabel={`All, ${totalCount} places`}
         style={[chips.chip, selected === null && chips.active]}
         onPress={() => onSelect(null)}
       >
@@ -228,6 +230,8 @@ function CategoryChips({ categories, counts, totalCount, selected, onSelect }: C
         return (
           <Pressable
             key={cat}
+            testID={`map-chip-${cat}`}
+            accessibilityLabel={`${label}, ${count} places`}
             style={[chips.chip, selected === cat && chips.active]}
             onPress={() => onSelect(cat)}
           >

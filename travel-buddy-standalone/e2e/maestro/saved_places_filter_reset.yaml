@@ -1,0 +1,148 @@
+# Maestro E2E flow — SavedPlacesMapView category-filter reset
+#
+# Verifies the full mid-session removal loop on a real iOS or Android device:
+#   1. Open a trip that has ≥ 2 saved places in ≥ 2 distinct categories.
+#   2. Navigate to the trip's Wishlist Map view (SavedPlacesMapView).
+#   3. Tap a specific category chip (e.g. "Restaurants").
+#   4. Navigate back to the trip detail and remove the last "Restaurants" place.
+#   5. Return to the Wishlist Map.
+#   6. Assert the "All" chip is selected (testID "map-chip-all" is focused).
+#   7. Navigate away from the trip and back.
+#   8. Assert "All" is still active after remount (storage key was cleared).
+#
+# Prerequisites
+# -------------
+#   - EAS development build installed on device (not Expo Go).
+#     Bundle ID: see appId below — update to match app.json.
+#   - Maestro CLI ≥ 1.37 installed: https://maestro.mobile.dev/getting-started/installing-maestro
+#   - Metro dev server running:
+#       cd travel-buddy-standalone && pnpm run dev
+#   - Device connected and Metro URL entered in the app.
+#   - One trip ("Paris Trip") exists with ≥ 2 saved places:
+#       - At least 1 place in category "Restaurants" named "Le Marais Bistro"
+#       - At least 1 place in any other category (e.g. "food")
+#     Both must have coordinates so they appear as map pins.
+#
+#   Seed the trip via the Discovery screen:
+#     1. Open the app → Discovery → find a restaurant → "Save to trip" → select "Paris Trip"
+#     2. Repeat for one place in another category
+#
+#   Note: SavedPlacesMapView must be rendered inside the trip detail screen
+#   (accessible via a "Wishlist Map" or "Saved Places Map" button/tab on the trip
+#   page). The testIDs "map-chip-all" and "map-chip-Restaurants" are set on the
+#   chip Pressables in SavedPlacesMapView.tsx. If this entry point does not yet
+#   exist in the trip screen, integrate SavedPlacesMapView into the trip detail
+#   page before running this flow.
+#
+# Run
+# ---
+#   maestro test travel-buddy-standalone/e2e/maestro/saved_places_filter_reset.yaml
+#
+# Maestro Cloud (CI):
+#   maestro cloud --app <path/to/app.apk> \
+#     travel-buddy-standalone/e2e/maestro/saved_places_filter_reset.yaml
+
+appId: com.travelbuddy.app   # update to match bundle ID in app.json
+
+---
+
+# ── Step 1: Launch the app and land on Pulse (home) tab ───────────────────────
+- launchApp:
+    clearState: false   # keep auth state from the EAS dev build
+
+# ── Step 2: Navigate to the Trips tab ─────────────────────────────────────────
+- tapOn:
+    text: "Trips"
+
+# ── Step 3: Open the test trip ────────────────────────────────────────────────
+- tapOn:
+    text: "Paris Trip"
+
+# ── Step 4: Open the Wishlist Map within the trip ─────────────────────────────
+# This taps the "Wishlist Map" button/tab that renders SavedPlacesMapView.
+# SavedPlacesMapView exposes testID="map-chip-all" and testID="map-chip-<cat>"
+# on each chip Pressable.
+- tapOn:
+    text: "Wishlist Map"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# ── Step 5: Assert the chip row is visible with ≥ 2 categories ────────────────
+# CategoryChips only renders when there are 2+ distinct categories.
+- assertVisible:
+    id: "map-chip-all"
+
+- assertVisible:
+    id: "map-chip-Restaurants"
+
+# ── Step 6: Select the "Restaurants" chip ─────────────────────────────────────
+- tapOn:
+    id: "map-chip-Restaurants"
+
+# Confirm the chip was activated (it stays visible after tap).
+- assertVisible:
+    id: "map-chip-Restaurants"
+
+# ── Step 7: Navigate back to the trip detail page ─────────────────────────────
+- tapOn:
+    text: "Back"
+
+# ── Step 8: Remove the last "Restaurants" place via the Saved Places strip ────
+# The TripSavedPlacesSection strip renders each place's X remove button with:
+#   accessibilityLabel: "Remove {name} from saved places"
+#   testID: "saved-place-remove-{place.id}"
+#
+# We match by accessibility label since the place ID is not known at script time.
+- tapOn:
+    label: "Remove Le Marais Bistro from saved places"
+
+# Allow React state + AsyncStorage fire-and-forget write to settle.
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# ── Step 9: Return to the Wishlist Map ────────────────────────────────────────
+- tapOn:
+    text: "Wishlist Map"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# ── Step 10: Assert "All" chip is highlighted, "Restaurants" chip is gone ─────
+#
+# After removal of the last "Restaurants" place, resolveStoredCategory returns
+# null → effectiveCategory = null → chip row resets to "All".
+# The "Restaurants" chip disappears because the category no longer exists.
+- assertVisible:
+    id: "map-chip-all"
+
+- assertNotVisible:
+    id: "map-chip-Restaurants"
+
+# ── Step 11: Navigate away (trips list) ───────────────────────────────────────
+- tapOn:
+    text: "Trips"
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+# ── Step 12: Return to the same trip's Wishlist Map (remount) ─────────────────
+- tapOn:
+    text: "Paris Trip"
+
+- tapOn:
+    text: "Wishlist Map"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# ── Step 13: Assert "All" is still active after remount ───────────────────────
+#
+# The mount-restore useEffect calls readRawCategoryFilter. The storage key was
+# cleared by toggleSave when the last place was removed, so it returns null.
+# resolveStoredCategory(null, categories) → null → chip stays on "All".
+- assertVisible:
+    id: "map-chip-all"
+
+- assertNotVisible:
+    id: "map-chip-Restaurants"

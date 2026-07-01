@@ -303,6 +303,7 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
                 ) : null}
               </View>
               <Pressable
+                testID={`saved-place-remove-${place.id}`}
                 style={tsp.removeBtn}
                 hitSlop={8}
                 onPress={() => { void toggle(place); }}
