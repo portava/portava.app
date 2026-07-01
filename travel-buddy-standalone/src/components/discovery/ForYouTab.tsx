@@ -202,6 +202,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     return (
       <>
         <DiscoveryMapView
+          key={destination}
           places={mapPlaces}
           onSelectPlace={(p) => {
             // Strip "comm/" prefix so PlaceDetailSheet uses the bare UUID

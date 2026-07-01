@@ -3,10 +3,15 @@
  * Metro automatically selects DiscoveryMapView.web.tsx on web, so this file
  * is only compiled for native (iOS / Android).
  *
- * DB places (id prefixed "db/") are rendered with a distinct gold pin + Star
- * icon so travelers can tell them apart from OSM-sourced venues at a glance.
+ * DB places (id prefixed "db/" or "comm/") are rendered as gold star pins so
+ * travelers can distinguish them from OSM-sourced venues at a glance.
+ *
+ * A three-way segmented filter (All / Traveler Picks / Venues) floats at the
+ * top of the map and re-renders visible pins without any network request.
+ * Filter state is internal; pass a new `key` prop to reset it externally
+ * (e.g. key={destination} in ForYouTab).
  */
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Navigation, Star } from 'lucide-react-native';
@@ -21,6 +26,9 @@ const MAP_STYLE = MAPTILER_KEY
   : 'https://demotiles.maplibre.org/style.json';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/** Which layer of pins to show on the map. */
+export type MapFilter = 'all' | 'traveler' | 'osm';
 
 export interface DiscoveryMapViewProps {
   userLat?: number | null;
@@ -53,6 +61,14 @@ function isDbPlace(id: string): boolean {
   return id.startsWith('db/') || id.startsWith('comm/');
 }
 
+// ── Filter options ─────────────────────────────────────────────────────────────
+
+const FILTER_OPTIONS: { key: MapFilter; label: string }[] = [
+  { key: 'all',      label: 'All' },
+  { key: 'traveler', label: '⭐ Picks' },
+  { key: 'osm',      label: '📍 Venues' },
+];
+
 // ── Viewport helper ───────────────────────────────────────────────────────────
 
 function computeViewport(places: DiscoveryPlace[]) {
@@ -75,19 +91,32 @@ function computeViewport(places: DiscoveryPlace[]) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+  const [filter, setFilter] = useState<MapFilter>('all');
+
+  // All places that have coordinates — used for viewport + empty-state check.
   const mappable = useMemo(
     () => places.filter((p) => p.lat != null && p.lng != null),
     [places],
   );
+
+  // Subset of mappable based on the active filter — what actually gets pinned.
+  const visiblePlaces = useMemo(() => {
+    if (filter === 'traveler') return mappable.filter((p) => isDbPlace(p.id));
+    if (filter === 'osm')      return mappable.filter((p) => !isDbPlace(p.id));
+    return mappable;
+  }, [mappable, filter]);
+
   const viewport = useMemo(() => computeViewport(mappable), [mappable]);
 
   const fallback = (fallbackLat != null && fallbackLng != null)
     ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
     : null;
   const vp = viewport ?? fallback;
-  const dbCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
+
+  const travelerCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
   const cameraRef = useRef<any>(null);
   const hasUser = userLat != null && userLng != null;
+
   const recenterOnMe = () => {
     if (hasUser && cameraRef.current) {
       cameraRef.current.setCamera({
@@ -97,6 +126,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
       });
     }
   };
+
   if (!vp) {
     return (
       <View style={s.empty}>
@@ -122,7 +152,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             zoom: vp.zoom,
           }}
         />
-        {mappable.map((place) => {
+        {visiblePlaces.map((place) => {
           const db = isDbPlace(place.id);
           const pinBg = db ? DB_PIN_COLOR : (CAT_COLOR[place.category] ?? color.signal);
           return (
@@ -141,7 +171,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             </Marker>
           );
         })}
-              {hasUser && (
+        {hasUser && (
           <Marker key="me-marker" lngLat={[userLng as number, userLat as number]}>
             <View style={s.meDotOuter}>
               <View style={s.meDot} />
@@ -149,22 +179,45 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           </Marker>
         )}
       </Map>
+
+      {/* ── Filter toggle ──────────────────────────────────────────────────── */}
+      <View style={s.filterRow}>
+        {FILTER_OPTIONS.map((opt) => {
+          const active = filter === opt.key;
+          return (
+            <Pressable
+              key={opt.key}
+              style={[s.filterBtn, active && s.filterBtnActive]}
+              onPress={() => setFilter(opt.key)}
+              hitSlop={4}
+            >
+              <Text style={[s.filterBtnText, active && s.filterBtnTextActive]}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* ── Badge row ──────────────────────────────────────────────────────── */}
       <View style={s.badgeRow}>
         <View style={s.badge}>
           <MapPin size={10} color="#fff" />
           <Text style={s.badgeText}>
-            {mappable.length} {mappable.length === 1 ? 'place' : 'places'}
+            {visiblePlaces.length} {visiblePlaces.length === 1 ? 'place' : 'places'}
           </Text>
         </View>
-        {dbCount > 0 && (
+        {travelerCount > 0 && filter !== 'osm' && (
           <View style={[s.badge, s.dbBadge]}>
             <Star size={10} color="#fff" fill="#fff" />
             <Text style={s.badgeText}>
-              {dbCount} traveler {dbCount === 1 ? 'pick' : 'picks'}
+              {filter === 'traveler' ? visiblePlaces.length : travelerCount}{' '}
+              traveler {(filter === 'traveler' ? visiblePlaces.length : travelerCount) === 1 ? 'pick' : 'picks'}
             </Text>
           </View>
         )}
       </View>
+
       {hasUser && (
         <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
           <Navigation size={18} color={color.signal} />
@@ -263,6 +316,37 @@ const s = StyleSheet.create({
     color: color.faint,
     textAlign: 'center',
     maxWidth: 260,
+  },
+  filterRow: {
+    position: 'absolute',
+    top: 14,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: radius.pill,
+    padding: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 5,
+    gap: 2,
+  },
+  filterBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  filterBtnActive: {
+    backgroundColor: color.signal,
+  },
+  filterBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: color.mute,
+  },
+  filterBtnTextActive: {
+    color: '#fff',
   },
   badgeRow: {
     position: 'absolute',
