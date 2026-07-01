@@ -18,6 +18,7 @@ import {
   getCollectionItems,
   type Collection, type CollectionItem,
 } from '../src/services/collections';
+import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
 import {
   Bookmark, FolderPlus, Folder, Trash2, X, ChevronRight,
   ChevronLeft, MapPin, User, Image as ImageIcon, Hash, CalendarDays,
@@ -368,13 +369,14 @@ export default function SavedScreen() {
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const handleDelete = useCallback(async (col: Collection) => {
-    const prev = collections;
-    setCollections((cs) => cs.filter((c) => c.id !== col.id));
-    const ok = await deleteCollection(col.id);
-    if (!ok) {
-      setCollections(prev);
-      showError("Couldn't delete — please try again.");
-    }
+    await withOptimisticRemoveBool({
+      target: col,
+      getItems: () => collections,
+      setItems: setCollections,
+      match: (item, t) => item.id === t.id,
+      deleteOp: (c) => deleteCollection(c.id),
+      onError: showError,
+    });
   }, [collections, showError]);
 
   const handleRenamed = useCallback((updated: Collection) => {
