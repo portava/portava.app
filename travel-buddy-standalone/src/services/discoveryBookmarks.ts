@@ -81,6 +81,11 @@ export async function listSaved(): Promise<BookmarkedPlace[]> {
   return all.sort((a, b) => b.savedAt - a.savedAt);
 }
 
+export async function clearAllSaved(): Promise<void> {
+  await _storage.removeItem(STORAGE_KEY);
+  await _storage.removeItem(GLOBAL_FILTER_KEY);
+}
+
 export async function removeSaved(id: string): Promise<void> {
   // Read and write directly — bypassing the silent-catch helpers — so that
   // any AsyncStorage failure propagates to the caller. The saved.tsx

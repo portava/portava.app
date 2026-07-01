@@ -9,7 +9,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { removeSaved, _setTestStorage } from '../discoveryBookmarks.ts';
+import { removeSaved, clearAllSaved, _setTestStorage } from '../discoveryBookmarks.ts';
 import { categoryStorageKey } from '../../components/savedPlacesMapFilterStorage.ts';
 
 const GLOBAL_FILTER_KEY = categoryStorageKey('global');
@@ -163,5 +163,78 @@ describe('removeSaved — stale filter key cleanup', () => {
 
     // The primary removeSaved promise must resolve even if removeItem rejects
     await assert.doesNotReject(() => removeSaved('place-1'));
+  });
+});
+
+describe('clearAllSaved — bulk-remove with filter key cleanup', () => {
+  let storage: FakeStorage;
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+  });
+
+  it('removes the bookmarks key and the global filter key atomically', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1', 'place-2', 'place-3'));
+    storage.store.set(GLOBAL_FILTER_KEY, 'food');
+
+    await clearAllSaved();
+
+    assert.ok(
+      storage.removedKeys.includes(BOOKMARKS_KEY),
+      'bookmarks key must be removed',
+    );
+    assert.ok(
+      storage.removedKeys.includes(GLOBAL_FILTER_KEY),
+      'filter key must be removed',
+    );
+    assert.equal(storage.store.has(BOOKMARKS_KEY), false);
+    assert.equal(storage.store.has(GLOBAL_FILTER_KEY), false);
+  });
+
+  it('leaves no stale filter key when called with no filter previously set', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    // No filter key set — removeItem should still be called (idempotent)
+
+    await clearAllSaved();
+
+    assert.ok(
+      storage.removedKeys.includes(GLOBAL_FILTER_KEY),
+      'removeItem must be called for the filter key even when it was absent',
+    );
+  });
+
+  it('leaves no stale filter key when called on an already-empty list', async () => {
+    // Neither key is in storage — simulates calling clearAll on an empty wishlist
+    await clearAllSaved();
+
+    assert.ok(storage.removedKeys.includes(BOOKMARKS_KEY), 'bookmarks key removal must be attempted');
+    assert.ok(storage.removedKeys.includes(GLOBAL_FILTER_KEY), 'filter key removal must be attempted');
+  });
+
+  it('removes bookmarks key before filter key (bookmarks key is removed first)', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    storage.store.set(GLOBAL_FILTER_KEY, 'parks');
+
+    await clearAllSaved();
+
+    const bookmarksIdx = storage.removedKeys.indexOf(BOOKMARKS_KEY);
+    const filterIdx = storage.removedKeys.indexOf(GLOBAL_FILTER_KEY);
+    assert.ok(bookmarksIdx !== -1, 'bookmarks key must be removed');
+    assert.ok(filterIdx !== -1, 'filter key must be removed');
+    assert.ok(bookmarksIdx < filterIdx, 'bookmarks key should be removed before filter key');
+  });
+
+  it('propagates a removeItem error on the bookmarks key', async () => {
+    const broken: FakeStorage = {
+      store: new Map([[BOOKMARKS_KEY, serialise('place-1')]]),
+      removedKeys: [],
+      getItem: (k) => Promise.resolve(broken.store.get(k) ?? null),
+      setItem: (_k, _v) => Promise.resolve(),
+      removeItem: () => Promise.reject(new Error('storage error')),
+    };
+    _setTestStorage(broken);
+
+    await assert.rejects(() => clearAllSaved(), /storage error/);
   });
 });
