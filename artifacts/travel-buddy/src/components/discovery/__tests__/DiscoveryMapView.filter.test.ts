@@ -23,6 +23,12 @@
  *   C7. removeMapFilter calls storage.removeItem with the correct key
  *   C8. Full lifecycle: save('traveler') → remove → getCachedFilter() === null
  *   C9. Full lifecycle: save('osm') → load → getCachedFilter() === 'osm'
+ *
+ * Round-trip integration tests:
+ *   RT1. save → load confirms value → remove → load again returns 'all'
+ *   RT2. wrong-key removeItem bug: demonstrates that storage still holds the
+ *        value when the wrong key is deleted; correct removeMapFilter fixes it
+ *   RT3. cache mirrors storage at every step of the full lifecycle
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -260,6 +266,92 @@ describe('getCachedFilter and memory cache', () => {
     saveMapFilter(storage, 'osm');
     await loadMapFilter(storage);
     assert.equal(getCachedFilter(), 'osm');
+  });
+});
+
+// ── Stateful storage (for round-trip integration tests) ───────────────────────
+//
+// Unlike fakeStorage() whose getItem always returns a fixed value, statefulStorage
+// reflects mutations: setItem stores a value, removeItem deletes it, getItem reads
+// the current state. This lets a single test drive save → load → remove → load.
+
+function statefulStorage(): StorageLike & { store: Map<string, string> } {
+  const store = new Map<string, string>();
+  return {
+    store,
+    getItem(key) { return Promise.resolve(store.get(key) ?? null); },
+    setItem(key, value) { store.set(key, value); return Promise.resolve(); },
+    removeItem(key) { store.delete(key); return Promise.resolve(); },
+  };
+}
+
+// ── Round-trip integration tests ───────────────────────────────────────────────
+
+describe('round-trip integration', () => {
+  beforeEach(() => { removeMapFilter(fakeStorage()); });
+  afterEach(() => { removeMapFilter(fakeStorage()); });
+
+  it('RT1. save → load confirms persisted value → remove → load returns "all"', async () => {
+    const storage = statefulStorage();
+    // Step 1: save 'traveler'
+    saveMapFilter(storage, 'traveler');
+    await new Promise((r) => setImmediate(r)); // let setItem settle
+    // Step 2: load confirms the value was actually written to storage
+    const afterSave = await loadMapFilter(storage);
+    assert.equal(afterSave, 'traveler');
+    // Step 3: remove
+    removeMapFilter(storage);
+    await new Promise((r) => setImmediate(r)); // let removeItem settle
+    // Step 4: load confirms the value is gone — not a wrong-key removal
+    const afterRemove = await loadMapFilter(storage);
+    assert.equal(afterRemove, 'all');
+  });
+
+  it('RT1b. same round-trip with "osm" filter', async () => {
+    const storage = statefulStorage();
+    saveMapFilter(storage, 'osm');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(await loadMapFilter(storage), 'osm');
+    removeMapFilter(storage);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(await loadMapFilter(storage), 'all');
+  });
+
+  it('RT2. demonstrates that a wrong-key removeItem leaves stale data; removeMapFilter uses the correct key', async () => {
+    const storage = statefulStorage();
+    saveMapFilter(storage, 'osm');
+    await new Promise((r) => setImmediate(r));
+    // Simulate a bug: remove a different key instead of the real storage key
+    storage.store.delete('wrong_key');
+    // The real key is still present — stale data survives wrong-key deletion
+    const stillPresent = await loadMapFilter(storage);
+    assert.equal(stillPresent, 'osm');
+    // removeMapFilter uses FILTER_STORAGE_KEY — the correct key — so the value is gone
+    removeMapFilter(storage);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(await loadMapFilter(storage), 'all');
+  });
+
+  it('RT3. cache mirrors storage state at every step of the full lifecycle', async () => {
+    const storage = statefulStorage();
+    // Initially null
+    assert.equal(getCachedFilter(), null);
+    // After save: cache updated synchronously
+    saveMapFilter(storage, 'traveler');
+    assert.equal(getCachedFilter(), 'traveler');
+    await new Promise((r) => setImmediate(r));
+    // After load: cache still 'traveler' (load also sets cache on valid value)
+    await loadMapFilter(storage);
+    assert.equal(getCachedFilter(), 'traveler');
+    // After remove: cache cleared to null and storage value is gone
+    removeMapFilter(storage);
+    assert.equal(getCachedFilter(), null);
+    await new Promise((r) => setImmediate(r));
+    // Reload after remove: returns 'all' (storage key was deleted)
+    const afterRemove = await loadMapFilter(storage);
+    assert.equal(afterRemove, 'all');
+    // Cache stays null on fallback (only set when a valid stored value is found)
+    assert.equal(getCachedFilter(), null);
   });
 });
 
