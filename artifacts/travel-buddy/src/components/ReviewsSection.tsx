@@ -9,7 +9,7 @@
  * Shows "Edit your review" CTA if the user already has a review on file.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -17,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   getTripReviews,
   getEventReviews,
@@ -103,38 +103,42 @@ export function ReviewsSection({
   const [loading, setLoading]         = useState(true);
   const [alreadyReviewed, setAlready] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        if (entityType === 'trip') {
-          const resp: ReviewsResponse = await getTripReviews(entityId, 1, 5);
-          if (active) {
-            setReviews(resp.reviews);
-            setTotal(resp.total);
-            setAvg(resp.avgRating);
+  // Refetch reviews and aggregate stats every time the screen comes into focus
+  // so avgRating is fresh after the user writes or edits a review and returns.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const load = async () => {
+        try {
+          if (entityType === 'trip') {
+            const resp: ReviewsResponse = await getTripReviews(entityId, 1, 5);
+            if (active) {
+              setReviews(resp.reviews);
+              setTotal(resp.total);
+              setAvg(resp.avgRating);
+            }
+          } else if (entityType === 'event') {
+            const resp: EventReviewsResponse = await getEventReviews(entityId, 1, 5);
+            if (active) {
+              setReviews(resp.reviews);
+              setTotal(resp.reviews.length);
+              setAvg(
+                resp.reviews.length > 0
+                  ? resp.reviews.reduce((sum, r) => sum + r.rating, 0) / resp.reviews.length
+                  : null,
+              );
+            }
           }
-        } else if (entityType === 'event') {
-          const resp: EventReviewsResponse = await getEventReviews(entityId, 1, 5);
-          if (active) {
-            setReviews(resp.reviews);
-            setTotal(resp.reviews.length);
-            setAvg(
-              resp.reviews.length > 0
-                ? resp.reviews.reduce((sum, r) => sum + r.rating, 0) / resp.reviews.length
-                : null,
-            );
-          }
+        } catch {
+          // silent — don't block the parent screen
+        } finally {
+          if (active) setLoading(false);
         }
-      } catch {
-        // silent — don't block the parent screen
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    load();
-    return () => { active = false; };
-  }, [entityType, entityId]);
+      };
+      load();
+      return () => { active = false; };
+    }, [entityType, entityId]),
+  );
 
   // Separately check whether the current user has already submitted a review.
   // Only runs when the review CTA would otherwise be shown, and only for trip/booking
