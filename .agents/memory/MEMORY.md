@@ -27,3 +27,4 @@
 - [RNTL v14 async API](rntl-v14-async-api.md) — render/rerender/fireEvent are all async; must await or getByTestId is undefined (Promise returned, not RenderResult)
 - [Phase 8 fake-client pitfalls](phase8-test-pitfalls.md) — geofence trip_members must include role field; admin.ts uses .eq("flag",...) while safeReturn.ts uses .eq("key",...) — fake client needs both columns; rentABuddy nightlife flag must be seeded or age/category checks are unreachable
 - [Discovery DB merge + Pulse place cards](discovery-db-merge.md) — discovery route now merges discovery_places DB with OSM; pulse returns placeCards when posts<5; regex `hik` not `hike` to match "hiking"
+- [Profile visibility system](profile-visibility-system.md) — resolveProfileVisibility helper; profile_privacy_settings vs user_privacy_settings sync; passport viewer object; username rules; profile tab pattern

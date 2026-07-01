@@ -32,16 +32,18 @@ const SUPPORTED_LANGUAGE_CODES = new Set([
 ]);
 
 const RESERVED_USERNAMES = new Set([
-  "admin", "support", "system", "travelbuddy", "passport", "official",
-  "root", "api", "settings", "login", "signup", "help", "me", "user",
-  "users", "null", "undefined", "about", "terms", "privacy",
+  "admin", "support", "travelbuddy", "official", "root", "system",
+  "null", "undefined", "help", "security", "moderator", "owner",
+  "passport", "api", "settings", "login", "signup", "me", "user",
+  "users", "about", "terms", "privacy",
 ]);
 
-const USERNAME_RE = /^[a-z0-9_.]{3,24}$/;
+/** No periods: keeps usernames clean; max 30 chars (was 24). */
+const USERNAME_RE = /^[a-z0-9_]{3,30}$/;
 
 function validateUsername(u: string): { valid: boolean; reason?: string } {
   if (!USERNAME_RE.test(u)) {
-    return { valid: false, reason: "Username must be 3-24 chars, lowercase letters/numbers/underscores/periods only" };
+    return { valid: false, reason: "Username must be 3-30 chars, lowercase letters, numbers, and underscores only" };
   }
   if (RESERVED_USERNAMES.has(u)) {
     return { valid: false, reason: "That username is reserved" };
@@ -236,13 +238,32 @@ router.patch("/me/profile", async (req, res) => {
       sendError(res, "invalid_payload", v.reason ?? "Invalid username");
       return;
     }
-    const { data: existing } = await client
+
+    // 30-day cooldown: enforce via username_updated_at
+    const { data: currentProfile } = await client
+      .from("profiles")
+      .select("username, username_updated_at")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (currentProfile?.username_updated_at && currentProfile.username !== p.username) {
+      const lastChanged = new Date(currentProfile.username_updated_at);
+      const msSince = Date.now() - lastChanged.getTime();
+      const daysSince = msSince / (1000 * 60 * 60 * 24);
+      if (daysSince < 30) {
+        const daysLeft = Math.ceil(30 - daysSince);
+        sendError(res, "invalid_payload", `Username can only be changed once every 30 days. ${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining.`);
+        return;
+      }
+    }
+
+    const { data: takenBy } = await client
       .from("profiles")
       .select("id")
       .eq("username", p.username)
       .neq("id", user.id)
       .maybeSingle();
-    if (existing) {
+    if (takenBy) {
       sendError(res, "invalid_payload", "Username is already taken");
       return;
     }
@@ -500,6 +521,243 @@ router.put("/me/push-token", async (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+/* ===========================================================================
+ * POST /me/deactivate — temporarily deactivate the caller's account
+ * ===========================================================================
+ * Sets user_account_states to 'deactivated' and flags discovery off.
+ */
+router.post("/me/deactivate", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc
+    .from("user_account_states")
+    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id" });
+
+  if (error) {
+    req.log.error({ err: error }, "deactivate: failed to update account state");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // Update profile-level account_status (awaited; fail-open if column not yet migrated)
+  await sc
+    .from("profiles")
+    .update({ account_status: "deactivated" })
+    .eq("id", user.id)
+    .then(undefined, () => {});
+
+  // Suppress from discovery (fire-and-forget: non-critical)
+  sc.from("profile_privacy_settings")
+    .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  res.status(200).json({ deactivated: true });
+});
+
+/* ===========================================================================
+ * POST /me/delete-request — schedule account deletion (30-day hold)
+ * ===========================================================================
+ * Creates a deletion request record and flags the account as deactivated
+ * so it becomes invisible to other users during the hold period.
+ */
+router.post("/me/delete-request", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date().toISOString();
+  const scheduledAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await sc
+    .from("user_deletion_requests")
+    .upsert({ user_id: user.id, requested_at: now, scheduled_at: scheduledAt, status: "pending" }, { onConflict: "user_id" });
+
+  if (error) {
+    req.log.error({ err: error }, "delete-request: failed to create deletion request");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // Deactivate so profile is unavailable to others during the hold period
+  await sc
+    .from("user_account_states")
+    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  // Update profile-level account_status (awaited; fail-open if column not yet migrated)
+  await sc
+    .from("profiles")
+    .update({ account_status: "deactivated" })
+    .eq("id", user.id)
+    .then(undefined, () => {});
+
+  // Suppress from discovery (fire-and-forget: non-critical)
+  sc.from("profile_privacy_settings")
+    .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  res.status(200).json({ deletionScheduled: true, scheduledAt });
+});
+
+/* ===========================================================================
+ * GET /me/privacy — fetch caller's privacy settings
+ * ===========================================================================
+ * Returns the profile_privacy_settings row, or defaults if none exists yet.
+ */
+const PRIVACY_DEFAULTS = {
+  profile_visibility: "public",
+  show_current_city: true,
+  show_home_country: true,
+  show_visited_places: true,
+  show_upcoming_trips: true,
+  show_past_trips: true,
+  show_posts: true,
+  show_stamps: true,
+  show_friends: true,
+  show_followers: true,
+  allow_messages_from: "everyone",
+  allow_friend_requests: true,
+  allow_follow: true,
+  allow_tagging: true,
+  allow_profile_discovery: true,
+  delayed_posting_default: false,
+  precise_location_visible: false,
+} as const;
+
+router.get("/me/privacy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data, error } = await sc
+    .from("profile_privacy_settings")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if ((error as any).code === "42P01" || (error as any).code === "PGRST205") {
+      res.status(200).json({ ...PRIVACY_DEFAULTS, user_id: user.id });
+      return;
+    }
+    req.log.error({ err: error }, "privacy/get: query failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  if (!data) {
+    // First access: persist defaults so PATCH can merge against a real row
+    const defaults = { ...PRIVACY_DEFAULTS, user_id: user.id };
+    sc.from("profile_privacy_settings")
+      .upsert(defaults, { onConflict: "user_id" })
+      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/get: failed to seed defaults"));
+    res.status(200).json(defaults);
+    return;
+  }
+
+  res.status(200).json(data);
+});
+
+/* ===========================================================================
+ * PATCH /me/privacy — update privacy settings
+ * ===========================================================================
+ * Upserts profile_privacy_settings and syncs profile_visibility to
+ * user_privacy_settings so the interactionPermissions engine stays consistent.
+ */
+const patchPrivacySchema = z.object({
+  profile_visibility: z.enum(["public", "followers_only", "private"]).optional(),
+  show_current_city: z.boolean().optional(),
+  show_home_country: z.boolean().optional(),
+  show_visited_places: z.boolean().optional(),
+  show_upcoming_trips: z.boolean().optional(),
+  show_past_trips: z.boolean().optional(),
+  show_posts: z.boolean().optional(),
+  show_stamps: z.boolean().optional(),
+  show_friends: z.boolean().optional(),
+  show_followers: z.boolean().optional(),
+  allow_messages_from: z.enum(["everyone", "friends", "followers", "nobody"]).optional(),
+  allow_friend_requests: z.boolean().optional(),
+  allow_follow: z.boolean().optional(),
+  allow_tagging: z.boolean().optional(),
+  allow_profile_discovery: z.boolean().optional(),
+  delayed_posting_default: z.boolean().optional(),
+  precise_location_visible: z.boolean().optional(),
+});
+
+router.patch("/me/privacy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = patchPrivacySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    sendError(res, "invalid_payload", "At least one field must be provided");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date().toISOString();
+
+  // Fetch existing to merge (prevents overwriting fields not in this PATCH)
+  const existingRes = await sc
+    .from("profile_privacy_settings")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle()
+    .then(undefined, () => ({ data: null }));
+  const existing = existingRes.data;
+
+  const mergedRow = {
+    ...PRIVACY_DEFAULTS,
+    ...(existing ?? {}),
+    ...parsed.data,
+    user_id: user.id,
+    updated_at: now,
+  };
+
+  const { data, error } = await sc
+    .from("profile_privacy_settings")
+    .upsert(mergedRow, { onConflict: "user_id" })
+    .select("*")
+    .single();
+
+  if (error) {
+    req.log.error({ err: error }, "privacy/patch: update failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // Keep user_privacy_settings.profile_visibility in sync
+  if (parsed.data.profile_visibility !== undefined) {
+    const syncVisibility = parsed.data.profile_visibility === "followers_only"
+      ? null   // user_privacy_settings encodes "followers_only" as null (falsy private)
+      : parsed.data.profile_visibility;
+    sc.from("user_privacy_settings")
+      .upsert({ user_id: user.id, profile_visibility: syncVisibility, updated_at: now }, { onConflict: "user_id" })
+      .then(undefined, () => {});
+  }
+
+  res.status(200).json(data);
 });
 
 export default router;

@@ -59,6 +59,7 @@ import reviewsRouter from "./reviews";
 import appealsRouter from "./appeals";
 import collectionsRouter from "./collections";
 import wishlistRouter from "./wishlist";
+import profileTabsRouter from "./profileTabs";
 
 const router: IRouter = Router();
 
@@ -122,5 +123,6 @@ router.use(reviewsRouter);
 router.use(appealsRouter);
 router.use(collectionsRouter);
 router.use(wishlistRouter);
+router.use(profileTabsRouter);
 
 export default router;
