@@ -410,6 +410,26 @@ describe("GET /api/reviews/my-review", () => {
     assert.equal(body.exists, false, "removed review should not count as existing");
   });
 
+  it("excludes reviews with state=hidden from the exists check", async () => {
+    const hiddenReview = {
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      4,
+      state:       "hidden",   // author-retracted — should be excluded
+    };
+    server = await startServer(completedTripTables([hiddenReview]));
+    const { status, body } = await fetchGet(
+      server.url,
+      `/api/reviews/my-review?entityType=trip&entityId=${TRIP_ID}`,
+      "reviewer-token",
+    );
+    assert.equal(status, 200);
+    assert.equal(body.exists, false, "hidden review should not count as existing");
+    assert.equal(body.reviewId, null);
+  });
+
   it("400 invalid_payload when entityId is missing", async () => {
     server = await startServer();
     const { status, body } = await fetchGet(
