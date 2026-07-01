@@ -28,6 +28,8 @@ Install all of the following on any machine or CI runner before triggering a bui
 
 # Verify all tools before running the pre-release check
 - run: bash scripts/pre-release-check.sh
+  env:
+    SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
 ```
 
 ### Verifying locally
@@ -298,6 +300,61 @@ Push a test `release-*` branch to confirm CI passes the Android credential check
 1. **"Could not retrieve Android credentials"** — `EXPO_TOKEN` may have been revoked or the token does not have access to this EAS project. Regenerate the token at https://expo.dev/accounts/[your-username]/settings/access-tokens, update the `EXPO_TOKEN` GitHub secret, and re-run the workflow.
 2. **"No Android keystore found"** — `eas credentials --platform android` has never been run for this project, or the keystore was manually deleted. Follow "Android credentials setup for CI" above.
 3. **"EXPIRED"** — The keystore has already lapsed. If the app has never been submitted to Google Play, rotate using the steps above. If it is live on Google Play, see the Google Play signing lock warning.
+
+---
+
+## DB triggers check in CI
+
+The `db-triggers` pre-release check (`scripts/check-db-triggers.sh`) queries the Supabase Management API to confirm that the DB protection triggers from migrations 0071–0074 are present in the production database before any EAS build is allowed to proceed.
+
+### Which token to use
+
+| Context | Token | Notes |
+|---------|-------|-------|
+| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped, read-only. Safe to store as a repo secret — not tied to any developer account. Rotate independently from developer tokens. **Preferred.** |
+| **Local developer run** | `SUPABASE_ACCESS_TOKEN` | Personal access token from https://supabase.com/dashboard/account/tokens. Never commit or store this in CI. |
+
+The script checks `SUPABASE_PROJECT_TOKEN` first; if absent it falls back to `SUPABASE_ACCESS_TOKEN`. Both use the same Supabase Management API endpoint so no other config change is needed.
+
+### Creating a project-scoped token (one-time setup)
+
+1. Go to the [Supabase dashboard](https://supabase.com/dashboard) and open this project.
+2. Navigate to **Project Settings → API → Project API tokens**.
+3. Click **Generate new token**.
+4. Give it a name (e.g. `github-ci-trigger-check`) and set the scope to **Read** — the check never writes.
+5. Copy the generated token value.
+
+### Storing the token as a GitHub Actions secret
+
+1. In your GitHub repository, go to **Settings → Secrets and variables → Actions**.
+2. Click **New repository secret**.
+3. Name: `SUPABASE_PROJECT_TOKEN` · Value: the token you copied above.
+4. Save.
+
+The `pre-release-check.sh` step in CI must then pass the secret as an environment variable:
+
+```yaml
+- name: Pre-release checks
+  run: bash scripts/pre-release-check.sh
+  env:
+    SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+```
+
+### If the check fails in CI
+
+| Error message | Likely cause | Fix |
+|---------------|-------------|-----|
+| `No Supabase token found` | Secret not set or not passed via `env:` | Add/verify `SUPABASE_PROJECT_TOKEN` in repository secrets and the `env:` block above |
+| `Management API returned HTTP 401` | Token invalid or revoked | Regenerate the project token and update the secret |
+| `Management API returned HTTP 403` | Token scope too narrow | Ensure the token was created with **Read** scope |
+| One or more triggers missing | Migration not applied to production | Apply `0071_protect_default_collection.sql` – `0074_*` via the Supabase dashboard or `psql` |
+
+### Local developer run
+
+```bash
+export SUPABASE_ACCESS_TOKEN=sbp_...   # generate at https://supabase.com/dashboard/account/tokens
+bash scripts/check-db-triggers.sh
+```
 
 ---
 

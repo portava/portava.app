@@ -4,8 +4,21 @@
 #
 # Called by scripts/pre-release-check.sh as the "db-triggers" check.
 #
-# Environment variables:
-#   SUPABASE_ACCESS_TOKEN  — Supabase personal access token (Management API).
+# Environment variables (checked in order — first one present wins):
+#
+#   SUPABASE_PROJECT_TOKEN — Project-scoped Supabase API token (preferred for
+#                            CI).  Create one in the Supabase dashboard under
+#                            Project Settings → API → Project API tokens, then
+#                            store it as a repo secret (e.g. SUPABASE_PROJECT_TOKEN
+#                            in GitHub Actions secrets).  Scope it to "read"
+#                            access — this check never writes to the project.
+#                            See docs/eas-runbook.md → "DB triggers check in CI"
+#                            for full setup instructions.
+#
+#   SUPABASE_ACCESS_TOKEN  — Personal access token (Management API).  Suitable
+#                            for local developer runs.  Not recommended for CI
+#                            because it is tied to an individual account and must
+#                            be rotated whenever the developer changes.
 #                            Generate one at:
 #                            https://supabase.com/dashboard/account/tokens
 #
@@ -41,14 +54,35 @@ if [[ -z "$PROJECT_REF" || "$PROJECT_REF" == "$SUPABASE_URL" ]]; then
   exit 1
 fi
 
-# ── require SUPABASE_ACCESS_TOKEN ─────────────────────────────────────────────
-if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
-  printf "  ✘  SUPABASE_ACCESS_TOKEN is not set.\n"
-  printf "     This token is required to query the Supabase Management API.\n"
-  printf "     Generate one at: https://supabase.com/dashboard/account/tokens\n"
-  printf "     Then export it:  export SUPABASE_ACCESS_TOKEN=sbp_...\n"
+# ── resolve the Management API bearer token ───────────────────────────────────
+# Prefer SUPABASE_PROJECT_TOKEN (project-scoped, safe for CI) over the personal
+# SUPABASE_ACCESS_TOKEN so that CI runners never need a developer account token.
+MGMT_TOKEN=""
+TOKEN_SOURCE=""
+
+if [[ -n "${SUPABASE_PROJECT_TOKEN:-}" ]]; then
+  MGMT_TOKEN="$SUPABASE_PROJECT_TOKEN"
+  TOKEN_SOURCE="SUPABASE_PROJECT_TOKEN"
+elif [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+  MGMT_TOKEN="$SUPABASE_ACCESS_TOKEN"
+  TOKEN_SOURCE="SUPABASE_ACCESS_TOKEN"
+else
+  printf "  ✘  No Supabase token found.\n"
+  printf "\n"
+  printf "     For CI / GitHub Actions (recommended):\n"
+  printf "       Set SUPABASE_PROJECT_TOKEN as a repository secret.\n"
+  printf "       Create the token in Supabase dashboard →\n"
+  printf "         Project Settings → API → Project API tokens\n"
+  printf "       Scope: read-only.  Store as: SUPABASE_PROJECT_TOKEN\n"
+  printf "       See docs/eas-runbook.md → \"DB triggers check in CI\" for details.\n"
+  printf "\n"
+  printf "     For local runs:\n"
+  printf "       export SUPABASE_ACCESS_TOKEN=sbp_...\n"
+  printf "       Generate at: https://supabase.com/dashboard/account/tokens\n"
   exit 1
 fi
+
+printf "  ℹ  Using %s for Supabase Management API\n" "$TOKEN_SOURCE"
 
 # ── query Management API for all required triggers ────────────────────────────
 # information_schema.triggers is always accessible via the Management API
@@ -67,7 +101,7 @@ API_URL="https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query"
 
 RESPONSE=$(curl -s -w "\n%{http_code}" \
   -X POST "$API_URL" \
-  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
   -H "Content-Type: application/json" \
   --data-raw "{\"query\":\"${SQL}\"}")
 
@@ -77,7 +111,7 @@ HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
 if [[ "$HTTP_CODE" != "200" ]]; then
   printf "  ✘  Supabase Management API returned HTTP %s\n" "$HTTP_CODE"
   printf "     Response: %s\n" "$HTTP_BODY"
-  printf "     Verify SUPABASE_ACCESS_TOKEN is valid and has access to project %s.\n" "$PROJECT_REF"
+  printf "     Verify %s is valid and has access to project %s.\n" "$TOKEN_SOURCE" "$PROJECT_REF"
   exit 1
 fi
 

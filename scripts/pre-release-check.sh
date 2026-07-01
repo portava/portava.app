@@ -263,8 +263,11 @@ for entry in "${results[@]}"; do
         printf '            artifacts/api-server/src/migrations/0071_protect_default_collection.sql\n'
         printf '            artifacts/api-server/src/migrations/0072_block_collections_truncate.sql\n'
         printf '            artifacts/api-server/src/migrations/0073_block_collection_items_truncate.sql\n'
-        printf '          If SUPABASE_ACCESS_TOKEN is missing, generate one at:\n'
-        printf '            https://supabase.com/dashboard/account/tokens\n'
+        printf '          Token required to query the Supabase Management API:\n'
+        printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
+        printf '                             See docs/eas-runbook.md → "DB triggers check in CI"\n'
+        printf '            Local dev:       export SUPABASE_ACCESS_TOKEN=sbp_...\n'
+        printf '                             Generate at: https://supabase.com/dashboard/account/tokens\n'
         ;;
     esac
   fi
