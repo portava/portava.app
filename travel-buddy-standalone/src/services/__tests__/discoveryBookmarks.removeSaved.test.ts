@@ -9,7 +9,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { removeSaved, clearAllSaved, _setTestStorage } from '../discoveryBookmarks.ts';
+import { removeSaved, clearAllSaved, toggleSave, _setTestStorage } from '../discoveryBookmarks.ts';
 import { categoryStorageKey } from '../../components/savedPlacesMapFilterStorage.ts';
 
 const GLOBAL_FILTER_KEY = categoryStorageKey('global');
@@ -236,5 +236,71 @@ describe('clearAllSaved — bulk-remove with filter key cleanup', () => {
     _setTestStorage(broken);
 
     await assert.rejects(() => clearAllSaved(), /storage error/);
+  });
+});
+
+// ── Concurrent toggleSave calls on the same place ─────────────────────────────
+
+describe('toggleSave — concurrent save→unsave race', () => {
+  let storage: FakeStorage;
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+  });
+
+  it('calls removeItem for the filter key at most once when two unsaves race', async () => {
+    // Seed one place and the filter key — simulates a user who already saved
+    // the place and now rapidly taps unsave twice before the first resolves.
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    storage.store.set(GLOBAL_FILTER_KEY, 'food');
+
+    const place = makePlace('place-1');
+
+    // Fire both toggleSave calls concurrently.  Without the write queue both
+    // calls would read the same stale list, both see the place present, and
+    // both call removeItem for the filter key — producing a stale filter entry.
+    await Promise.all([
+      toggleSave(place, 'global'),
+      toggleSave(place, 'global'),
+    ]);
+
+    const filterKeyRemovals = storage.removedKeys.filter((k) => k === GLOBAL_FILTER_KEY);
+    assert.ok(
+      filterKeyRemovals.length <= 1,
+      `expected removeItem(${GLOBAL_FILTER_KEY}) to be called at most once, ` +
+        `but it was called ${filterKeyRemovals.length} times`,
+    );
+  });
+
+  it('leaves storage in a consistent state after a concurrent save→unsave pair', async () => {
+    // Same place saved once already
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    storage.store.set(GLOBAL_FILTER_KEY, 'food');
+
+    const place = makePlace('place-1');
+
+    // Both calls race.  The write queue ensures they execute one after the other,
+    // so the net outcome is deterministic: first call removes, second call adds
+    // back (or vice-versa).  The invariant is that the storage is coherent —
+    // no duplicate entries and no corrupt JSON.
+    await Promise.all([
+      toggleSave(place, 'global'),
+      toggleSave(place, 'global'),
+    ]);
+
+    const raw = storage.store.get(BOOKMARKS_KEY);
+    assert.ok(raw !== undefined, 'bookmarks key must still exist in storage');
+
+    const parsed = JSON.parse(raw!) as Array<{ id: string }>;
+    const ids = parsed.map((p) => p.id);
+
+    // No duplicates — the write queue prevented both calls from inserting at once
+    const unique = new Set(ids);
+    assert.equal(
+      unique.size,
+      ids.length,
+      `expected no duplicate entries but got: ${JSON.stringify(ids)}`,
+    );
   });
 });

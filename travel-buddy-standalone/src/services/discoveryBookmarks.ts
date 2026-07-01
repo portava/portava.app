@@ -47,6 +47,8 @@ export interface BookmarkedPlace {
 let _storage: StorageLike = AsyncStorage;
 export function _setTestStorage(s: StorageLike): void {
   _storage = s;
+  // Reset the write queue so tests start with a clean serial chain
+  _writeQueue = Promise.resolve();
 }
 
 // undefined  = use real supabase auth (default)
@@ -55,6 +57,24 @@ export function _setTestStorage(s: StorageLike): void {
 let _testToken: string | null | undefined = undefined;
 export function _setTestToken(t: string | null | undefined): void {
   _testToken = t;
+}
+
+// ── Write queue ────────────────────────────────────────────────────────────────
+// Serialises concurrent toggleSave calls so a rapid save→unsave pair cannot
+// both read stale state and both try to remove the same item (which would call
+// removeItem for the category-filter key twice and leave the UI with a stale
+// filter).  The queue is reset in _setTestStorage so each test starts clean.
+
+let _writeQueue: Promise<void> = Promise.resolve();
+
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = _writeQueue.then(() => fn());
+  // Absorb errors so a rejected fn() doesn't poison the queue for future callers
+  _writeQueue = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
@@ -121,51 +141,57 @@ export async function isSaved(id: string): Promise<boolean> {
  * Returns true  → place was added to the list.
  * Returns false → place was removed from the list.
  */
-export async function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
-  // 1. Update AsyncStorage first — fast, works offline
-  const all = await readAll();
-  const idx = all.findIndex((b) => b.id === place.id && (b.listId ?? 'global') === listId);
-  const removing = idx >= 0;
-  if (removing) {
-    // remove just this (place, list) pair — other trips keep their copy
-    all.splice(idx, 1);
-    await writeAll(all);
-    // When the last place for this list is removed, the category-filter key
-    // becomes stale. Clear it as a fire-and-forget cleanup.
-    const remaining = all.filter((b) => (b.listId ?? 'global') === listId);
-    if (remaining.length === 0) {
-      _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
-    }
-  } else {
-    // add, tagging with listId so per-trip filtering works
-    all.unshift({ ...place, listId, savedAt: Date.now() });
-    await writeAll(all);
-  }
-
-  // 2. Sync to Supabase via API (best-effort; failure does not revert local state)
-  const token = await getAuthToken();
-  if (token) {
-    const base = apiBase();
-    try {
-      if (removing) {
-        await fetch(
-          `${base}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(listId)}`,
-          { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
-        );
-      } else {
-        await fetch(`${base}/api/wishlist`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ placeId: place.id, placeData: place, listId }),
-        });
+export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
+  // Wrap the storage read+write in the write queue so concurrent calls (e.g. a
+  // rapid save→unsave tap) are serialised.  Without this, both calls could read
+  // the same stale list, both decide to remove the item, and both fire
+  // removeItem for the category-filter key — leaving a stale filter in storage.
+  return withWriteLock(async () => {
+    // 1. Update AsyncStorage first — fast, works offline
+    const all = await readAll();
+    const idx = all.findIndex((b) => b.id === place.id && (b.listId ?? 'global') === listId);
+    const removing = idx >= 0;
+    if (removing) {
+      // remove just this (place, list) pair — other trips keep their copy
+      all.splice(idx, 1);
+      await writeAll(all);
+      // When the last place for this list is removed, the category-filter key
+      // becomes stale. Clear it as a fire-and-forget cleanup.
+      const remaining = all.filter((b) => (b.listId ?? 'global') === listId);
+      if (remaining.length === 0) {
+        _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
       }
-    } catch {
-      // Network error — local state already updated; Supabase will reconcile on
-      // the next successful listSaved() call.
+    } else {
+      // add, tagging with listId so per-trip filtering works
+      all.unshift({ ...place, listId, savedAt: Date.now() });
+      await writeAll(all);
     }
-  }
 
-  return !removing;
+    // 2. Sync to Supabase via API (best-effort; failure does not revert local state)
+    const token = await getAuthToken();
+    if (token) {
+      const base = apiBase();
+      try {
+        if (removing) {
+          await fetch(
+            `${base}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(listId)}`,
+            { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+          );
+        } else {
+          await fetch(`${base}/api/wishlist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ placeId: place.id, placeData: place, listId }),
+          });
+        }
+      } catch {
+        // Network error — local state already updated; Supabase will reconcile on
+        // the next successful listSaved() call.
+      }
+    }
+
+    return !removing;
+  });
 }
 
 /**
