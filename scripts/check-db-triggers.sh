@@ -25,6 +25,16 @@
 # The Supabase project ref is extracted automatically from SUPABASE_URL in
 # artifacts/api-server/.env — no extra configuration is needed.
 #
+# ── Testing / local-PostgreSQL mode ──────────────────────────────────────────
+#
+#   TRIGGER_QUERY_MODE=psql — Skip the Supabase Management API entirely and
+#                             query a local PostgreSQL instance via psql.
+#                             Requires TRIGGER_PSQL_URL to be set.
+#
+#   TRIGGER_PSQL_URL        — libpq connection string for the test database,
+#                             e.g. "postgresql://postgres@helium:5432/heliumdb".
+#                             Used only when TRIGGER_QUERY_MODE=psql.
+#
 # Exit codes:
 #   0  all three triggers are confirmed live
 #   1  one or more triggers are missing, credentials are absent, or the API
@@ -32,8 +42,60 @@
 
 set -euo pipefail
 
-WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Allow tests to redirect the workspace root without touching the real repo.
+# Set CHECK_TRIGGERS_WORKSPACE_ROOT to a temp directory in tests; leave unset
+# in production. Mirrors the SYNC_STANDALONE_REPO_ROOT pattern in
+# scripts/sync-standalone.sh.
+if [[ -n "${CHECK_TRIGGERS_WORKSPACE_ROOT:-}" ]]; then
+  WORKSPACE_ROOT="$CHECK_TRIGGERS_WORKSPACE_ROOT"
+fi
+
 cd "$WORKSPACE_ROOT"
+
+# ── shared SQL ───────────────────────────────────────────────────────────────
+# Use pg_trigger + pg_class directly — information_schema.triggers only surfaces
+# triggers the calling role owns, so it can miss triggers created by other roles
+# (e.g. postgres) when queried as the anon/service role via the Management API.
+SQL="SELECT t.tgname AS trigger_name, c.relname AS event_object_table \
+FROM pg_trigger t \
+JOIN pg_class c ON c.oid = t.tgrelid \
+WHERE t.tgname IN (\
+'enforce_default_collection_no_delete',\
+'block_collections_truncate',\
+'block_collection_items_truncate',\
+'block_saved_places_truncate'\
+)"
+
+# ── local psql mode (testing / CI with direct DB access) ─────────────────────
+if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
+  PSQL_URL="${TRIGGER_PSQL_URL:-}"
+  if [[ -z "$PSQL_URL" ]]; then
+    printf "  ✘  TRIGGER_PSQL_URL is required when TRIGGER_QUERY_MODE=psql\n"
+    printf "     Example: postgresql://postgres@helium:5432/heliumdb\n"
+    exit 1
+  fi
+
+  printf "  ℹ  Using psql (TRIGGER_QUERY_MODE=psql) for trigger check\n"
+
+  JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${SQL}) q"
+
+  TRIGGER_JSON=$(psql "$PSQL_URL" -t -A -c "$JSON_SQL" 2>&1)
+  PSQL_EXIT=$?
+
+  if [[ $PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql query failed (exit %d):\n" "$PSQL_EXIT"
+    printf "     %s\n" "$TRIGGER_JSON"
+    exit 1
+  fi
+
+  TRIGGER_RESPONSE="$TRIGGER_JSON" node "${SCRIPT_DIR}/src/verify-db-triggers.mjs"
+  exit $?
+fi
+
+# ── Supabase Management API mode (production / normal CI) ────────────────────
 
 # ── load SUPABASE_URL from the API server .env ───────────────────────────────
 ENV_FILE="artifacts/api-server/.env"
@@ -85,19 +147,6 @@ fi
 printf "  ℹ  Using %s for Supabase Management API\n" "$TOKEN_SOURCE"
 
 # ── query Management API for all required triggers ────────────────────────────
-# Use pg_trigger + pg_class directly — information_schema.triggers only surfaces
-# triggers the calling role owns, so it can miss triggers created by other roles
-# (e.g. postgres) when queried as the anon/service role via the Management API.
-SQL="SELECT t.tgname AS trigger_name, c.relname AS event_object_table \
-FROM pg_trigger t \
-JOIN pg_class c ON c.oid = t.tgrelid \
-WHERE t.tgname IN (\
-'enforce_default_collection_no_delete',\
-'block_collections_truncate',\
-'block_collection_items_truncate',\
-'block_saved_places_truncate'\
-)"
-
 API_URL="https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query"
 
 RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -118,4 +167,4 @@ if [[ "$HTTP_CODE" != "200" && "$HTTP_CODE" != "201" ]]; then
 fi
 
 # ── parse response and verify all triggers are present ───────────────────────
-TRIGGER_RESPONSE="$HTTP_BODY" node scripts/src/verify-db-triggers.mjs
+TRIGGER_RESPONSE="$HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-triggers.mjs"
