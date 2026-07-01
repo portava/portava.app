@@ -7,6 +7,12 @@
  * Read path   : API is tried first; on failure (network error, unauthenticated,
  *               server down) AsyncStorage is used instead.
  *
+ * Storage shape (v2):
+ *   Each entry carries a `listId` field so per-trip saves are independent.
+ *   The same place can appear in multiple lists (trips); existence checks are
+ *   scoped to (id, listId). Legacy v1 entries (no listId) are treated as
+ *   belonging to the 'global' list.
+ *
  * Test isolation: The supabase module is lazy-loaded inside getAuthToken() so
  * the native @supabase/supabase-js packages are never imported when running
  * node:test in a pure Node.js environment.  Tests that only exercise local
@@ -29,6 +35,8 @@ export interface BookmarkedPlace {
   savedAt: number;
   lat?: number | null;
   lng?: number | null;
+  /** Which list (trip id or 'global') this entry belongs to. */
+  listId?: string;
 }
 
 // ── Test seams ─────────────────────────────────────────────────────────────────
@@ -105,19 +113,32 @@ export async function isSaved(id: string): Promise<boolean> {
   return all.some((b) => b.id === id);
 }
 
+/**
+ * Toggle a place in/out of a specific list (trip id or 'global').
+ * Existence is checked by (place.id, listId) so the same place can be saved
+ * independently to multiple trips without interfering.
+ *
+ * Returns true  → place was added to the list.
+ * Returns false → place was removed from the list.
+ */
 export async function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
   // 1. Update AsyncStorage first — fast, works offline
   const all = await readAll();
-  const idx = all.findIndex((b) => b.id === place.id);
+  const idx = all.findIndex((b) => b.id === place.id && (b.listId ?? 'global') === listId);
   const removing = idx >= 0;
   if (removing) {
+    // remove just this (place, list) pair — other trips keep their copy
     all.splice(idx, 1);
     await writeAll(all);
-    if (all.length === 0) {
+    // When the last place for this list is removed, the category-filter key
+    // becomes stale. Clear it as a fire-and-forget cleanup.
+    const remaining = all.filter((b) => (b.listId ?? 'global') === listId);
+    if (remaining.length === 0) {
       _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
     }
   } else {
-    all.unshift({ ...place, savedAt: Date.now() });
+    // add, tagging with listId so per-trip filtering works
+    all.unshift({ ...place, listId, savedAt: Date.now() });
     await writeAll(all);
   }
 
@@ -147,7 +168,14 @@ export async function toggleSave(place: BookmarkedPlace, listId = 'global'): Pro
   return !removing;
 }
 
-export async function listSaved(): Promise<BookmarkedPlace[]> {
+/**
+ * Return all saved places, optionally scoped to a specific list.
+ * When no listId is given, returns every entry across all lists sorted newest first.
+ *
+ * Tries Supabase first (authoritative when online & authenticated); falls back
+ * to AsyncStorage on network error or when unauthenticated.
+ */
+export async function listSaved(listId?: string): Promise<BookmarkedPlace[]> {
   // Try Supabase first — authoritative source when online & authenticated
   const token = await getAuthToken();
   if (token) {
@@ -161,7 +189,10 @@ export async function listSaved(): Promise<BookmarkedPlace[]> {
         const places = json.places ?? [];
         // Keep local cache in sync with the authoritative Supabase list
         await writeAll(places);
-        return places.sort((a, b) => b.savedAt - a.savedAt);
+        const filtered = listId
+          ? places.filter((b) => (b.listId ?? 'global') === listId)
+          : places;
+        return filtered.sort((a, b) => b.savedAt - a.savedAt);
       }
     } catch {
       // Network error — fall through to AsyncStorage
@@ -170,7 +201,25 @@ export async function listSaved(): Promise<BookmarkedPlace[]> {
 
   // Fallback: local AsyncStorage
   const all = await readAll();
-  return all.sort((a, b) => b.savedAt - a.savedAt);
+  const filtered = listId
+    ? all.filter((b) => (b.listId ?? 'global') === listId)
+    : all;
+  return filtered.sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/**
+ * Return the set of list IDs (trip ids or 'global') that already contain the
+ * given place id. Used by TripWishlistPicker to pre-populate saved state.
+ */
+export async function getSavedListIds(placeId: string): Promise<Set<string>> {
+  const all = await readAll();
+  const ids = new Set<string>();
+  for (const b of all) {
+    if (b.id === placeId) {
+      ids.add(b.listId ?? 'global');
+    }
+  }
+  return ids;
 }
 
 export async function clearAllSaved(): Promise<void> {

@@ -4,6 +4,10 @@
  * Bottom-sheet modal that lets the user pick one of their trips to add a
  * Discovery place to. Calls toggleSave(place, tripId) from discoveryBookmarks
  * so the trip-scoped list and its category-filter key are kept in sync.
+ *
+ * On open the picker reads discoveryBookmarks.getSavedListIds(place.id) to
+ * pre-populate which trips already contain the place. Those rows show an
+ * "Already saved" chip and tapping them removes the place (full toggle).
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -19,6 +23,7 @@ import { X, MapPin, Check, ListPlus, AlertCircle } from 'lucide-react-native';
 import { listMyTrips, type TripRow } from '../../services/trips';
 import {
   toggleSave,
+  getSavedListIds,
   type BookmarkedPlace,
 } from '../../services/discoveryBookmarks';
 import type { DiscoveryPlace } from '../../services/discovery';
@@ -63,12 +68,17 @@ export function TripWishlistPicker({
   const [errorIds, setErrorIds]   = useState<Set<string>>(new Set());
 
   const load = useCallback(() => {
+    if (!place) return;
     setLoading(true);
     setLoadError(false);
-    listMyTrips()
-      .then((rows) => { setTrips(rows); setLoading(false); })
+    Promise.all([listMyTrips(), getSavedListIds(place.id)])
+      .then(([rows, alreadySaved]) => {
+        setTrips(rows);
+        setSavedIds(alreadySaved);
+        setLoading(false);
+      })
       .catch(() => { setLoadError(true); setLoading(false); });
-  }, []);
+  }, [place]);
 
   useEffect(() => {
     if (visible) {
@@ -89,12 +99,16 @@ export function TripWishlistPicker({
     try {
       const bookmark = placeToBookmark(place);
       const nowSaved = await toggleSave(bookmark, trip.id);
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (nowSaved) {
+          next.add(trip.id);
+        } else {
+          next.delete(trip.id);
+        }
+        return next;
+      });
       if (nowSaved) {
-        setSavedIds((prev) => new Set(prev).add(trip.id));
-        onSaved?.(trip);
-      } else {
-        // toggleSave removed the place (was already saved); treat as success
-        // but don't mark the row as saved — it was already there and is now gone.
         onSaved?.(trip);
       }
     } catch {
@@ -115,10 +129,10 @@ export function TripWishlistPicker({
           styles.tripRow,
           isSaved && styles.tripRowSaved,
           hasError && styles.tripRowError,
-          pressed && !isSaved && { opacity: 0.75 },
+          pressed && { opacity: 0.75 },
         ]}
-        onPress={() => { if (!isSaved) handlePick(item); }}
-        disabled={isBusy || isSaved}
+        onPress={() => handlePick(item)}
+        disabled={isBusy}
       >
         <View style={styles.badge}>
           <MapPin size={12} color={color.deep} />
@@ -140,7 +154,7 @@ export function TripWishlistPicker({
         ) : isSaved ? (
           <View style={styles.savedChip}>
             <Check size={12} color={color.deep} />
-            <Text style={styles.savedText}>Saved</Text>
+            <Text style={styles.savedText}>Already saved</Text>
           </View>
         ) : hasError ? (
           <AlertCircle size={18} color="#DC2626" />
