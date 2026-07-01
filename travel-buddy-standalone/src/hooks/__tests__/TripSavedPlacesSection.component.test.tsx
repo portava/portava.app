@@ -26,6 +26,7 @@ jest.mock('../../services/discoveryBookmarks', () => ({
   listSaved: jest.fn(),
   toggleSave: jest.fn(),
   clearAllSaved: jest.fn(),
+  removeSavedFromList: jest.fn(),
 }));
 jest.mock('../useTripSavedPlaces', () => ({
   useTripSavedPlaces: jest.fn(),
@@ -255,7 +256,7 @@ describe('TripSavedPlacesSection — integrated remove flow (real hook + mocked 
 
   it('restores the item and shows an error Alert when storage rejects (end-to-end rollback)', async () => {
     const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
-    dm.toggleSave.mockRejectedValue(new Error('disk full'));
+    dm.removeSavedFromList.mockRejectedValue(new Error('disk full'));
 
     const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
 
@@ -280,7 +281,7 @@ describe('TripSavedPlacesSection — integrated remove flow (real hook + mocked 
 
   it('removes the item permanently when storage succeeds (no Alert)', async () => {
     const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
-    dm.toggleSave.mockResolvedValue(false);
+    dm.removeSavedFromList.mockResolvedValue(undefined);
 
     const { getByTestId, queryByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
 

@@ -268,6 +268,48 @@ export async function clearAllSaved(): Promise<void> {
   }
 }
 
+/**
+ * Remove a saved place from one specific list (trip id or 'global').
+ *
+ * Reads and writes directly — bypassing the silent-catch helpers — so that any
+ * AsyncStorage failure propagates to the caller.  The caller can then roll back
+ * optimistic UI state and show an error to the user.
+ *
+ * Unlike toggleSave (which swallows write errors) and removeSaved (which removes
+ * the place from every list it appears in), this function is both error-throwing
+ * and list-scoped: it removes only the (id, listId) pair and leaves all other
+ * (id, otherList) entries intact.
+ */
+export async function removeSavedFromList(id: string, listId: string): Promise<void> {
+  const raw = await _storage.getItem(STORAGE_KEY);
+  const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
+  const remaining = all.filter(
+    (b) => !(b.id === id && (b.listId ?? 'global') === listId),
+  );
+  await _storage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+
+  // When the last place for this list is removed the category-filter key
+  // becomes stale. Clear it as a fire-and-forget cleanup.
+  const listRemaining = remaining.filter((b) => (b.listId ?? 'global') === listId);
+  if (listRemaining.length === 0) {
+    _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
+  }
+
+  // Sync to Supabase (best-effort — failure does not revert the local remove)
+  const token = await getAuthToken();
+  if (token) {
+    const base = apiBase();
+    try {
+      await fetch(
+        `${base}/api/wishlist/${encodeURIComponent(id)}?list=${encodeURIComponent(listId)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      );
+    } catch {
+      // Network error — local state is already removed
+    }
+  }
+}
+
 export async function removeSaved(id: string): Promise<void> {
   // Read and write directly — bypassing the silent-catch helpers — so that
   // any AsyncStorage failure propagates to the caller. The saved.tsx

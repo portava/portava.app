@@ -19,13 +19,15 @@ jest.mock('../../services/discoveryBookmarks', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),
   toggleSave: jest.fn(),
+  removeSavedFromList: jest.fn(),
 }));
 
-const { listSaved, clearAllSaved, toggleSave: toggleSaveMock } =
+const { listSaved, clearAllSaved, toggleSave: toggleSaveMock, removeSavedFromList: removeSavedFromListMock } =
   jest.requireMock('../../services/discoveryBookmarks') as {
     listSaved: jest.Mock;
     clearAllSaved: jest.Mock;
     toggleSave: jest.Mock;
+    removeSavedFromList: jest.Mock;
   };
 
 function makePlace(id: string, overrides: Partial<BookmarkedPlace> = {}): BookmarkedPlace {
@@ -309,8 +311,8 @@ describe('useTripSavedPlaces — toggle failure (storage error)', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove success', () => {
-  it('removes only the target place from the list after toggleSave resolves', async () => {
-    toggleSaveMock.mockResolvedValue(false);
+  it('removes only the target place from the list after removeSavedFromList resolves', async () => {
+    removeSavedFromListMock.mockResolvedValue(undefined);
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
     expect(result.current.places).toHaveLength(2);
 
@@ -320,19 +322,19 @@ describe('useTripSavedPlaces — remove success', () => {
     expect(result.current.places[0].id).toBe('p2');
   });
 
-  it('calls toggleSave with the place and the hook-scoped tripId', async () => {
-    toggleSaveMock.mockResolvedValue(false);
+  it('calls removeSavedFromList with the place id and the hook-scoped tripId', async () => {
+    removeSavedFromListMock.mockResolvedValue(undefined);
     const place = makePlace('p1');
     const { result } = await renderAndLoad([place]);
 
     await act(async () => { await result.current.remove(place); });
 
-    expect(toggleSaveMock).toHaveBeenCalledWith(place, 'trip-1');
-    expect(toggleSaveMock).toHaveBeenCalledTimes(1);
+    expect(removeSavedFromListMock).toHaveBeenCalledWith(place.id, 'trip-1');
+    expect(removeSavedFromListMock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves an empty list when the last place is removed', async () => {
-    toggleSaveMock.mockResolvedValue(false);
+    removeSavedFromListMock.mockResolvedValue(undefined);
     const { result } = await renderAndLoad([makePlace('only')]);
 
     await act(async () => { await result.current.remove(makePlace('only')); });
@@ -346,8 +348,8 @@ describe('useTripSavedPlaces — remove success', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove rollback on failure', () => {
-  it('restores the original places list when toggleSave rejects', async () => {
-    toggleSaveMock.mockRejectedValue(new Error('disk full'));
+  it('restores the original places list when removeSavedFromList rejects', async () => {
+    removeSavedFromListMock.mockRejectedValue(new Error('disk full'));
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
 
     await act(async () => {
@@ -359,7 +361,7 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
   });
 
   it('rethrows as remove_failed (not the raw storage error)', async () => {
-    toggleSaveMock.mockRejectedValue(new Error('ENOENT'));
+    removeSavedFromListMock.mockRejectedValue(new Error('ENOENT'));
     const { result } = await renderAndLoad([makePlace('p1')]);
 
     let caught: Error | undefined;
@@ -371,7 +373,7 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
   });
 
   it('rollback preserves all original place fields', async () => {
-    toggleSaveMock.mockRejectedValue(new Error('fail'));
+    removeSavedFromListMock.mockRejectedValue(new Error('fail'));
     const rich = makePlace('r1', { name: 'Full Place', category: 'restaurant', address: '1 Main St', type: 'food' });
     const { result } = await renderAndLoad([rich]);
 
@@ -389,9 +391,11 @@ describe('useTripSavedPlaces — remove rollback on failure', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('useTripSavedPlaces — remove optimistic timing', () => {
-  it('drops the place from the list before toggleSave resolves', async () => {
-    let resolveToggle!: () => void;
-    toggleSaveMock.mockReturnValue(new Promise<boolean>((res) => { resolveToggle = () => res(false); }));
+  it('drops the place from the list before removeSavedFromList resolves', async () => {
+    let resolveRemove!: () => void;
+    removeSavedFromListMock.mockReturnValue(
+      new Promise<void>((res) => { resolveRemove = res; }),
+    );
 
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
 
@@ -400,14 +404,14 @@ describe('useTripSavedPlaces — remove optimistic timing', () => {
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
 
     // Let storage complete — place stays gone on success
-    await act(async () => { resolveToggle(); });
+    await act(async () => { resolveRemove(); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
   });
 
   it('restores the place before the storage rejection is handled', async () => {
-    let rejectToggle!: (err: Error) => void;
-    toggleSaveMock.mockReturnValue(
-      new Promise<boolean>((_, reject) => { rejectToggle = reject; }),
+    let rejectRemove!: (err: Error) => void;
+    removeSavedFromListMock.mockReturnValue(
+      new Promise<void>((_, reject) => { rejectRemove = reject; }),
     );
 
     const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
@@ -415,7 +419,7 @@ describe('useTripSavedPlaces — remove optimistic timing', () => {
     await act(() => { void result.current.remove(makePlace('p1')).catch(() => {}); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
 
-    await act(async () => { rejectToggle(new Error('disk error')); });
+    await act(async () => { rejectRemove(new Error('disk error')); });
     expect(result.current.places.map((p) => p.id)).toEqual(['p1', 'p2']);
   });
 });

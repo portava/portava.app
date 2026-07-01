@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   listSaved,
   toggleSave,
+  removeSavedFromList,
   clearAllSaved,
   type BookmarkedPlace,
 } from '../services/discoveryBookmarks';
@@ -68,10 +69,11 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     // before the storage write completes.
     setPlaces((prev) => prev.filter((p) => p.id !== place.id));
     try {
-      // Use toggleSave (not removeSaved directly) to preserve trip-scoped
-      // category key cleanup: when the last place is removed,
-      // categoryStorageKey(tripId) is cleared rather than the global key.
-      await toggleSave(place, tripId);
+      // removeSavedFromList reads/writes directly (no silent-catch helpers) so
+      // any AsyncStorage failure propagates here and triggers the rollback.
+      // It is also scoped to tripId so it leaves the same place intact in other
+      // trip lists (unlike the global removeSaved).
+      await removeSavedFromList(place.id, tripId);
     } catch {
       // Rollback so the item reappears and the caller can surface an error.
       setPlaces(snapshot);
