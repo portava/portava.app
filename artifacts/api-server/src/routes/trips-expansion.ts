@@ -164,7 +164,7 @@ router.get("/trips/me", async (req, res) => {
     .from("trip_members")
     .select("trip_id, role")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host"]);
+    .in("role", ["owner", "member", "co_host", "viewer"]);
 
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
   if (!memberRows || memberRows.length === 0) { res.json({ trips: [] }); return; }
@@ -198,7 +198,7 @@ router.get("/trips/upcoming", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host"]);
+    .in("role", ["owner", "member", "co_host", "viewer"]);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -232,7 +232,7 @@ router.get("/trips/active", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host"]);
+    .in("role", ["owner", "member", "co_host", "viewer"]);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -267,7 +267,7 @@ router.get("/trips/past", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host"]);
+    .in("role", ["owner", "member", "co_host", "viewer"]);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -1024,6 +1024,104 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
 
   res.status(201).json({ status: "joined", tripId, role: "member" });
 });
+
+// ===========================================================================
+// GET /api/trips/:tripId/nearby-places  — discovery places near the trip destination
+// ===========================================================================
+router.get("/trips/:tripId/nearby-places", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc
+    .from("trips")
+    .select("owner_id, status, visibility, destination_city, destination_country, destination_lat, destination_lng")
+    .eq("id", tripId)
+    .maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const t = trip as any;
+  const isPublic = t.visibility === "public";
+  if (!isPublic) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership && t.owner_id !== user.id) { sendError(res, "not_member", "Not a trip member"); return; }
+  }
+
+  if (!t.destination_city) {
+    res.json({ places: [], message: "No destination set for this trip" });
+    return;
+  }
+
+  // Return discovery places matching the destination city
+  const { data: places } = await sc
+    .from("discovery_places")
+    .select("id, name, category, lat, lng, city, country, cover_url, rating")
+    .ilike("city", `%${t.destination_city}%`)
+    .order("rating", { ascending: false })
+    .limit(30);
+
+  res.json({ places: places ?? [], destination: { city: t.destination_city, country: t.destination_country ?? null } });
+});
+
+// ===========================================================================
+// POST /api/trips/:tripId/destinations/reorder
+// POST /api/trips/:tripId/items/reorder  (alias — same handler)
+// ===========================================================================
+async function handleDestinationsReorder(req: any, res: any): Promise<void> {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
+  if (!["owner", "co_host", "member"].includes(membership.role)) {
+    sendError(res, "forbidden", "Viewers cannot reorder destinations"); return;
+  }
+
+  const OrderSchema = z.object({
+    order: z.array(z.string().regex(UUID_RE)).min(1),
+  });
+  const parsed = OrderSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "order must be an array of UUIDs"); return; }
+
+  const { order } = parsed.data;
+
+  // Validate that all IDs belong to this trip
+  const { data: existing } = await sc
+    .from("trip_destinations")
+    .select("id")
+    .eq("trip_id", tripId)
+    .in("id", order);
+
+  const existingIds = new Set((existing ?? []).map((r: any) => r.id as string));
+  if (order.some((id) => !existingIds.has(id))) {
+    sendError(res, "invalid_payload", "One or more destination IDs do not belong to this trip"); return;
+  }
+
+  // Apply positions sequentially
+  await Promise.all(
+    order.map((id, idx) =>
+      sc.from("trip_destinations").update({ position: idx + 1 }).eq("id", id).then(undefined, () => {}),
+    ),
+  );
+
+  res.json({ status: "reordered", tripId, count: order.length });
+}
+
+router.post("/trips/:tripId/destinations/reorder", handleDestinationsReorder);
+router.post("/trips/:tripId/items/reorder", handleDestinationsReorder);
 
 // ===========================================================================
 // Budget routes (owner + co_host only — never public)

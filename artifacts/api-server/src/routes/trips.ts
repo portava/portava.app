@@ -63,13 +63,15 @@ router.post("/trips", async (req, res) => {
 
   const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl } = req.body;
 
-  if (!title || !destinationCity) {
-    res.status(400).json({ error: "title and destinationCity are required" });
+  // Date conflict check — applies even when title/city are absent (draft support)
+  if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+    res.status(400).json({ error: "invalid_payload", message: "end_date must be ≥ start_date" });
     return;
   }
 
   // Status is server-authoritative — never accept client-supplied status on create.
-  const computedStatus = computeTripStatus(title, destinationCity, startDate ?? null, endDate ?? null, "planning");
+  // Trips without title/city are saved as drafts.
+  const computedStatus = computeTripStatus(title ?? null, destinationCity ?? null, startDate ?? null, endDate ?? null, "planning");
 
   const { data, error } = await client
     .from("trips")
@@ -349,7 +351,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("owner_id, status, title").eq("id", tripId).maybeSingle();
+  const { data: trip } = await sc.from("trips").select("owner_id, status, title, destination_city, start_date, end_date").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
 
