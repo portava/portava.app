@@ -1,0 +1,1119 @@
+Travel Buddy — Full Add a Trip System Buildout, Frontend + Backend
+
+You are building the full “Add a Trip” system for Travel Buddy.
+
+Important product direction:
+Travel Buddy is a social media app for travelers. Trips are a core social object, not just a calendar note. A trip should connect to the user’s Passport, Trips tab, Pulse, Discovery, Telegraph, Trip Crew, Safe Return, posts/postcards, events, circles, hidden gems, Rent a Buddy, notifications, privacy, and travel recommendations.
+
+Do not delete existing working systems.
+Do not fake trips, users, posts, events, reviews, places, bookings, or activity.
+Inspect what exists first.
+Patch/build only after inventory.
+Preserve auth/session behavior.
+Use real backend data.
+Everything must be cohesive with Pulse, Discovery, Trips, Passport/profile, Telegraph, Rent a Buddy, Trust Score, verification, delayed posting, privacy, and safety.
+
+Primary goal:
+Build a complete Add a Trip system where users can:
+- create a new trip
+- add destination/city/country
+- set dates
+- choose trip visibility
+- invite or add Trip Crew
+- add places/events/notes/plans/checklists
+- add optional trip budget
+- add optional private trip documents
+- optionally enable Safe Return
+- optionally request or attach Rent a Buddy
+- post trip updates
+- show trip on profile/passport based on privacy
+- show trip-related content in Trips, Pulse, Discovery, and notifications
+- edit/cancel/archive trips
+- manage privacy and sharing
+- use request-to-join if enabled
+- connect trip to Telegraph group chat if crew exists
+- support offline-friendly trip viewing where feasible
+
+PHASE 0 — Inventory first
+
+Before making changes, search the repo for:
+- trip
+- trips
+- add trip
+- plan
+- trip plan
+- itinerary
+- destination
+- saved places
+- places
+- discovery_places
+- events
+- circles
+- crew
+- trip crew
+- safe return
+- check-in
+- telegraph
+- messages
+- group chat
+- passport
+- profile
+- posts
+- postcards
+- pulse
+- discovery
+- rentABuddy
+- buddy
+- hidden gems
+- notifications
+- activity center
+- privacy
+- location
+- delayed posting
+- RLS
+- Supabase
+- migrations
+- calendar
+- travel dates
+- checklist
+- budget
+- documents
+- offline
+- activity log
+- join request
+- invite link
+- Compass
+- AI
+- deep link
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Trip data model
+
+Inspect existing tables first. Add migrations only if needed.
+
+A trip must support:
+
+Core fields:
+- id
+- user_id / owner_id
+- title
+- destination_city
+- destination_country
+- destination_place_id, if linked to real place data
+- destination_lat
+- destination_lng
+- start_date
+- end_date
+- timezone
+- trip_type
+- status
+- visibility
+- cover_image_url
+- notes
+- created_at
+- updated_at
+
+Trip type examples:
+- solo
+- friends
+- group
+- business
+- family
+- romantic/private
+- backpacking
+- nightlife
+- food
+- beach
+- adventure
+- digital_nomad
+- layover
+- relocation/exploring
+- weekend
+
+Trip statuses:
+- draft
+- upcoming
+- active
+- completed
+- cancelled
+- archived
+
+Visibility:
+- private
+- friends_only
+- crew_only
+- public
+- hidden_from_profile
+
+Privacy fields:
+- show_on_profile
+- show_in_discovery
+- allow_friend_suggestions
+- allow_trip_crew_invites
+- allow_join_requests
+- show_exact_dates
+- show_destination_city
+- delayed_posting_default
+- precise_location_visible false by default
+
+Optional budget fields:
+- total_budget
+- daily_budget
+- lodging_budget
+- food_budget
+- nightlife_budget
+- transport_budget
+- activities_budget
+- currency
+
+Budget visibility:
+- private by default
+- owner/allowed crew only
+
+Related trip tables, if not already present:
+- trips
+- trip_destinations, if supporting multi-city trips
+- trip_members
+- trip_invites
+- trip_join_requests
+- trip_items
+- trip_saved_places
+- trip_events
+- trip_notes
+- trip_checklists
+- trip_media
+- trip_documents
+- trip_posts
+- trip_comments, if needed
+- trip_notifications, if separate
+- trip_privacy_settings, if separate
+- trip_activity_log
+- trip_invite_links
+- trip_budget, if separate
+- trip_recommendations_cache, optional
+- trip_offline_cache_metadata, optional
+
+Trip members:
+- trip_id
+- user_id
+- role: owner / co_host / member / invited / viewer
+- status: invited / accepted / declined / removed / left
+- permissions jsonb
+- joined_at
+
+Trip join requests:
+- trip_id
+- requester_user_id
+- status: requested / approved / declined / cancelled / expired
+- answer_text / join_questions jsonb, optional
+- created_at
+- resolved_at
+
+Trip items:
+- trip_id
+- type: place / event / note / booking / rent_buddy / hidden_gem / custom / checklist / document / reminder
+- title
+- description
+- date
+- start_time
+- end_time
+- place_id
+- lat/lng
+- source
+- created_by
+- order_index
+- visibility
+- status
+
+Trip documents:
+- trip_id
+- owner_id
+- type: flight_info / hotel_info / visa_note / insurance_note / reservation_screenshot / important_address / custom
+- title
+- file_url or note_text
+- visibility private by default
+- created_at
+
+Activity log:
+- trip_id
+- actor_user_id
+- action_type
+- metadata jsonb
+- created_at
+
+RLS:
+- Owner can fully manage their trips.
+- Crew members can view accepted trips based on permissions.
+- Public can only view public trip summary fields.
+- Private trips must not leak.
+- Crew-only trips only visible to accepted crew.
+- Friends-only trips only visible to accepted friends if social graph exists.
+- Blocked users cannot view or interact.
+- Invited users can view invite preview only.
+- Join-request users can view limited public/request preview only.
+- Admins can moderate.
+- Precise location should never be public by default.
+- Budget and documents are private by default.
+- Safety/Safe Return data must never be publicly exposed.
+
+PHASE 2 — Backend API routes
+
+Create or complete trip API routes.
+
+Required trip routes:
+- GET /api/trips/me
+- GET /api/trips/upcoming
+- GET /api/trips/active
+- GET /api/trips/past
+- GET /api/trips/invites
+- GET /api/trips/join-requests
+- POST /api/trips
+- GET /api/trips/:tripId
+- PATCH /api/trips/:tripId
+- DELETE /api/trips/:tripId or POST /api/trips/:tripId/archive
+- POST /api/trips/:tripId/cancel
+- POST /api/trips/:tripId/complete
+
+Trip destination/place routes:
+- POST /api/trips/:tripId/destinations
+- PATCH /api/trips/:tripId/destinations/:destinationId
+- DELETE /api/trips/:tripId/destinations/:destinationId
+- GET /api/trips/:tripId/nearby-places
+- POST /api/trips/:tripId/saved-places
+- DELETE /api/trips/:tripId/saved-places/:savedPlaceId
+
+Trip item/itinerary routes:
+- GET /api/trips/:tripId/items
+- POST /api/trips/:tripId/items
+- PATCH /api/trips/:tripId/items/:itemId
+- DELETE /api/trips/:tripId/items/:itemId
+- POST /api/trips/:tripId/items/reorder
+
+Trip Crew routes:
+- GET /api/trips/:tripId/members
+- POST /api/trips/:tripId/invite
+- POST /api/trips/:tripId/invites/:inviteId/accept
+- POST /api/trips/:tripId/invites/:inviteId/decline
+- DELETE /api/trips/:tripId/members/:userId
+- PATCH /api/trips/:tripId/members/:userId/role
+
+Join/request-to-join routes:
+- POST /api/trips/:tripId/join-request
+- POST /api/trips/:tripId/join-requests/:requestId/approve
+- POST /api/trips/:tripId/join-requests/:requestId/decline
+- POST /api/trips/:tripId/join-requests/:requestId/cancel
+
+Trip invite link/sharing routes:
+- POST /api/trips/:tripId/invite-link
+- DELETE /api/trips/:tripId/invite-link/:linkId
+- GET /api/trips/invite-link/:token/preview
+- POST /api/trips/invite-link/:token/accept
+
+Trip privacy routes:
+- GET /api/trips/:tripId/privacy
+- PATCH /api/trips/:tripId/privacy
+
+Trip budget routes:
+- GET /api/trips/:tripId/budget
+- PATCH /api/trips/:tripId/budget
+
+Trip document routes:
+- GET /api/trips/:tripId/documents
+- POST /api/trips/:tripId/documents
+- PATCH /api/trips/:tripId/documents/:documentId
+- DELETE /api/trips/:tripId/documents/:documentId
+
+Trip posts/media routes:
+- GET /api/trips/:tripId/posts
+- POST /api/trips/:tripId/posts
+- GET /api/trips/:tripId/media
+- POST /api/trips/:tripId/media
+
+Trip checklist/notes routes:
+- GET /api/trips/:tripId/checklist
+- POST /api/trips/:tripId/checklist
+- PATCH /api/trips/:tripId/checklist/:itemId
+- DELETE /api/trips/:tripId/checklist/:itemId
+- GET /api/trips/:tripId/notes
+- POST /api/trips/:tripId/notes
+- PATCH /api/trips/:tripId/notes/:noteId
+- DELETE /api/trips/:tripId/notes/:noteId
+
+Trip activity/reminder routes:
+- GET /api/trips/:tripId/activity
+- GET /api/trips/:tripId/reminders
+- POST /api/trips/:tripId/reminders
+- PATCH /api/trips/:tripId/reminders/:reminderId
+- DELETE /api/trips/:tripId/reminders/:reminderId
+
+Backend behavior:
+- All routes must use authenticated user context.
+- Public trip route must respect visibility and blocks.
+- Own trip route must return private settings.
+- Trip edits must validate dates, location, title, and privacy settings.
+- End date cannot be before start date.
+- Destination is required unless saved as draft.
+- Trip cannot be public if required safety/privacy fields are missing.
+- Public route must never leak exact location unless explicitly allowed.
+- Trip member routes must enforce roles/permissions.
+- Invite routes must prevent duplicates.
+- Join request routes must respect allow_join_requests.
+- Deleted/archived trips should not show in active lists.
+- Activity log should record major actions.
+- Budget/documents must never leak publicly.
+- Invite links must be revocable and must not leak private trip details.
+
+PHASE 3 — Trip templates
+
+Support quick-start templates:
+- Weekend trip
+- Solo trip
+- Group trip
+- Nightlife trip
+- Food trip
+- Beach trip
+- Business trip
+- Layover
+- Digital nomad stay
+
+Templates should prefill suggested trip style/tags/checklist items only.
+Never fake places, events, bookings, users, ratings, or reviews.
+
+PHASE 4 — Add a Trip frontend flow
+
+Build or complete the Add a Trip flow.
+
+Entry points:
+- Trips tab primary button: “Add Trip”
+- Create tab: “Create Trip”
+- Passport/profile: “Add upcoming trip”
+- Discovery place card: “Add to Trip”
+- Event card: “Add to Trip”
+- Rent a Buddy: “Add buddy booking to Trip”
+- Empty Trips screen: “Plan your first trip”
+- Deep link route if app supports deep links
+
+Add Trip steps:
+
+Step 1 — Template
+- choose blank trip or quick-start template
+- template sets trip style/tags/checklist suggestions only
+
+Step 2 — Destination
+Fields:
+- city
+- country
+- place search
+- destination autocomplete from real places if available
+- optional multi-city toggle
+- destination map preview if available
+- timezone detection
+
+Step 3 — Dates
+Fields:
+- start date
+- end date
+- flexible dates toggle
+- date not decided yet option
+- trip status auto-calculated as upcoming/active/past where applicable
+
+Step 4 — Trip Style
+Fields:
+- solo / friends / group / business / family / nightlife / food / beach / adventure / digital nomad / layover / weekend
+- interests for this trip
+- vibe tags
+- budget range optional
+- language preferences optional
+
+Step 5 — Privacy
+Fields:
+- private
+- friends only
+- crew only
+- public
+- show on Passport
+- show exact dates
+- show destination city
+- allow traveler suggestions
+- allow friends to request joining
+- allow join requests
+- delayed posting default
+- precise location hidden by default
+
+Step 6 — Trip Crew
+Options:
+- skip
+- invite friends
+- search users
+- add by username
+- create trip group
+- choose member permissions
+- auto-create Telegraph group chat if crew is added
+
+Step 7 — Budget, optional
+Fields:
+- total budget
+- daily budget
+- lodging budget
+- food budget
+- nightlife budget
+- transport budget
+- activities budget
+- currency
+- visibility owner/allowed crew only
+
+Step 8 — Safety
+Options:
+- enable Safe Return if available
+- add emergency contact if supported
+- check-in reminders
+- hide real-time location
+- delayed posting explanation
+
+Step 9 — Finish
+Show summary:
+- destination
+- dates
+- style
+- privacy
+- crew
+- budget summary if added
+- safety settings
+- create trip button
+
+After create:
+- navigate to trip detail page
+- show success state
+- allow adding places/events/notes/checklist/documents immediately
+
+PHASE 5 — Trips tab
+
+Trips tab must show real trip data.
+
+Sections:
+- Active Trip
+- Upcoming Trips
+- Past Trips
+- Draft Trips
+- Invites
+- Join Requests
+- Saved Places / Ideas
+- Trip Crew activity
+- Suggested nearby places/events for active trip
+
+Each trip card should show:
+- cover image or destination fallback
+- title
+- destination
+- dates
+- status
+- privacy badge
+- crew avatars
+- saved places count
+- itinerary/items count
+- Safe Return enabled indicator, if active
+- budget badge if owner/allowed crew and budget exists
+- quick actions: View, Add item, Invite, Post, Edit
+
+Empty states:
+- No trips: “Add your first trip.”
+- No active trip: “No active trip right now.”
+- No upcoming trips: “Plan your next city.”
+- No invites: “Trip invites will appear here.”
+- No join requests: “Join requests will appear here.”
+
+PHASE 6 — Trip detail screen
+
+Trip detail must be the main hub for each trip.
+
+Sections:
+- Trip hero
+- destination and dates
+- status
+- privacy badge
+- crew strip
+- Telegraph group chat entry
+- Safe Return status
+- itinerary/timeline
+- saved places
+- nearby places
+- events nearby
+- hidden gems
+- Rent a Buddy suggestions
+- trip posts/postcards
+- checklist
+- notes
+- budget, owner/allowed crew only
+- documents, owner/allowed crew only
+- activity log, owner/co-host by default
+- map if available
+- settings/edit
+
+Trip detail actions:
+- edit trip
+- invite crew
+- approve/decline join requests
+- add place
+- add event
+- add note
+- add checklist item
+- add document
+- post update
+- open Telegraph
+- enable Safe Return
+- request Rent a Buddy
+- archive/cancel trip
+- share trip if public or invite link enabled
+- revoke invite links
+
+PHASE 7 — Trip Crew
+
+Trip Crew must support:
+- inviting users
+- accepting/declining invites
+- request-to-join if enabled
+- approve/decline join requests
+- member roles
+- member permissions
+- removing members
+- leaving trip
+- privacy-safe member list
+- auto-created Telegraph group chat
+- activity notifications
+
+Roles:
+- owner
+- co_host
+- member
+- viewer
+
+Permissions:
+- can_invite
+- can_add_items
+- can_edit_items
+- can_post_to_trip
+- can_view_private_notes
+- can_view_budget
+- can_view_documents
+- can_manage_safety, owner only by default
+
+Rules:
+- Owner cannot be removed by another member.
+- Private trips only visible to accepted crew.
+- Blocked users cannot be invited.
+- Users below age requirements cannot join if trip/events include age rules.
+- Invite links must not leak private trip details.
+- Join requests only work if owner enabled them.
+- Join requests must enforce trust, age, privacy, and block checks.
+
+PHASE 8 — Telegraph integration
+
+If a trip has accepted crew members:
+- create or link a Telegraph group chat
+- show chat entry from trip detail
+- include trip context card in chat
+- show destination/dates/privacy badge
+- allow trip item sharing into chat
+- allow messages only for accepted members
+- remove access when member leaves or is removed
+
+If auto-translation exists:
+- apply Telegraph translation settings based on user language preferences.
+
+PHASE 9 — Safe Return integration
+
+If Safe Return exists:
+- allow enabling Safe Return from Add Trip and Trip Detail
+- create trip-linked safety session
+- show check-in reminders
+- show active status
+- missed check-in prompt should connect to trip
+- emergency/help sheet should reference trip destination
+- only owner and permitted safety contacts/admin flows can access safety data
+
+If Safe Return does not exist:
+- show “Safe Return not enabled yet” honestly.
+- do not fake safety status.
+
+PHASE 10 — Discovery and Pulse connections
+
+Trips must connect to Discovery and Pulse.
+
+Discovery:
+- active/upcoming trip destination should personalize Discovery
+- show nearby places for trip city
+- show events near trip city
+- show hidden gems for trip city
+- allow “Save to Trip” from place/event cards
+- allow “Add to itinerary”
+- allow “Request Rent a Buddy for this trip”
+
+Pulse:
+- user can post trip update/postcard linked to trip
+- public trip posts can appear in Pulse depending on privacy
+- delayed posting must be respected
+- exact location must not leak
+- trip context chip on posts if allowed
+
+PHASE 11 — Passport/profile connections
+
+Trips must connect to Passport/profile.
+
+Profile should show:
+- upcoming trips if privacy allows
+- past trips if privacy allows
+- trip count
+- cities/countries count derived from completed/past trips where appropriate
+- stamps earned from completed trips
+- mutual trips with viewer if allowed
+
+Rules:
+- private trips hidden from public
+- crew-only trips visible only to crew
+- exact dates hidden if disabled
+- destination hidden if disabled
+- cancelled/archived trips hidden unless owner viewing
+
+PHASE 12 — Rent a Buddy trip connection
+
+Rent a Buddy must connect to trips.
+
+From trip:
+- request a buddy for this destination
+- show buddies available in trip city
+- filter by trip date/time
+- attach confirmed booking to trip items
+- show buddy booking card in itinerary
+- open booking Telegraph context from trip
+
+Rules:
+- only confirmed/allowed booking details visible to trip owner and permitted crew
+- no off-app payment
+- buddy safety copy visible
+- booking status should show honestly
+
+PHASE 13 — Places/events/hidden gems connection
+
+Trip can include:
+- saved real places
+- user-created events
+- hidden gems
+- custom notes
+- Rent a Buddy bookings
+- checklist items
+
+Rules:
+- real places only
+- no fake ratings/reviews
+- if place source unavailable, show honest empty state
+- place cards should preserve source/provider id
+- duplicate saved places prevented
+- item order can be changed
+
+PHASE 14 — Notifications/activity center
+
+Create notifications for:
+- trip created
+- trip invite received
+- join request received
+- join request approved/declined
+- invite accepted/declined
+- crew member added/removed
+- upcoming trip reminder
+- active trip started
+- trip ending soon
+- checklist/reminder due
+- Safe Return check-in
+- new trip chat message
+- trip item added
+- trip post/comment
+- Rent a Buddy booking attached
+- trip cancelled/archived
+- invite link used/revoked
+
+Use existing notification/activity center if available.
+
+PHASE 15 — Trip privacy and safety
+
+Trip privacy must be enforced everywhere.
+
+Controls:
+- trip visibility
+- show on profile
+- show exact dates
+- show destination city
+- crew-only notes
+- budget visibility
+- document visibility
+- allow joining requests
+- allow friend suggestions
+- delayed posting default
+- exact location hidden by default
+
+Safety:
+- report trip
+- report trip member
+- block member
+- remove member
+- hide from profile
+- hide from Discovery/Pulse
+- Safe Return integration
+- no precise real-time location exposure by default
+- warnings for risky privacy choices
+
+PHASE 16 — Trip status automation
+
+Trip status should update based on dates:
+- draft if incomplete
+- upcoming before start date
+- active from start date through end date
+- completed after end date
+- cancelled if user cancels
+- archived if user archives
+
+Do not rely only on client-side status.
+Backend should calculate or validate status.
+Avoid destructive status changes.
+
+PHASE 17 — Trip conflict checks
+
+Warn user if:
+- new trip dates overlap another trip
+- destination is missing
+- end date is before start date
+- trip is public but exact location is enabled
+- trip is active and user tries to delete instead of archive/cancel
+- user tries to invite blocked user
+- user tries to make budget/documents public
+
+Warnings should not create fake blockers unless safety/privacy requires it.
+
+PHASE 18 — Multi-city trips
+
+If simple enough, support multi-city trips.
+
+Minimum:
+- primary destination required
+- optional additional destinations
+- each destination can have dates
+- trip items can attach to a destination
+- Discovery can switch city context
+
+If not feasible now:
+- build schema-ready support
+- keep MVP single-destination
+- document follow-up.
+
+PHASE 19 — Trip recommendations hook
+
+Compass AI can support trips, but not replace the social app.
+
+Add hooks for:
+- recommend places near trip destination
+- recommend events during trip dates
+- recommend hidden gems
+- recommend Rent a Buddy providers
+- suggest checklist items
+- suggest trip templates/items based on style
+
+If AI is not configured:
+- show normal data-driven suggestions
+- do not pretend AI is active
+
+PHASE 20 — Trip sharing
+
+Support privacy-safe sharing:
+- share public trip link if public
+- share invite link if enabled
+- crew-only share link
+- disable/revoke invite links
+- prevent private trip leakage
+- preview must respect privacy
+
+PHASE 21 — Trip documents
+
+Allow trip document placeholders or uploads if storage exists:
+- flight info
+- hotel info
+- visa notes
+- insurance notes
+- reservation screenshots
+- important addresses
+- custom notes
+
+Private by default.
+Do not expose documents publicly.
+If upload/storage is not ready, support private text placeholders and show honest “file upload not enabled yet.”
+
+PHASE 22 — Offline/travel mode
+
+Support graceful offline behavior:
+- cached trip overview
+- cached itinerary
+- cached emergency/safety notes if Safe Return exists
+- clear “offline” status
+- sync changes when online if offline editing is feasible
+
+If full offline editing is not feasible:
+- make trip overview read-friendly offline where possible
+- document limitation.
+
+PHASE 23 — Calendar export/reminders
+
+Add reminders for:
+- trip start
+- trip end
+- checklist items
+- events
+- Safe Return check-ins
+
+If calendar integration exists:
+- allow export/add-to-calendar.
+
+If not:
+- create internal notifications only
+- show honest state.
+
+PHASE 24 — Trip import/future-ready
+
+Do not build full import unless easy, but make schema/design ready for:
+- importing flight/hotel emails later
+- parsing reservation screenshots later
+- adding bookings later
+
+Do not fake imported bookings.
+
+PHASE 25 — Frontend UX polish
+
+Add Trip should feel fast and simple.
+
+Requirements:
+- progress indicator
+- save draft
+- back/continue navigation
+- validation errors
+- skeleton loading
+- retry states
+- honest empty states
+- keyboard-safe mobile layout
+- date picker works on mobile
+- destination search is responsive
+- trip cards are compact
+- no giant header blocking content
+- accessible buttons and touch targets
+- no blank screen without explanation
+
+PHASE 26 — Admin/moderation
+
+If admin system exists:
+- view trips
+- moderate reported trips
+- remove unsafe trip content
+- hide public trip
+- inspect trip reports
+- resolve trip reports
+- suspend abusive users
+- audit major trip changes if needed
+
+No private trip/safety/document/budget data should leak to non-admins.
+
+PHASE 27 — Tests
+
+Add tests for:
+- create trip
+- draft trip
+- update trip
+- archive/cancel trip
+- trip date validation
+- trip conflict warnings
+- own trips list
+- public trip privacy
+- private trip privacy
+- friends-only trip privacy
+- crew-only trip privacy
+- trip invite create/accept/decline
+- join request create/approve/decline
+- invite link create/revoke/preview
+- blocked user cannot be invited
+- trip member permissions
+- add/remove trip item
+- save place to trip
+- duplicate saved place prevention
+- budget privacy
+- document privacy
+- profile trip visibility
+- Pulse delayed posting with trip context
+- Telegraph group chat access
+- Safe Return link if available
+- Rent a Buddy booking attach if available
+- notification creation where supported
+- RLS policies
+- no private trip fields leaked
+
+Manual QA:
+- create solo trip
+- create trip from template
+- create trip with crew
+- invite user
+- accept/decline invite
+- request to join trip
+- approve/decline join request
+- edit trip
+- add/edit budget
+- add note/checklist item
+- add document placeholder/upload if supported
+- save place to trip
+- add event/place to itinerary
+- reorder itinerary
+- view trip on Passport/profile
+- hide trip from profile
+- create Pulse post linked to trip
+- verify delayed posting behavior
+- open Telegraph group chat
+- enable Safe Return if available
+- attach Rent a Buddy booking if available
+- share/revoke invite link
+- test offline/read-only trip view if supported
+- cancel/archive trip
+- test private/public/friends-only/crew-only views
+
+FINAL CONNECTION AUDIT
+
+Before marking complete, verify Add a Trip is connected to:
+- Trips tab
+- Create tab
+- Passport/profile
+- Pulse posting
+- Discovery save-to-trip
+- Event save-to-trip
+- Hidden Gems save-to-trip
+- Telegraph group chat
+- Trip Crew
+- Safe Return
+- Rent a Buddy
+- notifications/activity center
+- privacy settings
+- blocking/reporting
+- stamps/badges
+- search/deep links
+- reminders/calendar if available
+- offline/travel mode if available
+
+FINAL ADD A TRIP DEFINITION OF DONE
+
+Do not mark Add a Trip complete unless all of the following pass:
+
+1. Create trip
+- Logged-in user can create a trip.
+- Destination and dates save correctly.
+- Trip status is correct.
+- Trip appears in Trips tab.
+- Empty states are honest.
+
+2. Edit/manage trip
+- User can edit trip details.
+- User can cancel/archive trip.
+- User can add places/events/notes/checklist items/documents.
+- User can reorder itinerary items if implemented.
+
+3. Privacy
+- Private trips are private.
+- Friends-only and crew-only trips enforce access.
+- Public trip only shows allowed fields.
+- Exact dates/location hidden when disabled.
+- Budget/documents private by default.
+- Blocked users cannot view/interact.
+
+4. Trip Crew
+- Invite/accept/decline works.
+- Request-to-join works when enabled.
+- Member roles and permissions work.
+- Crew list respects privacy.
+- Removed members lose access.
+
+5. Telegraph
+- Trip group chat opens for accepted crew.
+- Non-members cannot access chat.
+- Removed members lose access.
+
+6. Safe Return
+- Safe Return links to trip if available.
+- Safety data stays private.
+- If unavailable, app says so honestly.
+
+7. Discovery/Pulse
+- Trip destination personalizes Discovery where supported.
+- Place/event/hidden gem cards can be saved to trip.
+- Trip posts can appear in Pulse only if privacy allows.
+- Delayed posting is respected.
+
+8. Passport/profile
+- Trip appears on owner profile only if allowed.
+- Public viewer sees only permitted trip info.
+- Trip counts/stamps update from real qualifying trips.
+
+9. Rent a Buddy
+- Trip can request or attach a buddy booking if system exists.
+- Booking card appears in trip itinerary when allowed.
+- Private booking details do not leak.
+
+10. Budget/documents
+- Budget saves and displays only to owner/allowed crew.
+- Documents/placeholders save and display only to owner/allowed crew.
+- Upload unavailable states are honest if storage is not enabled.
+
+11. Sharing/join requests
+- Public sharing respects privacy.
+- Invite links can be revoked.
+- Join requests require owner approval and obey block/trust/age/privacy checks.
+
+12. Backend/RLS/security
+- Own trips API returns private trip data.
+- Public trip APIs return only allowed fields.
+- RLS prevents unauthorized reads/writes.
+- No private safety/location/member/budget/document data leaks.
+
+13. Performance
+- Trips tab loads fast.
+- Heavy trip sections lazy load.
+- Itinerary/items are paginated or efficiently queried.
+- One slow section does not block the whole trip page.
+
+14. Tests
+Required tests pass for:
+- trip create/update/cancel/archive
+- trip privacy
+- trip invites
+- trip members
+- join requests
+- invite links
+- item add/remove
+- save place
+- budget/document privacy
+- profile visibility
+- Pulse delayed posting
+- Telegraph access
+- RLS policies
+- no private field leakage
+
+Final deliverable:
+Return:
+- inventory report
+- files changed
+- migrations added
+- routes added/changed
+- screens/components added
+- tests added
+- tests passed/failed
+- manual QA pass/fail
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+The Add a Trip system must work end-to-end as a connected Travel Buddy core feature, not a disconnected form.
