@@ -243,11 +243,12 @@ export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: stri
 
 /* ── Trip Saved Places ──────────────────────────────────────────────────────
  * Shows bookmarked Discovery places in the context of a specific trip.
- * Removing a place calls toggleSave(place, tripId) so that when the last place
- * is removed, categoryStorageKey(tripId) is cleared — not the global key.
+ * The X button uses remove() for an optimistic delete with rollback: the item
+ * disappears instantly and reappears with an error alert if storage fails.
+ * The full toggle is still available for add/remove via the TripWishlistPicker.
  * ─────────────────────────────────────────────────────────────────────────── */
 export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
-  const { places, loading, toggle, clearAll } = useTripSavedPlaces(tripId);
+  const { places, loading, remove, clearAll } = useTripSavedPlaces(tripId);
 
   const handleClearAll = () => {
     Alert.alert(
@@ -309,7 +310,11 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
                 testID={`saved-place-remove-${place.id}`}
                 style={tsp.removeBtn}
                 hitSlop={8}
-                onPress={() => { void toggle(place); }}
+                onPress={() => {
+                  remove(place).catch(() => {
+                    Alert.alert('Something went wrong', "Couldn't remove this place. Please try again.");
+                  });
+                }}
                 accessibilityLabel={`Remove ${place.name} from saved places`}
               >
                 <X size={13} color={color.mute} />

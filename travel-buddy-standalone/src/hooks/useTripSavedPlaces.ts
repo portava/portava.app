@@ -7,10 +7,12 @@
  * rather than the default global key.
  *
  * Usage:
- *   const { places, toggle, loading, refresh } = useTripSavedPlaces(tripId);
+ *   const { places, toggle, remove, loading, refresh } = useTripSavedPlaces(tripId);
  *   // In the map view:
  *   <SavedPlacesMapView places={places} listId={tripId} onPlanRoute={...} />
- *   // On remove:
+ *   // Optimistic single-item remove (X button):
+ *   await remove(place); // throws 'remove_failed' on storage error
+ *   // Full toggle:
  *   await toggle(place); // clears categoryStorageKey(tripId) when list empties
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -18,6 +20,7 @@ import {
   listSaved,
   toggleSave,
   clearAllSaved,
+  removeSaved,
   type BookmarkedPlace,
 } from '../services/discoveryBookmarks';
 
@@ -26,6 +29,10 @@ export interface UseTripSavedPlacesResult {
   loading: boolean;
   toggle: (place: BookmarkedPlace) => Promise<boolean>;
   refresh: () => void;
+  /** Optimistically removes a single place from the list immediately.
+   *  Rolls back and rethrows as 'remove_failed' if removeSaved fails,
+   *  so the caller can show an error to the user. */
+  remove: (place: BookmarkedPlace) => Promise<void>;
   /** Optimistically clears all saved places. Rolls back and throws if the
    *  storage call fails so the caller can surface an error to the user. */
   clearAll: () => Promise<void>;
@@ -56,6 +63,20 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     [tripId, load],
   );
 
+  const remove = useCallback(async (place: BookmarkedPlace): Promise<void> => {
+    const snapshot = places;
+    // Optimistic: drop the place from the list immediately so the UI responds
+    // before the storage write completes.
+    setPlaces((prev) => prev.filter((p) => p.id !== place.id));
+    try {
+      await removeSaved(place.id);
+    } catch {
+      // Rollback so the item reappears and the caller can surface an error.
+      setPlaces(snapshot);
+      throw new Error('remove_failed');
+    }
+  }, [places]);
+
   const clearAll = useCallback(async (): Promise<void> => {
     const snapshot = places;
     // Optimistic: empty the list immediately so the UI responds instantly.
@@ -69,5 +90,5 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     }
   }, [places]);
 
-  return { places, loading, toggle, refresh: load, clearAll };
+  return { places, loading, toggle, remove, refresh: load, clearAll };
 }

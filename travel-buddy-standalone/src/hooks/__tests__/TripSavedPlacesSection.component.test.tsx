@@ -64,14 +64,17 @@ function makePlace(id: string): BookmarkedPlace {
 function setupHook(overrides: Partial<ReturnType<typeof useTripSavedPlaces>> = {}) {
   const clearAll = jest.fn().mockResolvedValue(undefined);
   const toggle = jest.fn().mockResolvedValue(true);
+  const remove = jest.fn().mockResolvedValue(undefined);
   mockUseTripSavedPlaces.mockReturnValue({
     places: [makePlace('p1'), makePlace('p2')],
     loading: false,
     toggle,
     clearAll,
+    remove,
+    refresh: jest.fn(),
     ...overrides,
   });
-  return { clearAll, toggle };
+  return { clearAll, toggle, remove };
 }
 
 // ── Alert spy ─────────────────────────────────────────────────────────────────
@@ -165,5 +168,58 @@ describe('TripSavedPlacesSection — handleClearAll Alert gate', () => {
 
     expect(alertSpy).toHaveBeenCalledTimes(2);
     expect(alertSpy.mock.calls[1][0]).toBe('Something went wrong');
+  });
+});
+
+// ── Tests: individual place remove (X button) ─────────────────────────────────
+
+describe('TripSavedPlacesSection — X button (individual place remove)', () => {
+  it('calls remove with the correct place when the X button is pressed', async () => {
+    const { remove } = setupHook();
+    const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+
+    await fireEvent.press(getByTestId('saved-place-remove-p1'));
+
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }));
+  });
+
+  it('does NOT show an Alert when remove resolves (success path)', async () => {
+    setupHook();
+    const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+
+    await fireEvent.press(getByTestId('saved-place-remove-p1'));
+
+    // Flush the resolved promise's microtask queue
+    await new Promise<void>((resolve) => {
+      Promise.resolve().then(() => Promise.resolve().then(resolve));
+    });
+
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows an error Alert when remove rejects (storage failure)', async () => {
+    const remove = jest.fn().mockRejectedValue(new Error('remove_failed'));
+    setupHook({ remove });
+
+    const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+    await fireEvent.press(getByTestId('saved-place-remove-p1'));
+
+    // Let the .catch() handler run
+    await new Promise<void>((resolve) => {
+      Promise.resolve().then(() => Promise.resolve().then(resolve));
+    });
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toBe('Something went wrong');
+  });
+
+  it('calls remove with p2 when the X button for p2 is pressed', async () => {
+    const { remove } = setupHook();
+    const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
+
+    await fireEvent.press(getByTestId('saved-place-remove-p2'));
+
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'p2' }));
   });
 });

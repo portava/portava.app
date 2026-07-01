@@ -19,13 +19,15 @@ jest.mock('../../services/discoveryBookmarks', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),
   toggleSave: jest.fn(),
+  removeSaved: jest.fn(),
 }));
 
-const { listSaved, clearAllSaved, toggleSave: toggleSaveMock } =
+const { listSaved, clearAllSaved, toggleSave: toggleSaveMock, removeSaved: removeSavedMock } =
   jest.requireMock('../../services/discoveryBookmarks') as {
     listSaved: jest.Mock;
     clearAllSaved: jest.Mock;
     toggleSave: jest.Mock;
+    removeSaved: jest.Mock;
   };
 
 function makePlace(id: string, overrides: Partial<BookmarkedPlace> = {}): BookmarkedPlace {
@@ -42,6 +44,7 @@ async function renderAndLoad(initial: BookmarkedPlace[]) {
 beforeEach(() => {
   jest.clearAllMocks();
   clearAllSaved.mockResolvedValue(undefined);
+  removeSavedMock.mockResolvedValue(undefined);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -301,5 +304,117 @@ describe('useTripSavedPlaces — toggle failure (storage error)', () => {
     // State must not change — no partial update should have occurred
     expect(result.current.places).toHaveLength(2);
     expect(result.current.places.map((p) => p.id)).toEqual(['s1', 's2']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// remove — success
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('useTripSavedPlaces — remove success', () => {
+  it('removes only the target place from the list after removeSaved resolves', async () => {
+    const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
+    expect(result.current.places).toHaveLength(2);
+
+    await act(async () => { await result.current.remove(makePlace('p1')); });
+
+    expect(result.current.places).toHaveLength(1);
+    expect(result.current.places[0].id).toBe('p2');
+  });
+
+  it('calls removeSaved with the place id', async () => {
+    const { result } = await renderAndLoad([makePlace('p1')]);
+
+    await act(async () => { await result.current.remove(makePlace('p1')); });
+
+    expect(removeSavedMock).toHaveBeenCalledWith('p1');
+    expect(removeSavedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an empty list when the last place is removed', async () => {
+    const { result } = await renderAndLoad([makePlace('only')]);
+
+    await act(async () => { await result.current.remove(makePlace('only')); });
+
+    expect(result.current.places).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// remove — rollback on failure
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('useTripSavedPlaces — remove rollback on failure', () => {
+  it('restores the original places list when removeSaved rejects', async () => {
+    removeSavedMock.mockRejectedValue(new Error('disk full'));
+    const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
+
+    await act(async () => {
+      await result.current.remove(makePlace('p1')).catch(() => {});
+    });
+
+    expect(result.current.places).toHaveLength(2);
+    expect(result.current.places.map((p) => p.id)).toEqual(['p1', 'p2']);
+  });
+
+  it('rethrows as remove_failed (not the raw storage error)', async () => {
+    removeSavedMock.mockRejectedValue(new Error('ENOENT'));
+    const { result } = await renderAndLoad([makePlace('p1')]);
+
+    let caught: Error | undefined;
+    await act(async () => {
+      await result.current.remove(makePlace('p1')).catch((e: Error) => { caught = e; });
+    });
+
+    expect(caught?.message).toBe('remove_failed');
+  });
+
+  it('rollback preserves all original place fields', async () => {
+    removeSavedMock.mockRejectedValue(new Error('fail'));
+    const rich = makePlace('r1', { name: 'Full Place', category: 'restaurant', address: '1 Main St', type: 'food' });
+    const { result } = await renderAndLoad([rich]);
+
+    await act(async () => {
+      await result.current.remove(makePlace('r1')).catch(() => {});
+    });
+
+    expect(result.current.places).toHaveLength(1);
+    expect(result.current.places[0]).toMatchObject({ id: 'r1', name: 'Full Place', category: 'restaurant' });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// remove — optimistic timing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('useTripSavedPlaces — remove optimistic timing', () => {
+  it('drops the place from the list before removeSaved resolves', async () => {
+    let resolveRemove!: () => void;
+    removeSavedMock.mockReturnValue(new Promise<void>((res) => { resolveRemove = res; }));
+
+    const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
+
+    // Flush the synchronous optimistic setPlaces that fires before the first await
+    await act(() => { void result.current.remove(makePlace('p1')); });
+    expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
+
+    // Let storage complete — place stays gone on success
+    await act(async () => { resolveRemove(); });
+    expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
+  });
+
+  it('restores the place before the storage rejection is handled', async () => {
+    let rejectRemove!: (err: Error) => void;
+    removeSavedMock.mockReturnValue(
+      new Promise<void>((_, reject) => { rejectRemove = reject; }),
+    );
+
+    const { result } = await renderAndLoad([makePlace('p1'), makePlace('p2')]);
+
+    await act(() => { void result.current.remove(makePlace('p1')).catch(() => {}); });
+    expect(result.current.places.map((p) => p.id)).toEqual(['p2']);
+
+    await act(async () => { rejectRemove(new Error('disk error')); });
+    expect(result.current.places.map((p) => p.id)).toEqual(['p1', 'p2']);
   });
 });
