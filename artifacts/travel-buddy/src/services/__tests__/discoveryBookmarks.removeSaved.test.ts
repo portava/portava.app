@@ -7,9 +7,9 @@
  *
  * Uses a fake StorageLike so the native AsyncStorage module is never required.
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { removeSaved, clearAllSaved, toggleSave, _setTestStorage } from '../discoveryBookmarks.ts';
+import { removeSaved, clearAllSaved, toggleSave, _setTestStorage, _setTestToken } from '../discoveryBookmarks.ts';
 import { categoryStorageKey } from '../../components/savedPlacesMapFilterStorage.ts';
 
 const GLOBAL_FILTER_KEY = categoryStorageKey('global');
@@ -236,6 +236,140 @@ describe('clearAllSaved — bulk-remove with filter key cleanup', () => {
     _setTestStorage(broken);
 
     await assert.rejects(() => clearAllSaved(), /storage error/);
+  });
+});
+
+// ── removeSaved — API sync is best-effort, local remove always wins ────────────
+//
+// removeSaved() writes to AsyncStorage first, then fires a best-effort DELETE
+// to Supabase.  The fetch is wrapped in try/catch so a network failure or a
+// non-ok response must NEVER revert the local remove or throw to the caller.
+
+describe('removeSaved — API sync is best-effort (local remove is permanent)', () => {
+  let storage: FakeStorage;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    storage = fakeStorage();
+    _setTestStorage(storage);
+    _setTestToken('fake-bearer-token'); // exercise the fetch code path
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setTestToken(undefined); // restore real supabase auth for other suites
+  });
+
+  it('removes the place from AsyncStorage before the fetch fires', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1', 'place-2'));
+
+    let storageStateAtFetch: Array<{ id: string }> = [];
+    (globalThis as { fetch: unknown }).fetch = () => {
+      // Capture storage state at the moment fetch is called
+      const raw = storage.store.get(BOOKMARKS_KEY) ?? '[]';
+      storageStateAtFetch = JSON.parse(raw) as Array<{ id: string }>;
+      return Promise.resolve({ ok: true } as Response);
+    };
+
+    await removeSaved('place-1');
+
+    assert.equal(
+      storageStateAtFetch.length,
+      1,
+      'AsyncStorage must be updated before the fetch fires',
+    );
+    assert.equal(
+      storageStateAtFetch[0].id,
+      'place-2',
+      'only the other place should remain when fetch is called',
+    );
+  });
+
+  it('local entry stays removed when the fetch throws a network error', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1', 'place-2'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.reject(new Error('connection refused'));
+
+    await removeSaved('place-1');
+
+    const stored = JSON.parse(
+      storage.store.get(BOOKMARKS_KEY) ?? '[]',
+    ) as Array<{ id: string }>;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].id, 'place-2');
+    assert.ok(
+      !stored.some((p) => p.id === 'place-1'),
+      'place-1 must still be absent after a fetch rejection',
+    );
+  });
+
+  it('does not throw to the caller when the fetch rejects', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.reject(new Error('network error'));
+
+    await assert.doesNotReject(
+      () => removeSaved('place-1'),
+      'removeSaved must resolve even when the Supabase sync fetch rejects',
+    );
+  });
+
+  it('local entry stays removed when the API returns 404', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1', 'place-2'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 404 } as Response);
+
+    await removeSaved('place-1');
+
+    const stored = JSON.parse(
+      storage.store.get(BOOKMARKS_KEY) ?? '[]',
+    ) as Array<{ id: string }>;
+    assert.ok(
+      !stored.some((p) => p.id === 'place-1'),
+      'place-1 must still be absent after a 404 response',
+    );
+  });
+
+  it('local entry stays removed when the API returns 500', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 500 } as Response);
+
+    await removeSaved('place-1');
+
+    const stored = JSON.parse(
+      storage.store.get(BOOKMARKS_KEY) ?? '[]',
+    ) as Array<{ id: string }>;
+    assert.deepEqual(stored, [], 'place-1 must still be gone after a 500 response');
+  });
+
+  it('does not throw to the caller when the API returns a non-ok status', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.resolve({ ok: false, status: 503 } as Response);
+
+    await assert.doesNotReject(
+      () => removeSaved('place-1'),
+      'removeSaved must resolve even when the API returns a non-ok status',
+    );
+  });
+
+  it('other places are unaffected when only the target entry is removed and sync fails', async () => {
+    storage.store.set(BOOKMARKS_KEY, serialise('place-1', 'place-2', 'place-3'));
+    (globalThis as { fetch: unknown }).fetch = () =>
+      Promise.reject(new Error('server down'));
+
+    await removeSaved('place-2');
+
+    const stored = JSON.parse(
+      storage.store.get(BOOKMARKS_KEY) ?? '[]',
+    ) as Array<{ id: string }>;
+    assert.deepEqual(
+      stored.map((p) => p.id),
+      ['place-1', 'place-3'],
+      'only place-2 should be removed; place-1 and place-3 must be intact',
+    );
   });
 });
 
