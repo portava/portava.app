@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   requireUser,
+  optionalUser,
   requireTripMember,
   sendError,
   type ApiErrorCode,
@@ -1989,9 +1990,9 @@ router.get("/trips/:tripId", async (req, res) => {
   const { tripId } = req.params;
   if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
 
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user } = auth;
+  // Auth is optional — unauthenticated callers can read public trips.
+  const auth = await optionalUser(req);
+  const user = auth?.user ?? null;
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
@@ -2005,8 +2006,10 @@ router.get("/trips/:tripId", async (req, res) => {
   if (error || !trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const t = trip as any;
-  const isMember = await requireTripMember(sc, tripId, user.id);
-  const isOwner  = t.owner_id === user.id;
+
+  // Unauthenticated callers cannot be members or owners.
+  const isMember = user ? await requireTripMember(sc, tripId, user.id) : null;
+  const isOwner  = user ? t.owner_id === user.id : false;
 
   // Members / owner always get full shape regardless of visibility.
   if (isMember || isOwner) {
@@ -2014,13 +2017,15 @@ router.get("/trips/:tripId", async (req, res) => {
     return;
   }
 
-  // Non-member: blocked users never see the trip.
-  const blocked = await isBlocked(sc, user.id, t.owner_id);
-  if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
+  // Non-member / unauthenticated: blocked users (known) never see the trip.
+  if (user) {
+    const blocked = await isBlocked(sc, user.id, t.owner_id);
+    if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
+  }
 
-  // Enforce visibility for non-members:
-  //   "public"  — anyone may see the stripped public shape
-  //   "buddies" — only mutual followers (friends) may see the stripped shape
+  // Enforce visibility for non-members / unauthenticated:
+  //   "public"  — anyone (including unauthenticated) may see the stripped shape
+  //   "buddies" — only authenticated mutual followers may see the stripped shape
   //   "invite"  — only explicitly accepted members (already handled above); others → 404
   //   "private" — members only (already handled above); others → 404
   const vis = (t.visibility ?? "private") as string;
@@ -2030,7 +2035,7 @@ router.get("/trips/:tripId", async (req, res) => {
     return;
   }
 
-  if (vis === "buddies") {
+  if (vis === "buddies" && user) {
     // Mutual-follow check: viewer follows owner AND owner follows viewer
     const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
       sc.from("follows").select("id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
@@ -2040,12 +2045,9 @@ router.get("/trips/:tripId", async (req, res) => {
       res.json(toPublicTrip(t));
       return;
     }
-    // Not a mutual friend: reveal nothing
-    sendError(res, "not_found", "Trip not found");
-    return;
   }
 
-  // "invite", "private", or any other restrictive mode: non-members are excluded
+  // All other cases (not public, not a mutual friend, not a member): 404
   sendError(res, "not_found", "Trip not found");
 });
 

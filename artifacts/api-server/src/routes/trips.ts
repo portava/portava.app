@@ -327,12 +327,39 @@ router.get("/me/trip-invites/pending", async (req, res) => {
 const PlanEditPermissionEnum = ["owner_only", "all_members", "specific_members"] as const;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
-const TripStatusEnum = ["planning", "ongoing", "completed", "cancelled"] as const;
+const TripStatusEnum = ["draft", "upcoming", "active", "planning", "completed", "cancelled", "archived"] as const;
 
 const PatchTripSchema = z.object({
+  // Plan edit settings
   planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
-  planEditors: z.array(z.string().regex(UUID_RE)).optional(),
-  status: z.enum(TripStatusEnum).optional(),
+  planEditors:        z.array(z.string().regex(UUID_RE)).optional(),
+  // Status (server-authoritative via computeTripStatus)
+  status:             z.enum(TripStatusEnum).optional(),
+  // Core trip fields
+  title:                   z.string().min(1).max(200).optional(),
+  destinationCity:         z.string().max(100).optional(),
+  destinationCountry:      z.string().max(100).nullable().optional(),
+  destinationLat:          z.number().nullable().optional(),
+  destinationLng:          z.number().nullable().optional(),
+  destinationPlaceId:      z.string().nullable().optional(),
+  startDate:               z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate:                 z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  visibility:              z.enum(["public", "private", "buddies", "invite"]).optional(),
+  tripType:                z.string().optional(),
+  timezone:                z.string().nullable().optional(),
+  travelStyle:             z.string().nullable().optional(),
+  openToMeet:              z.boolean().optional(),
+  coverUrl:                z.string().url().nullable().optional(),
+  tripNotes:               z.string().nullable().optional(),
+  showOnProfile:           z.boolean().optional(),
+  showInDiscovery:         z.boolean().optional(),
+  allowFriendSuggestions:  z.boolean().optional(),
+  allowTripCrewInvites:    z.boolean().optional(),
+  allowJoinRequests:       z.boolean().optional(),
+  showExactDates:          z.boolean().optional(),
+  showDestinationCity:     z.boolean().optional(),
+  delayedPostingDefault:   z.boolean().optional(),
+  preciseLocationVisible:  z.boolean().optional(),
 });
 
 router.patch("/trips/:tripId", async (req, res) => {
@@ -345,117 +372,110 @@ router.patch("/trips/:tripId", async (req, res) => {
 
   const parsed = PatchTripSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { planEditPermission, planEditors, status } = parsed.data;
+  const b = parsed.data;
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("owner_id, status, title, destination_city, start_date, end_date").eq("id", tripId).maybeSingle();
+  const { data: trip } = await sc.from("trips").select("*").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
+  const t = trip as any;
+  if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
 
-  if (planEditPermission !== undefined) {
-    const { error } = await sc.from("trips").update({ plan_edit_permission: planEditPermission }).eq("id", tripId);
-    if (error) { sendError(res, "db_error", error.message); return; }
+  // Date conflict check across current + incoming values
+  const newStart = b.startDate !== undefined ? b.startDate : (t.start_date ?? null);
+  const newEnd   = b.endDate   !== undefined ? b.endDate   : (t.end_date   ?? null);
+  if (newStart && newEnd && new Date(newStart) > new Date(newEnd)) {
+    sendError(res, "invalid_payload", "end_date must be ≥ start_date"); return;
   }
 
-  if (status !== undefined && status !== (trip as any).status) {
-    // Run through server-authoritative status logic so terminal states are honoured.
-    const t = trip as any;
-    const resolvedStatus = computeTripStatus(t.title, t.destination_city ?? t.destinationCity ?? null, t.start_date ?? null, t.end_date ?? null, status);
-    const { error } = await sc.from("trips").update({ status: resolvedStatus, updated_at: new Date().toISOString() }).eq("id", tripId);
-    if (error) { sendError(res, "db_error", error.message); return; }
+  // Build the patch object — only include fields explicitly provided
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (b.title                  !== undefined) patch.title                    = b.title;
+  if (b.destinationCity        !== undefined) patch.destination_city         = b.destinationCity;
+  if (b.destinationCountry     !== undefined) patch.destination_country      = b.destinationCountry;
+  if (b.destinationLat         !== undefined) patch.destination_lat          = b.destinationLat;
+  if (b.destinationLng         !== undefined) patch.destination_lng          = b.destinationLng;
+  if (b.destinationPlaceId     !== undefined) patch.destination_place_id     = b.destinationPlaceId;
+  if (b.startDate              !== undefined) patch.start_date               = b.startDate;
+  if (b.endDate                !== undefined) patch.end_date                 = b.endDate;
+  if (b.visibility             !== undefined) patch.visibility               = b.visibility;
+  if (b.tripType               !== undefined) patch.trip_type                = b.tripType;
+  if (b.timezone               !== undefined) patch.timezone                 = b.timezone;
+  if (b.travelStyle            !== undefined) patch.travel_style             = b.travelStyle;
+  if (b.openToMeet             !== undefined) patch.open_to_meet             = b.openToMeet;
+  if (b.coverUrl               !== undefined) patch.cover_url                = b.coverUrl;
+  if (b.tripNotes              !== undefined) patch.trip_notes               = b.tripNotes;
+  if (b.showOnProfile          !== undefined) patch.show_on_profile          = b.showOnProfile;
+  if (b.showInDiscovery        !== undefined) patch.show_in_discovery        = b.showInDiscovery;
+  if (b.allowFriendSuggestions !== undefined) patch.allow_friend_suggestions = b.allowFriendSuggestions;
+  if (b.allowTripCrewInvites   !== undefined) patch.allow_trip_crew_invites  = b.allowTripCrewInvites;
+  if (b.allowJoinRequests      !== undefined) patch.allow_join_requests      = b.allowJoinRequests;
+  if (b.showExactDates         !== undefined) patch.show_exact_dates         = b.showExactDates;
+  if (b.showDestinationCity    !== undefined) patch.show_destination_city    = b.showDestinationCity;
+  if (b.delayedPostingDefault  !== undefined) patch.delayed_posting_default  = b.delayedPostingDefault;
+  if (b.preciseLocationVisible !== undefined) patch.precise_location_visible = b.preciseLocationVisible;
+  if (b.planEditPermission     !== undefined) patch.plan_edit_permission     = b.planEditPermission;
 
-    // Post-attendance review prompt — fire-and-forget when trip transitions to completed
-    if (status === "completed") {
-      void (async () => {
-        try {
-          const { data: members } = await sc
-            .from("trip_members")
-            .select("user_id")
-            .eq("trip_id", tripId);
+  // Compute server-authoritative status from effective field values
+  const effectiveTitle = (b.title ?? t.title) as string | null;
+  const effectiveCity  = (b.destinationCity ?? t.destination_city) as string | null;
+  const effectiveStatus = b.status ?? t.status;
+  patch.status = computeTripStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus);
 
-          if (members && (members as any[]).length > 0) {
-            const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
-            const tripTitle: string = (trip as any).title ?? "your trip";
+  const { data: updated, error: patchErr } = await sc
+    .from("trips")
+    .update(patch)
+    .eq("id", tripId)
+    .select("*")
+    .single();
 
-            // In-app notifications
-            await Promise.allSettled(
-              memberIds.map((uid) =>
-                sc.from("notifications").insert({
-                  user_id:           uid,
-                  actor_id:          user.id,
-                  notification_type: "review_prompt",
-                  content: {
-                    entityType: "trip",
-                    entityId:   tripId,
-                    entityName: tripTitle,
-                  },
-                  read: false,
-                }),
-              ),
-            );
-
-            // Push notifications via device tokens
-            const { data: devices } = await sc
-              .from("notification_devices")
-              .select("expo_push_token")
-              .in("user_id", memberIds);
-
-            const tokens: string[] = ((devices as any[]) ?? [])
-              .map((d: any) => d.expo_push_token)
-              .filter(Boolean);
-
-            if (tokens.length > 0) {
-              await sendPushNotification(tokens, {
-                title: "How was the trip?",
-                body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
-                data: {
-                  type:       "review_prompt",
-                  entityType: "trip",
-                  entityId:   tripId,
-                  entityName: tripTitle,
-                },
-              });
-            }
-          }
-        } catch {}
-      })();
-    }
-  }
+  if (patchErr) { sendError(res, "db_error", patchErr.message); return; }
 
   // Replace plan_editors list when provided (always a full replacement)
-  if (planEditors !== undefined) {
-    // Delete existing editors then insert new list
+  if (b.planEditors !== undefined) {
     const { error: delErr } = await sc.from("plan_editors").delete().eq("trip_id", tripId);
     if (delErr) { sendError(res, "db_error", delErr.message); return; }
-
-    if (planEditors.length > 0) {
-      const rows = planEditors.map((uid) => ({ trip_id: tripId, user_id: uid }));
-      const { error: insErr } = await sc.from("plan_editors").insert(rows);
+    if (b.planEditors.length > 0) {
+      const { error: insErr } = await sc.from("plan_editors").insert(b.planEditors.map((uid) => ({ trip_id: tripId, user_id: uid })));
       if (insErr) { sendError(res, "db_error", insErr.message); return; }
     }
   }
 
-  // Return current state
-  const { data: updated } = await sc
-    .from("trips")
-    .select("id, plan_edit_permission, status")
-    .eq("id", tripId)
-    .maybeSingle();
+  // Post-attendance review prompt — fire-and-forget when trip transitions to completed
+  if (patch.status === "completed" && t.status !== "completed") {
+    void (async () => {
+      try {
+        const { data: members } = await sc.from("trip_members").select("user_id").eq("trip_id", tripId);
+        if (members && (members as any[]).length > 0) {
+          const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
+          const tripTitle: string = (updated as any)?.title ?? "your trip";
+          await Promise.allSettled(
+            memberIds.map((uid) =>
+              sc.from("notifications").insert({
+                user_id: uid, actor_id: user.id,
+                notification_type: "review_prompt",
+                content: { entityType: "trip", entityId: tripId, entityName: tripTitle },
+                read: false,
+              }),
+            ),
+          );
+          const { data: devices } = await sc.from("notification_devices").select("expo_push_token").in("user_id", memberIds);
+          const tokens: string[] = ((devices as any[]) ?? []).map((d: any) => d.expo_push_token).filter(Boolean);
+          if (tokens.length > 0) {
+            await sendPushNotification(tokens, {
+              title: "How was the trip?",
+              body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
+              data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
+            });
+          }
+        }
+      } catch {}
+    })();
+  }
 
-  const { data: editorRows } = await sc
-    .from("plan_editors")
-    .select("user_id")
-    .eq("trip_id", tripId);
-
-  res.json({
-    tripId,
-    status:            (updated as any)?.status ?? null,
-    planEditPermission: (updated as any)?.plan_edit_permission ?? "all_members",
-    planEditors: (editorRows ?? []).map((r: any) => r.user_id as string),
-  });
+  res.json(updated);
 });
 
 /* ===========================================================================

@@ -80,6 +80,26 @@ export function sendError(res: Response, code: ApiErrorCode, message?: string) {
 }
 
 /**
+ * Like requireUser but returns null (without writing a 401) when the request
+ * has no auth header. Use for public endpoints that provide richer responses
+ * to authenticated callers (e.g., public trip detail for visibility=public).
+ */
+export async function optionalUser(
+  req: Request,
+): Promise<{ client: SupabaseClient; user: User } | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice(7).trim();
+  if (!token) return null;
+
+  const client = (_testClient ?? getServiceClient()) as SupabaseClient | null;
+  if (!client) return null;
+  const { data, error } = await client.auth.getUser(token);
+  if (error || !data?.user) return null;
+  return { client, user: data.user as User };
+}
+
+/**
  * Resolve the authenticated user from the request, using the SERVICE-ROLE
  * client to verify the Bearer token via Supabase Auth (auth.getUser), which
  * verifies ECC P-256 tokens regardless of PostgREST's JWT support.
