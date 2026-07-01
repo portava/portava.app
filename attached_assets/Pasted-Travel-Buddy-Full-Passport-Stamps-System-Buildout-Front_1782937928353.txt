@@ -1,0 +1,840 @@
+Travel Buddy — Full Passport Stamps System Buildout, Frontend + Backend
+
+You are building the full Passport Stamps system for Travel Buddy.
+
+Important product direction:
+Travel Buddy is a social media app for travelers. Passport Stamps are earned proof-of-travel and participation badges connected to real user activity: trips, places, events, cities, countries, hidden gems, Safe Return, Rent a Buddy, posts/postcards, reviews, circles, and community trust.
+
+Do not delete existing working systems.
+Do not fake stamps, users, check-ins, trips, events, places, reviews, bookings, or activity.
+Inspect what exists first.
+Patch/build only after inventory.
+Preserve auth/session behavior.
+Use real backend data.
+Everything must be cohesive with Passport/Profile, Trips, Events, Pulse, Discovery, Telegraph, Rent a Buddy, Trust Score, Safe Return, delayed posting, privacy, and city/location-aware discovery.
+
+Primary goal:
+Build a complete Passport Stamps system where users can:
+- earn stamps from real qualifying activity
+- view stamps on their Passport/profile
+- control stamp visibility
+- see stamp details and earned history
+- earn city/country/event/host/contributor/safety/community stamps
+- connect stamps to trips, events, posts, places, hidden gems, and Rent a Buddy
+- prevent fake or duplicate stamps
+- allow admins to audit/revoke/award stamps safely
+- respect privacy and delayed posting rules
+- support future stamp collections, levels, and limited-time campaign stamps
+
+PHASE 0 — Inventory first
+
+Before making changes, search the repo for:
+- stamp
+- stamps
+- passport stamp
+- badge
+- badges
+- achievement
+- achievements
+- user_stamps
+- user_badges
+- passport
+- profile
+- trip
+- trips
+- events
+- check-in
+- checkin
+- visited
+- country
+- city
+- place
+- places
+- discovery_places
+- hidden gems
+- pulse
+- posts
+- postcards
+- safe return
+- rentABuddy
+- buddy
+- reviews
+- trust
+- verification
+- circles
+- telegraph
+- notifications
+- activity center
+- privacy
+- delayed posting
+- location
+- geofence
+- RLS
+- Supabase
+- migrations
+- moderation
+- admin
+
+Return an inventory table before editing:
+
+Feature | Existing files/routes/tables | Current status | Missing/broken | Action
+
+Do not skip inventory.
+
+PHASE 1 — Stamp product rules
+
+Passport Stamps must be earned from real qualifying actions.
+
+Core stamp types:
+1. Location stamps
+- country visited
+- city visited
+- neighborhood/area visited, optional
+- airport/arrival stamp, optional
+- beach/landmark/hidden gem stamp, optional
+
+2. Trip stamps
+- first trip created
+- first trip completed
+- solo trip
+- group trip
+- multi-city trip
+- weekend trip
+- nightlife trip
+- food trip
+- beach trip
+- digital nomad stay
+- completed trip streaks, optional
+
+3. Event stamps
+- first event joined
+- first event hosted
+- nightlife event
+- food crawl
+- beach meetup
+- culture meetup
+- language exchange
+- safe host
+- top host, real criteria only
+
+4. Social/community stamps
+- first postcard
+- hidden gem contributor
+- helpful reviewer
+- circle founder
+- trusted traveler
+- early user/beta stamp, if applicable
+
+5. Safety/trust stamps
+- verified profile
+- Safe Return enabled/completed
+- trusted host
+- low-report/high-trust badge
+- safe buddy/provider, if applicable
+
+6. Rent a Buddy stamps
+- first buddy booking completed as traveler
+- first buddy booking completed as provider
+- top rated buddy
+- language helper
+- city helper
+- nightlife buddy, real completed bookings only
+
+7. Special/admin campaign stamps
+- launch city stamp
+- festival/event campaign stamp
+- official Travel Buddy challenge stamp
+- limited-time stamp
+
+Rules:
+- No stamp should be awarded from fake or manually invented activity unless admin explicitly creates an official/admin stamp.
+- Stamps should be idempotent: same qualifying action cannot award duplicates unless the stamp is designed as repeatable.
+- Repeatable stamps must track counts/levels.
+- Public stamp display must respect user privacy.
+- Location-based stamps must avoid exposing precise real-time location.
+- Delayed posting should not block the user earning private credit, but public display may be delayed/hidden.
+- Admin-awarded stamps must be auditable.
+
+PHASE 2 — Stamp data model
+
+Inspect existing tables first. Add migrations only if needed.
+
+Likely required tables:
+- stamp_definitions
+- user_stamps
+- stamp_award_events
+- stamp_collections
+- stamp_collection_items
+- stamp_visibility_settings, if separate
+- stamp_admin_actions
+- stamp_revocations
+- stamp_campaigns, optional/future-ready
+- stamp_progress, optional for multi-step/level stamps
+
+stamp_definitions fields:
+- id
+- slug
+- name
+- description
+- stamp_type
+- category
+- icon_url
+- color/theme fields, optional
+- rarity: common / uncommon / rare / epic / legendary / official
+- is_active
+- is_repeatable
+- max_awards_per_user
+- level_config jsonb, optional
+- criteria_type
+- criteria jsonb
+- visibility_default
+- source_system
+- city
+- country
+- starts_at, optional
+- ends_at, optional
+- created_at
+- updated_at
+
+user_stamps fields:
+- id
+- user_id
+- stamp_definition_id
+- source_type
+- source_id
+- earned_at
+- city
+- country
+- lat/lng optional private/internal only
+- title_override, optional
+- metadata jsonb
+- visibility: public / friends_only / private / hidden
+- display_on_passport boolean
+- is_revoked boolean
+- revoked_at
+- revoked_reason
+- awarded_by_admin_id, optional
+- created_at
+- updated_at
+
+stamp_award_events fields:
+- id
+- user_id
+- stamp_definition_id
+- source_type
+- source_id
+- award_reason
+- criteria_snapshot jsonb
+- idempotency_key
+- status: awarded / skipped_duplicate / skipped_ineligible / revoked / error
+- created_at
+
+stamp_progress fields:
+- user_id
+- stamp_definition_id
+- progress_count
+- progress_target
+- metadata jsonb
+- updated_at
+
+RLS:
+- Users can read their own stamps including private/hidden/revoked status.
+- Public can read only public visible, non-revoked stamps.
+- Friends can read friends_only stamps if friendship exists.
+- Private/hidden stamps never show publicly.
+- Users can update their own stamp visibility/display_on_passport only.
+- Users cannot self-award stamps.
+- Admins can award/revoke/moderate stamps.
+- Exact lat/lng or private source metadata must not leak publicly.
+- Blocked users cannot see each other’s non-public stamp data.
+
+PHASE 3 — Backend stamp engine
+
+Create or complete a server-side stamp award engine.
+
+Required behavior:
+- Award stamps only from trusted backend events.
+- Use idempotency keys to prevent duplicates.
+- Support non-repeatable and repeatable stamps.
+- Support progress-based stamps.
+- Support admin-awarded stamps.
+- Support stamp revocation.
+- Store source_type and source_id.
+- Store criteria snapshot for audit.
+- Never trust the client to claim “I earned this stamp.”
+- Return honest skipped reasons when criteria are not met.
+
+Source types:
+- trip_created
+- trip_completed
+- city_visited
+- country_visited
+- place_checkin
+- event_joined
+- event_completed
+- event_hosted
+- post_created
+- postcard_created
+- hidden_gem_submitted
+- hidden_gem_approved
+- review_submitted
+- safe_return_completed
+- rent_buddy_booking_completed
+- profile_verified
+- circle_created
+- admin_award
+- campaign
+
+Award triggers should hook into existing systems:
+- trip creation/completion
+- event join/completion/hosting
+- verified check-in/place visit
+- post/postcard creation
+- hidden gem approval
+- Safe Return completion
+- Rent a Buddy booking completion
+- profile verification
+- review submission
+- circle creation
+- admin campaign actions
+
+Do not create client-only stamp awarding.
+
+PHASE 4 — Backend API routes
+
+Create or complete Passport Stamp API routes.
+
+Public/own stamp routes:
+- GET /api/stamps/definitions
+- GET /api/stamps/me
+- GET /api/stamps/me/progress
+- GET /api/stamps/me/collections
+- GET /api/stamps/user/:userId
+- GET /api/stamps/profile/:username
+- GET /api/stamps/:stampId
+- PATCH /api/stamps/:userStampId/visibility
+- PATCH /api/stamps/:userStampId/display
+- GET /api/stamps/recent
+- GET /api/stamps/city/:city
+- GET /api/stamps/country/:country
+
+Stamp award/internal routes:
+- POST /api/stamps/award, server/admin only
+- POST /api/stamps/check-eligibility, authenticated/server-safe
+- POST /api/stamps/recalculate/me
+- POST /api/stamps/recalculate/:userId, admin only
+
+Admin routes:
+- GET /api/admin/stamps/definitions
+- POST /api/admin/stamps/definitions
+- PATCH /api/admin/stamps/definitions/:stampDefinitionId
+- POST /api/admin/stamps/award
+- POST /api/admin/stamps/:userStampId/revoke
+- POST /api/admin/stamps/:userStampId/restore
+- GET /api/admin/stamps/audit
+- GET /api/admin/stamps/campaigns
+- POST /api/admin/stamps/campaigns
+- PATCH /api/admin/stamps/campaigns/:campaignId
+
+Backend behavior:
+- Public stamp routes must respect privacy, blocks, and revoked status.
+- Own routes return all user stamps with visibility state.
+- Public profile route shows only visible allowed stamps.
+- Admin award/revoke must create audit records.
+- Recalculate must be safe/idempotent.
+- No private lat/lng/source metadata leaks publicly.
+- Award route must never allow normal clients to spoof source events.
+
+PHASE 5 — Stamp definitions and starter catalog
+
+Create a starter stamp catalog with real criteria.
+
+Do not award these until criteria are actually met.
+
+Starter stamp definitions:
+
+Location:
+- First City Visited
+- First Country Visited
+- Cebu Stamp
+- Siargao Stamp
+- Tokyo Stamp
+- Bangkok Stamp
+- Miami Stamp
+- Da Nang Stamp
+- Hidden Gem Explorer
+
+Trips:
+- First Trip Created
+- First Trip Completed
+- Solo Traveler
+- Group Tripper
+- Weekend Wanderer
+- Food Tripper
+- Beach Tripper
+- Nightlife Explorer
+- Digital Nomad
+
+Events:
+- First Event Joined
+- First Event Hosted
+- Food Crawl Crew
+- Beach Meetup
+- Nightlife Meetup
+- Culture Explorer
+- Trusted Host
+
+Social:
+- First Postcard
+- Storyteller
+- Helpful Reviewer
+- Circle Founder
+- Early Traveler, only if applicable
+
+Safety/Trust:
+- Verified Traveler
+- Safe Return Ready
+- Safe Return Completed
+- Trusted Traveler
+
+Rent a Buddy:
+- First Buddy Booking
+- First Buddy Hosted
+- City Helper
+- Language Helper
+- Top Buddy, real rating/completion threshold only
+
+Rules:
+- Use inactive/future-ready flags if criteria are not fully implemented.
+- Do not claim users earned old stamps unless backfill criteria can prove it.
+- For beta/early user stamp, define exact eligibility.
+
+PHASE 6 — Passport/Profile frontend integration
+
+Stamps must appear on the user’s Passport/profile.
+
+My Passport:
+- stamp strip near top
+- featured stamps
+- recently earned stamps
+- stamp count
+- category filters
+- visibility controls
+- display_on_passport toggle
+- hidden/private labels visible to owner only
+- progress toward next stamps, if available
+
+Public Profile:
+- visible stamp strip
+- stamp grid/tab
+- stamp detail modal
+- no private/hidden stamps
+- no precise location leakage
+- friends_only stamps only for friends
+- blocked users see nothing beyond allowed preview
+
+Profile tabs:
+- Add Stamps tab or integrate into existing tabs.
+- Support pagination/lazy loading.
+- Empty state: “No public stamps yet.”
+
+Stamp card:
+- icon/art
+- name
+- category
+- rarity
+- earned date
+- city/country if allowed
+- source summary, privacy-safe
+- visibility badge for owner
+- tap for detail
+
+Stamp detail:
+- name
+- description
+- earned date
+- how it was earned
+- source object link if viewer has access
+- city/country if allowed
+- privacy controls for owner
+- share button if public
+
+PHASE 7 — Stamp earning UX
+
+When user earns a stamp:
+- show toast/modal: “Passport Stamp Earned”
+- show stamp icon/name
+- show why it was earned
+- allow “View Passport”
+- allow “Share to Pulse” if privacy allows
+- do not reveal precise real-time location
+- delayed posting rules apply to any shared stamp post
+
+Notification:
+- create notification/activity item for earned stamp
+- do not spam if multiple stamps earned at once
+- group batch awards where appropriate
+
+Pulse:
+- optional stamp-earned post if user shares it
+- no automatic public post unless product explicitly wants it
+- respect privacy
+
+PHASE 8 — Trip stamp integration
+
+Trips can award stamps from real trip activity.
+
+Award examples:
+- First Trip Created after first successful trip creation
+- First Trip Completed after completed trip
+- Solo Traveler after completed solo trip
+- Group Tripper after completed group trip
+- City/Country stamps after trip reaches completed or verified visited state
+- Weekend Wanderer based on trip duration/type
+- Food/Nightlife/Beach trip stamps based on trip style/tags and completion
+
+Rules:
+- Creating a draft trip should not award completed travel stamps.
+- Completed travel/city/country stamps should require completed trip, verified visit, check-in, or other trusted criteria.
+- Private trip can still earn private stamp credit, but public display follows stamp privacy.
+
+PHASE 9 — Event stamp integration
+
+Events can award stamps from real event activity.
+
+Award examples:
+- First Event Joined after accepted attendance or completed event, depending criteria
+- First Event Hosted after published/completed hosted event
+- Nightlife/Food/Beach/Culture event stamps based on event category and completed attendance
+- Trusted Host based on safe completed hosted events and low reports
+
+Rules:
+- No stamp for merely viewing an event.
+- No stamp for fake/no-show attendance.
+- If check-in exists, use check-in/completion for stronger stamps.
+- Cancelled events should not award participation stamps.
+
+PHASE 10 — Place/check-in/location stamp integration
+
+Location stamps must be privacy-safe.
+
+Sources:
+- completed trip destination
+- verified check-in
+- geotagged post/postcard after delayed posting rules
+- approved hidden gem visit
+- event attendance at venue
+- manual admin award
+
+Rules:
+- Do not expose precise live location.
+- User can earn private credit before public display.
+- City/country stamps should use city/country-level display by default.
+- Exact venue stamp display should be optional and privacy-controlled.
+- Prevent repeated duplicate stamps for same city/country unless repeatable.
+
+PHASE 11 — Posts/Postcards/Pulse integration
+
+Posts and postcards can contribute to stamps.
+
+Award examples:
+- First Postcard
+- Storyteller after real count threshold
+- City postcard stamp if geotagged city is verified
+- Hidden Gem Contributor after approved hidden gem post
+
+Rules:
+- Delayed posts can earn private credit but public stamp sharing waits until safe.
+- Deleted/removed posts may revoke or hide related stamps depending policy.
+- Reported/removed content should not count toward positive stamps.
+
+PHASE 12 — Rent a Buddy integration
+
+Rent a Buddy can award stamps after real booking completion.
+
+Award examples:
+- First Buddy Booking
+- First Buddy Hosted
+- City Helper
+- Language Helper
+- Top Buddy
+
+Rules:
+- Booking must be completed.
+- Payment/booking status must be real.
+- Disputed/refunded/no-show bookings should not count until resolved.
+- Provider stamps visible only if provider allows and profile is approved.
+- No adult/dating/escort framing.
+
+PHASE 13 — Safe Return and Trust integration
+
+Safety/trust stamps:
+- Verified Traveler after verified profile
+- Safe Return Ready after enabling Safe Return for a trip
+- Safe Return Completed after successful completion/check-ins
+- Trusted Traveler based on trust score/tier
+
+Rules:
+- Do not expose sensitive verification details.
+- Trust internals should not be public.
+- Revocation should occur if verification/trust is lost, where appropriate.
+
+PHASE 14 — Stamp privacy controls
+
+User can control:
+- show/hide individual stamp
+- display on Passport
+- default stamp visibility
+- hide location details
+- hide earned date, optional if desired
+- share stamp to Pulse
+- remove shared stamp post without deleting earned stamp
+
+Privacy defaults:
+- normal stamps public by default if profile public
+- location-sensitive stamps friends_only or private by default if needed
+- safety/verification stamps public as badge only, no sensitive details
+- admin/campaign stamps follow definition default
+
+Public API must never leak:
+- exact lat/lng
+- hidden stamps
+- private stamps
+- source details user cannot access
+- verification internals
+- blocked-user stamp data
+
+PHASE 15 — Stamp collections and progress
+
+Build if feasible:
+- collections by category
+- city/country collection
+- trip collection
+- event collection
+- community collection
+- Rent a Buddy collection
+- progress bars for multi-step stamps
+- next stamp suggestions
+
+If not feasible now:
+- build schema-ready and simple category filters
+- document follow-up.
+
+PHASE 16 — Admin stamp tools
+
+If admin system exists, add/wire:
+
+Admin can:
+- view stamp definitions
+- create/edit/deactivate stamp definitions
+- award stamp manually
+- revoke stamp
+- restore revoked stamp
+- view audit trail
+- create campaign stamp
+- set campaign eligibility
+- inspect stamp award events
+- recalculate stamps safely
+- hide abusive/fraudulent stamp activity
+
+Admin rules:
+- All admin awards/revokes must be audited.
+- Admin cannot silently change user-visible stamp history without audit.
+- Manual awards must have reason.
+- Revoked stamps should not appear publicly.
+
+PHASE 17 — Anti-fraud and data integrity
+
+Add protections:
+- idempotency keys
+- duplicate source prevention
+- server-only awarding
+- no client-side self-award
+- source verification
+- no awarding from removed/cancelled/refunded/disputed data
+- revoked stamps excluded
+- deleted users handled safely
+- backfill/recalculate safe and repeatable
+- suspicious stamp activity reportable/admin-visible
+
+PHASE 18 — Frontend UX polish
+
+Requirements:
+- premium Passport-style stamp design
+- stamp grid and strip feel travel-themed
+- compact cards
+- clean detail modal
+- skeleton loading
+- retry states
+- honest empty states
+- fast filters
+- no giant headers
+- mobile-safe layout
+- accessible touch targets
+- no blank screen without explanation
+
+Empty states:
+- Owner: “Start traveling, joining events, and posting postcards to earn stamps.”
+- Public viewer: “No public stamps yet.”
+- Private/hidden: “This traveler keeps their stamps private.”
+
+PHASE 19 — Notifications/activity center
+
+Create notifications for:
+- stamp earned
+- stamp progress updated, only if meaningful
+- stamp collection completed
+- campaign stamp available
+- admin-awarded stamp
+- stamp revoked/restored, owner/admin only
+
+Use existing notification/activity center if available.
+
+PHASE 20 — Backfill/recalculation
+
+If existing users already have real trips/events/posts:
+- create an admin/server-only backfill script
+- dry-run first
+- report what would be awarded
+- require explicit run
+- use idempotency keys
+- do not infer unverifiable travel
+- do not award from fake/sample data
+- do not award from deleted/removed/cancelled content
+
+Backfill report:
+User | Stamp | Source | Reason | Awarded/skipped | Skip reason
+
+PHASE 21 — Tests
+
+Add tests for:
+- stamp definition creation
+- non-repeatable stamp awarded once
+- repeatable stamp increments correctly
+- duplicate source does not duplicate stamp
+- client cannot self-award
+- trip-created stamp
+- trip-completed stamp
+- event-joined/hosted stamp
+- post/postcard stamp
+- hidden gem stamp if available
+- Rent a Buddy completed booking stamp if available
+- Safe Return stamp if available
+- visibility public/private/friends_only
+- blocked user cannot see restricted stamps
+- public profile only shows allowed stamps
+- private source metadata not leaked
+- admin award audited
+- admin revoke hides public stamp
+- recalculate idempotent
+- RLS policies
+- deleted/revoked/removed content handling
+
+Manual QA:
+- create trip and check eligible stamp
+- complete trip and check completed-trip/city stamp
+- join/host event and check event stamp
+- create postcard and check postcard stamp
+- hide a stamp from Passport
+- make stamp private
+- view own Passport
+- view public profile as another user
+- view profile as blocked user
+- share stamp to Pulse if allowed
+- admin award stamp
+- admin revoke stamp
+- run dry-run backfill
+- verify no fake stamps appear
+
+FINAL PASSPORT STAMPS CONNECTION AUDIT
+
+Before marking complete, verify Stamps connect to:
+- Passport/Profile
+- Profile tabs
+- Trips
+- Events
+- Pulse
+- Discovery/location/place data
+- Posts/Postcards
+- Hidden Gems
+- Rent a Buddy
+- Safe Return
+- Trust Score/verification
+- Notifications/activity center
+- Admin moderation
+- Privacy settings
+- Blocking
+- Delayed posting
+- Search/deep links if applicable
+
+FINAL PASSPORT STAMPS DEFINITION OF DONE
+
+Do not mark Passport Stamps complete unless all of the following pass:
+
+1. Stamp definitions
+- Starter stamp catalog exists.
+- Definitions have real criteria.
+- Inactive/future stamps do not award accidentally.
+
+2. Stamp earning
+- Stamps are awarded only by trusted backend events.
+- Duplicate awards are prevented.
+- Repeatable/progress stamps work where implemented.
+- No client can self-award.
+
+3. Passport/Profile display
+- Owner sees all own stamps with visibility state.
+- Public viewers only see allowed public stamps.
+- Stamp strip/grid/detail work.
+- Empty states are honest.
+
+4. Privacy/security
+- Hidden/private stamps do not leak.
+- Exact lat/lng does not leak.
+- Blocked users cannot see restricted stamp data.
+- Verification/trust internals do not leak.
+
+5. System connections
+- Trips can award trip/location stamps.
+- Events can award event stamps.
+- Posts/postcards can award social stamps.
+- Rent a Buddy/Safe Return/Trust stamps connect where systems exist.
+- Pulse sharing respects privacy and delayed posting.
+
+6. Admin
+- Admin can create/disable definitions if admin system exists.
+- Admin can award/revoke/restore stamps.
+- All admin actions are audited.
+
+7. Backfill
+- Backfill is dry-run capable, idempotent, and real-data-only.
+- No unverifiable historic stamps are awarded.
+
+8. Tests
+Required tests pass for:
+- award engine
+- duplicate prevention
+- visibility
+- RLS/security
+- admin audit
+- trip/event/post integrations
+- no private field leakage
+
+Final deliverable:
+Return:
+- inventory report
+- files changed
+- migrations added
+- routes added/changed
+- screens/components added
+- stamp definitions added
+- award triggers added
+- tests added
+- tests passed/failed
+- manual QA pass/fail
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+The Passport Stamps system must work end-to-end as Travel Buddy’s earned travel identity layer, not as fake badges or decorative profile icons.

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections';
+import { getSavedListIds } from '../../services/discoveryBookmarks';
 import { usePlanPicker } from '../PlanPickerController';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
@@ -18,6 +19,7 @@ interface PlaceCardProps {
 export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [savedCount, setSavedCount]     = useState(0);
   const accent = categoryColor(place.category);
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -25,6 +27,18 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
   useEffect(() => {
     checkSaved('place', place.id)
       .then(({ saved }) => setSaved(saved))
+      .catch(() => {});
+  }, [place.id]);
+
+  useEffect(() => {
+    getSavedListIds(place.id)
+      .then((ids) => setSavedCount(ids.size))
+      .catch(() => {});
+  }, [place.id]);
+
+  const refreshSavedCount = useCallback(() => {
+    getSavedListIds(place.id)
+      .then((ids) => setSavedCount(ids.size))
       .catch(() => {});
   }, [place.id]);
 
@@ -95,6 +109,16 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
                 <Text style={styles.tagText}>{tag}</Text>
               </View>
             ))}
+          </View>
+        )}
+
+        {/* Saved-to-trips badge */}
+        {savedCount > 0 && (
+          <View style={styles.savedBadge}>
+            <ListPlus size={11} color={color.deep} />
+            <Text style={styles.savedBadgeText}>
+              {savedCount === 1 ? 'Saved to 1 trip' : `Saved to ${savedCount} trips`}
+            </Text>
           </View>
         )}
 
@@ -176,8 +200,14 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
       <TripWishlistPicker
         place={place}
         visible={pickerVisible}
-        onClose={() => setPickerVisible(false)}
-        onSaved={() => setPickerVisible(false)}
+        onClose={() => {
+          setPickerVisible(false);
+          refreshSavedCount();
+        }}
+        onSaved={() => {
+          setSavedCount((c) => c + 1);
+          setPickerVisible(false);
+        }}
       />
     </Pressable>
   );
@@ -345,6 +375,22 @@ const styles = StyleSheet.create({
     backgroundColor: color.deep + '14',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  savedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: color.deep + '12',
+  },
+  savedBadgeText: {
+    ...t.stamp,
+    color: color.deep,
+    fontSize: 10,
+    fontWeight: '600',
   },
 });
 

@@ -1,0 +1,461 @@
+ADDENDUM — Full Passport Stamp Artwork & Design System
+
+Add a complete stamp artwork/design function to the Passport Stamps system.
+
+Goal:
+Passport Stamps should feel collectible, premium, travel-themed, and consistent across the app. They should not look like random badges. Each stamp needs a clear visual identity, rarity treatment, category style, and reusable artwork rules.
+
+Do not use copyrighted logos, airline logos, country seals, government passport marks, or protected brand artwork.
+Do not fake official immigration/passport stamps.
+Do not imply government-issued travel proof.
+These are Travel Buddy in-app collectible stamps only.
+
+PHASE 1 — Stamp artwork data model
+
+Extend stamp_definitions or create stamp_artwork fields/table.
+
+Required artwork fields:
+- artwork_type
+- icon_name
+- icon_url
+- image_url
+- shape
+- border_style
+- color_theme
+- background_pattern
+- stamp_texture
+- rarity_style
+- category_style
+- animation_style
+- locked_artwork_url
+- unlocked_artwork_url
+- small_icon_url
+- large_artwork_url
+- share_card_artwork_url
+- dark_mode_variant_url, optional
+- light_mode_variant_url, optional
+- accessibility_label
+- short_display_name
+- design_version
+- created_at
+- updated_at
+
+Artwork types:
+- generated_svg
+- uploaded_image
+- icon_badge
+- city_stamp
+- country_stamp
+- event_stamp
+- trip_stamp
+- safety_stamp
+- buddy_stamp
+- campaign_stamp
+
+Shapes:
+- circle
+- oval
+- rounded_square
+- ticket_stub
+- passport_stamp_rectangle
+- luggage_tag
+- shield
+- pin
+- postcard_mark
+
+Border styles:
+- classic_stamp
+- dashed
+- double_ring
+- embossed
+- ink_bleed
+- minimal
+- premium_gold
+- verified_shield
+
+Background patterns:
+- subtle_map
+- compass_grid
+- wave
+- palm
+- skyline
+- mountain
+- stars
+- passport_paper
+- boarding_pass
+- none
+
+Texture styles:
+- clean
+- ink
+- faded
+- vintage
+- embossed
+- foil
+- rubber_stamp
+- paper_grain
+
+Rarity styles:
+- common
+- uncommon
+- rare
+- epic
+- legendary
+- official
+- limited
+
+PHASE 2 — Design language rules
+
+All stamps must follow a consistent Travel Buddy visual system.
+
+Base rules:
+- stamp name readable at small size
+- icon clear at 32px
+- category recognizable
+- rarity visible but not overwhelming
+- works in light and dark mode
+- works in grid, strip, modal, share card, and notification
+- has accessible label
+- no clutter
+- no tiny unreadable text
+- no real government/passport seal imitation
+- no copyrighted brand marks
+- no fake immigration authority marks
+
+Visual tone:
+- premium
+- fun
+- collectible
+- social travel
+- passport-inspired
+- modern, not childish
+- slightly textured like travel stamps
+- clean enough for mobile
+
+PHASE 3 — Stamp category design themes
+
+Create reusable artwork themes by category.
+
+Location stamps:
+- visual style: passport stamp / city mark
+- icons: city skyline, map pin, landmark silhouette, compass
+- patterns: subtle map, passport paper
+- colors: city/country themed but not flag-dependent unless generic
+- shape: oval or passport_stamp_rectangle
+
+Trip stamps:
+- visual style: luggage tag / boarding pass
+- icons: suitcase, route line, plane, backpack, calendar
+- patterns: boarding_pass, compass_grid
+- shape: rounded_square or luggage_tag
+
+Event stamps:
+- visual style: ticket stub / event wristband
+- icons: people, music, fork, beach, camera, sports
+- patterns: stars, wave, palm, none
+- shape: ticket_stub or circle
+
+Social/community stamps:
+- visual style: postcard mark / social badge
+- icons: postcard, chat bubble, camera, heart, group
+- patterns: paper_grain, subtle_map
+- shape: postcard_mark or rounded_square
+
+Safety/trust stamps:
+- visual style: shield / verified badge
+- icons: shield, check, lock, lifeline, location-safe
+- patterns: minimal, compass_grid
+- shape: shield or circle
+
+Rent a Buddy stamps:
+- visual style: helper badge / city guide patch
+- icons: handshake, guide flag, language bubble, map, group
+- patterns: compass_grid, subtle_map
+- shape: rounded_square or luggage_tag
+
+Campaign/official stamps:
+- visual style: premium/limited collectible
+- icons: star, ribbon, compass, limited mark
+- patterns: embossed, foil, passport_paper
+- shape: circle or passport_stamp_rectangle
+
+PHASE 4 — Rarity visual system
+
+Apply rarity consistently.
+
+Common:
+- simple border
+- standard icon
+- minimal texture
+
+Uncommon:
+- stronger border
+- subtle background pattern
+
+Rare:
+- double border
+- richer background
+- small sparkle/highlight
+
+Epic:
+- premium border
+- subtle animation on detail view
+- richer texture
+
+Legendary:
+- premium foil/embossed style
+- special detail animation
+- limited use
+
+Official:
+- Travel Buddy official style
+- clear “Official” tag
+- not government-looking
+
+Limited:
+- limited-time ribbon/tag
+- campaign dates visible in detail
+
+PHASE 5 — Generated SVG stamp renderer
+
+Build a reusable generated stamp renderer if feasible.
+
+Component:
+- StampArtwork
+- StampIcon
+- StampCard
+- StampDetailArtwork
+- StampShareCard
+
+Renderer inputs:
+- stamp_type
+- category
+- rarity
+- shape
+- icon_name
+- color_theme
+- border_style
+- background_pattern
+- texture
+- locked/unlocked state
+- size: tiny / small / medium / large / share
+
+Renderer outputs:
+- app-rendered stamp artwork
+- fallback icon
+- accessible label
+- locked grayscale version
+- unlocked full-color version
+
+Rules:
+- Use deterministic design from stamp_definition fields.
+- Do not rely on remote image loading for every stamp if generated SVG/local rendering can work.
+- If uploaded images are used, provide fallback generated design.
+- Stamp must render even if image_url fails.
+- Stamp artwork should be cached where safe.
+
+PHASE 6 — Locked vs unlocked stamp artwork
+
+Support locked/unearned stamps if collections/progress display them.
+
+Locked stamp:
+- grayscale or muted
+- lock icon
+- hidden details if secret stamp
+- visible criteria if normal stamp
+- “Keep traveling to unlock” copy
+
+Unlocked stamp:
+- full color
+- earned date
+- source summary
+- share action if public/allowed
+
+Secret stamp:
+- hidden name/details until earned, optional
+- generic mystery artwork
+- no false hints if criteria are secret
+
+PHASE 7 — Stamp detail and share artwork
+
+Stamp detail modal should show:
+- large artwork
+- name
+- category
+- rarity
+- earned date
+- short story/why earned
+- source link if viewer has access
+- collection membership
+- visibility settings for owner
+- share to Pulse button if allowed
+
+Share card artwork:
+- stamp artwork
+- user display name
+- “earned a Passport Stamp”
+- stamp name
+- city/country if allowed
+- Travel Buddy branding
+- no precise location unless explicitly public
+- export/share image if app supports it
+
+PHASE 8 — Admin artwork tools
+
+If admin system exists, add/wire:
+
+Admin can:
+- choose stamp artwork type
+- choose icon
+- choose shape
+- choose color theme
+- choose border style
+- choose background pattern
+- choose texture
+- choose rarity style
+- upload custom artwork
+- preview tiny/small/large/share sizes
+- set locked/unlocked artwork
+- set accessibility label
+- set design version
+- deactivate bad artwork
+- restore fallback artwork
+
+Admin preview must show:
+- grid preview
+- profile strip preview
+- detail modal preview
+- notification preview
+- share card preview
+- light/dark mode preview
+
+PHASE 9 — Artwork validation
+
+Validate:
+- required accessibility label
+- icon exists
+- safe URL/path for uploaded artwork
+- image file type
+- image size
+- no SVG script injection
+- no external tracking URLs
+- no copyrighted/government/brand mark if detectable
+- color contrast acceptable
+- name readable at small size
+- fallback exists
+
+PHASE 10 — Stamp artwork storage
+
+If using uploaded artwork:
+- store in safe storage bucket/path
+- separate original and optimized variants
+- generate thumbnails if image pipeline exists
+- avoid exposing private upload paths
+- cache public-safe assets
+- allow replacing artwork without breaking old stamps
+- preserve design_version history if feasible
+
+If image processing is not available:
+- use generated SVG renderer first
+- allow uploaded icon_url only with validation
+- document limitation
+
+PHASE 11 — Frontend placement
+
+Apply StampArtwork consistently in:
+- Passport stamp strip
+- Profile Stamps tab
+- Stamp grid
+- Stamp detail modal
+- Stamp earned toast/modal
+- Notifications/activity center
+- Pulse share card
+- Collections/progress screen
+- Admin preview
+- Search/deep link stamp preview if applicable
+
+No stamp should appear as plain text only unless artwork failed and fallback is shown.
+
+PHASE 12 — Stamp animation/micro-interactions
+
+Add subtle interactions:
+- earned stamp reveal animation
+- small bounce/glow on unlock
+- detail view shimmer for rare/legendary only
+- pressed state on stamp cards
+- locked-to-unlocked transition if user earns while viewing
+
+Rules:
+- no excessive animation
+- respect reduce-motion setting
+- animations must not block app performance
+- rare/legendary effects should be subtle
+
+PHASE 13 — Accessibility
+
+Requirements:
+- every stamp artwork has accessibility label
+- color is not the only signal for rarity/category
+- locked state has text/icon signal
+- screen reader reads stamp name, category, rarity, earned/locked state
+- share card has text equivalent
+- reduced motion supported
+
+PHASE 14 — Tests
+
+Add tests for:
+- stamp artwork renders from definition
+- fallback renders when image fails
+- locked vs unlocked rendering
+- rarity style mapping
+- category style mapping
+- accessibility label required
+- invalid icon rejected
+- unsafe SVG rejected
+- uploaded artwork validation
+- admin preview data returned
+- share card hides precise location unless allowed
+- reduce-motion disables nonessential animation
+
+Manual QA:
+- view stamp strip
+- view stamp grid
+- open stamp detail
+- earn a stamp and see reveal
+- view locked stamp
+- view rare/legendary stamp
+- test image failure fallback
+- preview in light/dark mode
+- test small mobile screen
+- test screen reader labels where possible
+- test reduce-motion
+- admin creates/edits artwork if admin exists
+
+FINAL STAMP ARTWORK DEFINITION OF DONE
+
+Do not mark stamp artwork complete unless:
+- every stamp has a consistent visual design
+- every stamp has fallback artwork
+- Passport/profile uses artwork everywhere
+- locked/unlocked states work
+- rarity/category styles are visible
+- accessibility labels exist
+- unsafe/copyright/government-style artwork is blocked or flagged
+- share cards hide private location data
+- admin can preview/manage artwork if admin exists
+- tests and manual QA pass
+
+Final deliverable:
+Return:
+- artwork fields/tables added
+- components added
+- renderer added
+- admin tools added
+- validation rules added
+- tests added
+- screenshots or screen descriptions
+- known limitations
+- remaining follow-up tasks
+
+Acceptance:
+Passport Stamps must feel like a real collectible Travel Buddy design system, not generic badges or plain icons.
