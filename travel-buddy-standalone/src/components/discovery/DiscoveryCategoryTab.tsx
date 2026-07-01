@@ -316,7 +316,7 @@ export function DiscoveryCategoryTab({
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
       ) : viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} />
+        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
       ) : error && places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Couldn't load places</Text>

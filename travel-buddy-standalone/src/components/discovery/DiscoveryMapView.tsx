@@ -45,6 +45,8 @@ export interface DiscoveryMapViewProps {
   fallbackZoom?: number;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
+  /** Pixels to shift map-overlay UI down so it clears a floating header/tab bar. */
+  topInset?: number;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, topInset = 0 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
@@ -239,7 +241,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
       </Map>
 
       {/* ── Filter toggle ──────────────────────────────────────────────────── */}
-      <View style={s.filterRow}>
+      <View style={[s.filterRow, { top: 14 + topInset }]}>
         {FILTER_OPTIONS.map((opt) => {
           const active = filter === opt.key;
           return (
@@ -264,7 +266,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
 
       {/* ── Reset toast ────────────────────────────────────────────────────── */}
       {resetToast && (
-        <View style={s.resetToast} pointerEvents="none">
+        <View style={[s.resetToast, { top: 62 + topInset }]} pointerEvents="none">
           <Text style={s.resetToastText}>Filter reset</Text>
         </View>
       )}
@@ -296,7 +298,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
 
       {/* ── Legend button ───────────────────────────────────────────────────── */}
       <Pressable
-        style={s.legendBtn}
+        style={[s.legendBtn, { top: 14 + topInset }]}
         onPress={() => setLegendOpen((o) => !o)}
         hitSlop={8}
       >
@@ -309,7 +311,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           {/* Transparent overlay — tap anywhere outside the panel to close */}
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setLegendOpen(false)} />
 
-          <View style={s.legendPanel}>
+          <View style={[s.legendPanel, { top: 58 + topInset }]}>
             {/* Traveler picks entry listed first per spec */}
             <View style={s.legendRow}>
               <View style={[s.legendDot, { backgroundColor: DB_PIN_COLOR }]}>

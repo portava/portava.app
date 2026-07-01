@@ -382,7 +382,7 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             filters={activeFilters}
             fallbackZoom={destinationZoom}
-            listTopInset={isMapMode ? 0 : tabRowHeight}
+            listTopInset={tabRowHeight}
           />
         )}
 
