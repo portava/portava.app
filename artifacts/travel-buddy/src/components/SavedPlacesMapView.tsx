@@ -32,7 +32,7 @@ import {
 } from './savedPlacesMapHelpers';
 import {
   categoryStorageKey,
-  loadCategoryFilter,
+  readRawCategoryFilter,
   saveCategoryFilter,
 } from './savedPlacesMapFilterStorage';
 
@@ -291,18 +291,32 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
 
   const storageKey = categoryStorageKey(listId);
 
+  // Always-current ref so the async restore callback validates against the
+  // latest categories, not the closure snapshot captured when the effect ran.
+  const categoriesRef = useRef<string[]>(categories);
+  useEffect(() => {
+    categoriesRef.current = categories;
+  }, [categories]);
+
   // Restore persisted category on mount (or when listId changes).
+  //
+  // Uses readRawCategoryFilter (no categories snapshot) + categoriesRef so the
+  // stored value is validated against the LATEST categories when the Promise
+  // resolves. This fixes a race condition where a fast network refresh could
+  // repopulate categories between the effect firing and the Promise resolving,
+  // causing a valid stored category to be silently discarded as stale.
   useEffect(() => {
     let cancelled = false;
-    loadCategoryFilter(AsyncStorage, storageKey, categories).then((resolved) => {
+    readRawCategoryFilter(AsyncStorage, storageKey).then((raw) => {
       if (cancelled) return;
-      if (resolved !== null) setActiveCategory(resolved);
+      if (raw && categoriesRef.current.includes(raw)) {
+        setActiveCategory(raw);
+      }
     });
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]); // intentionally omits `categories` — we validate with the snapshot at read time
+  }, [storageKey]);
 
   // If the active category is removed from the list (e.g., last place of that
   // type was deleted), silently fall back to "All".

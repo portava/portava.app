@@ -18,6 +18,7 @@ import {
   loadCategoryFilter,
   saveCategoryFilter,
   categoryStorageKey,
+  readRawCategoryFilter,
   CATEGORY_STORAGE_PREFIX,
 } from '../../savedPlacesMapFilterStorage.ts';
 import type { StorageLike } from '../../savedPlacesMapFilterStorage.ts';
@@ -125,6 +126,60 @@ describe('loadCategoryFilter', () => {
     await loadCategoryFilter(storage, TEST_KEY, CATEGORIES);
     assert.equal(capturedKey, TEST_KEY);
     assert.equal(capturedKey, 'saved_places_map_cat_v1_global');
+  });
+});
+
+// ── readRawCategoryFilter ──────────────────────────────────────────────────────
+
+describe('readRawCategoryFilter', () => {
+  it('returns the raw stored string without categories validation', async () => {
+    const storage = fakeStorage({ getResult: 'beach' });
+    const result = await readRawCategoryFilter(storage, TEST_KEY);
+    assert.equal(result, 'beach');
+  });
+
+  it('demonstrates the race condition fix: loadCategoryFilter fails with stale snapshot, readRaw survives', async () => {
+    const storage = fakeStorage({ getResult: 'beach' });
+    // Simulate: categories=[] at effect time (initial render, data not loaded yet)
+    const categoriesAtCallTime: string[] = [];
+    // Old approach — validates against stale snapshot → discards valid category
+    const oldResult = await loadCategoryFilter(storage, TEST_KEY, categoriesAtCallTime);
+    assert.equal(oldResult, null); // 'beach' was discarded ← the bug
+
+    // New approach — reads raw value; validation happens against latest categories
+    const raw = await readRawCategoryFilter(storage, TEST_KEY);
+    const categoriesNow = ['food', 'beach']; // categories after data arrived
+    const survived = raw && categoriesNow.includes(raw) ? raw : null;
+    assert.equal(survived, 'beach'); // 'beach' survives ← the fix
+  });
+
+  it('returns null for a missing key (null from storage)', async () => {
+    const storage = fakeStorage({ getResult: null });
+    const result = await readRawCategoryFilter(storage, TEST_KEY);
+    assert.equal(result, null);
+  });
+
+  it('returns null for an empty string stored value', async () => {
+    const storage = fakeStorage({ getResult: '' });
+    const result = await readRawCategoryFilter(storage, TEST_KEY);
+    assert.equal(result, null);
+  });
+
+  it('returns null when getItem rejects', async () => {
+    const storage = fakeStorage({ getError: new Error('storage unavailable') });
+    const result = await readRawCategoryFilter(storage, TEST_KEY);
+    assert.equal(result, null);
+  });
+
+  it('reads from the supplied storage key', async () => {
+    let capturedKey: string | undefined;
+    const storage: StorageLike = {
+      getItem(key) { capturedKey = key; return Promise.resolve('food'); },
+      setItem() { return Promise.resolve(); },
+      removeItem() { return Promise.resolve(); },
+    };
+    await readRawCategoryFilter(storage, TEST_KEY);
+    assert.equal(capturedKey, TEST_KEY);
   });
 });
 

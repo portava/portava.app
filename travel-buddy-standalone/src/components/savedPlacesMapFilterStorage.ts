@@ -50,6 +50,31 @@ export async function loadCategoryFilter(
 }
 
 /**
+ * Read the raw stored category value without validating against a categories
+ * snapshot.
+ *
+ * Prefer this over `loadCategoryFilter` in the mount-restore useEffect so the
+ * validation is deferred until the Promise resolves, using the LATEST categories
+ * (via a ref) rather than the snapshot captured when the effect ran. This
+ * prevents a race condition where a fast network refresh repopulates categories
+ * between the effect firing and the Promise resolving, causing a valid stored
+ * category to be silently discarded.
+ *
+ * Returns null for missing keys, empty strings, or storage errors.
+ */
+export async function readRawCategoryFilter(
+  storage: StorageLike,
+  storageKey: string,
+): Promise<string | null> {
+  try {
+    const stored = await storage.getItem(storageKey);
+    return stored || null; // coerce empty string → null
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Persist the chosen category to storage.
  *
  * When `cat` is `null` (meaning "All places") the stored key is removed so
