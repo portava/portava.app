@@ -114,7 +114,7 @@ router.get("/reviews/my-review", async (req, res) => {
     .eq("entity_type", entityType)
     .eq("entity_id", entityId)
     .eq("reviewer_id", auth.user.id)
-    .neq("state", "removed")
+    .not("state", "in", '("removed","hidden")')
     .maybeSingle();
 
   if (error) {
@@ -439,7 +439,7 @@ router.patch("/reviews/:id", async (req, res) => {
     res.status(403).json({ error: "forbidden", message: "Not your review" });
     return;
   }
-  if ((existing as any).state === "removed") {
+  if ((existing as any).state === "removed" || (existing as any).state === "hidden") {
     sendError(res, "not_found", "Review not found");
     return;
   }
