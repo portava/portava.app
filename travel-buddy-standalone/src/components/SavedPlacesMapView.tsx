@@ -289,6 +289,15 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   const categories = useMemo(() => uniqueCategories(mappable), [mappable]);
   const counts     = useMemo(() => categoryCounts(mappable), [mappable]);
 
+  // Resolve the effective category synchronously during render so that when the
+  // last pin in a category is removed, the filter resets to "All" in the same
+  // render pass — eliminating the one-frame "No pins in this category" flash
+  // that a useEffect reset would cause.
+  const effectiveCategory = useMemo(
+    () => resolveStoredCategory(activeCategory, categories),
+    [activeCategory, categories],
+  );
+
   const storageKey = categoryStorageKey(listId);
 
   // Always-current ref so the async restore callback validates against the
@@ -318,16 +327,9 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
     };
   }, [storageKey]);
 
-  // If the active category is removed from the list (e.g., last place of that
-  // type was deleted), silently fall back to "All".
-  useEffect(() => {
-    const resolved = resolveStoredCategory(activeCategory, categories);
-    if (resolved !== activeCategory) setActiveCategory(resolved);
-  }, [categories, activeCategory]);
-
   const visible = useMemo(
-    () => filterVisible(mappable, activeCategory),
-    [mappable, activeCategory],
+    () => filterVisible(mappable, effectiveCategory),
+    [mappable, effectiveCategory],
   );
 
   const selected = useMemo(
@@ -392,7 +394,7 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
         categories={categories}
         counts={counts}
         totalCount={mappable.length}
-        selected={activeCategory}
+        selected={effectiveCategory}
         onSelect={handleCategoryChange}
       />
 
@@ -406,13 +408,13 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
       )}
 
       {/* "No pins in this category" overlay — shown when the active filter yields zero pins */}
-      {shouldShowNoPinsOverlay(activeCategory, visible.length) && (
+      {shouldShowNoPinsOverlay(effectiveCategory, visible.length) && (
         <View style={s.noPinsOverlay}>
           <View style={s.noPinsIcon}>
             <MapPin size={22} color={color.faint} />
           </View>
           <Text style={s.noPinsTitle}>No pins in this category</Text>
-          <Text style={s.noPinsBody}>None of your saved places in "{activeCategory}" have map coordinates.</Text>
+          <Text style={s.noPinsBody}>None of your saved places in "{effectiveCategory}" have map coordinates.</Text>
         </View>
       )}
 
