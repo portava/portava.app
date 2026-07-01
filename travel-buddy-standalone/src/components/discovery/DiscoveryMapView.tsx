@@ -22,7 +22,8 @@ import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   loadMapFilter,
   saveMapFilter,
-  FILTER_STORAGE_KEY,
+  removeMapFilter,
+  getCachedFilter,
   type MapFilter,
 } from './discoverMapFilterStorage';
 export type { MapFilter } from './discoverMapFilterStorage';
@@ -110,7 +111,10 @@ function computeViewport(places: DiscoveryPlace[]) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
-  const [filter, setFilterRaw] = useState<MapFilter>('all');
+  // Lazy initialiser reads the module-level memory cache synchronously so
+  // remounts (e.g. Expo Router tab navigation) start with the correct filter
+  // value and never flash to 'all' while waiting for AsyncStorage to resolve.
+  const [filter, setFilterRaw] = useState<MapFilter>(() => getCachedFilter() ?? 'all');
   const [legendOpen, setLegendOpen] = useState(false);
   const [resetToast, setResetToast] = useState(false);
   const resetToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,7 +145,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   // with a filter that shows no pins in the current city.
   const handleFilterReset = () => {
     setFilterRaw('all');
-    AsyncStorage.removeItem(FILTER_STORAGE_KEY).catch(() => {});
+    removeMapFilter(AsyncStorage); // clears cache + storage atomically
     setResetToast(true);
     if (resetToastTimer.current) clearTimeout(resetToastTimer.current);
     resetToastTimer.current = setTimeout(() => setResetToast(false), 1500);
