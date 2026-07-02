@@ -1,0 +1,279 @@
+Backend Function Audit Pass — Travel Buddy
+
+Audit every backend function, route, service, and app feature connection across Travel Buddy.
+
+Do not rebuild systems.
+Do not add new features.
+Do not refactor for style.
+Only fix proven backend blockers, missing guards, broken routes, fake success paths, unsafe permissions, bad data joins, or frontend/backend mismatches.
+
+Goal:
+Make sure every real app function has a working backend path, correct auth, correct permissions, correct database behavior, honest error handling, and no fake/no-op success.
+
+Scope:
+Audit backend coverage for every major app system:
+
+1. Auth / session / user profile
+   - Sign up/sign in/session restore backend assumptions
+   - Profile creation
+   - Profile updates
+   - Username/handle uniqueness
+   - Avatar/photo URL handling
+   - Role/admin loading
+   - Account deactivation/delete if present
+   - Block/unblock relationships
+   - Trust/friend/follow relationships if present
+
+2. Passport / public profiles
+   - Own profile endpoint/data loader
+   - Other user profile endpoint/data loader
+   - Privacy filtering
+   - Blocked-user filtering
+   - Trust score display data
+   - Passport stamps
+   - Memories/postcards attached to profile
+   - Viewer permissions
+
+3. Pulse / posts / memories
+   - Feed backend
+   - Create post
+   - Create memory
+   - Upload media link path
+   - Like/unlike
+   - Comment/create/delete
+   - Save/unsave
+   - Report content
+   - Hide likes/comments privacy controls
+   - Delayed posting/geofence/privacy logic
+   - Hashtags/tagged users
+   - Feed ranking/visibility if present
+   - Empty/error states from API
+
+4. Discovery
+   - Discovery feed backend
+   - User search
+   - Event search
+   - Place search
+   - Hidden Gems
+   - Community places
+   - Save/unsave places
+   - Duplicate place checks
+   - Status filtering so stale/wrong-status places do not show
+   - Privacy/block filtering
+   - API failure fallback behavior
+
+5. Trips
+   - Create trip
+   - Edit trip
+   - Delete/cancel trip if present
+   - Trip detail fetch
+   - Trip members
+   - Trip timeline
+   - Saved ideas
+   - Add-to-trip
+   - TripCircle
+   - Trip chat creation/linking
+   - Safe Return trip scoping
+   - Permission checks: owner/member/public/private
+
+6. Events / plans
+   - Create event/plan
+   - Edit event/plan
+   - Join/request/maybe/decline/leave
+   - Host accept/decline if present
+   - Attendee list
+   - Age/trust/language/visibility filters
+   - Availability filtering
+   - Event media/cover support
+   - Event detail backend
+   - Event reports/moderation
+   - Permission checks
+
+7. Telegraph messaging
+   - Thread creation
+   - 1:1 thread fetch
+   - Group thread fetch
+   - Send message
+   - Message request flow
+   - Accept/decline message request
+   - Blocked-user restrictions
+   - Translation creation/status/retry
+   - Show original support data
+   - Mark read
+   - Unread counts
+   - Attachment backend support: either fully wired or frontend button must be hidden/disabled honestly
+   - Push notification trigger if present
+
+8. Notifications / Activity Center
+   - Notification list endpoint
+   - Category filters
+   - Unread counts
+   - Mark one read
+   - Mark all read
+   - Deep-link actionUrl generation
+   - Blocked-user notification suppression
+   - Admin notifications guarded
+   - Pagination
+   - Failure behavior
+
+9. Safe Return
+   - Start session
+   - Get active session
+   - Trip-scoped active session filtering
+   - Check-in
+   - Missed check-in
+   - Escalation state
+   - Trusted contacts
+   - Emergency contacts
+   - End session
+   - Privacy/location sharing permissions
+   - No unrelated session leaks across trips/users
+
+10. Rent a Buddy
+   - Provider application
+   - Provider approval/admin routes
+   - Buddy marketplace listing
+   - Booking request
+   - Booking accept/decline
+   - Booking chat link
+   - Complete booking
+   - Review only after completed booking
+   - Support report time-window rules
+   - Non-dating boundary acknowledgment
+   - Payment state honesty: no fake paid/success state
+   - Admin flags/disputes
+   - Provider/traveler permission checks
+
+11. Admin / moderation
+   - requireAdminGuard on every admin backend route
+   - Frontend admin screens have matching backend endpoints
+   - Trust reviews
+   - Trust detail / score adjustment
+   - Gaming flags
+   - Feature flags
+   - Hashtags
+   - Hidden Gems moderation
+   - Content reports
+   - RAB admin screens
+   - User suspension/ban if backend exists
+   - Confirm no admin endpoint can be accessed by normal authenticated users
+
+12. Media/upload backend
+   - Upload endpoint
+   - File type validation
+   - File size limits
+   - Auth requirement
+   - Service-role storage behavior
+   - Public URL/storage path handling
+   - Delete/replace if present
+   - Media ownership checks
+   - All frontend upload surfaces either wired or honestly disabled:
+     - profile photo
+     - post media
+     - memory media
+     - story/highlight media
+     - event cover
+     - trip cover
+     - Telegraph attachment
+     - RAB provider photos
+
+13. Database / Supabase behavior
+   - Every route handles Supabase errors honestly
+   - No maybeSingle error falls through into insert/update
+   - No fake success if insert/update/delete failed
+   - No silent catch blocks hiding broken behavior
+   - No missing await on writes
+   - No duplicate creation race where obvious
+   - No broad select leaks private fields
+   - RLS assumptions documented where backend bypasses with service role
+   - Validate required columns exist or migrations exist
+
+14. API consistency
+   - Frontend service calls match backend route paths
+   - HTTP methods match
+   - Request body fields match
+   - Response shapes match frontend expectations
+   - Error shapes are consistent
+   - Pagination params match
+   - Auth token usage is consistent
+   - No frontend calls to dead/missing endpoints
+   - No backend routes that are unused but critical alternatives are missing
+
+Required process:
+
+1. Survey first.
+   Use targeted greps to inventory:
+   - all API routes
+   - all frontend service files
+   - all fetch/apiClient calls
+   - all Supabase table references
+   - all admin routes
+   - all auth guards
+   - all TODO/no-op/fake success markers
+   - all buttons/actions that call backend services
+
+2. Build a backend coverage matrix:
+   Columns:
+   - System
+   - Frontend action/function
+   - Frontend file/service
+   - Backend route/function
+   - Database tables touched
+   - Auth guard
+   - Permission guard
+   - Status: pass / partial / fail / unused / missing
+   - Evidence
+   - Fix needed
+
+3. Fix only proven blockers:
+   - Missing backend route used by frontend
+   - Wrong route path/method/body/response shape
+   - Missing auth guard
+   - Missing ownership/admin permission guard
+   - Fake success/no-op backend path
+   - Supabase error fallthrough
+   - Broken data filtering/privacy leak
+   - Broken status guard
+   - Crash-causing response mismatch
+   - Dishonest UI caused by backend absence
+
+4. Do not fix:
+   - Cosmetic issues
+   - New feature ideas
+   - Large architecture rewrites
+   - Preferences that are not blockers
+   - Anything not proven by code evidence
+
+5. For every fix:
+   - Use existing services/components/patterns
+   - Keep changes minimal
+   - Add or update tests where existing test patterns already exist
+   - Do not break standalone sync workflow
+   - Do not touch unrelated systems
+
+6. After fixes, run:
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - relevant backend/API tests for changed routes
+
+7. Final report must include:
+   - Backend coverage matrix
+   - List of every missing/broken backend connection found
+   - Fixes completed
+   - Files changed
+   - Tests added/updated
+   - Real remaining backend blockers
+   - Non-blocking backend gaps
+   - Validation table
+   - Commit message
+
+Important rules:
+- If frontend has a button/action but backend is not wired, either wire it to the existing intended backend flow or make the frontend action honest/disabled.
+- If backend accepts a request but does not enforce ownership/admin/member permissions, treat it as a blocker.
+- If backend returns success without confirming the database write succeeded, treat it as a blocker.
+- If a route uses service-role access, confirm the route itself enforces user/admin permissions before touching private data.
+- If a feature is not supposed to be live yet, make the frontend/backend state honest instead of pretending it works.
+- Keep this backend pass focused on correctness, safety, permissions, and real connectivity.

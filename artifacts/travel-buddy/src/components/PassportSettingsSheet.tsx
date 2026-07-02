@@ -228,8 +228,19 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
     setUsernameStatus('checking');
     debounceRef.current = setTimeout(async () => {
       const result = await checkUsername(v);
-      setUsernameStatus(result.available ? 'available' : 'unavailable');
-      setUsernameReason(result.reason ?? '');
+      if (result.available) {
+        setUsernameStatus('available');
+        setUsernameReason('');
+      } else {
+        const transientReasons = ['Could not check username', 'Network error', 'Backend not configured', 'Not signed in'];
+        if (transientReasons.includes(result.reason ?? '')) {
+          setUsernameStatus('idle');
+          setUsernameReason('');
+        } else {
+          setUsernameStatus('unavailable');
+          setUsernameReason(result.reason ?? '');
+        }
+      }
     }, 600);
   }, [profile.username]);
 

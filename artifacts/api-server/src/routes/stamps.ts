@@ -163,7 +163,15 @@ router.get("/stamps/me", async (req, res) => {
   if (country) query = (query as any).eq("country", country);
 
   const { data, error } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) {
+    // PGRST205/PGRST200 = relation does not exist (migration not yet applied)
+    if ((error as any).code === "PGRST205" || (error as any).code === "PGRST200") {
+      res.json({ stamps: [] });
+      return;
+    }
+    sendError(res, "db_error", error.message);
+    return;
+  }
 
   res.json({ stamps: (data ?? []).map(formatStamp) });
 });
