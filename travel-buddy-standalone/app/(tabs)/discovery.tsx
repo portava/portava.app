@@ -30,6 +30,13 @@ import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  loadDiscoveryFilters,
+  saveDiscoveryFilters,
+  removeDiscoveryFilters,
+  getCachedFilters,
+} from '../../src/components/discovery/discoveryFilterStorage';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -157,7 +164,27 @@ export default function DiscoveryHub() {
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
   const [countsLoading, setCountsLoading] = useState(false);
-  const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
+  const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>(
+    () => getCachedFilters() ?? { radiusKm: 10, openNow: false, minRating: null },
+  );
+
+  // Load persisted filters from AsyncStorage on first mount (covers cold app
+  // launches). getCachedFilters() above handles in-session remounts synchronously.
+  useEffect(() => {
+    loadDiscoveryFilters(AsyncStorage).then(setActiveFilters);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFiltersChange = useCallback((f: DiscoveryFilters) => {
+    setActiveFilters(f);
+    saveDiscoveryFilters(AsyncStorage, f);
+  }, []);
+
+  const handleResetFilters = useCallback(() => {
+    const defaults: DiscoveryFilters = { radiusKm: 10, openNow: false, minRating: null };
+    setActiveFilters(defaults);
+    removeDiscoveryFilters(AsyncStorage);
+  }, []);
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -506,7 +533,12 @@ export default function DiscoveryHub() {
                 </View>
               )}
 
-              <FilterStrip filters={activeFilters} onChange={setActiveFilters} />
+              <FilterStrip filters={activeFilters} onChange={handleFiltersChange} />
+              {hasNonDefaultFilters && (
+                <Pressable style={styles.resetFiltersBtn} onPress={handleResetFilters}>
+                  <Text style={styles.resetFiltersText}>Reset filters</Text>
+                </Pressable>
+              )}
             </View>
           )}
 
@@ -909,5 +941,16 @@ const styles = StyleSheet.create({
   trendingChipCount: {
     fontSize: 10,
     color: color.mute,
+  },
+  resetFiltersBtn: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
+  resetFiltersText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    textDecorationLine: 'underline' as const,
   },
 });
