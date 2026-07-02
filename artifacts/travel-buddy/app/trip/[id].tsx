@@ -45,6 +45,7 @@ export default function TripDetail() {
   const commandBarY      = useRef<number>(0);
   const [chatLoading, setChatLoading] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
+  const [crewRefreshKey, setCrewRefreshKey] = useState(0);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [gapDays, setGapDays] = useState<string[]>([]);
@@ -241,7 +242,7 @@ export default function TripDetail() {
         <TripStamps stamps={live ? [] : tripStamps} />
         <TripMapPlaceholder />
         {live && trip.id ? (
-          <TripCrewSection tripId={trip.id} />
+          <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
         ) : null}
         <TripSafety tripId={live ? trip.id : undefined} />
         <TripPostsSection posts={live ? [] : tripPosts} />
@@ -284,6 +285,7 @@ export default function TripDetail() {
         tripId={trip.id}
         visible={inviteSheetOpen}
         onDismiss={() => setInviteSheetOpen(false)}
+        onInviteSent={() => setCrewRefreshKey((k) => k + 1)}
       />
     </View>
   );

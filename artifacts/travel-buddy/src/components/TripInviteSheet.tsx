@@ -28,6 +28,8 @@ interface Props {
   tripId: string;
   visible: boolean;
   onDismiss: () => void;
+  /** Called each time an invite is successfully sent. Parent can use this to refresh the crew section. */
+  onInviteSent?: () => void;
 }
 
 type InviteStatus = 'on_trip' | 'pending' | 'available';
@@ -54,7 +56,7 @@ function Avatar({ user, size = 38 }: { user: FriendUser; size?: number }) {
   );
 }
 
-export function TripInviteSheet({ tripId, visible, onDismiss }: Props) {
+export function TripInviteSheet({ tripId, visible, onDismiss, onInviteSent }: Props) {
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<CircleMember[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -119,6 +121,7 @@ export function TripInviteSheet({ tripId, visible, onDismiss }: Props) {
       setMembers((prev) =>
         prev.map((m) => (m.id === user.id ? { ...m, status: 'pending' } : m)),
       );
+      onInviteSent?.();
       showNotificationToast({
         id: `trip-invite-${user.id}-${Date.now()}`,
         userId: '',

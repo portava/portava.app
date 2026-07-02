@@ -21,7 +21,7 @@ export interface UseTripCrewMapResult {
 
 const POLL_INTERVAL_MS = 30_000;
 
-export function useTripCrewMap(tripId: string | null): UseTripCrewMapResult {
+export function useTripCrewMap(tripId: string | null, refreshKey = 0): UseTripCrewMapResult {
   const [members, setMembers] = useState<CrewMemberCard[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [featureEnabled, setFeatureEnabled] = useState(true);
@@ -43,6 +43,14 @@ export function useTripCrewMap(tripId: string | null): UseTripCrewMapResult {
     setFeatureEnabled(result.data.featureEnabled);
     setError(null);
   }, [tripId]);
+
+  // Immediate re-fetch whenever the caller increments refreshKey
+  // (e.g. after sending an invite from TripInviteSheet).
+  useEffect(() => {
+    if (!tripId || refreshKey === 0) return;
+    void fetchMap();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   useEffect(() => {
     if (!tripId) return;

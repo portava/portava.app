@@ -25,6 +25,8 @@ import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCr
 
 interface Props {
   tripId: string;
+  /** Increment to trigger an immediate crew re-fetch (e.g. after sending an invite). */
+  refreshKey?: number;
 }
 
 // ── Approximate density map (no SDK) ─────────────────────────────────────────
@@ -134,8 +136,8 @@ function VisibilitySelector({
   );
 }
 
-export function CrewMapSection({ tripId }: Props) {
-  const { members, totalCount, featureEnabled, loading, error, refresh } = useTripCrewMap(tripId);
+export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
+  const { members, totalCount, featureEnabled, loading, error, refresh } = useTripCrewMap(tripId, refreshKey);
   const { blockedIds, blockerIds } = useBlockedIds();
 
   function isBlockedMember(userId: string): boolean {
