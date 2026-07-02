@@ -38,7 +38,8 @@ import {
   buildRentBuddyCtaUrl, shouldShowRentBuddyCta,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
-import { checkCityAvailable } from '../../src/services/rentABuddy';
+import { checkCityAvailable, getTopInCity, type BuddyProfile } from '../../src/services/rentABuddy';
+import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
@@ -118,6 +119,9 @@ export default function EventDetailScreen() {
   const [addedToTrip, setAddedToTrip] = useState(false);
   // null = loading/unknown; true = buddies available in this city; false = none/unavailable
   const [buddyCityAvailable, setBuddyCityAvailable] = useState<boolean | null>(null);
+  // Top buddies shown inline below the CTA; null = not yet fetched
+  const [previewBuddies, setPreviewBuddies] = useState<BuddyProfile[] | null>(null);
+  const [buddyPreviewLoading, setBuddyPreviewLoading] = useState(false);
   // hasPendingRequest is seeded from backend on load; optimistically set true
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
@@ -175,6 +179,26 @@ export default function EventDetailScreen() {
     }).catch(() => { if (!cancelled) setBuddyCityAvailable(false); });
     return () => { cancelled = true; };
   }, [event?.city, rentBuddyEnabled]);
+
+  // ── Inline buddy preview — fetch top 3 once city availability is confirmed ──
+  useEffect(() => {
+    if (!buddyCityAvailable || !event?.city) {
+      setPreviewBuddies(null);
+      return;
+    }
+    let cancelled = false;
+    setBuddyPreviewLoading(true);
+    getTopInCity(event.city)
+      .then((res) => {
+        if (cancelled) return;
+        setPreviewBuddies(res.ok ? (res.data?.buddies?.slice(0, 3) ?? []) : []);
+        setBuddyPreviewLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) { setPreviewBuddies([]); setBuddyPreviewLoading(false); }
+      });
+    return () => { cancelled = true; };
+  }, [buddyCityAvailable, event?.city]);
 
   // ── Add to itinerary (when arriving from Trip Detail with tripId param) ────
   async function handleAddToItinerary() {
@@ -612,26 +636,56 @@ export default function EventDetailScreen() {
               )}
             </View>
 
-            {/* Find a Travel Buddy CTA — shown for public/going events in RAB-available cities */}
+            {/* Find a Travel Buddy — inline preview section */}
             {shouldShowRentBuddyCta(event, rentBuddyEnabled, buddyCityAvailable) && (
-              <Pressable
-                testID="find-buddy-cta"
-                style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
-                onPress={() => {
-                  const url = buildRentBuddyCtaUrl(event);
-                  if (!url) return;
-                  router.push(url as any);
-                }}
-              >
-                <View style={styles.findBuddyIcon}>
-                  <Users size={18} color="#0369A1" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.findBuddyTitle}>Find a Travel Buddy</Text>
-                  <Text style={styles.findBuddySub}>Connect with a local buddy in {event.city}</Text>
-                </View>
-                <ChevronDown size={14} color="#0369A1" style={{ transform: [{ rotate: '-90deg' }] }} />
-              </Pressable>
+              <View style={styles.findBuddySection}>
+                {/* Header — tapping navigates to the full search screen */}
+                <Pressable
+                  testID="find-buddy-cta"
+                  style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
+                  onPress={() => {
+                    const url = buildRentBuddyCtaUrl(event);
+                    if (!url) return;
+                    router.push(url as any);
+                  }}
+                >
+                  <View style={styles.findBuddyIcon}>
+                    <Users size={18} color="#0369A1" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.findBuddyTitle}>Find a Travel Buddy</Text>
+                    <Text style={styles.findBuddySub}>Connect with a local buddy in {event.city}</Text>
+                  </View>
+                  <ChevronDown size={14} color="#0369A1" style={{ transform: [{ rotate: '-90deg' }] }} />
+                </Pressable>
+
+                {/* Buddy preview cards */}
+                {buddyPreviewLoading ? (
+                  <>
+                    <BuddyCardSkeleton />
+                    <BuddyCardSkeleton />
+                  </>
+                ) : previewBuddies && previewBuddies.length > 0 ? (
+                  <>
+                    {previewBuddies.map((buddy) => (
+                      <BuddyCard key={buddy.id} buddy={buddy} compact />
+                    ))}
+                    {/* See all — navigates to full search screen */}
+                    <Pressable
+                      testID="see-all-buddies"
+                      style={({ pressed }) => [styles.seeAllBuddies, pressed && { opacity: 0.7 }]}
+                      onPress={() => {
+                        const url = buildRentBuddyCtaUrl(event);
+                        if (!url) return;
+                        router.push(url as any);
+                      }}
+                    >
+                      <Text style={styles.seeAllBuddiesText}>See all buddies in {event.city}</Text>
+                      <ChevronDown size={13} color="#0369A1" style={{ transform: [{ rotate: '-90deg' }] }} />
+                    </Pressable>
+                  </>
+                ) : null}
+              </View>
             )}
 
             {/* Comments / event updates — visible to attendees and host */}
@@ -863,10 +917,13 @@ const styles = StyleSheet.create({
   commentsRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, padding: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze },
   commentsText:       { ...t.body, color: color.mute, flex: 1 },
 
+  findBuddySection:   { gap: space.sm },
   findBuddyCta:       { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F0F9FF', borderRadius: radius.md, borderWidth: 1, borderColor: '#BAE6FD', paddingHorizontal: space.md, paddingVertical: 12 },
   findBuddyIcon:      { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
   findBuddyTitle:     { ...t.bodyStrong, color: '#0C4A6E', fontSize: 14 },
   findBuddySub:       { ...t.small, color: '#0369A1', marginTop: 1 },
+  seeAllBuddies:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: space.sm },
+  seeAllBuddiesText:  { ...t.small, color: '#0369A1', fontWeight: '600' },
 
   actionBar:          { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: color.paperRaised, borderTopWidth: 1, borderTopColor: color.haze, padding: space.lg, ...shadow.card },
   blockedRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF3C7', borderRadius: radius.md, padding: space.md },
