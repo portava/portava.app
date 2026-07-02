@@ -22,6 +22,7 @@ import { useCompassFrontload } from '../src/hooks/compass/useCompassFrontload';
 import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
+import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
 import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 
@@ -67,6 +68,7 @@ export default function RootLayout() {
                 <AttachControllerProvider>
                   <PlanPickerControllerProvider>
                     <NotificationToastProvider>
+                    <StampEarnedToastProvider>
                       <PushSetup />
                       <CompassFrontloadSetup />
                       <StatusBar style="dark" />
@@ -83,6 +85,7 @@ export default function RootLayout() {
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                       </Stack>
+                    </StampEarnedToastProvider>
                     </NotificationToastProvider>
                   </PlanPickerControllerProvider>
                 </AttachControllerProvider>

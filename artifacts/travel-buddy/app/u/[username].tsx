@@ -890,7 +890,14 @@ export default function PublicPassportScreen() {
 
         <View style={{ marginTop: space.md }}>
           {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} />}
-          {tab === 'stamps' && <StampsTab stamps={profile?.stamps ?? []} />}
+          {tab === 'stamps' && (
+            <StampsTab
+              stamps={profile?.stamps ?? []}
+              viewingUsername={!isOwn ? username : undefined}
+              viewingUserId={profile?.id}
+              isOwner={isOwn}
+            />
+          )}
           {tab === 'map' && <MapTab postcards={postcards} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>

@@ -5,7 +5,7 @@
  */
 import { supabase } from '../lib/supabase';
 
-export type StampVisibility = 'public' | 'circle_only' | 'trip_crew' | 'private';
+export type StampVisibility = 'public' | 'circle_only' | 'friends_only' | 'trip_crew' | 'private';
 export type MemoryVisibility = 'public' | 'circle_only' | 'trip_crew' | 'private';
 
 export interface StampDefinition {

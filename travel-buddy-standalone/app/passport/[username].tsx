@@ -224,7 +224,7 @@ export default function PassportDeepLinkScreen() {
 
         <View style={{ marginTop: space.md }}>
           {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} />}
-          {tab === 'stamps' && <StampsTab stamps={[]} viewingUsername={username} />}
+          {tab === 'stamps' && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
           {tab === 'map' && <MapTab postcards={postcards} />}
           {tab === 'about' && <AboutTab profile={profile} isOwner={false} />}
         </View>
