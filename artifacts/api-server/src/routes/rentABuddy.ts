@@ -442,7 +442,7 @@ router.get("/api/rent-a-buddy/cities/:city/available", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ available: false, code: "service_unavailable" });
 
-  const rentBuddyEnabled = await getFlag(serviceClient, "rent_buddy_enabled").catch(() => false);
+  const rentBuddyEnabled = await isFlagEnabled(serviceClient, "rent_buddy_enabled").catch(() => false);
   if (!rentBuddyEnabled) return res.json({ available: false, code: "feature_disabled" });
 
   const city = req.params.city?.trim();
