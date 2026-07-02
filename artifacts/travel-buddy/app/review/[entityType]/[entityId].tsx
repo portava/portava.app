@@ -87,7 +87,7 @@ export default function ReviewComposerScreen() {
   // If so, pre-fill the form fields for editing.
   useEffect(() => {
     if (!isAuthed || !entityId || entityType === 'event') return;
-    const validType = ['trip', 'rent_buddy_booking'].includes(entityType ?? '');
+    const validType = ['trip', 'rent_buddy_booking', 'place'].includes(entityType ?? '');
     if (!validType) return;
 
     setLoading(true);
@@ -119,7 +119,7 @@ export default function ReviewComposerScreen() {
       return;
     }
 
-    const validType = ['event', 'trip', 'rent_buddy_booking'].includes(entityType ?? '');
+    const validType = ['event', 'trip', 'rent_buddy_booking', 'place'].includes(entityType ?? '');
     if (!validType || !entityId) {
       Alert.alert('Error', 'Invalid review target. Please go back and try again.');
       return;
@@ -180,6 +180,8 @@ export default function ReviewComposerScreen() {
       ? 'Event'
       : entityType === 'trip'
       ? 'Trip'
+      : entityType === 'place'
+      ? 'Place'
       : 'Booking';
 
   if (loading) {

@@ -16,8 +16,13 @@ export interface GpsResult {
   lat: number | null;
   lng: number | null;
   accuracyMeters: number | null;
+  /** true when the fix came from getLastKnownPositionAsync (cached), false for a fresh fix */
+  cached?: boolean;
   error?: string;
 }
+
+/** Hard timeout for a live GPS fix before falling back to last-known position. */
+const GPS_TIMEOUT_MS = 8_000;
 
 export interface PlaceResult {
   city: string | null;
@@ -40,15 +45,48 @@ export async function getCurrentGps(): Promise<GpsResult> {
     if (status !== 'granted') {
       return { granted: false, lat: null, lng: null, accuracyMeters: null, error: 'permission_denied' };
     }
-    const pos = await Location.getCurrentPositionAsync({
+
+    // Race a live fix against a hard timeout so GPS never stalls the UI indefinitely.
+    const liveFixPromise = Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
-    return {
-      granted: true,
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude,
-      accuracyMeters: pos.coords.accuracy ?? null,
-    };
+    const timeoutPromise = new Promise<null>((_, reject) =>
+      setTimeout(() => reject(new Error('gps_timeout')), GPS_TIMEOUT_MS),
+    );
+
+    try {
+      const pos = await Promise.race([liveFixPromise, timeoutPromise]) as Location.LocationObject;
+      return {
+        granted: true,
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracyMeters: pos.coords.accuracy ?? null,
+        cached: false,
+      };
+    } catch {
+      // Live fix timed out or failed — fall back to the last known position.
+    }
+
+    // Last-known fallback: accept a cached fix up to 5 min old with ≤500 m accuracy.
+    try {
+      const last = await Location.getLastKnownPositionAsync({
+        maxAge: 5 * 60 * 1000,
+        requiredAccuracy: 500,
+      });
+      if (last) {
+        return {
+          granted: true,
+          lat: last.coords.latitude,
+          lng: last.coords.longitude,
+          accuracyMeters: last.coords.accuracy ?? null,
+          cached: true,
+        };
+      }
+    } catch {
+      // No cached position available.
+    }
+
+    return { granted: false, lat: null, lng: null, accuracyMeters: null, error: 'gps_failed' };
   } catch (e) {
     return {
       granted: false,

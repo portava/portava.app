@@ -1,17 +1,19 @@
 /**
- * ReviewsSection — embeddable reviews panel for event/trip/booking detail screens.
+ * ReviewsSection — embeddable reviews panel for event/trip/booking/place detail screens.
  *
  * Event reviews use the legacy GET /api/events/:id/reviews endpoint (event_reviews table).
  * Trip reviews use GET /api/trips/:id/reviews (reviews table).
+ * Place reviews use GET /api/places/:id/reviews (reviews table).
  *
  * Shows aggregate rating (stars + count) + recent reviews.
  * Shows "Write a Review" CTA if canReview=true and the user has not yet reviewed.
- * Shows "Edit your review" CTA if the user already has a review on file.
+ * Shows "Edit your review" + "Remove" CTAs if the user already has a review on file.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -21,7 +23,9 @@ import { router, useFocusEffect } from 'expo-router';
 import {
   getTripReviews,
   getEventReviews,
+  getPlaceReviews,
   getMyReview,
+  deleteReview,
   type Review,
   type ReviewsResponse,
   type EventReviewsResponse,
@@ -102,6 +106,8 @@ export function ReviewsSection({
   const [avgRating, setAvg]           = useState<number | null>(null);
   const [loading, setLoading]         = useState(true);
   const [alreadyReviewed, setAlready] = useState(false);
+  const [myReviewId, setMyReviewId]   = useState<string | null>(null);
+  const [deleting, setDeleting]       = useState(false);
 
   // Refetch reviews and aggregate stats every time the screen comes into focus
   // so avgRating is fresh after the user writes or edits a review and returns.
@@ -112,6 +118,13 @@ export function ReviewsSection({
         try {
           if (entityType === 'trip') {
             const resp: ReviewsResponse = await getTripReviews(entityId, 1, 5);
+            if (active) {
+              setReviews(resp.reviews);
+              setTotal(resp.total);
+              setAvg(resp.avgRating);
+            }
+          } else if (entityType === 'place') {
+            const resp: ReviewsResponse = await getPlaceReviews(entityId, 1, 5);
             if (active) {
               setReviews(resp.reviews);
               setTotal(resp.total);
@@ -141,7 +154,7 @@ export function ReviewsSection({
   );
 
   // Separately check whether the current user has already submitted a review.
-  // Only runs when the review CTA would otherwise be shown, and only for trip/booking
+  // Only runs when the review CTA would otherwise be shown, and only for non-event
   // entities (event reviews don't use the my-review endpoint).
   useEffect(() => {
     if (!canReview || !isAuthed || entityType === 'event') return;
@@ -150,6 +163,7 @@ export function ReviewsSection({
       .then((result) => {
         if (!active) return;
         setAlready(result.exists);
+        setMyReviewId(result.reviewId);
       })
       .catch(() => {
         // Fail open — don't prevent writing a review if the check fails
@@ -189,9 +203,57 @@ export function ReviewsSection({
       {/* Review CTA */}
       {canReview && (
         alreadyReviewed ? (
-          <TouchableOpacity style={[s.writeBtn, s.writeBtnEditing]} onPress={openComposer}>
-            <Text style={s.writeBtnTextEditing}>✎ Edit your review</Text>
-          </TouchableOpacity>
+          <View style={s.ctaRow}>
+            <TouchableOpacity style={[s.writeBtn, s.writeBtnEditing]} onPress={openComposer}>
+              <Text style={s.writeBtnTextEditing}>✎ Edit your review</Text>
+            </TouchableOpacity>
+            {myReviewId && (
+              <TouchableOpacity
+                style={s.deleteBtn}
+                disabled={deleting}
+                onPress={() => {
+                  Alert.alert(
+                    'Remove review',
+                    'Are you sure you want to delete your review?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const idToDelete = myReviewId;
+                          setDeleting(true);
+                          try {
+                            await deleteReview(idToDelete);
+                            // Optimistic update: remove the review and recompute aggregate
+                            // from remaining local rows (full refresh on next focus via useFocusEffect).
+                            const remaining = reviews.filter((r) => r.id !== idToDelete);
+                            setReviews(remaining);
+                            setTotal((t) => Math.max(0, t - 1));
+                            setAvg(
+                              remaining.length > 0
+                                ? Math.round(
+                                    (remaining.reduce((s, r) => s + r.rating, 0) / remaining.length) * 10,
+                                  ) / 10
+                                : null,
+                            );
+                            setAlready(false);
+                            setMyReviewId(null);
+                          } catch {
+                            Alert.alert('Error', 'Could not delete your review. Please try again.');
+                          } finally {
+                            setDeleting(false);
+                          }
+                        },
+                      },
+                    ],
+                  );
+                }}
+              >
+                <Text style={s.deleteBtnText}>{deleting ? '…' : 'Remove'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         ) : (
           <TouchableOpacity style={s.writeBtn} onPress={openComposer}>
             <Text style={s.writeBtnText}>★ Write a Review</Text>
@@ -227,6 +289,7 @@ const s = StyleSheet.create({
   avgRow:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
   avgText:      { fontSize: 13, color: '#6B7280' },
 
+  ctaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   writeBtn: {
     borderWidth: 1,
     borderColor: '#F59E0B',
@@ -234,7 +297,7 @@ const s = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
     alignSelf: 'flex-start',
-    marginBottom: 14,
+    marginBottom: 0,
   },
   writeBtnEditing: {
     borderColor: '#9CA3AF',
@@ -242,6 +305,16 @@ const s = StyleSheet.create({
   },
   writeBtnText:        { fontSize: 13, fontWeight: '600', color: '#92400E' },
   writeBtnTextEditing: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
+  deleteBtn: {
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#FEF2F2',
+  },
+  deleteBtnText: { fontSize: 13, fontWeight: '600', color: '#DC2626' },
 
   reviewCard: {
     borderTopWidth: 1,

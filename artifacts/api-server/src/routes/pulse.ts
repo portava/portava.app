@@ -245,20 +245,53 @@ router.get("/pulse", async (req, res) => {
         .order("saved_count", { ascending: false })
         .limit(10);
 
-      placeCards = ((nearbyPlaces ?? []) as any[]).map((p: any) => ({
-        type: "place_card",
-        id: `place_card_${p.id as string}`,
-        placeId: p.id as string,
-        name: p.name as string,
-        city: (p.city ?? cityParam) as string,
-        category: (p.category ?? p.place_type ?? null) as string | null,
-        blurb: (p.blurb ?? null) as string | null,
-        imageUrl: (p.image_url ?? null) as string | null,
-        rating: p.rating != null ? parseFloat(String(p.rating)) : null,
-        lat: p.lat != null ? parseFloat(String(p.lat)) : null,
-        lng: p.lng != null ? parseFloat(String(p.lng)) : null,
-        neighborhood: (p.neighborhood ?? null) as string | null,
-      }));
+      // Inline haversine (km) — used for proximity sort when caller supplies coords
+      const haversineKm = (la1: number, lo1: number, la2: number, lo2: number): number => {
+        const R = 6371;
+        const dLat = ((la2 - la1) * Math.PI) / 180;
+        const dLon = ((lo2 - lo1) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos((la1 * Math.PI) / 180) * Math.cos((la2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      };
+
+      const mapped = ((nearbyPlaces ?? []) as any[]).map((p: any) => {
+        const pLat = p.lat != null ? parseFloat(String(p.lat)) : null;
+        const pLng = p.lng != null ? parseFloat(String(p.lng)) : null;
+        const distanceKm =
+          latParam != null && lngParam != null && pLat != null && pLng != null
+            ? Math.round(haversineKm(latParam, lngParam, pLat, pLng) * 10) / 10
+            : null;
+        return {
+          type: "place_card",
+          id: `place_card_${p.id as string}`,
+          placeId: p.id as string,
+          name: p.name as string,
+          city: (p.city ?? cityParam) as string,
+          category: (p.category ?? p.place_type ?? null) as string | null,
+          blurb: (p.blurb ?? null) as string | null,
+          imageUrl: (p.image_url ?? null) as string | null,
+          rating: p.rating != null ? parseFloat(String(p.rating)) : null,
+          distanceKm,
+          neighborhood: (p.neighborhood ?? null) as string | null,
+        };
+      });
+
+      // When caller provides GPS coords, radius-filter to ≤50 km then sort by proximity.
+      // This keeps place cards relevant to the user's actual location rather than just
+      // any place in the city string. Falls back to saved_count order when no coords.
+      const RADIUS_KM = 50;
+      placeCards =
+        latParam != null && lngParam != null
+          ? mapped
+              .filter((p: any) => p.distanceKm == null || (p.distanceKm as number) <= RADIUS_KM)
+              .sort((a: any, b: any) => {
+                if (a.distanceKm == null) return 1;
+                if (b.distanceKm == null) return -1;
+                return (a.distanceKm as number) - (b.distanceKm as number);
+              })
+          : mapped;
     }
   } catch { /* non-fatal — place cards degrade gracefully */ }
 

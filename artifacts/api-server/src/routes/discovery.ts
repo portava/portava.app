@@ -23,6 +23,7 @@ import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { sendError, requireUser } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
+import { toCanonicalCategory } from "../lib/placeCategories";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
 import { calculateUserAge } from "../lib/ageEligibility";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
@@ -324,18 +325,12 @@ async function queryOverpass(
 
 // ── Category mapper (DB → Discovery tab) ──────────────────────────────────────
 //
-// Maps a free-text category or place_type from discovery_places to one of the
-// 8 canonical Discovery tab categories so that category chips filter DB places.
+// Wraps the authoritative placeCategories.ts module.
+// Prefer primary_category from the DB; fall back to the canonical mapper
+// only for rows that pre-date migration 0083 (no primary_category yet).
 
-function mapDbCategory(raw: string): string {
-  const c = (raw ?? "").toLowerCase();
-  if (/food|restaurant|cafe|eat|dine|bistro|bakery|snack|eatery/.test(c)) return "food";
-  if (/beach|coast|ocean|sea|shore|bay|surf/.test(c)) return "beaches";
-  if (/night|club|bar|pub|cocktail|lounge|casino/.test(c)) return "nightlife";
-  if (/transport|bus|train|airport|transit|ferry|metro|subway/.test(c)) return "transport";
-  if (/event|festival|concert|theatre|show|perform|museum|gallery|art/.test(c)) return "events";
-  if (/sport|gym|activ|park|leisure|pool|fitness|hik|dive|surf|tour/.test(c)) return "activities";
-  return "places";
+function mapDbCategory(rawCategory: string, rawPlaceType?: string): string {
+  return toCanonicalCategory(rawCategory, rawPlaceType);
 }
 
 // ── DB places query ────────────────────────────────────────────────────────────
@@ -367,7 +362,7 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, neighborhood, blurb, image_url, rating, lat, lng, tag, verified, created_at")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, lat, lng, tag, verified, created_at")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -378,16 +373,29 @@ async function queryDbPlaces(
     return (data as any[])
       .filter((row: any) => {
         if (category === "for_you") return true;
-        const mapped = mapDbCategory((row.category ?? row.place_type ?? "") as string);
-        return mapped === category;
+        // Prefer primary_category (post-migration 0083); fall back to the
+        // canonical mapper so pre-migration rows still filter correctly.
+        const effectiveCategory: string = (row.primary_category as string | null)
+          ?? mapDbCategory((row.category ?? "") as string, (row.place_type ?? "") as string);
+        if (effectiveCategory === category) return true;
+        // Also include places where the requested category appears in secondary_categories,
+        // so multi-category venues (e.g. a beach bar: primary=beaches, secondary=[food])
+        // show up in all applicable tabs.
+        const secondary: string[] = Array.isArray(row.secondary_categories)
+          ? (row.secondary_categories as string[])
+          : [];
+        return secondary.includes(category);
       })
       .map((row: any): DiscoveryPlace => {
         const lat = row.lat != null ? parseFloat(String(row.lat)) : null;
         const lng = row.lng != null ? parseFloat(String(row.lng)) : null;
+        const effectiveCategory: string = (row.primary_category as string | null)
+          ?? mapDbCategory((row.category ?? "") as string, (row.place_type ?? "") as string);
         return {
           id: `db/${row.id as string}`,
           name: row.name as string,
-          category,
+          // Use canonical category so the frontend always gets a valid tab value
+          category: effectiveCategory,
           type: (row.place_type ?? null) as string | null,
           description: (row.blurb ?? null) as string | null,
           distanceKm:

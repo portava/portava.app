@@ -20,7 +20,15 @@ import { isSupabaseConfigured } from '../lib/supabase';
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type PermissionStatus = 'unknown' | 'prompt' | 'granted' | 'denied' | 'unavailable';
-export type LocationSource = 'gps' | 'last_known' | 'manual_city' | 'trip_context' | 'post_tag' | 'none';
+export type LocationSource =
+  | 'gps'          // legacy — kept for backward-compat with persisted API payloads
+  | 'gps_fresh'    // live fix from getCurrentPositionAsync
+  | 'gps_cached'   // fallback from getLastKnownPositionAsync
+  | 'last_known'   // legacy alias for gps_cached
+  | 'manual_city'
+  | 'trip_context'
+  | 'post_tag'
+  | 'none';
 export type LocationFreshness = 'live' | 'recent' | 'stale' | 'unavailable';
 
 export interface LocationCoords {
@@ -216,22 +224,26 @@ export function useActiveLocation(): UseActiveLocationResult {
 
       const place = await reverseGeocodeDetailed(gps.lat!, gps.lng!);
       const now = new Date().toISOString();
+      const isCached = gps.cached === true;
+      const source: LocationSource = isCached ? 'gps_cached' : 'gps_fresh';
       const next: ActiveLocationState = {
         ok: true,
         permissionStatus: 'granted',
-        source: 'gps',
-        freshness: 'live',
+        source,
+        freshness: isCached ? 'recent' : 'live',
         coords: { lat: gps.lat!, lng: gps.lng!, accuracyMeters: gps.accuracyMeters },
         place,
         lastUpdatedAt: now,
-        userMessage: place.city ? null : "We found your location, but couldn't name the city yet.",
+        userMessage: isCached
+          ? (place.city ? `Showing recent location near ${place.city}.` : 'Showing a recent location. Live GPS unavailable.')
+          : (place.city ? null : "We found your location, but couldn't name the city yet."),
       };
 
       if (!mountedRef.current) return;
       setLocationState(next);
 
       await saveLocationToApi({
-        source: 'gps',
+        source,
         permissionStatus: 'granted',
         coords: { lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters },
         place,
@@ -271,7 +283,7 @@ export function useActiveLocation(): UseActiveLocationResult {
   const clearManualCity = useCallback(async () => {
     setLocationState((prev) => ({
       ...prev,
-      source: prev.coords ? 'last_known' : 'none',
+      source: prev.coords ? 'gps_cached' : 'none',
       place: prev.coords ? prev.place : EMPTY_PLACE,
     }));
     await saveLocationToApi({ manualCity: null, manualCountry: null });

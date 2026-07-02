@@ -17,6 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, addGemToPlan, shareGemToTelegraph } from '../../src/services/hiddenGems';
+import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { useSession } from '../../src/context/SessionContext';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -218,6 +220,7 @@ function ReportModal({ visible, gemId, onClose }: { visible: boolean; gemId: str
 export default function GemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router  = useRouter();
+  const { isAuthed } = useSession();
 
   const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
 
@@ -424,6 +427,16 @@ export default function GemDetailScreen() {
             </View>
           </View>
         )}
+
+        {/* Reviews */}
+        <View style={[styles.section, { backgroundColor: '#fff', borderRadius: 16, marginHorizontal: 16, marginBottom: 20, padding: 16 }]}>
+          <ReviewsSection
+            entityType="place"
+            entityId={gem.id}
+            entityName={gem.name}
+            canReview={isAuthed}
+          />
+        </View>
 
         {/* Action bar */}
         <View style={styles.actionBar}>

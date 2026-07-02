@@ -16,7 +16,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, optionalUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
@@ -47,8 +47,9 @@ async function requireAdminGuard(
 
 /**
  * Checks whether the caller is eligible to review the given entity:
- *  - entity_type=trip:   active trip member (trip_members)
- *  - entity_type=rent_buddy_booking: party to the completed booking
+ *  - entity_type=trip:              active completed trip member (trip_members)
+ *  - entity_type=rent_buddy_booking: party to a completed booking
+ *  - entity_type=place:             any authenticated user (open rating)
  *
  * Note: event eligibility is handled by POST /api/events/:id/reviews in events.ts.
  */
@@ -59,6 +60,25 @@ async function checkEligibility(
   entityId: string,
 ): Promise<boolean> {
   switch (entityType) {
+    case "place": {
+      // Any authenticated user may rate a seeded/community place.
+      // Check discovery_places first; fall back to hidden_gems so that gem
+      // detail pages (which use hidden_gems IDs) can also accept ratings.
+      const { data: placeRow } = await sc
+        .from("discovery_places")
+        .select("id")
+        .eq("id", entityId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (placeRow) return true;
+
+      const { data: gemRow } = await sc
+        .from("hidden_gems")
+        .select("id")
+        .eq("id", entityId)
+        .maybeSingle();
+      return !!gemRow;
+    }
     case "trip": {
       const { data: membership } = await sc
         .from("trip_members")
@@ -141,7 +161,7 @@ router.get("/reviews/my-review", async (req, res) => {
 // ── POST /api/reviews ─────────────────────────────────────────────────────────
 
 const CreateReviewSchema = z.object({
-  entityType:  z.enum(["trip", "rent_buddy_booking"]),
+  entityType:  z.enum(["trip", "rent_buddy_booking", "place"]),
   entityId:    z.string().uuid(),
   rating:      z.number().int().min(1).max(5),
   body:        z.string().max(2000).optional(),
@@ -250,6 +270,71 @@ router.get("/trips/:id/reviews", async (req, res) => {
     .from("reviews")
     .select("rating")
     .eq("entity_type", "trip")
+    .eq("entity_id", id)
+    .eq("state", "published");
+
+  const allRows = (allForCount as any[]) ?? [];
+  const totalCount = allRows.length;
+  const avgRating = totalCount > 0
+    ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
+    : null;
+
+  res.json({
+    reviews: rows.map((r: any) => ({
+      id:         r.id,
+      rating:     r.rating,
+      body:       r.body ?? null,
+      tags:       r.tags ?? [],
+      anonymous:  r.visibility === "anonymous",
+      createdAt:  r.created_at,
+      reviewer:   r.visibility === "anonymous" ? null : {
+        id:          r.reviewer_id,
+        handle:      r.profiles?.handle ?? null,
+        displayName: r.profiles?.display_name ?? null,
+        avatarUrl:   r.profiles?.avatar_url ?? null,
+      },
+    })),
+    avgRating,
+    total: totalCount,
+    page,
+    limit,
+  });
+});
+
+// ── GET /api/places/:id/reviews ────────────────────────────────────────────────
+// Public read — auth is optional; unauthenticated callers still see published reviews.
+
+router.get("/places/:id/reviews", async (req, res) => {
+  // optionalUser: if a Bearer token is present it is verified; missing token is fine.
+  await optionalUser(req);
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page  = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: reviews, error } = await sc
+    .from("reviews")
+    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .eq("entity_type", "place")
+    .eq("entity_id", id)
+    .eq("state", "published")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "get place reviews"); sendError(res, "db_error", error.message); return; }
+
+  const rows = (reviews as any[]) ?? [];
+
+  const { data: allForCount } = await sc
+    .from("reviews")
+    .select("rating")
+    .eq("entity_type", "place")
     .eq("entity_id", id)
     .eq("state", "published");
 

@@ -33,3 +33,4 @@
 - [EventDiscoveryCard props](event-discovery-card-props.md) — only accepts { event, onPress, onRsvp? }; no isSaved/onSave/compact; extend the component if those are needed
 - [Profile visibility system](profile-visibility-system.md) — resolveProfileVisibility helper; profile_privacy_settings vs user_privacy_settings sync; passport viewer object; username rules; profile tab pattern
 - [Express param-route ordering](express-param-route-ordering.md) — GET /trips/:tripId intercepts /trips/me etc. if registered first; always register static GET routes before parameterized ones in the same router; test IDs must use only [0-9a-f] chars when UUID_RE validates them
+- [Place system taxonomy + reviews](place-system.md) — placeCategories.ts is the canonical mapper; primary_category column added by migration 0083; migration 0084 adds place enum value; fake client insert+single() needs _singleMode respected

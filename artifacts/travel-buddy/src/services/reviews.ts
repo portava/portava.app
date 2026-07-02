@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export type ReviewEntityType = 'event' | 'trip' | 'rent_buddy_booking';
+export type ReviewEntityType = 'event' | 'trip' | 'rent_buddy_booking' | 'place';
 
 export interface ReviewTag {
   label: string;
@@ -190,6 +190,18 @@ export async function deleteReview(reviewId: string): Promise<void> {
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error('Failed to delete review');
+}
+
+export async function getPlaceReviews(
+  placeId: string,
+  page = 1,
+  limit = 20,
+): Promise<ReviewsResponse> {
+  const res = await fetch(api(`places/${placeId}/reviews?page=${page}&limit=${limit}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to load place reviews');
+  return res.json();
 }
 
 // ── Event reviews (uses the legacy event_reviews endpoint in events.ts) ───────
