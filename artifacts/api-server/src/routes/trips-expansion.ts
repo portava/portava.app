@@ -548,6 +548,34 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
 
   await sc.from("trips").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_cancelled");
+
+  // Fire-and-forget: notify all accepted trip members that the trip was cancelled.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const [{ data: tripRow }, { data: members }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("trip_members").select("user_id").eq("trip_id", tripId).eq("role", "member"),
+      ]);
+      const tokens: Array<string | undefined> = [];
+      if (members && members.length > 0) {
+        const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
+        if (memberIds.length > 0) {
+          const { data: profiles } = await sc2.from("profiles").select("expo_push_token").in("id", memberIds);
+          (profiles ?? []).forEach((p: any) => tokens.push(p.expo_push_token));
+        }
+      }
+      if (tokens.length > 0) {
+        await sendPushNotification(tokens, {
+          title: "Trip cancelled",
+          body:  `${(tripRow as any)?.title ?? "A trip"} has been cancelled`,
+          data:  { type: "trip_cancelled", tripId },
+        });
+      }
+    } catch { /* best-effort */ }
+  })();
+
   res.json({ status: "cancelled", tripId });
 });
 
@@ -598,6 +626,34 @@ router.post("/trips/:tripId/archive", async (req, res) => {
 
   await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_archived");
+
+  // Fire-and-forget: notify all accepted trip members that the trip was archived.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const [{ data: tripRow }, { data: members }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("trip_members").select("user_id").eq("trip_id", tripId).eq("role", "member"),
+      ]);
+      const tokens: Array<string | undefined> = [];
+      if (members && members.length > 0) {
+        const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
+        if (memberIds.length > 0) {
+          const { data: profiles } = await sc2.from("profiles").select("expo_push_token").in("id", memberIds);
+          (profiles ?? []).forEach((p: any) => tokens.push(p.expo_push_token));
+        }
+      }
+      if (tokens.length > 0) {
+        await sendPushNotification(tokens, {
+          title: "Trip archived",
+          body:  `${(tripRow as any)?.title ?? "A trip"} has been archived`,
+          data:  { type: "trip_archived", tripId },
+        });
+      }
+    } catch { /* best-effort */ }
+  })();
+
   res.json({ status: "archived", tripId });
 });
 
@@ -689,6 +745,27 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   await logActivity(sc, tripId, user.id, "join_request_created");
+
+  // Fire-and-forget: notify trip owner that someone requested to join.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const ownerId = (trip as any).owner_id as string;
+      if (ownerId === user.id) return; // owner self-request (shouldn't happen, but guard)
+      const [{ data: tripRow }, { data: ownerRow }, { data: requesterRow }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("profiles").select("expo_push_token").eq("id", ownerId).maybeSingle(),
+        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+      ]);
+      const requesterName = (requesterRow as any)?.display_name ?? "Someone";
+      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+        title: "New join request",
+        body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,
+        data:  { type: "trip_join_request_received", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
 
   res.status(201).json({ status: "pending", requestId: (newReq as any).id, createdAt: (newReq as any).created_at });
 });

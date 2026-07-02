@@ -668,6 +668,27 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
 
+  // Fire-and-forget: notify trip owner that their invitation was declined.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const [{ data: tripRow }, { data: declinerRow }] = await Promise.all([
+        sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle(),
+        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+      ]);
+      const ownerId = (tripRow as any)?.owner_id as string | undefined;
+      if (!ownerId || ownerId === user.id) return;
+      const { data: ownerRow } = await sc2.from("profiles").select("expo_push_token").eq("id", ownerId).maybeSingle();
+      const declinerName = (declinerRow as any)?.display_name ?? "Someone";
+      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+        title: "Invite declined",
+        body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
+        data:  { type: "trip_invite_declined", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
+
   res.status(200).json({ status: "declined", tripId });
 });
 

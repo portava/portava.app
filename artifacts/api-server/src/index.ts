@@ -12,6 +12,7 @@ import { warmUpDiscoveryCache } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
+import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -45,6 +46,7 @@ app.listen(port, (err) => {
   startPushRetryWorker();
   startZombieTokenSweeper();
   startEventWaitlistSweeper();
+  startTripReminderScheduler();
   warmUpDiscoveryCache(port).catch((e) =>
     logger.warn({ err: e }, "discovery warm-up: unhandled error"),
   );

@@ -933,6 +933,134 @@ router.get("/admin/dev/interaction-test", async (req, res) => {
   }
 });
 
+
+// ===========================================================================
+// Admin trip routes
+// ===========================================================================
+
+/**
+ * GET /admin/trips
+ *
+ * Returns trips that have been reported (target_type = 'trip') and are still
+ * pending review, newest first.  Each row includes the trip title, owner, and
+ * the count of open reports against it so the admin dashboard can triage.
+ */
+router.get("/admin/trips", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const { data: reports, error } = await sc
+    .from("reports")
+    .select("id, target_id, reason_code, severity, status, created_at")
+    .eq("target_type", "trip")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  if (!reports || reports.length === 0) {
+    res.json({ trips: [] });
+    return;
+  }
+
+  // Collect unique trip IDs from the report rows.
+  const tripIds = [...new Set((reports as any[]).map((r: any) => r.target_id as string))];
+
+  const { data: trips } = await sc
+    .from("trips")
+    .select("id, title, owner_id, visibility, status, created_at")
+    .in("id", tripIds);
+
+  const tripMap: Record<string, any> = {};
+  (trips ?? []).forEach((t: any) => { tripMap[t.id] = t; });
+
+  const result = tripIds
+    .filter((id) => !!tripMap[id])
+    .map((id) => {
+      const tripReports = (reports as any[]).filter((r: any) => r.target_id === id);
+      return {
+        trip: tripMap[id],
+        pendingReports: tripReports.length,
+        highestSeverity: tripReports.reduce((max: string, r: any) => {
+          const order: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+          return (order[r.severity] ?? 0) > (order[max] ?? 0) ? r.severity : max;
+        }, "low"),
+        reports: tripReports,
+      };
+    });
+
+  res.json({ trips: result });
+});
+
+/**
+ * POST /admin/trips/:tripId/hide
+ *
+ * Forces a trip's visibility to 'private' so it no longer appears in public
+ * discovery, Passport, or search results.  A moderation_action row is written
+ * for the audit trail.
+ */
+router.post("/admin/trips/:tripId/hide", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) {
+    sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
+  }
+
+  const { data: trip } = await sc.from("trips").select("id, owner_id, visibility").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : "Admin hide";
+
+  await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
+
+  await sc.from("moderation_actions").insert({
+    target_user_id: (trip as any).owner_id,
+    action_type:    "trip_hidden",
+    reason,
+    performed_by:  admin.userId,
+  });
+
+  res.json({ tripId, visibility: "private", hidden: true });
+});
+
+/**
+ * POST /admin/trips/:tripId/report-resolve
+ *
+ * Resolves all pending reports against a trip (accepted / rejected by admin).
+ * Body: { resolution: 'accepted' | 'rejected', reason?: string }
+ */
+router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) {
+    sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
+  }
+
+  const resolution = req.body?.resolution;
+  if (resolution !== "accepted" && resolution !== "rejected") {
+    sendError(res, "invalid_payload", "resolution must be 'accepted' or 'rejected'");
+    return;
+  }
+
+  const { data: updated, error } = await sc
+    .from("reports")
+    .update({ status: resolution === "accepted" ? "resolved" : "dismissed",
+              updated_at: new Date().toISOString() })
+    .eq("target_type", "trip")
+    .eq("target_id", tripId)
+    .eq("status", "pending")
+    .select("id");
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.json({ tripId, resolution, resolvedCount: (updated ?? []).length });
+});
+
 export default router;
-
-
