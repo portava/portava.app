@@ -661,6 +661,7 @@ export async function getUserEvents(
 export {
   shouldShowRentBuddyCta,
   buildRentBuddyParamsFromEvent,
+  buildRentBuddyCtaUrl,
   type RentBuddySearchParams,
 } from './eventCtaHelper.ts';
 

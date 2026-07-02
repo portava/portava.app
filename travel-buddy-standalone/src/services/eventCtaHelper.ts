@@ -60,6 +60,21 @@ export function buildRentBuddyParamsFromEvent(
 }
 
 /**
+ * Builds the full navigation URL for the "Find a Travel Buddy" CTA press.
+ * Returns null when the event has no city (button should be a no-op).
+ *
+ * The returned URL is passed directly to router.push in the component so
+ * tests can assert the exact navigation target without rendering.
+ */
+export function buildRentBuddyCtaUrl(event: RentBuddyCtaEvent): string | null {
+  const p = buildRentBuddyParamsFromEvent(event);
+  if (!p) return null;
+  const qs = new URLSearchParams({ city: p.city, category: p.category });
+  if (p.bookingDate) qs.set('bookingDate', p.bookingDate);
+  return `/(rent-a-buddy)/search?${qs.toString()}`;
+}
+
+/**
  * Returns true when the "Find a Travel Buddy" CTA should be shown.
  *
  * Mirrors the JSX render condition in app/event/[id].tsx so the logic

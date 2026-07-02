@@ -28,6 +28,7 @@
 - [Phase 8 fake-client pitfalls](phase8-test-pitfalls.md) — geofence trip_members must include role field; admin.ts uses .eq("flag",...) while safeReturn.ts uses .eq("key",...) — fake client needs both columns; rentABuddy nightlife flag must be seeded or age/category checks are unreachable
 - [Discovery DB merge + Pulse place cards](discovery-db-merge.md) — discovery route now merges discovery_places DB with OSM; pulse returns placeCards when posts<5; regex `hik` not `hike` to match "hiking"
 - [tsx ESM bare-import isolation](tsx-esm-bare-import-isolation.md) — service files without .ts extension on supabase import crash node:test; fix: extract pure logic into zero-import helper and re-export
+- [RNTL component tests broken — multiple React instances](rntl-multi-react.md) — jest-expo + React 19 causes "Invalid hook call / null dispatcher" in ALL component tests; machine-layer pattern is the working alternative
 - [useActiveLocation hook API](useActiveLocation-api.md) — returns { locationState, requestLocation, refreshLocation, setManualCity, clearManualCity, getLocationForFeature }; coords at locationState.coords not top-level; call requestLocation() not requestPermission()
 - [EventDiscoveryCard props](event-discovery-card-props.md) — only accepts { event, onPress, onRsvp? }; no isSaved/onSave/compact; extend the component if those are needed
 - [Profile visibility system](profile-visibility-system.md) — resolveProfileVisibility helper; profile_privacy_settings vs user_privacy_settings sync; passport viewer object; username rules; profile tab pattern

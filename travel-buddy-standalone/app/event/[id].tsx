@@ -35,7 +35,7 @@ import {
 import {
   getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
-  buildRentBuddyParamsFromEvent, shouldShowRentBuddyCta,
+  buildRentBuddyCtaUrl, shouldShowRentBuddyCta,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
 import { checkCityAvailable } from '../../src/services/rentABuddy';
@@ -615,13 +615,12 @@ export default function EventDetailScreen() {
             {/* Find a Travel Buddy CTA — shown for public/going events in RAB-available cities */}
             {shouldShowRentBuddyCta(event, rentBuddyEnabled, buddyCityAvailable) && (
               <Pressable
+                testID="find-buddy-cta"
                 style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
                 onPress={() => {
-                  const p = buildRentBuddyParamsFromEvent(event);
-                  if (!p) return;
-                  const qs = new URLSearchParams({ city: p.city, category: p.category });
-                  if (p.bookingDate) qs.set('bookingDate', p.bookingDate);
-                  router.push(`/(rent-a-buddy)/search?${qs.toString()}` as any);
+                  const url = buildRentBuddyCtaUrl(event);
+                  if (!url) return;
+                  router.push(url as any);
                 }}
               >
                 <View style={styles.findBuddyIcon}>
