@@ -21,6 +21,8 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
+import { NotificationService } from "../services/notifications/NotificationService.js";
+import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 
 const router = Router();
 
@@ -232,6 +234,23 @@ router.post("/admin/stamps/award", async (req, res) => {
     awardReason:    parsed.data.reason,
     adminId,
   });
+
+  if (result.awarded) {
+    (async () => {
+      try {
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotifRouter(sc);
+        const row = await notifSvc.create({
+          userId:     parsed.data.userId,
+          eventType:  "passport.stamp_earned",
+          sourceType: "passport",
+          sourceId:   result.userStampId,
+          params:     { location: parsed.data.city ?? parsed.data.country ?? parsed.data.definitionSlug },
+        });
+        if (row) await notifRouter.route(row);
+      } catch {}
+    })();
+  }
 
   res.status(result.awarded ? 201 : 200).json(result);
 });
