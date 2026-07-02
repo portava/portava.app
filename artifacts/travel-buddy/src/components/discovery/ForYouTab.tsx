@@ -41,6 +41,7 @@ interface ForYouTabProps {
   userLng?: number | null;
   fallbackZoom?: number;
   viewMode?: 'list' | 'map';
+  sortBy?: 'rating' | null;
 }
 
 type ForYouItem =
@@ -67,7 +68,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list' }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -113,7 +114,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     }, [destination, compass.refresh]),
   );
 
-  const community = useCommunityDiscovery(destination ?? null);
+  const community = useCommunityDiscovery(destination ?? null, sortBy);
 
   // All OSM/Compass items + community places unified for DiscoveryMapView.
   const mapPlaces = useMemo<DiscoveryPlace[]>(() => {

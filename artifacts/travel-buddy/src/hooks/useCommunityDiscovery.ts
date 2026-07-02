@@ -107,7 +107,7 @@ interface CommunityDiscoveryState {
 
 const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
 
-export function useCommunityDiscovery(city: string | null): CommunityDiscoveryState {
+export function useCommunityDiscovery(city: string | null, sortBy?: 'rating' | null): CommunityDiscoveryState {
   const [state, setState] = useState<CommunityDiscoveryState>(EMPTY);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -119,7 +119,7 @@ export function useCommunityDiscovery(city: string | null): CommunityDiscoverySt
     setState((prev) => ({ ...prev, loading: true }));
 
     try {
-      const result = await getCommunityPlaces(c, 'all', 20);
+      const result = await getCommunityPlaces(c, 'all', 20, sortBy);
       if (ctrl.signal.aborted) return;
 
       if (!result.ok) {
@@ -146,7 +146,7 @@ export function useCommunityDiscovery(city: string | null): CommunityDiscoverySt
         setState({ gems: [], picks: [], places: [], loading: false });
       }
     }
-  }, []);
+  }, [sortBy]);
 
   useEffect(() => {
     if (!city) {

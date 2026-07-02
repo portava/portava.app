@@ -971,6 +971,7 @@ router.get("/discovery/community", async (req, res) => {
   const rawType  = (req.query.place_type ?? req.query.type) as string | undefined;
   const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
   const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
+  const sortBy   = (req.query.sortBy as string | undefined) === "rating" ? "rating" : null;
 
   // Age filter params for community discovery
   const VALID_AGE_FILTERS_COMM = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
@@ -1053,7 +1054,7 @@ router.get("/discovery/community", async (req, res) => {
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
-      .order("created_at", { ascending: false })
+      .order(sortBy === "rating" ? "rating" : "created_at", { ascending: false, nullsFirst: false })
       .limit(limit);
 
     if (typeFilter !== "all") {

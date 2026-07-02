@@ -92,11 +92,13 @@ export async function getCommunityPlaces(
   city: string,
   type: 'hidden_gem' | 'traveler_pick' | 'all' = 'all',
   limit = 20,
+  sortBy?: 'rating' | null,
 ): Promise<{ ok: true; data: CommunityDiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
 
   const params = new URLSearchParams({ city, type, limit: String(limit) });
+  if (sortBy) params.set('sortBy', sortBy);
 
   try {
     const res = await fetch(`${base}/api/discovery/community?${params}`);
