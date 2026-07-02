@@ -1,0 +1,821 @@
+TRAVEL BUDDY — BETA READINESS AUDIT / PORTION 2
+
+Continue from Portion 1. Do not redo sections 1–10 unless needed to verify dependencies. Do NOT rebuild working systems. Check what already exists first, then mark every item as:
+- DONE
+- PARTIAL
+- BROKEN
+- MISSING
+- BLOCKED
+
+For anything broken or partial, fix only the minimum needed to make it work as intended. Do not break existing flows. Do not insert fake users, fake reviews, fake places, or placeholder production data. Do not modify Supabase env vars. Do not expose service-role keys. Do not sync artifacts/travel-buddy unless explicitly told.
+
+==================================================
+11. MAP
+==================================================
+
+Needed:
+- Real interactive map
+- User location permission handling
+- Current location marker
+- Seeded place pins
+- Event pins
+- Trip places pins
+- Hidden gems pins
+- Hotel/area pins if supported
+- Place detail from pin
+- Directions/routing
+- Route optimization if promised
+- Map style using Google/MapTiler as intended
+- Permission denied state
+- Offline/error state
+- Loading state
+- Clustering if many pins
+- Filters by category
+- Safe location privacy rules
+
+Verify:
+- Map is not just “coming soon.”
+- Pins have valid lat/lng.
+- Clicking pin opens place/card.
+- Directions opens correctly.
+- User location permission failure does not crash.
+- Private user locations are not exposed.
+
+==================================================
+12. TRIPS SYSTEM
+==================================================
+
+Needed:
+- Create trip
+- Edit trip
+- Delete/cancel trip
+- Trip privacy:
+  - public
+  - friends only
+  - invite only
+  - private
+- Trip members
+- Invite users
+- Request to join
+- Accept/decline members
+- Remove member
+- Trip Crew
+- Trip group chat auto-created in Telegraph
+- Trip timeline
+- Today / Next Up
+- Saved ideas
+- Add place to trip
+- Add event to trip
+- Add user/buddy to trip
+- Compass brief
+- Trip map
+- Trip posts/memories
+- Passport stamps earned from trip
+- Safe Return check-ins
+- Trip notifications
+- Trust/age/language/gender rules if host enables them
+
+Verify:
+- Trip creation persists.
+- Trip detail loads real data.
+- Add-to-trip selector works.
+- Trip Crew members can communicate.
+- Trip chat opens correct Telegraph group.
+- Trip map shows trip places.
+- Trip posts link back to trip.
+- Permission rules are enforced.
+
+==================================================
+13. EVENTS SYSTEM
+==================================================
+
+Needed:
+- Create event
+- Edit event
+- Cancel/delete event
+- Event detail
+- Event categories:
+  - game
+  - bar/nightlife
+  - concert
+  - hike
+  - beach
+  - food crawl
+  - activity
+  - custom
+- Public/private/invite-only
+- Join request
+- Accept/decline attendees
+- Host controls
+- Co-host if supported
+- Capacity limit
+- Age filter
+- Language filter
+- Gender preference if supported and policy-safe
+- Minimum Trust Score
+- Event location/map
+- Event chat auto-created in Telegraph
+- Event posts/memories
+- Event reminders/notifications
+- Report event
+- Remove attendee
+- No-show/attendance tracking if used for Trust Score
+
+Verify:
+- Event creation persists.
+- Joining/requesting works.
+- Host approval works.
+- Event chat opens correct group.
+- Event map displays location.
+- Filters actually affect eligibility/visibility.
+- Event cards appear in Discovery/Pulse where intended.
+
+==================================================
+14. CIRCLES / GROUPS
+==================================================
+
+If Circles exist or are planned, audit:
+
+Needed:
+- Create circle
+- Join/request to join
+- Invite members
+- Remove member
+- Circle chat
+- Circle posts
+- Circle events/trips
+- Privacy controls
+- Admin/moderator role
+- Report circle/member
+- Discover circles
+
+Verify:
+- Circle group chat is created.
+- Circle posts are visible only to allowed members.
+- Circle events/trips connect properly.
+
+==================================================
+15. PASSPORT STAMPS
+==================================================
+
+Needed:
+- Stamp artwork designs
+- Stamp detail page
+- GPS/location-based unlock
+- Trip-based unlock
+- Event-based unlock
+- Hidden gem unlock
+- City/country unlock
+- Anti-fake-location checks
+- Verified stamp logic separate from travel stamps
+- Stamp sharing to Pulse/Postcard
+- Stamp strip on Passport
+- Stamp grid/tab
+- Admin/manual award rules if needed
+- Duplicate prevention
+
+Verify:
+- Stamps unlock only when rules are satisfied.
+- Stamps show on Passport.
+- Stamp art loads correctly.
+- User cannot repeatedly earn same stamp accidentally.
+- GPS permission failure is handled.
+
+==================================================
+16. SAFE RETURN / SAFETY
+==================================================
+
+Needed:
+- Safe Return check-in for trips/events
+- Scheduled prompts
+- Missed check-in flow
+- Escalation contact
+- Emergency help button
+- Panic button idea if included
+- Share status with trusted contact/trip crew
+- Privacy-safe location sharing
+- End safety session
+- Safety notifications
+- Admin visibility where appropriate
+- Abuse prevention
+
+Verify:
+- Check-in prompt fires.
+- Missed check-in creates correct escalation.
+- Location is not publicly exposed.
+- User can cancel/complete safety session.
+- Safe Return integrates with Trips and Events.
+
+==================================================
+17. RENT A BUDDY MARKETPLACE
+==================================================
+
+Feature name:
+- Rent a Buddy
+
+Needed:
+- Verified local/traveler companion profiles
+- Service categories:
+  - city help
+  - social exploration
+  - language support
+  - nightlife
+  - shopping
+  - arrival support
+  - content help
+- Non-dating/non-adult-service boundaries
+- Provider onboarding
+- Provider verification
+- Availability schedule
+- Pricing
+- Booking request
+- Accept/decline booking
+- Deposit/full payment option
+- Payment status
+- Cancellation/refund rules
+- Booking chat
+- Reviews after booking
+- Report provider/client
+- Admin approval
+- Admin dispute tools
+- Trust Score effects
+- Safety disclaimers
+
+Verify:
+- Rent a Buddy does not look like dating/adult services.
+- Booking flow works end-to-end.
+- Payment state is not faked.
+- Provider cannot receive booking before approval if approval required.
+- Reviews require completed booking.
+
+==================================================
+18. TRUST SCORE / TRUST VALUE
+==================================================
+
+Needed:
+- Weighted Trust Value system
+- Positive signals:
+  - verified identity
+  - completed trips/events
+  - good reviews
+  - fast responses
+  - safe behavior
+  - quality content
+  - attended bookings
+- Negative signals:
+  - reports
+  - blocks
+  - no-shows
+  - spam
+  - unsafe behavior
+  - chargebacks/disputes if applicable
+- Admin adjustment log
+- User-facing explanation
+- Safety override
+- Visibility boost for active/good users
+- Abuse/spam penalty
+
+Verify:
+- Trust Score is not hardcoded.
+- Score updates from real actions.
+- Risky users are limited appropriately.
+- Active users get visibility boost only if safe/quality rules pass.
+
+==================================================
+19. COMPASS AI / RECOMMENDATION ENGINE
+==================================================
+
+Needed:
+- Personalized recommendations
+- Discovery recommendations
+- Trip recommendations
+- Event recommendations
+- Telegraph activity recommendations
+- Hidden gems suggestions
+- Availability-aware suggestions
+- Safety-aware suggestions
+- Language-aware suggestions
+- Budget/style preferences if available
+- Explain why recommendation was shown
+- Avoid recommending blocked users/content
+- Avoid recommending unavailable events
+- Avoid unsafe/adult/dating framing
+- Fallback when AI key is missing
+
+Verify:
+- Compass pulls from real app data.
+- Recommendations are not random placeholders.
+- Blocked users/content excluded.
+- Suggestions can be saved/added to trip.
+- Telegraph recommendations can be shared into chat.
+
+==================================================
+20. NOTIFICATIONS / ACTIVITY CENTER
+==================================================
+
+Needed:
+- Activity Center screen
+- Push notification setup if intended
+- In-app notifications
+- Deep links to correct screens
+- Notification types:
+  - friend/buddy request
+  - request accepted
+  - message request
+  - new Telegraph message
+  - trip invite
+  - trip join request
+  - event invite
+  - event join request
+  - booking request
+  - booking accepted/declined
+  - Safe Return prompt
+  - missed safety check-in
+  - comment
+  - like/reaction
+  - tag/mention
+  - report/moderation update
+  - stamp earned
+  - Compass recommendation
+- Mark read/unread
+- Delete/archive notification
+- Notification preferences
+
+Verify:
+- Notifications are created from real actions.
+- Tapping notification opens correct screen.
+- Read state persists.
+- Blocked users do not trigger unwanted notifications.
+
+==================================================
+21. PRIVACY CONTROLS
+==================================================
+
+Needed:
+- Hide likes
+- Turn off comments
+- Private profile
+- Friends-only profile/content
+- Hide current location
+- Delayed posting
+- Block user
+- Restrict message requests
+- Hide trip participation if needed
+- Hide saved places if needed
+- Show original/translated messages setting
+- Data deletion/account deactivation
+- Report content/user
+
+Verify:
+- Privacy settings actually change what other users see.
+- Hide likes hides counts externally but owner can still see if intended.
+- Comments disabled prevents new comments.
+- Private posts do not leak in Pulse/Discovery.
+- Delayed posts do not reveal live location.
+
+==================================================
+22. ADMIN / MODERATION
+==================================================
+
+Needed:
+- Admin dashboard
+- User reports
+- Content reports
+- Event reports
+- Trip reports
+- Rent a Buddy reports
+- Verification review
+- Provider approval
+- Ban/suspend user
+- Delete/hide content
+- Resolve report
+- Trust Score adjustment
+- Audit log
+- Fake-location/spam detection
+- Emergency safety review
+- Admin role protection
+
+Verify:
+- Only admins can access admin tools.
+- Admin actions are logged.
+- Moderation changes reflect in app.
+- Suspended users cannot continue normal actions.
+
+==================================================
+23. SEARCH
+==================================================
+
+Needed:
+- Search users
+- Search places
+- Search events
+- Search trips
+- Search hashtags
+- Search cities
+- Search hidden gems
+- Filters by category/location/date/language/trust
+- Recent searches
+- No results state
+- Blocked/private content excluded
+
+Verify:
+- Search returns real data.
+- Results open correct screens.
+- Blocked users/content excluded.
+- No crashes on empty query.
+
+==================================================
+24. AVAILABILITY SYSTEM
+==================================================
+
+Needed:
+- Weekly recurring availability
+- Trip-specific availability
+- Event availability matching
+- Availability-aware Discovery/Pulse
+- UI for selecting availability
+- Either:
+  - toggle grid, or
+  - time range pickers
+- Dim/collapse events outside availability
+- Timezone handling
+
+Verify:
+- Availability saves.
+- Recommendations respect availability.
+- Events outside window are visually deprioritized.
+- Timezone changes do not break schedules.
+
+==================================================
+25. ADD-TO-PLAN / ADD-TO-TRIP
+==================================================
+
+Needed:
+- Bottom sheet selector
+- Pick existing trip/plan
+- Create new trip/plan from sheet if final option selected
+- Attach place/event/activity
+- Confirmation toast
+- Persistence
+- Offline/session behavior if supported
+
+Verify:
+- Add from Discovery works.
+- Add from Map works.
+- Add from place detail works.
+- Add from Compass recommendation works.
+- Added item appears in trip/plan.
+
+==================================================
+26. PLACE DETAIL / HIDDEN GEMS
+==================================================
+
+Needed:
+- Place detail page
+- Real provider/source data
+- Photos if available
+- Category
+- Address/area
+- Lat/lng
+- Map preview
+- Save
+- Add to trip
+- Share to Telegraph
+- Directions
+- Reviews if real and allowed
+- User tips/memories connected
+- Hidden gem submission
+- Hidden gem moderation
+- Duplicate detection
+
+Verify:
+- Details load from real data.
+- No fake reviews.
+- User-generated tips are separate from provider data.
+- Hidden gems can be approved/moderated.
+
+==================================================
+27. MEDIA / UPLOADS
+==================================================
+
+Needed:
+- Image upload
+- Video upload if supported
+- 10-second postcard videos
+- Camera capture
+- Gallery attach
+- Media compression
+- Storage bucket policies
+- Delete own media
+- Profile photo upload
+- Post media upload
+- Trip/event media
+- Safe file type/size checks
+- Broken image fallback
+
+Verify:
+- Upload works on mobile.
+- Media displays after reload.
+- Unauthorized users cannot access private media.
+- Deleted media does not leave broken UI.
+
+==================================================
+28. ROUTING / NAVIGATION
+==================================================
+
+Needed:
+- Bottom tabs:
+  - Pulse
+  - Discovery
+  - Create
+  - Trips
+  - Passport
+- Messages/Telegraph removed from bottom tab if that was final decision
+- Telegraph accessible from header/inbox icon
+- Deep links:
+  - profile
+  - post
+  - trip
+  - event
+  - place
+  - chat
+  - notification
+- Back navigation
+- Auth gate
+- Unknown route fallback
+
+Known issue:
+- Join Plan from feed may route to general trips list instead of specific trip detail.
+
+Verify:
+- Every button goes to intended screen.
+- No no-op buttons.
+- No placeholder “coming soon” screens for beta-critical paths.
+- Deep links from notifications work.
+
+==================================================
+29. MOBILE UI / POLISH
+==================================================
+
+Needed:
+- Reduce City Pulse header size
+- Normalize button sizes
+- Reduce clutter
+- 30% opaque menu bar if that is final design
+- Better loading states
+- Better empty states
+- Error states with retry
+- Passport load failure fix
+- Discovery load failure fix
+- Map loading state
+- Clean typography
+- Safe area handling
+- Keyboard handling in forms/messages
+- Mobile performance
+- Touch targets
+- Dark/light mode if supported
+
+Verify:
+- App feels clean on iPhone and Android.
+- No clipped text.
+- No hidden buttons behind keyboard.
+- No overlapping cards.
+- No giant headers wasting screen space.
+
+==================================================
+30. PAYMENTS / MONETIZATION
+==================================================
+
+Only if beta includes money features.
+
+Needed:
+- Rent a Buddy deposits
+- Full payment option
+- Refund/cancellation status
+- Payment provider setup
+- Server-side payment intent creation
+- Webhook handling
+- Booking/payment reconciliation
+- No fake payment success
+- Passport Perks if included
+- Referral/giveaway tracking if included
+- First 1000 active user reward tracking if still planned
+
+Verify:
+- Payment secrets are backend-only.
+- App does not mark booking paid unless provider confirms/payment webhook succeeds.
+- Refund/cancel states are clear.
+
+==================================================
+31. LEGAL / SAFETY / POLICY
+==================================================
+
+Needed:
+- Terms of Service
+- Privacy Policy
+- Community Guidelines
+- Non-dating positioning
+- Rent a Buddy boundaries
+- Location privacy explanation
+- Delayed posting explanation
+- Report/block explanation
+- Age-limited content/event handling
+- Emergency disclaimer for Safe Return
+- Data deletion/account deactivation
+- Consent for notifications/location
+
+Verify:
+- Users accept required policies.
+- Sensitive features explain what data is used.
+- App does not market Rent a Buddy as dating/adult service.
+
+==================================================
+32. BETA CITY READINESS
+==================================================
+
+Beta cities:
+- Tokyo
+- Cebu
+- Bangkok
+- Miami
+- Fort Lauderdale
+
+Needed per city:
+- Real places
+- Real categories
+- Map pins
+- Discovery cards
+- Pulse location tab support
+- Hidden gem placeholders only if empty state, not fake data
+- Seeded source/provider labels
+- City search
+- Basic Compass recommendations
+- Nearby/area data
+- At least enough places to make app useful
+
+Verify:
+- Each city has 25–50+ real places.
+- Each city has restaurants/cafes/nightlife/landmarks/beaches where applicable.
+- Cities with limited beaches should not fake beach places.
+- Row counts reported.
+
+==================================================
+33. TESTING / VALIDATION
+==================================================
+
+Needed:
+- Typecheck
+- Lint if configured
+- Unit tests
+- Integration tests
+- Supabase query smoke tests
+- Auth flow smoke test
+- Onboarding save test
+- Discovery load test
+- Map pins test
+- Saved places persistence test
+- Post create/detail test
+- Comment/like/save test
+- Hide likes/disable comments test
+- Telegraph message request test
+- Telegraph translation test if implemented
+- Trip create/join/chat test
+- Event create/join/chat test
+- Profile viewer state test
+- Block/report test
+- Notification deep link test
+- Safe Return test
+- Rent a Buddy booking test if included
+- RLS policy sanity tests
+
+Verify:
+- Report exact pass/fail counts.
+- Do not ignore failing tests.
+- Separate known blocked tests from real failures.
+
+==================================================
+34. PERFORMANCE / RELIABILITY
+==================================================
+
+Needed:
+- App launch stable
+- No repeated crash on start
+- Network timeout handling
+- API retry/backoff
+- Overpass/Foursquare/Google failure handling
+- Supabase outage graceful state
+- Cached saved places
+- Pull-to-refresh
+- Loading skeletons
+- Avoid excessive API calls
+- Map clustering/performance
+- Image optimization
+- No infinite render loops
+- No memory-heavy feed crashes
+
+Verify:
+- App works on physical Android/iPhone dev build.
+- Slow network does not crash app.
+- Empty/missing data does not crash app.
+- Reload keeps saved items.
+
+==================================================
+35. FINAL BETA ACCEPTANCE CHECKLIST
+==================================================
+
+Before beta, app should prove:
+
+- User can sign up.
+- User can complete onboarding.
+- User lands in real Pulse/Discovery experience.
+- User can view real places.
+- User can save a place.
+- User can add a place to trip.
+- User can create a trip.
+- User can invite/request another user.
+- User can message through Telegraph.
+- Unknown users go through message request.
+- User can create a post/postcard.
+- User can like/comment/save unless disabled.
+- User can hide likes.
+- User can turn off comments.
+- User can open any profile picture to the correct Passport.
+- User can block/report.
+- User can create/join event.
+- Event/trip chat works.
+- Map displays real pins.
+- Pulse location tabs work.
+- Passport shows profile, stamps, postcards.
+- Safe Return check-in works for trips/events.
+- Notifications route to correct screen.
+- Admin can review reports.
+- No fake places/users/reviews appear.
+- No secrets are exposed.
+- RLS is enabled and sane.
+- App survives restart.
+- App survives missing optional API keys with honest fallbacks.
+- All critical buttons are wired.
+- No beta-critical “coming soon” placeholders remain.
+
+==================================================
+REQUIRED FINAL REPORT FORMAT
+==================================================
+
+Return the report in this exact structure:
+
+1. Summary
+- Overall beta readiness percentage
+- Biggest blockers
+- Safest next fix order
+
+2. Checklist Status Table
+For every section:
+- DONE / PARTIAL / BROKEN / MISSING / BLOCKED
+- Evidence
+- Files checked
+- Tables checked
+- Screens checked
+
+3. Broken Buttons / Dead Routes
+- Screen
+- Button/action
+- Expected behavior
+- Actual behavior
+- Fix needed
+
+4. Database Gaps
+- Missing tables
+- Empty required tables
+- Missing policies
+- Risky policies
+- Missing indexes
+- Needed SQL, but do not apply migrations unless explicitly approved
+
+5. Env/Security Gaps
+- Missing keys
+- Misused keys
+- Exposed keys
+- Client/server separation issues
+
+6. Real Data Gaps
+- Missing seeded cities
+- Missing categories
+- Row counts per city
+- Provider/source labels
+
+7. Fixes Applied
+- Files changed
+- What changed
+- Why
+- Risk level
+
+8. Validation
+- Commands run
+- Pass/fail counts
+- Failed checks
+- Blocked checks
+
+9. Next Recommended Tasks
+- Immediate blockers
+- Beta blockers
+- Post-beta improvements
