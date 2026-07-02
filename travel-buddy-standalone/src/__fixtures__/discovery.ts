@@ -28,6 +28,7 @@ export interface DiscoveryItem {
   imageUrl?: string;
   submittedBy?: { name: string; avatarUrl: string; id?: string; handle?: string | null };
   savedCount?: number;
+  rating?: number | null;
   source: DiscoverySource;
   status: DiscoveryStatus;
   verified: boolean;

@@ -40,6 +40,7 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
         }
       : undefined,
     savedCount:   item.savedCount,
+    rating:       item.rating ?? null,
     source:       (item.source ?? 'traveler') as DiscoveryItem['source'],
     status:       (item.status ?? 'provisional') as DiscoveryItem['status'],
     verified:     item.verified,

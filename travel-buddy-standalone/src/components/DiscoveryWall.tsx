@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
-  Gem, Star, Share2, Route, Flag,
+  Gem, Share2, Route, Flag,
 } from 'lucide-react-native';
 import type { RouteStopDraft } from './RouteBuilderSheet';
 import type { DiscoveryItem } from '../data/discovery';
@@ -307,6 +307,12 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
         <View style={g.body}>
           <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
           <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
+          {gem.rating != null && (
+            <View style={g.ratingRow}>
+              <Text style={g.ratingStar}>★</Text>
+              <Text style={g.ratingValue}>{gem.rating.toFixed(1)}</Text>
+            </View>
+          )}
           <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
           {displayCount > 0 && (
             <View style={g.savedRow}>
@@ -435,9 +441,9 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
       </View>
       <View style={tpk.placeRow}>
         <Text style={tpk.place} numberOfLines={1}>{pick.place}</Text>
-        {pick.rating ? (
-          <View style={tpk.rating}><Star size={12} color={color.warn} fill={color.warn} /><Text style={tpk.ratingText}>{pick.rating}</Text></View>
-        ) : null}
+        {pick.rating != null && (
+          <View style={tpk.rating}><Text style={tpk.ratingStar}>★</Text><Text style={tpk.ratingText}>{pick.rating.toFixed(1)}</Text></View>
+        )}
       </View>
       <Text style={tpk.note} numberOfLines={1}>{pick.note}</Text>
       {displayCount > 0 && (
@@ -666,6 +672,9 @@ const g = StyleSheet.create({
   reportBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze },
   savedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
   savedNote: { ...t.small, color: color.mute, fontSize: 10 },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 1 },
+  ratingStar: { fontSize: 10, color: '#F59E0B', lineHeight: 13 },
+  ratingValue: { fontSize: 10, color: color.ink, fontWeight: '600' },
 });
 
 const nb = StyleSheet.create({
@@ -688,6 +697,7 @@ const tpk = StyleSheet.create({
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   place: { ...t.bodyStrong, color: color.ink, flex: 1 },
   rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingStar: { fontSize: 10, color: '#F59E0B', lineHeight: 13 },
   ratingText: { ...t.small, color: color.ink, fontWeight: '700' },
   note: { ...t.small, color: color.mute },
   btnRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
