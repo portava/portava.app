@@ -8,8 +8,6 @@ import '../src/tasks/checkpointArrivalTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform } from 'react-native';
-import { AttachmentProvider } from '../src/context/AttachmentStore';
-import { AttachControllerProvider } from '../src/components/AttachController';
 import { PlanPickerControllerProvider } from '../src/components/PlanPickerController';
 import { AvailabilityProvider } from '../src/context/AvailabilityStore';
 import { SessionProvider } from '../src/context/SessionContext';
@@ -64,32 +62,28 @@ export default function RootLayout() {
           <LanguagePreferenceProvider>
           <LocationProvider>
             <AvailabilityProvider>
-              <AttachmentProvider>
-                <AttachControllerProvider>
-                  <PlanPickerControllerProvider>
-                    <NotificationToastProvider>
-                    <StampEarnedToastProvider>
-                      <PushSetup />
-                      <CompassFrontloadSetup />
-                      <StatusBar style="dark" />
-                      <Stack
-                        screenOptions={{
-                          headerShown: false,
-                          contentStyle: { backgroundColor: color.paper },
-                          animation: 'slide_from_right',
-                        }}
-                      >
-                        <Stack.Screen name="(tabs)" />
-                        <Stack.Screen name="(auth)" />
-                        <Stack.Screen name="create" options={{ presentation: 'modal' }} />
-                        <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
-                        <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
-                      </Stack>
-                    </StampEarnedToastProvider>
-                    </NotificationToastProvider>
-                  </PlanPickerControllerProvider>
-                </AttachControllerProvider>
-              </AttachmentProvider>
+              <PlanPickerControllerProvider>
+                <NotificationToastProvider>
+                <StampEarnedToastProvider>
+                  <PushSetup />
+                  <CompassFrontloadSetup />
+                  <StatusBar style="dark" />
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      contentStyle: { backgroundColor: color.paper },
+                      animation: 'slide_from_right',
+                    }}
+                  >
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="(auth)" />
+                    <Stack.Screen name="create" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
+                  </Stack>
+                </StampEarnedToastProvider>
+                </NotificationToastProvider>
+              </PlanPickerControllerProvider>
             </AvailabilityProvider>
           </LocationProvider>
           </LanguagePreferenceProvider>

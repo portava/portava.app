@@ -12,8 +12,6 @@ import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { useAttach } from './AttachController';
-import { useAttachments } from '../context/AttachmentStore';
 import { PassportStampCard } from './PassportStampCard';
 import { TravelSectionHeader, TravelEmptyState } from './primitives';
 import { HighlightRing } from './HighlightRing';
@@ -189,17 +187,14 @@ export function TripTimeline({ days }: { days: TimelineDay[] }) {
 }
 
 /* ── Saved Ideas ── */
-export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: string }) {
-  const attach = useAttach();
-  const { listAttachmentsByTarget } = useAttachments();
+export function SavedIdeas({ ideas }: { ideas: SavedIdea[]; tripId: string }) {
   const CAT_TONE: Record<string, { bg: string; fg: string }> = {
     Food: { bg: '#FCE9E4', fg: color.signal },
     Nightlife: { bg: '#EFE7FA', fg: '#7A4DBF' },
     Nature: { bg: '#E3F1EA', fg: color.success },
     Beach: { bg: '#E2EDF0', fg: color.deep },
   };
-  const added = listAttachmentsByTarget(tripId);
-  const hasAny = ideas.length > 0 || added.length > 0;
+  const hasAny = ideas.length > 0;
   return (
     <View style={section.wrap}>
       <SectionHead title="Saved Ideas" onViewAll={hasAny ? () => router.push('/saved') : undefined} />
@@ -207,18 +202,6 @@ export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: stri
         <View style={si.empty}><Text style={si.emptyText}>Save places from the Discovery Wall to build this trip.</Text></View>
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={si.strip}>
-          {added.map((att) => (
-            <View key={att.id} style={si.card}>
-              <View style={si.media}>
-                <View style={si.bookmark}><Bookmark size={15} color={color.onInk} fill={color.onInk} /></View>
-              </View>
-              <View style={si.body}>
-                <Text style={si.name} numberOfLines={1}>{att.sourceTitle}</Text>
-                <Text style={si.hood} numberOfLines={1}>{att.sourceCity ?? 'Added this session'}</Text>
-                <View style={[si.cat, { backgroundColor: '#E3F1EA' }]}><Text style={[si.catText, { color: color.success }]}>Added</Text></View>
-              </View>
-            </View>
-          ))}
           {ideas.map((idea) => {
             const tone = CAT_TONE[idea.category] ?? { bg: color.haze, fg: color.mute };
             return (
@@ -230,7 +213,6 @@ export function SavedIdeas({ ideas, tripId }: { ideas: SavedIdea[]; tripId: stri
                   <Text style={si.name} numberOfLines={1}>{idea.name}</Text>
                   <Text style={si.hood} numberOfLines={1}>{idea.neighborhood}</Text>
                   <View style={[si.cat, { backgroundColor: tone.bg }]}><Text style={[si.catText, { color: tone.fg }]}>{idea.category}</Text></View>
-                  <Pressable style={si.addBtn} onPress={() => attach.open({ id: idea.id, type: 'place', title: idea.name, city: idea.neighborhood, category: idea.category }, 'plan')}><Text style={si.addText}>Add to Plan</Text></Pressable>
                 </View>
               </View>
             );
@@ -794,8 +776,6 @@ const si = StyleSheet.create({
   hood: { ...t.small, color: color.mute, fontSize: 11 },
   cat: { alignSelf: 'flex-start', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.sm },
   catText: { ...t.small, fontWeight: '700', fontSize: 11 },
-  addBtn: { borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingVertical: 6, alignItems: 'center', marginTop: 2 },
-  addText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
   empty: { marginHorizontal: space.lg, padding: space.lg, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze },
   emptyText: { ...t.body, color: color.mute },
 });
