@@ -1,0 +1,214 @@
+TRAVEL BUDDY — BETA BLOCKER PASS 4 / SURGICAL FIXES
+
+Use the latest merged state as source of truth. This is not a rebuild. Fix only the specific beta blockers confirmed in the last audit. Check what exists first, then make the smallest safe changes. Do not insert fake users, fake reviews, fake places, or fake production content. Do not modify Supabase env vars. Do not expose service-role keys. Do not sync artifacts/travel-buddy unless explicitly told.
+
+==================================================
+1. SAFE RETURN ENTRY ON TRIP DETAIL
+==================================================
+
+Known:
+- SafeReturnSetupSheet.tsx exists.
+- ActiveSafeReturnCard.tsx exists.
+- MissedCheckinPrompt.tsx exists.
+- Safe Return is wired into app/route/[id].tsx.
+- app/trip/[id].tsx has no Safe Return wiring.
+
+Required:
+- Wire Safe Return into app/trip/[id].tsx using the existing components/services.
+- Add a clear Trip Safety / Safe Return entry point.
+- If there is an active Safe Return session for the trip, show ActiveSafeReturnCard.
+- If no active session, show a button/CTA like “Set up Safe Return.”
+- The setup must use the real trip id.
+- Do not expose live location publicly.
+- Do not create a new Safe Return system.
+
+Verify:
+- Trip detail shows Safe Return entry.
+- Starting Safe Return from trip detail works or reaches existing setup sheet.
+- Active session state displays correctly.
+- Missing permission/error state does not crash.
+
+==================================================
+2. RENT A BUDDY REVIEW GUARD
+==================================================
+
+Known:
+- POST /api/rent-a-buddy/bookings/:bookingId/review exists.
+- Endpoint checks booking and party membership.
+- It does not explicitly require status === "completed".
+
+Required:
+- Add a hard guard so reviews can only be submitted for completed bookings.
+- If booking status is not completed, return a clear 400/409 error.
+- Keep existing membership/party checks.
+- Do not fake completion.
+- Do not change payment behavior.
+
+Verify:
+- Completed booking can be reviewed.
+- Active/pending/cancelled bookings cannot be reviewed.
+- Existing review tests updated or new targeted test added if test pattern exists.
+
+==================================================
+3. TRIPCIRCLE REAL CITY PROP
+==================================================
+
+Known:
+- TripCircle now accepts city?: string.
+- app/trip/[id].tsx does not pass city.
+- It currently falls back to “your destination.”
+
+Required:
+- Pass city={trip.destinationCity} or the correct existing trip city/destination field to TripCircle.
+- If destination city is missing, fallback remains “your destination.”
+- Do not hardcode Cebu or any other city.
+
+Verify:
+- TripCircle displays “buddies near [real trip city]” when city exists.
+- No hardcoded city fallback remains.
+
+==================================================
+4. FRONTEND ADMIN ROLE GUARD
+==================================================
+
+Known:
+- Backend admin guard is strong: requireAdminGuard checks profiles.role === "admin" and returns 403.
+- Frontend admin screens may render for any authenticated user before API calls fail.
+- Need frontend role guard to avoid exposing admin UI shell to non-admin users.
+
+Required:
+- Inspect SessionContext/auth/profile loading.
+- Add admin role awareness using the existing profiles.role field if already available.
+- Protect /admin/* screens and Rent a Buddy admin screens on the frontend.
+- Non-admin logged-in users should be redirected or shown an access denied screen.
+- Unauthenticated users should still be redirected to login.
+- Backend guard remains the source of truth.
+- Do not weaken backend auth.
+- Do not create a fake admin role.
+
+Verify:
+- Admin user can access admin screens.
+- Non-admin logged-in user cannot view admin UI shell.
+- Logged-out user goes to login.
+- API calls still rely on backend requireAdminGuard.
+
+==================================================
+5. GENERAL CONTENT REPORTS ADMIN QUEUE
+==================================================
+
+Known:
+- reportContent() writes to reports table.
+- No general admin review screen for flagged posts/postcards was found.
+
+Required:
+- Build or wire a simple admin content reports queue using existing reports table/service.
+- Show reports for posts/postcards/content.
+- Include:
+  - reported content type
+  - reported content id
+  - reporter if available
+  - reason/category
+  - status
+  - created date
+- Actions, only if existing backend supports them:
+  - mark resolved
+  - dismiss
+  - hide/remove content
+- If dangerous actions do not have audited backend support, do not invent them. Show read-only queue + status update only if safe.
+- Admin route must use the frontend admin guard and backend admin guard.
+- Add clean empty/loading/error states.
+
+Verify:
+- Admin can view content reports.
+- Non-admin cannot view queue.
+- Empty reports table shows clean empty state.
+- Existing report records render without crashing.
+
+==================================================
+6. IMAGE FALLBACKS FOR HIGH-TRAFFIC MEDIA
+==================================================
+
+Known:
+- UserAvatarButton now has broken image fallback.
+- Most app <Image> usages still do not have onError fallback.
+
+Required:
+Add small safe broken-image fallbacks for high-traffic surfaces only:
+- Pulse/post cards
+- Passport postcard/profile media grid
+- Event image/card if present
+- Trip image/card if present
+- Place/Discovery image if present
+
+Rules:
+- Do not redesign image components.
+- Do not add fake images.
+- If an image fails, show neutral placeholder/empty media state.
+- Avoid crashes or blank broken spaces.
+
+Verify:
+- Broken image URL does not crash.
+- Card layout remains stable.
+- Placeholder does not look like real user content.
+
+==================================================
+7. VALIDATION / REPORT
+==================================================
+
+Run:
+- typecheck
+- route guard if available
+- targeted tests if available
+- source drift check
+- sync checks used by this repo
+
+Final report format:
+
+1. Summary
+- What was fixed
+- What was already working
+- What remains
+- Updated beta readiness estimate
+
+2. Files changed
+- File
+- Reason
+- Risk level
+
+3. Safe Return on trip detail
+- Entry point status
+- Active session status
+- Privacy/error status
+
+4. Rent a Buddy review guard
+- Completed-only guard status
+- Tests/verification
+
+5. TripCircle city
+- Field used
+- Fallback behavior
+
+6. Admin role guard
+- Frontend guard status
+- Backend guard unchanged confirmation
+- Non-admin behavior
+
+7. Content reports queue
+- Screen/route added or wired
+- Actions supported
+- Empty/error states
+
+8. Image fallbacks
+- Surfaces fixed
+- Remaining image fallback gaps
+
+9. Validation
+- Commands run
+- Exact pass/fail counts
+- Failed checks
+- Blocked checks
+
+10. Next recommended tasks
+- Immediate blockers
+- Beta blockers
+- Post-beta polish

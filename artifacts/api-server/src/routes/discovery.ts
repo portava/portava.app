@@ -1231,7 +1231,12 @@ router.post("/discovery/community", async (req, res) => {
     .limit(1)
     .maybeSingle();
 
-  if (!dupeCheckErr && existingPlace) {
+  if (dupeCheckErr) {
+    sendError(res, "db_error", dupeCheckErr.message);
+    return;
+  }
+
+  if (existingPlace) {
     res.status(409).json({
       ok: false,
       error: "duplicate_place",

@@ -45,7 +45,8 @@ const VALID_BODY = {
 function makeFakeClient({
   duplicateExists = false,
   insertFails = false,
-}: { duplicateExists?: boolean; insertFails?: boolean } = {}) {
+  dupeCheckFails = false,
+}: { duplicateExists?: boolean; insertFails?: boolean; dupeCheckFails?: boolean } = {}) {
   const insertedRow = {
     id:         "place-required-1",
     name:       VALID_BODY.name,
@@ -75,6 +76,9 @@ function makeFakeClient({
 
     async function resolve(): Promise<{ data: any; error: any }> {
       if (_maybeSingleMode) {
+        if (dupeCheckFails) {
+          return { data: null, error: { message: "dupe check db error" } };
+        }
         return { data: duplicateExists ? existingRow : null, error: null };
       }
       if (_isInsert) {
@@ -250,6 +254,34 @@ describe("POST /api/discovery/community — duplicate detection", () => {
     const r = await post(url, "/api/discovery/community", VALID_BODY);
     assert.equal(r.status, 201, `expected 201 for first submission, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.ok, true);
+  });
+});
+
+describe("POST /api/discovery/community — duplicate-check DB error", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient({ dupeCheckFails: true }), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("does not return 201 when the duplicate-check query itself fails", async () => {
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.notEqual(r.status, 201, `expected non-201 when dupe check fails, got ${r.status}: ${JSON.stringify(r.body)}`);
+  });
+
+  it("returns a non-empty error code when the duplicate-check query itself fails", async () => {
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.ok(
+      typeof r.body.error === "string" && r.body.error.length > 0,
+      `expected a non-empty error code in response, got: ${JSON.stringify(r.body)}`,
+    );
   });
 });
 
