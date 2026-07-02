@@ -125,8 +125,12 @@ STANDALONE_OWNED_FILES=(
   "src/components/discovery/ForYouTab.tsx"
   "src/hooks/__tests__/useTripSavedPlaces.component.test.tsx"
   "src/hooks/__tests__/TripSavedPlacesSection.component.test.tsx"
+  "src/hooks/__tests__/useGemCheckin.component.test.ts"
   "src/__mocks__/lucide-react-native.tsx"
   "src/services/__tests__/stampArtwork.test.ts"
+  "src/services/__tests__/location.gps.component.test.ts"
+  "src/components/__tests__/ReviewComposer.prefill.component.test.tsx"
+  "src/components/__tests__/ReviewsSection.place.component.test.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
