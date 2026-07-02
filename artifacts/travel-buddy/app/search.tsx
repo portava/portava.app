@@ -196,10 +196,7 @@ export default function SearchScreen() {
       style={{ flex: 1, backgroundColor: color.paper }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScreenHeader
-        title="Search"
-        onBack={() => router.back()}
-      />
+      <ScreenHeader title="Search" back />
 
       <View style={styles.searchBar}>
         <Search size={16} color={color.mute} />
@@ -267,10 +264,7 @@ export default function SearchScreen() {
               keyExtractor={(i) => i.id}
               contentContainerStyle={{ paddingBottom: 100 }}
               renderItem={({ item }) => (
-                <TravelerRow
-                  user={item}
-                  onPress={() => router.push(`/u/${item.username}` as any)}
-                />
+                <TravelerRow user={item} />
               )}
             />
           )}
