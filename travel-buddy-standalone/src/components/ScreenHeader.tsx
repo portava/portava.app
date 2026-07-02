@@ -8,24 +8,20 @@ import { color, space, type as t } from '../theme/tokens';
 export function ScreenHeader({
   title,
   back,
-  left,
   right,
 }: {
   title: string;
   back?: boolean;
-  left?: React.ReactNode;
   right?: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.wrap, { paddingTop: insets.top + space.sm }]}>
-      {left
-        ? left
-        : back && (
-            <Pressable onPress={() => router.back()} hitSlop={8} style={styles.back}>
-              <ChevronLeft size={26} color={color.ink} />
-            </Pressable>
-          )}
+      {back && (
+        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.back}>
+          <ChevronLeft size={26} color={color.ink} />
+        </Pressable>
+      )}
       <Text style={styles.title}>{title}</Text>
       <View style={{ flex: 1 }} />
       {right}
