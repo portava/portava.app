@@ -54,13 +54,14 @@
 
 ## Fixture Leaks Found and Fixed This Pass (Step 3 + Guard Test)
 
-The `scripts/src/fixture-import-guard.test.ts` guard test (newly created in this pass) discovered 5 total fixture leaks:
+The `scripts/src/fixture-import-guard.test.ts` guard test (newly created in this pass) and code review discovered 6 total fixture leaks:
 
 | File | Fixture Used | Impact | Fix |
 |------|-------------|--------|-----|
 | `app/post/[id].tsx` | `postById(id)` from cebu | Post body showed cebu fixture to authenticated users | Wired to `getPostById()` → real API |
 | `app/(tabs)/ai.tsx` | `aiOpening` from cebu | Compass chat opened with cebu conversation seed | Removed; chat now starts blank (`[]`) |
 | `app/(tabs)/index.tsx` | `me.interests` + `editorialPosts` | `me.interests` seeded Pulse category engine with fixture user prefs; `editorialPosts` rendered in For You feed (not `__DEV__`-gated in artifact) | Both removed from import and render |
+| `app/(tabs)/index.tsx` | `pulseFeed` from `src/data/pulseFeed` + `filterPulseFeed` | `mockFeed` was appended to `forYouFeed` for **all authenticated users** in For You mode — fabricated cebu feed items shown to real users | Removed `pulseFeed` import, `filterPulseFeed` import, `mockFeed` memo; `forYouFeed` now returns only `filteredReal` |
 | `app/(tabs)/trips.tsx` | `mockTrips` | Unauthenticated state showed fabricated cebu trips | Replaced with sign-in CTA |
 | `app/destination/[slug].tsx` | `cebu`, `posts` | Screen always showed hardcoded Cebu content regardless of slug param | Replaced with honest "coming soon" stub |
 
@@ -233,10 +234,10 @@ All visible interactive elements audited across core surfaces:
 | `artifacts/travel-buddy/src/services/posts.ts` | Added `getPostById(postId)` → `GET /api/posts/:postId` |
 | `artifacts/travel-buddy/app/post/[id].tsx` | Removed cebu fixture; async fetch + `PostDetailCard` + overflow/report |
 | `artifacts/travel-buddy/app/(tabs)/ai.tsx` | Removed `aiOpening` import + `openingToEntries` helper; chat starts blank |
-| `artifacts/travel-buddy/app/(tabs)/index.tsx` | Removed `editorialPosts`, `me` cebu import; replaced `me.interests` → `[]`; removed editorial render block |
+| `artifacts/travel-buddy/app/(tabs)/index.tsx` | Removed `editorialPosts`, `me`, `pulseFeed` fixture imports; removed `filterPulseFeed`; `me.interests` → `[]`; removed editorial block; removed `mockFeed` merge from `forYouFeed` |
 | `artifacts/travel-buddy/app/(tabs)/trips.tsx` | Removed `mockTrips` import; replaced unauthenticated fallback with sign-in CTA |
 | `artifacts/travel-buddy/app/destination/[slug].tsx` | Replaced hardcoded cebu content with honest "coming soon" stub |
-| `travel-buddy-standalone/app/(tabs)/index.tsx` | Same as artifact index.tsx (standalone-owned — edited directly) |
+| `travel-buddy-standalone/app/(tabs)/index.tsx` | All index.tsx edits applied directly (standalone-owned); `usePulseFeed` hook already replaced the fixture pattern |
 | `travel-buddy-standalone/src/services/posts.ts` | Auto-synced |
 | `travel-buddy-standalone/app/post/[id].tsx` | Auto-synced |
 | `travel-buddy-standalone/app/(tabs)/ai.tsx` | Auto-synced |

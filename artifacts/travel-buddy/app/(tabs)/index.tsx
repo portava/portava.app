@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { pulseFeed } from '../../src/data/pulseFeed';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -14,7 +13,7 @@ import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
-import { filterPulseFeed } from '../../src/lib/recommend';
+
 import { PULSE_FILTERS } from '../../src/types/models';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
@@ -127,13 +126,12 @@ export default function Pulse() {
       .map(postRowToFeedItem),
     [realFeed.data],
   );
-  const mockFeed = useMemo(() => filterPulseFeed(pulseFeed, active), [active]);
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
     const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
       : realItems.filter(() => false);
-    return [...filteredReal, ...mockFeed];
-  }, [realItems, mockFeed, active]);
+    return filteredReal;
+  }, [realItems, active]);
 
   const followingItems = useMemo<PulseFeedItem[]>(
     () => (followingFeed.data ?? []).map(postRowToFeedItem),

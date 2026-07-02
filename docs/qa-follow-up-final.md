@@ -10,7 +10,7 @@
 
 This pass revisited all 12 issues from the July 2026 QA audit, swept **35 previously uncovered screens** (all `gems/`, `settings/`, `admin/`, `review/`, and remaining core screens), verified the source-of-truth for all 8 shared data domains, confirmed no regressions from tasks #1–#137, and executed the full broken-path zero-tolerance list across all core surfaces.
 
-**Net result:** 5 fixture leaks found and fixed; all prior audit fixes confirmed clean (with 2 corrections where prior-audit verification was wrong); 1 new regression test added (fixture-import guard, 2/2 pass); all pipeline checks pass.
+**Net result:** 6 fixture leaks found and fixed; all prior audit fixes confirmed clean (with 2 corrections where prior-audit verification was wrong); 1 new regression test added (fixture-import guard, 2/2 pass); all pipeline checks pass.
 
 ---
 
@@ -22,7 +22,7 @@ See `docs/qa-follow-up-tracker.md` for the full table. Summary:
 |----------|-------|--------|
 | Prior audit items verified clean | 10 | ✅ All clean |
 | Prior audit items that needed a fix | 2 | ✅ Fixed (trips mockTrips fallback, Pulse editorial/interests) |
-| New fixture leaks found via guard test | 5 total | ✅ All 5 fixed |
+| New fixture leaks found via guard test + code review | 6 total | ✅ All 6 fixed |
 | Intentional deferred stubs | 8 | 🔵 All honestly labeled in UI |
 | Out-of-scope blockers | 5 | 🔵 Documented |
 
@@ -47,6 +47,7 @@ Two prior-audit "verified clean" items turned out to need fixes:
 | `app/post/[id].tsx` | `postById()` from cebu | YES — shown unconditionally | `getPostById()` → `GET /api/posts/:postId` |
 | `app/(tabs)/ai.tsx` | `aiOpening` from cebu | YES — pre-populated chat | Removed; chat starts blank |
 | `app/(tabs)/index.tsx` | `me.interests` (always) + `editorialPosts` (For You mode) | YES | Both removed from import and render |
+| `app/(tabs)/index.tsx` | `pulseFeed` from `src/data/pulseFeed` — `mockFeed` appended to `forYouFeed` | YES — all authenticated users in For You mode | Removed `pulseFeed` import, `filterPulseFeed`, `mockFeed`; `forYouFeed` returns real items only |
 | `app/(tabs)/trips.tsx` | `mockTrips` (unauthenticated) | No — but honest gating required | Replaced with sign-in CTA |
 | `app/destination/[slug].tsx` | `cebu`, `posts` — entire screen | YES — slug param ignored | Replaced with honest "coming soon" stub |
 

@@ -28,12 +28,21 @@ const SCREEN_ROOTS = [
  * Covers both relative paths (../../src/data/cebu) and aliased names.
  */
 const BANNED_PATTERNS: RegExp[] = [
+  // Cebu fixture data
   /from\s+['"][^'"]*\/data\/cebu['"]/,
+  // pulseFeed fixture (re-exports from __fixtures__)
+  /from\s+['"][^'"]*\/data\/pulseFeed['"]/,
+  // Any direct __fixtures__ import
   /from\s+['"][^'"]*\/__fixtures__['"]/,
+  // Any path ending in /fixtures/
   /from\s+['"][^'"]*\/fixtures\/['"]/,
+  // Any mockData import
   /from\s+['"][^'"]*mockData['"]/,
+  // Aliased fixture barrel
   /from\s+['"]@fixtures['"]/,
+  // require() variants
   /require\s*\(\s*['"][^'"]*\/data\/cebu['"]\s*\)/,
+  /require\s*\(\s*['"][^'"]*\/data\/pulseFeed['"]\s*\)/,
 ];
 
 /** Globs that are allowed to contain fixture imports (test/story files). */
