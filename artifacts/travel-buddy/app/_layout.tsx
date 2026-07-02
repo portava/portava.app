@@ -23,6 +23,7 @@ import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
 import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
@@ -65,22 +66,24 @@ export default function RootLayout() {
               <PlanPickerControllerProvider>
                 <NotificationToastProvider>
                 <StampEarnedToastProvider>
-                  <PushSetup />
-                  <CompassFrontloadSetup />
-                  <StatusBar style="dark" />
-                  <Stack
-                    screenOptions={{
-                      headerShown: false,
-                      contentStyle: { backgroundColor: color.paper },
-                      animation: 'slide_from_right',
-                    }}
-                  >
-                    <Stack.Screen name="(tabs)" />
-                    <Stack.Screen name="(auth)" />
-                    <Stack.Screen name="create" options={{ presentation: 'modal' }} />
-                    <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
-                    <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
-                  </Stack>
+                  <ErrorBoundary>
+                    <PushSetup />
+                    <CompassFrontloadSetup />
+                    <StatusBar style="dark" />
+                    <Stack
+                      screenOptions={{
+                        headerShown: false,
+                        contentStyle: { backgroundColor: color.paper },
+                        animation: 'slide_from_right',
+                      }}
+                    >
+                      <Stack.Screen name="(tabs)" />
+                      <Stack.Screen name="(auth)" />
+                      <Stack.Screen name="create" options={{ presentation: 'modal' }} />
+                      <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+                      <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
+                    </Stack>
+                  </ErrorBoundary>
                 </StampEarnedToastProvider>
                 </NotificationToastProvider>
               </PlanPickerControllerProvider>
