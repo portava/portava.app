@@ -21,6 +21,7 @@ import { ArrowLeft } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../src/lib/supabase';
 import { useSession } from '../../src/context/SessionContext';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ function FlagRow({
 export default function FeatureFlagsScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, loading: sessionLoading } = useSession();
+  useRequireAdmin();
 
   useEffect(() => {
     if (!sessionLoading && !isAuthed) { router.replace('/(auth)/sign-in' as any); }

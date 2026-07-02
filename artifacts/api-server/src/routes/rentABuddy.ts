@@ -1826,6 +1826,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "completed") return res.status(400).json({ error: "invalid_payload", message: "Reviews can only be submitted for completed bookings." });
 
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;

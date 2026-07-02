@@ -15,6 +15,7 @@ import { ArrowLeft, Search, ShieldOff, Shield, TrendingDown, TrendingUp, Edit2, 
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { supabase } from '../../src/lib/supabase';
 import { useSession } from '../../src/context/SessionContext';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,7 @@ async function adminPatch<T>(path: string, body: unknown): Promise<{ ok: boolean
 export default function AdminHashtagsScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, loading: sessionLoading } = useSession();
+  useRequireAdmin();
 
   useEffect(() => {
     if (!sessionLoading && !isAuthed) { router.replace('/(auth)/sign-in' as any); }

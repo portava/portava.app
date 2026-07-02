@@ -2,14 +2,18 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
-  CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
+  CompassTripBrief, TripStamps, TripPostsSection,
   TripCrewSection,
 } from '../../src/components/TripPage';
+import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
+import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
+import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheckinPrompt';
+import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -51,6 +55,9 @@ export default function TripDetail() {
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [gapDays, setGapDays] = useState<string[]>([]);
   const [gapDestination, setGapDestination] = useState('');
+  const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<SafeReturnSession | null>(null);
+  const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
+  const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const handleGapDays = useCallback((days: string[], dest: string) => {
     setGapDays(days);
     setGapDestination(dest);
@@ -61,6 +68,22 @@ export default function TripDetail() {
     // Small delay lets the scroll animation start before the keyboard appears
     setTimeout(() => { commandBarRef.current?.focus(); }, 350);
   }, []);
+
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    async function pollSafeReturn() {
+      try {
+        const r = await getActiveSession();
+        if (cancelled) return;
+        setActiveSafeReturnSession(r.session ?? null);
+        if (r.session?.status === 'missed') setShowMissedPrompt(true);
+      } catch { }
+    }
+    pollSafeReturn();
+    const iv = setInterval(pollSafeReturn, 60_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [live]);
 
   const trip: TripDetail = (live && realTrip)
     ? {
@@ -272,7 +295,32 @@ export default function TripDetail() {
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
         ) : null}
-        <TripSafety tripId={live ? trip.id : undefined} />
+        {activeSafeReturnSession ? (
+          <ActiveSafeReturnCard
+            session={activeSafeReturnSession}
+            onSessionEnded={() => setActiveSafeReturnSession(null)}
+            onSessionUpdated={(s) => setActiveSafeReturnSession(s)}
+          />
+        ) : (
+          <Pressable style={styles.safeSetupBtn} onPress={() => setSafeReturnSetupOpen(true)}>
+            <ShieldCheck size={16} color={color.deep} />
+            <Text style={styles.safeSetupBtnText}>Set up Safe Return</Text>
+          </Pressable>
+        )}
+        {activeSafeReturnSession && activeSafeReturnSession.status === 'missed' && (
+          <MissedCheckinPrompt
+            visible={showMissedPrompt}
+            session={activeSafeReturnSession}
+            onDismiss={() => setShowMissedPrompt(false)}
+            onSafe={() => { setShowMissedPrompt(false); setActiveSafeReturnSession(null); }}
+            onExtended={(s) => { setShowMissedPrompt(false); setActiveSafeReturnSession(s); }}
+          />
+        )}
+        <SafeReturnSetupSheet
+          visible={safeReturnSetupOpen}
+          tripId={live ? trip.id : undefined}
+          onClose={() => setSafeReturnSetupOpen(false)}
+        />
         <TripPostsSection posts={[]} />
         {live && trip.id ? (
           <TripMemorySection
@@ -387,6 +435,8 @@ const styles = StyleSheet.create({
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  safeSetupBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  safeSetupBtnText: { ...t.body, color: color.deep, fontWeight: '600' },
 });
 
 function formatGapLabel(dateStr: string): string {

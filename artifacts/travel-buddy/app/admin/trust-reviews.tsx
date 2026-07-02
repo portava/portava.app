@@ -12,6 +12,7 @@ import {
 import { router } from 'expo-router';
 import { fetchReviews, type TrustReview } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 
 const STATUS_FILTERS = ['all', 'open', 'in_progress'] as const;
 const TYPE_FILTERS   = ['all', 'gaming_suspected', 'appeal', 'admin_flagged'] as const;
@@ -50,6 +51,7 @@ function ReviewRow({ item, onPress }: { item: TrustReview; onPress: () => void }
 
 export default function TrustReviewsScreen() {
   const { isAuthed, loading: sessionLoading } = useSession();
+  useRequireAdmin();
   const [reviews, setReviews]       = useState<TrustReview[]>([]);
   const [total, setTotal]           = useState(0);
   const [page, setPage]             = useState(1);

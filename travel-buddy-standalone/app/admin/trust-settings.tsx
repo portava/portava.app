@@ -14,6 +14,7 @@ import {
 import { router } from 'expo-router';
 import { fetchTrustSettings, updateTrustSetting, type TrustSettingKey } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 
 interface SettingSection {
   title: string;
@@ -140,6 +141,7 @@ function SettingRow({
 
 export default function TrustSettingsScreen() {
   const { isAuthed, loading: sessionLoading } = useSession();
+  useRequireAdmin();
   const [settings, setSettings]   = useState<Record<string, number>>({});
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);

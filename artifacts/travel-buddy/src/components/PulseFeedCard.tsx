@@ -112,6 +112,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
   const [dismissed, setDismissed] = useState(false);
+  const [mediaFailed, setMediaFailed] = useState(false);
   if (dismissed) return null;
 
   return (
@@ -119,7 +120,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
       <AuthorRow item={item} />
       {item.mediaUrl || true ? (
         <View style={s.media}>
-          {item.mediaUrl ? <Image source={{ uri: item.mediaUrl }} style={StyleSheet.absoluteFill} /> : null}
+          {item.mediaUrl && !mediaFailed ? <Image source={{ uri: item.mediaUrl }} style={StyleSheet.absoluteFill} onError={() => setMediaFailed(true)} /> : null}
           <View style={s.mediaTag}><Text style={s.mediaTagText}>POST</Text></View>
         </View>
       ) : null}

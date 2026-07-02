@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import {
   fetchUserTrustDetail,
   confirmTrustEvent,
@@ -191,6 +192,7 @@ function RestrictModal({
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function TrustDetailScreen() {
+  useRequireAdmin();
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const [detail, setDetail]           = useState<TrustUserDetail | null>(null);
   const [loading, setLoading]         = useState(true);

@@ -70,11 +70,12 @@ function HeroCard({ post }: { post: Post }) {
   const [reportOpen, setReportOpen] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
+  const [imgFailed, setImgFailed] = useState(false);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
 
   return (
     <Pressable style={[styles.card, styles.hero]} onPress={() => router.push(`/post/${post.id}`)}>
-      <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} />
+      {!imgFailed ? <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} onError={() => setImgFailed(true)} /> : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E5E7EB' }]} />}
       <Scrim />
       <View style={styles.heroTop}>
         <Stamp label={post.category} tone="onInk" />
@@ -134,6 +135,7 @@ function StandardCard({ post }: { post: Post }) {
   const cssFilter = shouldApplyCssFilter
     ? buildCssFilter(getMediaFilter(post.filterId), post.filterIntensity ?? 100)
     : 'none';
+  const [imgFailed, setImgFailed] = useState(false);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
 
   return (
@@ -150,7 +152,7 @@ function StandardCard({ post }: { post: Post }) {
           <MoreVertical size={16} color={color.mute} />
         </Pressable>
       </View>
-      {hasMedia && (
+      {hasMedia && !imgFailed && (
         <View>
           <Image
             source={{ uri: post.media[0].url }}
@@ -158,6 +160,7 @@ function StandardCard({ post }: { post: Post }) {
               styles.stdImage,
               shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
             ]}
+            onError={() => setImgFailed(true)}
           />
           {post.media[0]?.kind === 'video' && (
             <View style={styles.playBadge}>

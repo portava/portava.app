@@ -14,6 +14,7 @@ import {
 import { router } from 'expo-router';
 import { fetchGamingFlags, markGamingFlagReviewed, type TrustReview } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
+import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 
 const PATTERN_LABELS: Record<string, string> = {
   rapid_jump:      '📈 Rapid Score Jump',
@@ -61,6 +62,7 @@ function FlagRow({
 
 export default function GamingFlagsScreen() {
   const { isAuthed, loading: sessionLoading } = useSession();
+  useRequireAdmin();
   const [flags, setFlags]           = useState<TrustReview[]>([]);
   const [total, setTotal]           = useState(0);
   const [loading, setLoading]       = useState(true);
