@@ -12,6 +12,10 @@
  *  • "Edit your review" CTA shown when user already has a review on file
  *  • avgRating refreshes after returning from the review composer (0→1 edge case)
  *
+ * Delete path tests live in ReviewsSection.delete.component.test.tsx to
+ * prevent cross-test contamination from the un-unmounted second render in
+ * the "refreshes avgRating" test above.
+ *
  * Run with:  pnpm test:component
  *
  * useFocusEffect is mocked as a plain useEffect so the focus-callback fires on

@@ -1,0 +1,305 @@
+1. Full onboarding flow
+
+You need a real first-time user setup:
+
+* name / handle
+* profile photo
+* home country
+* current city
+* languages
+* travel interests
+* travel style
+* privacy defaults
+* location permission explanation
+* notification permission explanation
+* age verification path if needed
+* whether they are traveling now, planning, local, or open to meetups
+
+Without onboarding, Pulse, Discovery, Trips, Events, and Rent a Buddy won’t personalize correctly.
+
+2. Compass Intelligence Engine
+
+This is the “brain” of the app.
+
+It should decide what users see in:
+
+* Pulse
+* Discovery
+* Events
+* People nearby
+* Trips suggestions
+* Hidden Gems
+* Rent a Buddy recommendations
+* Notifications
+
+Inputs should include:
+
+* location/city
+* trip dates
+* interests
+* language
+* trust score
+* activity level
+* saved places
+* joined events
+* friends/circles
+* blocked users
+* safety settings
+* availability
+* privacy settings
+
+This is what makes the app feel smart instead of just a bunch of tabs.
+
+3. Discovery system full buildout
+
+You’ve talked about pieces, but Discovery needs its own full command.
+
+It should include:
+
+* real places
+* hidden gems
+* traveler-recommended places
+* nearby events
+* nearby circles
+* nearby travelers, privacy-safe
+* places near active/upcoming trip
+* food/nightlife/beach/outdoor categories
+* save to trip
+* recommend place
+* create event here
+* request Rent a Buddy here
+* map/list fallback
+
+This is one of the biggest missing core systems.
+
+4. Circles / groups system
+
+Events and Trips are strong, but you still need the full Circles system.
+
+Circles should support:
+
+* create circle
+* public/private/invite-only circles
+* city circles
+* trip circles
+* interest circles
+* language circles
+* circle events
+* circle posts
+* circle Telegraph group chat
+* moderators/admins
+* join requests
+* member roles
+* age/trust rules
+* report/block/moderation
+
+This is key for social retention.
+
+5. Telegraph messaging full buildout
+
+You’ve referenced Telegraph a lot, but it needs its own full system if it is not already complete:
+
+* 1:1 messages
+* message requests from unknown users
+* trip group chats
+* event group chats
+* circle chats
+* Rent a Buddy booking chats
+* auto-translation
+* media sharing
+* post/event/trip/place sharing
+* blocking/reporting
+* message permissions
+* unread counts
+* typing/read states if wanted
+* moderation/off-app payment detection for Rent a Buddy
+
+Messaging is what keeps users inside the app.
+
+6. Notifications / activity center
+
+This needs to be a full command too.
+
+Notifications should cover:
+
+* likes/comments/tags
+* friend/follow requests
+* trip invites
+* event invites
+* join requests
+* Rent a Buddy requests
+* booking updates
+* Telegraph messages
+* stamps earned
+* hidden gem approval
+* Safe Return check-ins
+* reports/admin actions
+* nearby event suggestions
+* trip reminders
+
+Without this, users won’t know what’s happening.
+
+7. Trust Score / verification system
+
+You’ve mentioned this, but it should be built as a central system.
+
+It should power:
+
+* verified badge
+* event eligibility
+* Rent a Buddy approval
+* profile trust badge
+* ranking in Discovery/Pulse
+* safety warnings
+* spam/abuse penalties
+* host/provider reputation
+* traveler behavior score
+
+This should not expose sensitive internals publicly.
+
+8. Safety center
+
+You have Safe Return, but the app needs a broader safety center:
+
+* block/report dashboard
+* emergency help
+* Safe Return
+* location privacy
+* delayed posting explanation
+* meeting safety tips
+* Rent a Buddy boundaries
+* event safety rules
+* trusted contacts
+* suspicious behavior reporting
+* moderation status
+
+This matters because the app is social + travel + meetups.
+
+9. Admin dashboard
+
+You need one full admin system covering everything:
+
+* users
+* reports
+* posts
+* events
+* trips
+* circles
+* Rent a Buddy applications
+* bookings/disputes
+* hidden gems
+* city rollout
+* stamps
+* trust/verification
+* moderation actions
+* feature flags
+* seed data status
+
+Without admin, the app will be hard to control once users join.
+
+10. City rollout / real data seeding
+
+You need a clean system for cities:
+
+* enabled cities
+* enabled features per city
+* real places loaded
+* Rent a Buddy available or not
+* events available or not
+* hidden gems available or not
+* empty state copy per city
+* city admin tools
+* OSM/Google Places sync
+* dedupe provider places
+* beta city launch checklist
+
+This is why screens can look empty even if the app technically works.
+
+11. Search system
+
+You need universal search:
+
+* users
+* places
+* events
+* trips
+* circles
+* hashtags
+* posts
+* hidden gems
+* Rent a Buddy providers
+* cities
+
+Search should respect privacy, blocks, and city rollout.
+
+12. Settings system
+
+Full settings still matters:
+
+* account
+* privacy
+* notifications
+* location
+* language/translation
+* blocked users
+* muted users
+* comments/likes visibility
+* tagging
+* messages
+* delayed posting default
+* Safe Return
+* verification
+* Rent a Buddy provider settings
+* delete/deactivate account
+
+13. Saved / collections system
+
+Users should be able to save:
+
+* posts
+* places
+* events
+* trips
+* hidden gems
+* buddies
+* circles
+* hashtags
+* cities
+
+Then organize them into collections like:
+
+* Want to Go
+* Food
+* Nightlife
+* Beaches
+* Trip Ideas
+* Hidden Gems
+* Saved for Tokyo
+* Saved for Siargao
+
+14. Reviews / recommendations system
+
+You need real reviews/recommendations, not fake ones:
+
+* place recommendations
+* event feedback
+* Rent a Buddy reviews
+* traveler reviews after bookings/events if allowed
+* hidden gem credibility
+* helpful votes
+* moderation/reporting
+
+15. Beta launch readiness
+
+Before launch, you need:
+
+* seed real places for beta cities
+* create honest empty states
+* test all main flows
+* confirm auth works
+* confirm RLS/security
+* confirm no fake data
+* confirm no private location leaks
+* test on mobile device, not only web preview
+* test slow/empty city states
+* test report/block everywhere
