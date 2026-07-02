@@ -702,7 +702,13 @@ router.get("/discovery", async (req, res) => {
       });
     }
     if (sortBy === "popular") {
-      list = [...list].sort((a, b) => (b.savedCount ?? 0) - (a.savedCount ?? 0));
+      list = [...list].sort((a, b) => {
+        const savedDiff = (b.savedCount ?? 0) - (a.savedCount ?? 0);
+        if (savedDiff !== 0) return savedDiff;
+        // For OSM places (and any place where savedCount is equal), use rating
+        // as a secondary popularity proxy so higher-rated venues surface first.
+        return (b.rating ?? 0) - (a.rating ?? 0);
+      });
     }
     if (sortBy === "nearest") {
       list = [...list].sort((a, b) => (a.distanceKm ?? 99999) - (b.distanceKm ?? 99999));
