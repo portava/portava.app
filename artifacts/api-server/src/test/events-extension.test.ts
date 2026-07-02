@@ -76,6 +76,8 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     message_thread_members: tables.message_thread_members ?? { rows: [] },
     collections:           tables.collections            ?? { rows: [] },
     collection_items:      tables.collection_items       ?? { rows: [] },
+    circle_members:        tables.circle_members         ?? { rows: [] },
+    trip_members:          tables.trip_members           ?? { rows: [] },
   };
 
   function chain(tableName: string, filtered: Row[]) {
@@ -2646,6 +2648,123 @@ describe("RLS-equivalent access-control — host/cohost/outsider/blocked", () =>
     ({ port, close } = await startServer());
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
     assert.equal(status, 403, `Under-age user must receive 403 on join, got ${status}`);
+  });
+});
+
+// ── circle / trip visibility enforcement ─────────────────────────────────────
+
+describe("circle/trip visibility enforcement — join + rsvp gated on membership", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { if (close) await close(); });
+
+  it("circle event: non-member cannot join (no linked_circle_id → 403)", async () => {
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: null }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      blocks: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403, `Non-member (no circle linked) must get 403, got ${status}`);
+  });
+
+  it("circle event: non-member cannot join (no circle_members row → 403)", async () => {
+    const circleId = "cccccccc-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      blocks: { rows: [] },
+      circle_members: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403, `Non-circle-member must get 403 on join, got ${status}`);
+  });
+
+  it("circle event: circle member can join", async () => {
+    const circleId = "cccccccc-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_attendees: { rows: [] },
+      blocks: { rows: [] },
+      circle_members: { rows: [{ circle_id: circleId, user_id: ID.user1 }] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 200, `Circle member must be able to join, got ${status}`);
+  });
+
+  it("trip event: non-trip-member cannot join (no linked_trip_id → 403)", async () => {
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, linked_trip_id: null }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      blocks: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403, `Non-member (no trip linked) must get 403, got ${status}`);
+  });
+
+  it("trip event: non-trip-member cannot join (no trip_members row → 403)", async () => {
+    const tripId = "tttttttt-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, linked_trip_id: tripId }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      blocks: { rows: [] },
+      trip_members: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403, `Non-trip-member must get 403 on join, got ${status}`);
+  });
+
+  it("trip event: accepted trip member can join", async () => {
+    const tripId = "tttttttt-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "trip" as any, linked_trip_id: tripId }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_attendees: { rows: [] },
+      blocks: { rows: [] },
+      trip_members: { rows: [{ trip_id: tripId, user_id: ID.user1, role: "member", status: "accepted" }] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 200, `Accepted trip member must be able to join, got ${status}`);
+  });
+
+  it("circle event: non-member cannot RSVP (403)", async () => {
+    const circleId = "cccccccc-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      blocks: { rows: [] },
+      circle_members: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/rsvp`, { status: "going" }, ID.user1);
+    assert.equal(status, 403, `Non-circle-member must get 403 on RSVP, got ${status}`);
+  });
+
+  it("circle event: non-member cannot view event detail (canViewEvent → 404)", async () => {
+    const circleId = "cccccccc-1111-0000-0000-000000000001";
+    _setTestClient(makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      event_roles: { rows: [] },
+      event_rsvps: { rows: [] },
+      circle_members: { rows: [] },
+    }), true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.ok([403, 404].includes(status), `Non-circle-member must get 403/404 on event detail, got ${status}`);
   });
 });
 

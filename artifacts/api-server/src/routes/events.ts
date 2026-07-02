@@ -1666,6 +1666,17 @@ router.post("/events/:id/rsvp", async (req, res) => {
       sendError(res, "forbidden", "This event requires host approval to join"); return;
     }
   }
+  // Circle/trip visibility: must be a member to RSVP
+  if ((ev as any).visibility === "circle") {
+    if (!(ev as any).linked_circle_id || !await isCircleMember(sc, (ev as any).linked_circle_id, user.id)) {
+      sendError(res, "forbidden", "This event is only open to circle members"); return;
+    }
+  }
+  if ((ev as any).visibility === "trip") {
+    if (!(ev as any).linked_trip_id || !await isTripEventMember(sc, (ev as any).linked_trip_id, user.id)) {
+      sendError(res, "forbidden", "This event is only open to trip members"); return;
+    }
+  }
 
   const status = parsed.data.status;
 
@@ -1786,6 +1797,16 @@ router.post("/events/:id/join", async (req, res) => {
   if (evData.rsvp_closed) { sendError(res, "forbidden", "RSVPs are closed for this event"); return; }
   if (evData.visibility === "invite_only") {
     sendError(res, "forbidden", "This event requires an invitation to join"); return;
+  }
+  if (evData.visibility === "circle") {
+    if (!evData.linked_circle_id || !await isCircleMember(sc, evData.linked_circle_id, user.id)) {
+      sendError(res, "forbidden", "This event is only open to circle members"); return;
+    }
+  }
+  if (evData.visibility === "trip") {
+    if (!evData.linked_trip_id || !await isTripEventMember(sc, evData.linked_trip_id, user.id)) {
+      sendError(res, "forbidden", "This event is only open to trip members"); return;
+    }
   }
 
   const result = await checkEventEligibility(sc, evData, user.id);
@@ -2969,9 +2990,44 @@ async function checkDuplicateEvent(
   return Array.isArray(data) && data.length > 0;
 }
 
+/** Check if userId is an active member of circle circleId (accepted/active status). */
+async function isCircleMember(sc: any, circleId: string, userId: string): Promise<boolean> {
+  const { data } = await sc
+    .from("circle_members")
+    .select("user_id")
+    .eq("circle_id", circleId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return !!data;
+}
+
+/** Check if userId is an accepted member/owner of the trip linked to the event. */
+async function isTripEventMember(sc: any, tripId: string, userId: string): Promise<boolean> {
+  const { data } = await sc
+    .from("trip_members")
+    .select("role")
+    .eq("trip_id", tripId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!data) return false;
+  const row = data as { role: string; status?: string | null };
+  const acceptedRoles = ["owner", "co_host", "member", "viewer"];
+  if (!acceptedRoles.includes(row.role)) return false;
+  if (row.status != null && row.status !== "accepted") return false;
+  return true;
+}
+
 async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
   if (ev.host_id === userId) return true;
-  if (ev.visibility === "public") return !["draft", "cancelled", "archived"].includes(ev.state) || ev.host_id === userId;
+
+  // Staff (cohost/moderator) always have access
+  const { data: staffRole } = await sc
+    .from("event_roles").select("role")
+    .eq("event_id", ev.id).eq("user_id", userId)
+    .maybeSingle();
+  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true;
+
+  if (ev.visibility === "public") return !["draft", "cancelled", "archived"].includes(ev.state);
   if (ev.visibility === "friends_only") {
     const { data: friendship } = await sc
       .from("user_friendships")
@@ -2979,8 +3035,24 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
       .or(`and(user_a.eq.${userId},user_b.eq.${ev.host_id}),and(user_b.eq.${userId},user_a.eq.${ev.host_id})`)
       .maybeSingle();
     if (friendship) return true;
+    // friends_only: also allow existing attendees/role holders to see the event
+    const [rsvp, role] = await Promise.all([
+      sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
+      sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
+    ]);
+    return !!(rsvp as any).data || !!(role as any).data;
   }
-  // Invite-only: must have an RSVP, join request, or role
+  if (ev.visibility === "circle") {
+    // Must be a member of the linked circle
+    if (!ev.linked_circle_id) return false;
+    return isCircleMember(sc, ev.linked_circle_id, userId);
+  }
+  if (ev.visibility === "trip") {
+    // Must be an accepted member of the linked trip
+    if (!ev.linked_trip_id) return false;
+    return isTripEventMember(sc, ev.linked_trip_id, userId);
+  }
+  // invite_only / unknown: must have an RSVP, approved join request, or role
   const [rsvp, role] = await Promise.all([
     sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
