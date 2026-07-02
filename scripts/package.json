@@ -14,6 +14,7 @@
     "test:db-triggers": "node --import tsx/esm --test ./src/check-db-triggers.test.ts",
     "test:truncate-guard": "node --import tsx/esm --test ./src/saved-places-truncate-guard.test.ts",
     "test:fixture-guard": "node --import tsx/esm --test ./src/fixture-import-guard.test.ts",
+    "test:dead-routes": "node --import tsx/esm --test ./src/dead-routes-guard.test.ts",
     "seed:profiles": "tsx ./src/seed-test-profiles.ts",
     "backfill:stamps": "tsx ./src/backfill-stamps.ts",
     "backfill:stamps:apply": "tsx ./src/backfill-stamps.ts --apply"
