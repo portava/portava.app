@@ -3,9 +3,12 @@
  *
  * Polls GET /api/trips/:tripId/crew/map every 30 seconds.
  * Same pattern as useThreadMessages — interval ref prevents drift on re-renders.
+ * Polling is paused when the app is backgrounded or inactive and resumes
+ * (with an immediate refresh) when it returns to the foreground.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getCrewMap, type CrewMapResponse, type CrewMemberCard } from '../services/tripCrewLocation';
+import { AppState } from 'react-native';
+import { getCrewMap, type CrewMemberCard } from '../services/tripCrewLocation';
 
 export interface UseTripCrewMapResult {
   members: CrewMemberCard[];
@@ -43,10 +46,38 @@ export function useTripCrewMap(tripId: string | null): UseTripCrewMapResult {
 
   useEffect(() => {
     if (!tripId) return;
-    fetchMap();
-    intervalRef.current = setInterval(fetchMap, POLL_INTERVAL_MS);
+
+    // Initial fetch
+    void fetchMap();
+
+    const startPoll = () => {
+      if (intervalRef.current) return;
+      intervalRef.current = setInterval(() => {
+        if (AppState.currentState === 'active') void fetchMap();
+      }, POLL_INTERVAL_MS);
+    };
+
+    const stopPoll = () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+
+    startPoll();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void fetchMap(); // immediate refresh on foregrounding
+        startPoll();
+      } else {
+        stopPoll();
+      }
+    });
+
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      stopPoll();
+      sub.remove();
     };
   }, [tripId, fetchMap]);
 
