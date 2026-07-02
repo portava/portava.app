@@ -401,7 +401,7 @@ export default function BuddyProfileScreen() {
                     const res = await reportContent({
                       target_type: 'buddy_profile',
                       target_id: buddy.userId,
-                      reason_code: 'inappropriate',
+                      reason_code: 'inappropriate_content',
                     });
                     if (res.ok) {
                       Alert.alert('Report submitted', 'Our team will review this profile.');
