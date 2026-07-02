@@ -19,7 +19,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient, _setTestServiceClient } from "../lib/http.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -521,6 +521,129 @@ describe("Stamp system v2 — smoke tests", async () => {
         body.reason.includes("cancelled") || body.reason.includes("source_invalid"),
         `Expected source_invalid reason, got: ${body.reason}`,
       );
+    });
+  });
+
+  // ── H. Unknown definitionSlug returns awarded:false ───────────────────────────
+
+  describe("H. Unknown definitionSlug returns awarded:false", () => {
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles:         [{ id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [],       // empty — slug cannot be found
+        userStamps:       [],
+        stampAwardEvents: [],
+      }), true);
+    });
+
+    it("returns awarded:false with definition_not_found reason", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: ALICE_ID,
+          definitionSlug: "does_not_exist",
+          sourceType: "system",
+          reason: "test",
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.awarded, false);
+      assert.equal(body.reason, "definition_not_found");
+    });
+  });
+
+  // ── I. Service client unavailable returns a safe structured error ─────────────
+
+  describe("I. Service client unavailable returns safe structured error", () => {
+    before(() => {
+      // Set up auth client (so requireUser can authenticate the request)...
+      _setTestClient(makeClient({ currentUserId: ALICE_ID }), true);
+      // ...then null out only the service client slot so getServiceClient() → null
+      _setTestServiceClient(null);
+    });
+
+    after(() => {
+      // Restore both slots so later tests are not affected
+      _setTestClient(makeClient({ currentUserId: ALICE_ID }), true);
+    });
+
+    it("GET /stamps/me returns a structured error (not a crash) when service client is null", async () => {
+      const res = await fetch(`${base()}/stamps/me`, {
+        headers: authHeaders(ALICE_ID),
+      });
+      // Must return 500 or 503 — never a connection error or unhandled exception
+      assert.ok(
+        res.status === 500 || res.status === 503,
+        `Expected 500 or 503, got ${res.status}`,
+      );
+      const body = await res.json();
+      assert.ok(body.error, "Response must include an error field");
+    });
+  });
+
+  // ── J. POST /stamps/award internal endpoint rejects invalid secrets ───────────
+
+  describe("J. POST /stamps/award rejects missing or wrong X-Internal-Secret", () => {
+    before(() => {
+      process.env.INTERNAL_API_SECRET = "stamps-test-secret-xyz";
+      _setTestClient(makeClient({
+        currentUserId: ALICE_ID,
+        stampDefinitions: [baseDef],
+        userStamps:       [],
+        stampAwardEvents: [],
+        trips: [{ id: "f1f1f1f1-0000-4000-8000-000000000001", status: "completed" }],
+      }), true);
+    });
+
+    after(() => {
+      delete process.env.INTERNAL_API_SECRET;
+    });
+
+    it("returns 401 when X-Internal-Secret header is absent", async () => {
+      const res = await fetch(`${base()}/stamps/award`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: ALICE_ID, definitionSlug: DEF_SLUG }),
+      });
+      assert.equal(res.status, 401, `Expected 401, got ${res.status}`);
+    });
+
+    it("returns 401 when X-Internal-Secret header has wrong value", async () => {
+      const res = await fetch(`${base()}/stamps/award`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Internal-Secret": "not-the-right-secret" },
+        body: JSON.stringify({ userId: ALICE_ID, definitionSlug: DEF_SLUG }),
+      });
+      assert.equal(res.status, 401, `Expected 401, got ${res.status}`);
+    });
+  });
+
+  // ── K. recalculate/me with zero award events returns zero counts ──────────────
+
+  describe("K. recalculate/me with no award events returns zero counts", () => {
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ALICE_ID,
+        profiles:         [{ id: ALICE_ID, role: "user" }],
+        stampDefinitions: [],
+        userStamps:       [],
+        stampAwardEvents: [],   // empty — nothing to recalculate
+      }), true);
+    });
+
+    it("returns { awarded: 0, skipped: 0 } when no award events exist for user", async () => {
+      const res = await fetch(`${base()}/stamps/recalculate/me`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.awarded, 0, `Expected awarded=0, got ${body.awarded}`);
+      assert.equal(body.skipped, 0, `Expected skipped=0, got ${body.skipped}`);
+      assert.ok(typeof body.checked === "number", "checked should be a number");
     });
   });
 });
