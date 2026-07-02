@@ -35,7 +35,7 @@ import {
 import {
   getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
-  buildRentBuddyParamsFromEvent,
+  buildRentBuddyParamsFromEvent, shouldShowRentBuddyCta,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
 import { checkCityAvailable } from '../../src/services/rentABuddy';
@@ -613,10 +613,7 @@ export default function EventDetailScreen() {
             </View>
 
             {/* Find a Travel Buddy CTA — shown for public/going events in RAB-available cities */}
-            {buddyCityAvailable === true
-              && !['draft', 'cancelled', 'archived'].includes(event.state)
-              && (event.visibility === 'public' || event.myRsvp === 'going')
-              && (
+            {shouldShowRentBuddyCta(event, rentBuddyEnabled, buddyCityAvailable) && (
               <Pressable
                 style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
                 onPress={() => {

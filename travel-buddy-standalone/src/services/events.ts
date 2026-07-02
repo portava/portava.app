@@ -654,44 +654,15 @@ export async function getUserEvents(
 }
 
 // ── Rent-a-Buddy integration ─────────────────────────────────────────────────
+//
+// Pure helpers live in eventCtaHelper.ts (no external imports) so they can be
+// unit-tested in node:test without pulling in the supabase client.
 
-export interface RentBuddySearchParams {
-  city: string;
-  category: string;
-  bookingDate: string | null;
-}
-
-/**
- * Maps event fields to Rent-a-Buddy search params.
- * Returns null when the event has no city (can't do a city-based buddy search).
- *
- * Category mapping follows the BuddyCategory union:
- *   'arrival' | 'city' | 'nightlife' | 'language' | 'content' | 'food' |
- *   'nature' | 'culture' | 'adventure' | 'shopping' | 'wellness' | 'other'
- */
-function mapEventCategoryToBuddyCategory(eventCategory: string | null): string {
-  if (!eventCategory) return 'city';
-  const lower = eventCategory.toLowerCase();
-  if (/nightlife|club|bar|party|dance/.test(lower))        return 'nightlife';
-  if (/food|dining|restaurant|brunch|lunch|dinner|eat/.test(lower)) return 'food';
-  if (/culture|art|museum|gallery|history|heritage/.test(lower))    return 'culture';
-  if (/nature|outdoor|hik|park|beach|lake|trail/.test(lower))       return 'nature';
-  if (/adventure|sport|extreme|surf|ski|climb|bike/.test(lower))    return 'adventure';
-  if (/shop|market|mall/.test(lower))                               return 'shopping';
-  if (/wellness|yoga|fitness|spa|meditation|pilates/.test(lower))   return 'wellness';
-  return 'city';
-}
-
-export function buildRentBuddyParamsFromEvent(
-  event: EventSummary,
-): RentBuddySearchParams | null {
-  if (!event.city) return null;
-  return {
-    city:        event.city,
-    category:    mapEventCategoryToBuddyCategory(event.category),
-    bookingDate: event.startsAt ? event.startsAt.slice(0, 10) : null,
-  };
-}
+export {
+  shouldShowRentBuddyCta,
+  buildRentBuddyParamsFromEvent,
+  type RentBuddySearchParams,
+} from './eventCtaHelper.ts';
 
 // ── Near-trip events ─────────────────────────────────────────────────────────
 
