@@ -647,6 +647,253 @@ describe("Stamp system v2 — smoke tests", async () => {
     });
   });
 
+  // ── M. first_trip_created awarded on first non-draft trip ────────────────────
+
+  describe("M. first_trip_created awarded on first non-draft trip", () => {
+    const TRIP_DEF: typeof baseDef = {
+      id: "dddddef0-0000-4000-8000-000000000099",
+      slug: "first_trip_created",
+      name: "First Trip Created",
+      is_active: true,
+      is_repeatable: false,
+      max_awards_per_user: null,
+      visibility_default: "public",
+      criteria_type: "automatic",
+    };
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [TRIP_DEF],
+        userStamps: [],
+        stampAwardEvents: [],
+        trips: [{ id: "aa00aa00-0000-4000-8000-000000000001", status: "upcoming" }],
+      }), true);
+    });
+
+    it("awards first_trip_created on first call", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: ALICE_ID,
+          definitionSlug: "first_trip_created",
+          sourceType: "trips",
+          sourceId: "aa00aa00-0000-4000-8000-000000000001",
+          reason: "backfill test",
+        }),
+      });
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.awarded, true, "Expected awarded:true on first_trip_created");
+    });
+
+    it("returns awarded:false on second call (non-repeatable)", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: ALICE_ID,
+          definitionSlug: "first_trip_created",
+          sourceType: "trips",
+          sourceId: "aa00aa00-0000-4000-8000-000000000001",
+          reason: "backfill test",
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.awarded, false, "Expected awarded:false on duplicate call");
+    });
+  });
+
+  // ── N. first_postcard awarded on first passport postcard ──────────────────────
+
+  describe("N. first_postcard stamp awarded once", () => {
+    const POSTCARD_DEF: typeof baseDef = {
+      id: "dddddef1-0000-4000-8000-000000000099",
+      slug: "first_postcard",
+      name: "First Postcard",
+      is_active: true,
+      is_repeatable: false,
+      max_awards_per_user: null,
+      visibility_default: "public",
+      criteria_type: "automatic",
+    };
+    const POST_ID = "pp000001-0000-4000-8000-000000000001";
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [POSTCARD_DEF],
+        userStamps: [],
+        stampAwardEvents: [],
+        posts: [{ id: POST_ID, status: "active" }],
+      }), true);
+    });
+
+    it("awards first_postcard when sourceType=posts", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: BOB_ID,
+          definitionSlug: "first_postcard",
+          sourceType: "posts",
+          sourceId: POST_ID,
+          reason: "backfill test",
+        }),
+      });
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.awarded, true, "Expected awarded:true for first_postcard");
+    });
+  });
+
+  // ── O. Stamp definitions unknown to the engine do not crash the routes ────────
+
+  describe("O. Unknown stamp slugs (safe_return_ready, safe_return_completed, etc.) return definition_not_found gracefully", () => {
+    const unknownSlugs = [
+      "safe_return_ready",
+      "safe_return_completed",
+      "first_buddy_booking",
+      "first_buddy_hosted",
+      "hidden_gem_explorer",
+      "verified_traveler",
+    ];
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [],  // empty — none of these are in DB
+        userStamps: [],
+        stampAwardEvents: [],
+      }), true);
+    });
+
+    for (const slug of unknownSlugs) {
+      it(`returns awarded:false with definition_not_found for ${slug}`, async () => {
+        const res = await fetch(`${base()}/admin/stamps/award`, {
+          method: "POST",
+          headers: authHeaders(ADMIN_ID),
+          body: JSON.stringify({
+            userId: ALICE_ID,
+            definitionSlug: slug,
+            sourceType: "system",
+            reason: "backfill test",
+          }),
+        });
+        assert.equal(res.status, 200, `Expected 200 for unknown slug, got ${res.status}`);
+        const body = await res.json();
+        assert.equal(body.awarded, false, `Expected awarded:false for ${slug}`);
+        assert.equal(body.reason, "definition_not_found", `Expected definition_not_found for ${slug}, got ${body.reason}`);
+      });
+    }
+  });
+
+  // ── P. Trip completion v2 slugs return definition_not_found gracefully ────────
+  // first_trip_completed / solo_traveler / group_tripper / weekend_wanderer are the
+  // renamed slugs used by awardTripCompletionStamps(). Until the DB definitions are
+  // inserted they must degrade gracefully — never 500, never throw.
+
+  describe("P. Trip completion v2 slugs return definition_not_found gracefully", () => {
+    const completionSlugs = [
+      "first_trip_completed",
+      "solo_traveler",
+      "group_tripper",
+      "weekend_wanderer",
+      "long_haul",
+      "international_voyager",
+      "road_warrior",
+      "frequent_flyer",
+    ];
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [],  // empty — definitions not yet seeded in DB
+        userStamps: [],
+        stampAwardEvents: [],
+      }), true);
+    });
+
+    for (const slug of completionSlugs) {
+      it(`returns awarded:false with definition_not_found for ${slug}`, async () => {
+        const res = await fetch(`${base()}/admin/stamps/award`, {
+          method: "POST",
+          headers: authHeaders(ADMIN_ID),
+          body: JSON.stringify({
+            userId: ALICE_ID,
+            definitionSlug: slug,
+            sourceType: "trips",
+            reason: "completion test",
+          }),
+        });
+        assert.equal(res.status, 200, `Expected 200 for unknown slug ${slug}, got ${res.status}`);
+        const body = await res.json();
+        assert.equal(body.awarded, false, `Expected awarded:false for ${slug}`);
+        assert.equal(body.reason, "definition_not_found", `Expected definition_not_found for ${slug}, got ${body.reason}`);
+      });
+    }
+  });
+
+  // ── Q. Backfill idempotency — second award for same source returns already_awarded
+  // Validates the (userId:definitionId:sourceType:sourceId) idempotency key that the
+  // backfill script relies on to skip already-processed candidates.
+
+  describe("Q. Backfill idempotency: second award for same source returns already_awarded", () => {
+    const TRIP_ID_Q = "eeeeeeee-0000-4000-8000-0000000000ee";
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ADMIN_ID,
+        profiles: [{ id: ALICE_ID, role: "user" }, { id: ADMIN_ID, role: "admin" }],
+        stampDefinitions: [{ id: DEF_ID, slug: DEF_SLUG, is_active: true, requires_approval: false, criteria_type: "automatic", visibility_default: "public" }],
+        userStamps: [],
+        stampAwardEvents: [],
+      }), true);
+    });
+
+    it("first call awards the stamp", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: ALICE_ID,
+          definitionSlug: DEF_SLUG,
+          // rent_buddy sourceType skips validateSource() table lookup
+          sourceType: "rent_buddy",
+          sourceId: TRIP_ID_Q,
+          reason: "backfill run 1",
+        }),
+      });
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.awarded, true, "First call must award the stamp");
+    });
+
+    it("second call (same source) returns already_awarded with awarded:false", async () => {
+      const res = await fetch(`${base()}/admin/stamps/award`, {
+        method: "POST",
+        headers: authHeaders(ADMIN_ID),
+        body: JSON.stringify({
+          userId: ALICE_ID,
+          definitionSlug: DEF_SLUG,
+          sourceType: "rent_buddy",
+          sourceId: TRIP_ID_Q,
+          reason: "backfill run 2 (duplicate)",
+        }),
+      });
+      assert.equal(res.status, 200, "Duplicate must be HTTP 200 (not 201 or 4xx)");
+      const body = await res.json();
+      assert.equal(body.awarded, false, "Duplicate must return awarded:false");
+      assert.equal(body.reason, "already_awarded", `Expected already_awarded, got ${body.reason}`);
+    });
+  });
+
   // ── L. recalculate/me skips events whose definitions are missing/inactive ─────
 
   describe("L. recalculate/me skips events with no matching definition", () => {

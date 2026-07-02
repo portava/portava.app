@@ -26,6 +26,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import {
@@ -254,6 +255,34 @@ router.post("/me/safe-return/sessions", async (req, res) => {
   invalidateCompassProfile(user.id);
 
   res.status(201).json({ ok: true, session: toPublicSession(session) });
+
+  // Fire-and-forget: award safe_return_ready stamp when user activates Safe Return.
+  void (async () => {
+    try {
+      const sc = getServiceClient();
+      if (!sc) return;
+      const result = await awardStamp(sc, {
+        userId:        user.id,
+        definitionSlug: "safe_return_ready",
+        sourceType:    "safe_return",
+        sourceId:      (session as any).id,
+      });
+      if (result.awarded) {
+        const { NotificationService } = await import("../services/notifications/NotificationService.js");
+        const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotificationRouter(sc);
+        const row = await notifSvc.create({
+          userId:     user.id,
+          eventType:  "passport.stamp_earned",
+          sourceType: "safe_return",
+          sourceId:   (session as any).id,
+          params:     { location: "Safe Return" },
+        });
+        if (row) await notifRouter.route(row);
+      }
+    } catch {}
+  })();
 });
 
 // ── POST /api/me/safe-return/sessions/:id/start ───────────────────────────────
@@ -377,6 +406,29 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
             suggestionReason: "You confirmed a Safe Return",
           });
         }
+      }
+
+      // Also award via StampAwardEngine (idempotent) so safe_return_completed
+      // participates in the stamp system v2 award/revoke/audit flow.
+      const engineResult = await awardStamp(sc, {
+        userId:        user.id,
+        definitionSlug: "safe_return_completed",
+        sourceType:    "safe_return",
+        sourceId:      (session as any).id,
+      });
+      if (engineResult.awarded) {
+        const { NotificationService } = await import("../services/notifications/NotificationService.js");
+        const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotificationRouter(sc);
+        const row = await notifSvc.create({
+          userId:     user.id,
+          eventType:  "passport.stamp_earned",
+          sourceType: "safe_return",
+          sourceId:   (session as any).id,
+          params:     { location: "Safe Return" },
+        });
+        if (row) await notifRouter.route(row);
       }
     } catch {}
   })();

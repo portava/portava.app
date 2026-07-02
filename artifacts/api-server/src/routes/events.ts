@@ -3603,6 +3603,13 @@ router.post("/events/:id/publish", async (req, res) => {
     } catch {}
   })();
 
+  // TODO(Task #1041): award category event stamps (first_event_joined,
+  // first_event_hosted, and event-category variants such as food/music/outdoor)
+  // via StampAwardEngine.awardStamp() here once definitions and eligibility
+  // rules are finalised. Pattern: see trips.ts awardTripCompletionStamps().
+  // Trigger points: POST /events/:id/publish (host), POST /events/:id/rsvp Going
+  // status, POST /events/:id/complete (event concluded).
+
   // Viewer is the host → always participant view
   res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
 });

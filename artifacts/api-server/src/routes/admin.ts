@@ -932,6 +932,34 @@ router.post("/admin/users/:userId/verify", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ ok: true, verified: true });
+
+  // Fire-and-forget: award verified_traveler stamp when an admin verifies a user.
+  void (async () => {
+    try {
+      const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
+      const result = await awardStamp(sc, {
+        userId:        userId,
+        definitionSlug: "verified_traveler",
+        sourceType:    "admin",
+        sourceId:      userId,
+        adminId:       adminUserId,
+      });
+      if (result.awarded) {
+        const { NotificationService } = await import("../services/notifications/NotificationService.js");
+        const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotificationRouter(sc);
+        const row = await notifSvc.create({
+          userId:     userId,
+          eventType:  "passport.stamp_earned",
+          sourceType: "admin",
+          sourceId:   userId,
+          params:     { location: "Verified Traveler" },
+        });
+        if (row) await notifRouter.route(row);
+      }
+    } catch {}
+  })();
 });
 
 /** POST /admin/users/:userId/unverify */

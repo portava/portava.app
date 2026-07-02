@@ -1296,6 +1296,57 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     recordActivityEvent(serviceClient, buddyUserId, "buddy_session_completed", { category: "buddy_session" });
   }
 
+  // Fire-and-forget: award first_buddy_booking (traveler) and first_buddy_hosted (buddy).
+  void (async () => {
+    try {
+      const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+      const sc = getServiceClient();
+      if (!sc) return;
+
+      const travelerResult = await awardStamp(sc, {
+        userId:        auth.user.id,
+        definitionSlug: "first_buddy_booking",
+        sourceType:    "rent_buddy",
+        sourceId:      bookingId,
+      });
+      if (travelerResult.awarded) {
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotificationRouter(sc);
+        const row = await notifSvc.create({
+          userId:     auth.user.id,
+          eventType:  "passport.stamp_earned",
+          sourceType: "rent_buddy",
+          sourceId:   bookingId,
+          params:     { location: "Rent a Buddy" },
+        });
+        if (row) await notifRouter.route(row);
+      }
+
+      if (buddyUserId) {
+        const buddyResult = await awardStamp(sc, {
+          userId:        buddyUserId,
+          definitionSlug: "first_buddy_hosted",
+          sourceType:    "rent_buddy",
+          sourceId:      bookingId,
+        });
+        if (buddyResult.awarded) {
+          const notifSvc    = new NotificationService(sc);
+          const notifRouter = new NotificationRouter(sc);
+          const row = await notifSvc.create({
+            userId:     buddyUserId,
+            eventType:  "passport.stamp_earned",
+            sourceType: "rent_buddy",
+            sourceId:   bookingId,
+            params:     { location: "Rent a Buddy" },
+          });
+          if (row) await notifRouter.route(row);
+        }
+      }
+    } catch {}
+  })();
+
   // Archive the booking thread unless BOTH parties opted to stay connected.
   // Either party may call POST /api/rent-a-buddy/bookings/:bookingId/stay-connected before or after
   // completion to record their preference. We check both here.

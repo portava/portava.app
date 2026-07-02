@@ -117,16 +117,18 @@ async function awardTripCompletionStamps(
   const awards: Array<{ userId: string; slug: string }> = [];
 
   // ── Per-member stamps ──────────────────────────────────────────────────────
+  // Slugs use the v2 naming convention (first_trip_completed, weekend_wanderer,
+  // solo_traveler, group_tripper) so they coexist cleanly with first_trip_created.
   for (const uid of memberIds) {
-    awards.push({ userId: uid, slug: "first_trip" });
+    awards.push({ userId: uid, slug: "first_trip_completed" });
     if (tripDays > 14)  awards.push({ userId: uid, slug: "long_haul" });
-    if (isWeekendTrip)  awards.push({ userId: uid, slug: "weekend_warrior" });
+    if (isWeekendTrip)  awards.push({ userId: uid, slug: "weekend_wanderer" });
     if (country)        awards.push({ userId: uid, slug: "international_voyager" });
   }
 
   // ── Owner-only stamps ──────────────────────────────────────────────────────
-  if (memberCount === 1) awards.push({ userId: ownerId, slug: "solo_adventurer" });
-  if (memberCount >= 3)  awards.push({ userId: ownerId, slug: "crew_captain" });
+  if (memberCount === 1) awards.push({ userId: ownerId, slug: "solo_traveler" });
+  if (memberCount >= 3)  awards.push({ userId: ownerId, slug: "group_tripper" });
 
   // Milestone stamps — count owner's completed trips (patch has already committed)
   const { count: completedCount } = await sc
@@ -139,15 +141,54 @@ async function awardTripCompletionStamps(
   if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
   if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
 
-  // ── Fire all via internal endpoint (concurrent, idempotent) ───────────────
-  await Promise.allSettled(
+  // ── Call awardStamp() directly to collect results, then batch notifications ─
+  // Direct engine calls (not HTTP) so we get AwardResult back for notification logic.
+  // awardStamp is idempotent via (user:def:sourceType:sourceId) key — re-runs are safe.
+  const settled = await Promise.allSettled(
     awards.map(({ userId, slug }) =>
-      callInternalStampAward(
-        { userId, definitionSlug: slug, sourceType: "trips", sourceId: tripId, city, country },
-        sc,
-      ),
+      awardStamp(sc, {
+        userId,
+        definitionSlug: slug,
+        sourceType: "trips",
+        sourceId: tripId,
+        city,
+        country,
+      }).then((result) => ({ userId, slug, ...result })),
     ),
   );
+
+  // Group awarded slugs by userId — send ONE notification per user, not one per stamp.
+  const awardedByUser = new Map<string, string[]>();
+  for (const r of settled) {
+    if (r.status === "fulfilled" && r.value.awarded) {
+      const { userId, slug } = r.value;
+      if (!awardedByUser.has(userId)) awardedByUser.set(userId, []);
+      awardedByUser.get(userId)!.push(slug);
+    }
+  }
+
+  if (awardedByUser.size > 0) {
+    const { NotificationService } = await import("../services/notifications/NotificationService.js");
+    const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+    await Promise.allSettled(
+      [...awardedByUser.entries()].map(async ([userId, slugs]) => {
+        const notifSvc    = new NotificationService(sc);
+        const notifRouter = new NotificationRouter(sc);
+        const row = await notifSvc.create({
+          userId,
+          eventType:  "passport.stamp_earned",
+          sourceType: "trips",
+          sourceId:   tripId,
+          params:     {
+            location: city ?? country ?? "your trip",
+            stamps:   slugs.join(","),
+            count:    String(slugs.length),
+          },
+        });
+        if (row) await notifRouter.route(row);
+      }),
+    );
+  }
 }
 
 router.post("/trips", async (req, res) => {
@@ -220,6 +261,37 @@ router.post("/trips", async (req, res) => {
   const newTripId = (data as any)?.id;
   if (newTripId) {
     syncTripChatMembers(newTripId, client).catch(() => {});
+  }
+
+  // Fire-and-forget: award first_trip_created stamp when a user creates their very
+  // first non-draft trip. Fully idempotent via awardStamp's (user:def:source) key.
+  if (newTripId && computedStatus !== "draft") {
+    void (async () => {
+      try {
+        const result = await awardStamp(client, {
+          userId: user.id,
+          definitionSlug: "first_trip_created",
+          sourceType: "trips",
+          sourceId: newTripId,
+          city: destinationCity ?? undefined,
+          country: destinationCountry ?? undefined,
+        });
+        if (result.awarded) {
+          const { NotificationService } = await import("../services/notifications/NotificationService.js");
+          const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+          const notifSvc    = new NotificationService(client);
+          const notifRouter = new NotificationRouter(client);
+          const row = await notifSvc.create({
+            userId:     user.id,
+            eventType:  "passport.stamp_earned",
+            sourceType: "trips",
+            sourceId:   newTripId,
+            params:     { location: destinationCity ?? destinationCountry ?? "your journey" },
+          });
+          if (row) await notifRouter.route(row);
+        }
+      } catch {}
+    })();
   }
 });
 

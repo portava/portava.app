@@ -987,11 +987,51 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     return;
   }
 
+  // Fetch gem's submitter before recording the verification (needed for stamp award).
+  const { data: gemRow } = await sc
+    .from("hidden_gems")
+    .select("submitted_by, location_city, location_country")
+    .eq("id", req.params.id)
+    .maybeSingle();
+
   try {
     await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);
     res.json({ ok: true });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
+    return;
+  }
+
+  // Fire-and-forget: award hidden_gem_explorer stamp to the submitter on approval.
+  if (parsed.data.result === "approved" && gemRow && (gemRow as any).submitted_by) {
+    const submitterId: string = (gemRow as any).submitted_by;
+    void (async () => {
+      try {
+        const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
+        const result = await awardStamp(sc, {
+          userId:        submitterId,
+          definitionSlug: "hidden_gem_explorer",
+          sourceType:    "hidden_gems",
+          sourceId:      req.params.id,
+          city:          (gemRow as any).location_city   ?? undefined,
+          country:       (gemRow as any).location_country ?? undefined,
+        });
+        if (result.awarded) {
+          const { NotificationService } = await import("../services/notifications/NotificationService.js");
+          const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+          const notifSvc    = new NotificationService(sc);
+          const notifRouter = new NotificationRouter(sc);
+          const row = await notifSvc.create({
+            userId:     submitterId,
+            eventType:  "passport.stamp_earned",
+            sourceType: "hidden_gems",
+            sourceId:   req.params.id,
+            params:     { location: (gemRow as any).location_city ?? (gemRow as any).location_country ?? "hidden gem" },
+          });
+          if (row) await notifRouter.route(row);
+        }
+      } catch {}
+    })();
   }
 });
 

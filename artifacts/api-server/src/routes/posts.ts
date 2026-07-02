@@ -22,6 +22,7 @@ import {
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
+import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { getServiceClient } from "../lib/supabase";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
@@ -306,6 +307,36 @@ router.post("/posts", async (req, res) => {
           }, req.log);
         }
       }
+
+      // Fire-and-forget: award first_postcard stamp on a user's first passport postcard.
+      void (async () => {
+        try {
+          const sc = getServiceClient();
+          if (!sc) return;
+          const result = await awardStamp(sc, {
+            userId:        user.id,
+            definitionSlug: "first_postcard",
+            // "postcards" skips validateSource() table lookup — postcard IDs live
+            // in passport_postcards, not in the posts table.
+            sourceType:    "postcards",
+            sourceId:      (data as any).id,
+            city:          locationCity ?? undefined,
+            country:       locationCountry ?? undefined,
+          });
+          if (result.awarded) {
+            const notifSvc    = new NotificationService(sc);
+            const notifRouter = new NotificationRouter(sc);
+            const row = await notifSvc.create({
+              userId:     user.id,
+              eventType:  "passport.stamp_earned",
+              sourceType: "postcards",
+              sourceId:   (data as any).id,
+              params:     { location: locationCity ?? locationCountry ?? "your travels" },
+            });
+            if (row) await notifRouter.route(row);
+          }
+        } catch {}
+      })();
     }
   }
 
