@@ -875,22 +875,6 @@ const styles = StyleSheet.create({
     fontWeight: '500' as const,
     color: color.mute,
   },
-  activeSortChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    backgroundColor: color.signal + '14',
-    borderWidth: 1,
-    borderColor: color.signal + '50',
-  },
-  activeSortChipText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-    color: color.signal,
-  },
   tabLabelColumn: {
     flexDirection: 'column',
     alignItems: 'flex-start',

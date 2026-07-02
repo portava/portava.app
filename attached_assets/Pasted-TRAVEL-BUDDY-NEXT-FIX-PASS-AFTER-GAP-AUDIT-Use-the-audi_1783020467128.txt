@@ -1,0 +1,273 @@
+TRAVEL BUDDY — NEXT FIX PASS AFTER GAP AUDIT
+
+Use the audit report already produced as source of truth. This is NOT a rebuild. Fix only the highest-impact beta blockers first. Check what exists before changing anything. Do not break working systems. Do not insert fake users, fake reviews, fake places, or fake production content. Do not modify Supabase env vars. Do not expose service-role keys. Do not sync artifacts/travel-buddy unless explicitly told.
+
+SCOPE FOR THIS PASS:
+Fix the top beta blockers from the audit in this order:
+
+1. Remove / neutralize live fixture data on production-facing screens
+2. Complete onboarding persistence
+3. Build or wire universal search
+4. Verify Discovery/Map real-data behavior
+5. Connect Compass outputs into visible tabs where safe
+6. Verify Telegraph group chat auto-creation hooks
+7. Report remaining blockers without overbuilding
+
+==================================================
+1. FIX LIVE FIXTURE DATA / HARDCODED CEBU
+==================================================
+
+Known audit findings:
+- Pulse / Home app/(tabs)/index.tsx uses pulseFeed fixtures + editorialPosts from src/data/cebu.ts
+- Pulse city is hardcoded to "Cebu"
+- Trips app/(tabs)/trips.tsx falls back to mockTrips from src/data/cebu.ts when unauthenticated or backend misconfigured
+- Passport Postcards tab app/(tabs)/passport.tsx uses first 4 posts from cebu.ts
+- Discovery fallback cards can masquerade as real content
+
+Required:
+- Remove hardcoded "Cebu" as the global Pulse city.
+- Use the user's actual current city / selected city / LocationContext / profile city in a clear source-of-truth order.
+- If no city is known, show an honest setup/location empty state.
+- Do not show Cebu fixture posts to all users.
+- Do not show mock trips as if they are real trips.
+- Do not show mock Passport postcards as if they are the user's real posts.
+- Fallback cards must be clearly labeled as empty/skeleton/recommendation placeholders, not fake real content.
+- Keep dev fixtures only behind an explicit dev/test flag if needed.
+
+Verify:
+- Pulse no longer hardcodes Cebu.
+- Logged-in user sees city-aware real/backend content or honest empty state.
+- Trips no longer presents mock trips as real user trips.
+- Passport no longer shows Cebu fixture postcards as user content.
+- Discovery fallback content cannot be mistaken for real provider/user content.
+
+==================================================
+2. COMPLETE ONBOARDING PERSISTENCE
+==================================================
+
+Known audit finding:
+- app/(auth)/onboarding.tsx only collects/saves travel style + interests.
+
+Required:
+Update onboarding to collect and persist, using existing schema where possible:
+- display name
+- handle/username
+- profile photo entry point, even if upload is existing service
+- home country
+- current city
+- default language
+- additional languages
+- travel style
+- interests
+- traveling now / planning / local mode
+- privacy defaults
+- location permission explanation
+- notification permission explanation
+- community guidelines / non-dating positioning acceptance
+- age/date of birth path only if already supported by schema
+
+Rules:
+- Inspect profiles/passports/user tables first.
+- Do not create risky migrations automatically.
+- If schema fields are missing, provide idempotent SQL separately instead of applying it.
+- Existing fields must be used before proposing new fields.
+- Onboarding completion should persist.
+- Returning users should not get stuck in onboarding.
+
+Verify:
+- New user can complete onboarding.
+- Values persist to Supabase.
+- Passport reflects saved profile fields.
+- Discovery/Compass can read city/language/interests.
+- Telegraph can read default language for translation.
+- Missing optional fields show completion prompts, not crashes.
+
+==================================================
+3. UNIVERSAL SEARCH
+==================================================
+
+Known audit finding:
+- Universal Search is missing.
+- Discovery search redirects to AI tab.
+- No single surface searches users, places, events, trips, circles, hidden gems, RAB providers, hashtags.
+
+Required:
+Build/wire a Universal Search screen using existing services/routes where possible.
+
+Search categories:
+- users/passports
+- discovery places
+- events
+- trips
+- circles/groups if present
+- hidden gems
+- hashtags/posts if present
+- Rent a Buddy providers if present
+
+Required UI:
+- search input
+- recent searches if existing storage pattern exists
+- category tabs/chips
+- no-results state
+- loading state
+- error/retry state
+- result cards route to correct detail screens
+
+Rules:
+- Exclude blocked users/content.
+- Respect private content.
+- Do not show fake results.
+- If a backend endpoint is missing, add the minimum safe endpoint or service function.
+- Do not break Discovery.
+
+Verify:
+- Search opens from Discovery/search entry.
+- Query returns real places from discovery_places.
+- Query returns real users/profiles.
+- Query returns real events/trips if tables have data.
+- Empty query/no result does not crash.
+- Result tap routes correctly.
+
+==================================================
+4. DISCOVERY / MAP REAL DATA CHECK
+==================================================
+
+Required:
+- Confirm Discovery uses real discovery_places/provider data where available.
+- Confirm Map uses real place lat/lng pins.
+- Confirm saved places use one consistent service/path.
+- Confirm add-to-trip/add-to-plan works from:
+  - Discovery card
+  - place detail
+  - map pin if available
+  - Compass recommendation if available
+
+Do not seed fake data.
+If discovery_places is empty, report that and point to the existing OSM seed script or create a server-side seed script only if none exists.
+
+Verify:
+- Row count query path exists or can be run.
+- Cards match DB/provider places.
+- Map pins match DB/provider places.
+- Save persists after app restart.
+- API outage fallback does not empty saved places.
+
+==================================================
+5. COMPASS INTO VISIBLE TABS
+==================================================
+
+Known audit finding:
+- Compass backend is strong but not driving visible tabs enough.
+- AI tab may be hidden from nav.
+- Pulse still uses fixtures.
+- Discovery does not surface Compass personalization signals enough.
+
+Required:
+- Do not rebuild Compass.
+- Identify existing Compass service outputs.
+- Wire safe Compass recommendations into visible surfaces:
+  - Discovery "For You" / Compass Picks
+  - Pulse recommendations where appropriate
+  - Trips saved ideas / Compass brief if existing
+  - Telegraph activity recommendation entry point if existing
+- Add small explanation text like "Because you saved cafes in Cebu" where data supports it.
+- Exclude blocked users/content.
+- Avoid fake/random recommendations.
+
+Verify:
+- Discovery shows real Compass-backed recommendation cards or honest empty state.
+- Pulse no longer relies on fixture data.
+- Trips can show Compass brief if route exists.
+- Missing AI key produces graceful fallback, not crash.
+
+==================================================
+6. TELEGRAPH GROUP CHAT HOOK VERIFICATION
+==================================================
+
+Known audit finding:
+- 1:1 messages, trip group chat, event chat, Telegraph stream exist.
+- Trip/event group chat auto-creation trigger is unverified.
+- Message request flow service exists but screen unclear.
+- Auto-translation UI/toggle missing.
+
+Required in this pass:
+- Verify whether trip creation auto-creates Telegraph group chat.
+- Verify whether event creation auto-creates Telegraph group chat.
+- If missing, add minimal server/client hook to create/link group chat on trip/event creation.
+- Verify the linked chat opens from trip/event detail.
+- Verify unknown-user message request flow is reachable.
+- Do not fully rebuild chat media features in this pass.
+
+Auto-translation:
+- Inspect existing translation service or message schema.
+- If translation backend exists, expose minimal UI state/toggle/indicator.
+- If translation backend does not exist, report as remaining blocker and do not fake translation.
+
+Verify:
+- New trip has linked Telegraph group chat.
+- New event has linked Telegraph group chat.
+- Chat opens to correct conversation.
+- Unknown user message starts as request, not accepted chat.
+- Blocked users cannot message.
+
+==================================================
+7. VALIDATION / REPORT
+==================================================
+
+Run available validation:
+- typecheck
+- lint if configured
+- targeted tests if they exist
+- any route/smoke tests available
+
+Final report format:
+
+1. Summary
+- What was fixed
+- What remains
+- Beta readiness estimate after this pass
+
+2. Files changed
+- File
+- Reason
+- Risk level
+
+3. Fixture data cleanup
+- Where Cebu/mock data was removed or gated
+- Remaining fixture references, if any
+
+4. Onboarding
+- Fields now collected
+- Fields persisted
+- Any schema gaps requiring SQL
+
+5. Search
+- Routes/screens added or wired
+- Data sources searched
+- Privacy/blocking behavior
+
+6. Discovery/Map
+- Real data status
+- Save/add-to-trip status
+- Any missing provider data
+
+7. Compass
+- Where recommendations now appear
+- Fallback behavior
+
+8. Telegraph
+- Trip chat auto-create status
+- Event chat auto-create status
+- Message request status
+- Translation status
+
+9. Validation
+- Commands run
+- Exact pass/fail counts
+- Failed checks
+- Blocked checks
+
+10. Next tasks
+- Immediate blockers
+- Beta blockers
+- Post-beta polish

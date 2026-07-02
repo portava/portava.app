@@ -79,8 +79,8 @@ export default function Pulse() {
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   const { locationState, openCityPicker } = useLocationContext();
-  const activeCity = locationState.place.city ?? 'Cebu City';
-  const activeCitySlug = activeCity.toLowerCase().replace(/\s+/g, '-');
+  const activeCity = locationState.place.city ?? null;
+  const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
 
   // Load learned category affinities from the preference engine so Pulse
   // ranking improves as the user interacts with recommendations.
@@ -96,7 +96,7 @@ export default function Pulse() {
 
   // Primary Pulse feed: real posts + place cards from /api/pulse.
   const pulseFeed = usePulseFeed({
-    city: activeCity,
+    city: activeCity ?? undefined,
     lat: locationState.coords?.lat,
     lng: locationState.coords?.lng,
   });
@@ -152,7 +152,7 @@ export default function Pulse() {
     const buddyItem: PulseFeedItem = {
       id: '__rent_a_buddy__',
       type: 'rent_a_buddy',
-      city: activeCity,
+      city: activeCity ?? '',
       createdAt: new Date().toISOString(),
       tags: [],
       source: 'editorial',
@@ -180,28 +180,37 @@ export default function Pulse() {
 
   const Header = (
     <View>
-      {/* Fits your time */}
-      <View style={styles.fitsHead}>
-        <Text style={styles.sectionTitle}>Fits your time</Text>
-        <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
-        <View style={{ flex: 1 }} />
-        {fits.length > 0 && (
-          <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
-        )}
-      </View>
-      {noFits ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
-          <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
-        </View>
-      ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
-          {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
-        </ScrollView>
-      )}
+      {activeCity ? (
+        <>
+          {/* Fits your time */}
+          <View style={styles.fitsHead}>
+            <Text style={styles.sectionTitle}>Fits your time</Text>
+            <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
+            <View style={{ flex: 1 }} />
+            {fits.length > 0 && (
+              <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
+            )}
+          </View>
+          {noFits ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
+              <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
+              {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+            </ScrollView>
+          )}
 
-      {/* When you're flexible */}
-      <FlexibleStrip events={buckets.flexible} />
+          {/* When you're flexible */}
+          <FlexibleStrip events={buckets.flexible} />
+        </>
+      ) : (
+        <Pressable style={styles.cityCta} onPress={openCityPicker}>
+          <MapPin size={16} color={color.signal} />
+          <Text style={styles.cityCtaText}>Tell us your city to see plans, events, and travelers near you →</Text>
+        </Pressable>
+      )}
 
       {/* Layover Mode entry point */}
       <Pressable style={styles.layoverBanner} onPress={() => setLayoverSheetOpen(true)}>
@@ -215,7 +224,7 @@ export default function Pulse() {
           {/* Module header */}
           <View style={styles.buddyModuleHead}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity}</Text>
+              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity ?? 'your city'}</Text>
               <Text style={styles.buddyModuleCount}>Local buddies available</Text>
             </View>
             <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
@@ -228,7 +237,7 @@ export default function Pulse() {
               <Pressable
                 key={cat}
                 style={styles.buddyCategoryChip}
-                onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity)}&category=${cat.toLowerCase().replace(/\s+/g, '_')}` as any)}
+                onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity ?? '')}&category=${cat.toLowerCase().replace(/\s+/g, '_')}` as any)}
               >
                 <Text style={styles.buddyCategoryText}>{cat}</Text>
               </Pressable>
@@ -237,7 +246,7 @@ export default function Pulse() {
           {/* Browse all buddies CTA */}
           <Pressable
             style={styles.buddyBrowseBtn}
-            onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity)}` as any)}
+            onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity ?? '')}` as any)}
           >
             <Users size={16} color="#E53935" />
             <Text style={styles.buddyBrowseBtnText}>Browse local buddies in {activeCity}</Text>
@@ -323,11 +332,11 @@ export default function Pulse() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <PulseHeader
-        city={activeCity}
-        cityFull={activeCity}
+        city={activeCity ?? ''}
+        cityFull={activeCity ?? ''}
         availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
         filterCount={filterCount}
-        onSearch={() => router.push('/(tabs)/discovery')}
+        onSearch={() => router.push('/search' as any)}
         onFilter={() => setSheetOpen(true)}
         onCityPress={openCityPicker}
       />
@@ -412,4 +421,19 @@ const styles = StyleSheet.create({
   buddyCategoryText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 11 },
   buddyBrowseBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E53935', borderRadius: 10, paddingVertical: 12 },
   buddyBrowseBtnText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 13 },
+  cityCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginTop: space.lg,
+    marginBottom: space.sm,
+    backgroundColor: color.signal + '10',
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    borderRadius: 12,
+    paddingHorizontal: space.md,
+    paddingVertical: 14,
+  },
+  cityCtaText: { flex: 1, ...t.small, fontWeight: '600', color: color.signal, fontSize: 13, lineHeight: 18 },
 });
