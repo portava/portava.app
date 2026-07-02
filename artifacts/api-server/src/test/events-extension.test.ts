@@ -2181,3 +2181,153 @@ describe("POST /api/events/drafts/:draftId/publish — spam/content validation",
     assert.equal(status, 400);
   });
 });
+
+// ── friends_only privacy — city/nearby/search discovery routes ────────────────
+
+describe("friends_only privacy — discovery routes exclude non-friends", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  const friendsOnlyHost = "00000000-0000-0000-0099-000000000001";
+
+  function makeSetup(extraFriendships: Row[]) {
+    return makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, visibility: "public",      host_id: ID.host1, city: "Paris", title: "Public Jazz", location_lat: 48.8566, location_lng: 2.3522 }),
+        makeEvent({ id: ID.ev2, visibility: "friends_only", host_id: friendsOnlyHost, city: "Paris", title: "Friends Only Party", location_lat: 48.8570, location_lng: 2.3520 }),
+      ]},
+      event_roles: { rows: [] },
+      event_rsvps: { rows: [] },
+      user_friendships: { rows: extraFriendships },
+      blocks: { rows: [] },
+      profiles: { rows: [] },
+    });
+  }
+
+  afterEach(async () => { if (close) await close(); });
+
+  it("GET /events/city/:city — non-friend cannot see friends_only event", async () => {
+    _setTestClient(makeSetup([]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/city/Paris", null, ID.user1);
+    assert.ok(!body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must not appear for non-friend on /city");
+    assert.ok(body.events.some((e: any) => e.id === ID.ev1),
+      "public event should appear on /city");
+  });
+
+  it("GET /events/city/:city — friend CAN see friends_only event", async () => {
+    _setTestClient(makeSetup([{ user_a: ID.user1, user_b: friendsOnlyHost }]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/city/Paris", null, ID.user1);
+    assert.ok(body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must appear for a friend on /city");
+  });
+
+  it("GET /events/nearby — non-friend cannot see friends_only event", async () => {
+    _setTestClient(makeSetup([]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/nearby?lat=48.857&lng=2.352&radiusKm=5", null, ID.user1);
+    assert.ok(!body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must not appear for non-friend on /nearby");
+  });
+
+  it("GET /events/nearby — friend CAN see friends_only event", async () => {
+    _setTestClient(makeSetup([{ user_a: ID.user1, user_b: friendsOnlyHost }]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/nearby?lat=48.857&lng=2.352&radiusKm=5", null, ID.user1);
+    assert.ok(body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must appear for a friend on /nearby");
+  });
+
+  it("GET /events/search — non-friend cannot see friends_only event", async () => {
+    _setTestClient(makeSetup([]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/search?q=Friends", null, ID.user1);
+    assert.ok(!body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must not appear for non-friend on /search");
+  });
+
+  it("GET /events/search — friend CAN see friends_only event", async () => {
+    _setTestClient(makeSetup([{ user_a: ID.user1, user_b: friendsOnlyHost }]), true);
+    ({ port, close } = await startServer());
+    const { body } = await req(port, "GET", "/api/events/search?q=Friends", null, ID.user1);
+    assert.ok(body.events.some((e: any) => e.id === ID.ev2),
+      "friends_only event must appear for a friend on /search");
+  });
+});
+
+// ── invite-accept capacity enforcement ───────────────────────────────────────
+
+describe("invite-accept — capacity/waitlist enforcement", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  afterEach(async () => { if (close) await close(); });
+
+  it("full event with waitlist enabled → accept returns waitlisted", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "full", max_attendees: 2, waitlist_enabled: true }),
+      ]},
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user2, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_invites: { rows: [
+        { id: ID.invite1, event_id: ID.ev1, inviter_id: ID.host1, invitee_id: ID.user1, status: "pending" },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/invites/${ID.invite1}/accept`, {}, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.status, "waitlisted",
+      `Full event with waitlist should return status=waitlisted, got: ${body.status}`);
+  });
+
+  it("full event with waitlist disabled → accept returns accepted (no RSVP inserted)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "full", max_attendees: 2, waitlist_enabled: false }),
+      ]},
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user2, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_invites: { rows: [
+        { id: ID.invite1, event_id: ID.ev1, inviter_id: ID.host1, invitee_id: ID.user1, status: "pending" },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/invites/${ID.invite1}/accept`, {}, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.status, "accepted",
+      `Full+no-waitlist event: invite recorded as accepted, got: ${body.status}`);
+  });
+
+  it("open event → accept RSVPs as going (status=accepted)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, waitlist_enabled: true }),
+      ]},
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_invites: { rows: [
+        { id: ID.invite1, event_id: ID.ev1, inviter_id: ID.host1, invitee_id: ID.user1, status: "pending" },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/invites/${ID.invite1}/accept`, {}, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.status, "accepted",
+      `Open event: invite should RSVP as going and return accepted, got: ${body.status}`);
+  });
+});

@@ -423,7 +423,7 @@ const CreateEventSchema = z.object({
   ageMax:          z.number().int().min(13).max(100).optional().nullable(),
   trustScoreMin:   z.number().min(0).max(100).optional().nullable(),
   verifiedOnly:    z.boolean().optional(),
-  visibility:      z.enum(["public", "friends_only", "invite_only"]).default("public"),
+  visibility:      z.enum(["public", "friends_only", "invite_only", "circle", "trip"]).default("public"),
   chatEnabled:     z.boolean().optional(),
   waitlistEnabled: z.boolean().optional(),
   priceType:       z.enum(["free", "external"]).optional(),
@@ -449,7 +449,7 @@ const UpdateEventSchema = z.object({
   ageMax:          z.number().int().min(13).max(100).nullable().optional(),
   trustScoreMin:   z.number().min(0).max(100).nullable().optional(),
   verifiedOnly:    z.boolean().optional(),
-  visibility:      z.enum(["public", "friends_only", "invite_only"]).optional(),
+  visibility:      z.enum(["public", "friends_only", "invite_only", "circle", "trip"]).optional(),
   state:           z.enum(["draft", "open", "started", "completed", "cancelled", "archived"]).optional(),
   chatEnabled:     z.boolean().optional(),
   waitlistEnabled: z.boolean().optional(),
@@ -697,6 +697,14 @@ router.get("/events/city/:city", async (req, res) => {
   const filtered: any[] = [];
   for (const ev of (events as any[]) ?? []) {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
+      const { data: friendship } = await sc
+        .from("user_friendships")
+        .select("user_a")
+        .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
+        .maybeSingle();
+      if (!friendship) continue;
+    }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (!elig.ok) continue;
     filtered.push(ev);
@@ -749,6 +757,14 @@ router.get("/events/nearby", async (req, res) => {
   const filtered: any[] = [];
   for (const ev of (events as any[]) ?? []) {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
+      const { data: friendship } = await sc
+        .from("user_friendships")
+        .select("user_a")
+        .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
+        .maybeSingle();
+      if (!friendship) continue;
+    }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (!elig.ok) continue;
     filtered.push(ev);
@@ -774,14 +790,15 @@ router.get("/events/search", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
+  // Fetch without DB-level pagination so friendship/block filtering produces a
+  // consistent result set before we slice — DB range + post-filter double-slices.
   const { data: byTitle } = await sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("title", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .range(offset, offset + limit - 1);
+    .order("starts_at", { ascending: true, nullsFirst: false });
 
   const { data: byCity } = await sc
     .from("events")
@@ -789,21 +806,29 @@ router.get("/events/search", async (req, res) => {
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("city", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .range(offset, offset + limit - 1);
+    .order("starts_at", { ascending: true, nullsFirst: false });
 
-  // Merge deduped results
+  // Merge, dedupe, enforce friendship + block + eligibility — then paginate
   const seen = new Set<string>();
   const merged: any[] = [];
   for (const ev of [...((byTitle as any[]) ?? []), ...((byCity as any[]) ?? [])]) {
     if (seen.has((ev as any).id)) continue;
     seen.add((ev as any).id);
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
+      const { data: friendship } = await sc
+        .from("user_friendships")
+        .select("user_a")
+        .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
+        .maybeSingle();
+      if (!friendship) continue;
+    }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (!elig.ok) continue;
     merged.push(ev);
   }
 
+  // Single pagination step after full merge+filter
   res.json({ events: merged.slice(offset, offset + limit).map((e: any) => formatEvent(e, user.id)), page, limit, q });
 });
 
@@ -3686,18 +3711,46 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
 
   await sc.from("event_invites").update({ status: "accepted", updated_at: new Date().toISOString() }).eq("id", inviteId);
 
-  // Auto-RSVP as going
+  // Auto-RSVP as going — apply the same capacity/waitlist logic as POST /join
   const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (elig.ok) {
-      await sc.from("event_rsvps").upsert(
-        { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
-        { onConflict: "event_id,user_id" },
-      );
-      await syncEventState(sc, id);
-      const going = await getGoingCount(sc, id);
-      await sc.from("events").update({ going_count: going }).eq("id", id);
+      // Event is full — route to waitlist rather than over-accept
+      if (["full","waitlist"].includes((ev as any).state)) {
+        if (!(ev as any).waitlist_enabled) {
+          // Invite accepted but event is full with no waitlist — just record acceptance, no RSVP
+        } else {
+          const { data: alreadyWaitlisted } = await sc
+            .from("event_waitlist")
+            .select("position")
+            .eq("event_id", id)
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (!alreadyWaitlisted) {
+            const { data: maxPos } = await sc
+              .from("event_waitlist")
+              .select("position")
+              .eq("event_id", id)
+              .order("position", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+            await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
+            await sc.from("events").update({ waitlist_count: nextPos }).eq("id", id);
+          }
+          res.json({ ok: true, status: "waitlisted" }); return;
+        }
+      } else {
+        // Event is open — RSVP as going
+        await sc.from("event_rsvps").upsert(
+          { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
+          { onConflict: "event_id,user_id" },
+        );
+        await syncEventState(sc, id);
+        const going = await getGoingCount(sc, id);
+        await sc.from("events").update({ going_count: going }).eq("id", id);
+      }
     }
   }
 
