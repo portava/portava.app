@@ -80,6 +80,7 @@ export interface EventDetail extends EventSummary {
   counts: EventCounts;
   waitlistCount: number;
   myRsvp: EventRsvpStatus | null;
+  myJoinRequestStatus: 'pending' | 'approved' | 'denied' | null;
   myWaitlistPosition: number | null;
   myWaitlistOfferExpiresAt: string | null;
   myRole: EventRoleType | null;

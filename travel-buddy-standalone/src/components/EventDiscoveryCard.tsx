@@ -1,11 +1,11 @@
 /**
  * EventDiscoveryCard — card shown in Events discovery list.
  * Displays cover photo thumbnail, title, date, location, attendance,
- * and an inline RSVP button.
+ * an inline RSVP button, and a save/bookmark toggle.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
-import { CalendarClock, MapPin, Users, ChevronRight } from 'lucide-react-native';
+import { CalendarClock, MapPin, Users, ChevronRight, Bookmark, BookmarkCheck } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import type { EventListItem, EventRsvpStatus } from '../services/events';
 
@@ -13,6 +13,8 @@ interface Props {
   event: EventListItem;
   onPress: () => void;
   onRsvp?: (status: EventRsvpStatus) => void;
+  isSaved?: boolean;
+  onToggleSave?: () => void;
 }
 
 const STATE_COLOR: Record<string, string> = {
@@ -48,7 +50,7 @@ function formatDate(iso: string | null): string {
     + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function EventDiscoveryCard({ event, onPress, onRsvp }: Props) {
+export function EventDiscoveryCard({ event, onPress, onRsvp, isSaved, onToggleSave }: Props) {
   const stateColor = STATE_COLOR[event.state] ?? color.mute;
   const stateLabel = STATE_LABEL[event.state] ?? event.state;
 
@@ -73,6 +75,19 @@ export function EventDiscoveryCard({ event, onPress, onRsvp }: Props) {
           <View style={[styles.stateBadge, { backgroundColor: stateColor + '22' }]}>
             <Text style={[styles.stateBadgeText, { color: stateColor }]}>{stateLabel}</Text>
           </View>
+          {/* Save / bookmark toggle */}
+          {onToggleSave && (
+            <Pressable
+              hitSlop={10}
+              onPress={(e) => { e.stopPropagation?.(); onToggleSave(); }}
+              style={styles.saveBtn}
+              accessibilityLabel={isSaved ? 'Remove from saved' : 'Save event'}
+            >
+              {isSaved
+                ? <BookmarkCheck size={16} color={color.signal} />
+                : <Bookmark size={16} color={color.mute} />}
+            </Pressable>
+          )}
         </View>
 
         {event.category && (
@@ -137,6 +152,7 @@ const styles = StyleSheet.create({
   title:        { ...t.bodyStrong, color: color.ink, fontWeight: '700', flex: 1 },
   stateBadge:   { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
   stateBadgeText:{ fontSize: 10, fontWeight: '700' },
+  saveBtn:      { padding: 2 },
   category:     { ...t.small, color: color.mute, fontStyle: 'italic' },
   metaRow:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
   meta:         { ...t.small, color: color.mute, flex: 1 },

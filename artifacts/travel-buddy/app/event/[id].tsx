@@ -110,7 +110,8 @@ export default function EventDetailScreen() {
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
-  // Track whether the viewer has a pending join request (invite_only events)
+  // hasPendingRequest is seeded from backend on load; optimistically set true
+  // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
 
   const load = useCallback(async () => {
@@ -122,6 +123,8 @@ export default function EventDetailScreen() {
     else {
       setEvent(res.data ?? null);
       setIsSaved(!!(res.data as any)?.isSaved);
+      // Hydrate pending-request state from backend truth on every load/refresh
+      setHasPendingRequest(res.data?.myJoinRequestStatus === 'pending');
     }
     setLoading(false);
   }, [id]);

@@ -303,6 +303,8 @@ export default function EventsTabScreen() {
               <EventDiscoveryCard
                 event={item}
                 onPress={() => router.push(`/event/${item.id}` as any)}
+                isSaved={savedIds.has(item.id)}
+                onToggleSave={() => handleSaveToggle(item)}
               />
             </View>
           )}

@@ -1382,13 +1382,14 @@ router.get("/events/:id", async (req, res) => {
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
-  const [rsvpResult, waitlistResult, roleResult, attendeeResult, goingResult, hostResult] = await Promise.all([
+  const [rsvpResult, waitlistResult, roleResult, attendeeResult, goingResult, hostResult, joinReqResult] = await Promise.all([
     sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_waitlist").select("position, offer_expires_at").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_attendee_states").select("*").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_rsvps").select("user_id, status").eq("event_id", id).in("status", ["going", "maybe"]),
     sc.from("profiles").select("id, handle, name, avatar_url").eq("id", (ev as any).host_id).maybeSingle(),
+    sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
   ]);
 
   const goingData = (goingResult as any).data ?? [];
@@ -1445,6 +1446,7 @@ router.get("/events/:id", async (req, res) => {
     counts,
     waitlistCount,
     myRsvp: (rsvpResult as any).data?.status ?? null,
+    myJoinRequestStatus: (joinReqResult as any).data?.status ?? null,
     myWaitlistPosition: (waitlistResult as any).data?.position ?? null,
     myWaitlistOfferExpiresAt: (waitlistResult as any).data?.offer_expires_at ?? null,
     myRole,
