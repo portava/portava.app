@@ -1,5 +1,5 @@
 /**
- * Tests for POST /api/discovery/community — required field validation
+ * Tests for POST /api/discovery/community — required field validation and duplicate detection
  *
  * Uses _setTestClient to inject a fake Supabase service client, bypassing the
  * real DB entirely. No network calls are made.
@@ -12,6 +12,8 @@
  *  - missing place_type returns 400 invalid_payload
  *  - invalid place_type value returns 400 invalid_payload
  *  - valid body with both valid place_type values returns 201
+ *  - duplicate city+name (active) returns 409 duplicate_place
+ *  - first submission (no existing place) returns 201
  *
  * Run: node --import tsx/esm --test src/test/discoveryCommunityRequiredFields.test.ts
  */
@@ -38,7 +40,7 @@ const VALID_BODY = {
 
 // ── Fake client ────────────────────────────────────────────────────────────────
 
-function makeFakeClient() {
+function makeFakeClient({ duplicateExists = false }: { duplicateExists?: boolean } = {}) {
   const insertedRow = {
     id:         "place-required-1",
     name:       VALID_BODY.name,
@@ -48,18 +50,31 @@ function makeFakeClient() {
     created_at: "2025-07-01T00:00:00.000Z",
   };
 
+  const existingRow = { id: "place-existing-1" };
+
   function chain() {
-    let _singleMode = false;
+    let _singleMode     = false;
+    let _maybeSingleMode = false;
+    let _isInsert       = false;
 
     const obj: any = {
-      select()          { return obj; },
-      insert()          { return obj; },
-      eq()              { return obj; },
-      single()          { _singleMode = true; return obj; },
+      select()      { return obj; },
+      insert()      { _isInsert = true; return obj; },
+      eq()          { return obj; },
+      ilike()       { return obj; },
+      limit()       { return obj; },
+      single()      { _singleMode = true; return obj; },
+      maybeSingle() { _maybeSingleMode = true; return obj; },
       then(onF: any, onR: any) { return resolve().then(onF, onR); },
     };
 
     async function resolve(): Promise<{ data: any; error: null }> {
+      if (_maybeSingleMode) {
+        return { data: duplicateExists ? existingRow : null, error: null };
+      }
+      if (_isInsert) {
+        return { data: _singleMode ? insertedRow : [insertedRow], error: null };
+      }
       return { data: _singleMode ? insertedRow : [insertedRow], error: null };
     }
 
@@ -197,6 +212,35 @@ describe("POST /api/discovery/community — required field validation", () => {
   it("accepts place_type=traveler_pick and returns 201", async () => {
     const r = await post(url, "/api/discovery/community", { ...VALID_BODY, place_type: "traveler_pick" });
     assert.equal(r.status, 201, `expected 201 for place_type="traveler_pick", got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
+  });
+});
+
+describe("POST /api/discovery/community — duplicate detection", () => {
+  let server: Server;
+  let url: string;
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns 409 with duplicate_place when the same city+name (active) already exists", async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient({ duplicateExists: true }), true);
+
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.equal(r.status, 409, `expected 409 for duplicate, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, false);
+    assert.equal(r.body.error, "duplicate_place");
+  });
+
+  it("returns 201 when no existing active place matches city+name (first submission)", async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient({ duplicateExists: false }), true);
+
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.equal(r.status, 201, `expected 201 for first submission, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.ok, true);
   });
 });

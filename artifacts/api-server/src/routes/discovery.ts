@@ -1217,6 +1217,29 @@ router.post("/discovery/community", async (req, res) => {
     return;
   }
 
+  const cityTrim = (city as string).trim();
+  const nameTrim = (name as string).trim();
+
+  // ── Duplicate check ──────────────────────────────────────────────────────────
+  // Reject if an active place with the same city + name already exists (case-insensitive).
+  const { data: existingPlace, error: dupeCheckErr } = await sc
+    .from("discovery_places")
+    .select("id")
+    .ilike("city", cityTrim)
+    .ilike("name", nameTrim)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+
+  if (!dupeCheckErr && existingPlace) {
+    res.status(409).json({
+      ok: false,
+      error: "duplicate_place",
+      message: "A place with that name already exists in this city",
+    });
+    return;
+  }
+
   // Auto-geocode the place name + city when the caller didn't supply coordinates.
   // A 4-second timeout prevents this from blocking the response when Nominatim is slow.
   // If geocoding fails or times out, we insert with null coords — the place still appears
@@ -1248,8 +1271,8 @@ router.post("/discovery/community", async (req, res) => {
     const { data, error } = await sc
       .from("discovery_places")
       .insert({
-        city:         (city as string).trim(),
-        name:         (name as string).trim(),
+        city:         cityTrim,
+        name:         nameTrim,
         place_type:   place_type as string,
         category:     typeof category === "string" ? category.trim() : null,
         neighborhood: typeof neighborhood === "string" ? neighborhood.trim() || null : null,
