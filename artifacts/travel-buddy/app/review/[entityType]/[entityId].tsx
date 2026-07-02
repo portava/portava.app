@@ -103,10 +103,24 @@ export default function ReviewComposerScreen() {
       .then((result) => {
         if (result.exists && result.reviewId) {
           setExistingReviewId(result.reviewId);
-          if (result.rating)                    setRating(result.rating);
-          if (result.body)                      setBody(result.body);
-          if (result.tags)                      setTags(result.tags);
-          if (result.anonymous !== undefined)   setAnonymous(result.anonymous);
+          // Even in edit mode, check for a draft saved after an offline
+          // updateReview failure — the draft represents unsaved edits and
+          // takes precedence over the server's last-saved values.
+          return loadReviewDraft(AsyncStorage, entityType!, entityId).then((draft) => {
+            if (draft) {
+              setRating(draft.rating);
+              setBody(draft.body);
+              setTags(draft.tags);
+              setAnonymous(draft.anonymous);
+              setHasDraft(true);
+            } else {
+              // No draft — restore from the server's existing review.
+              if (result.rating)                    setRating(result.rating);
+              if (result.body)                      setBody(result.body);
+              if (result.tags)                      setTags(result.tags);
+              if (result.anonymous !== undefined)   setAnonymous(result.anonymous);
+            }
+          });
         } else {
           // Not editing an existing review — restore a saved offline draft if one exists.
           return loadReviewDraft(AsyncStorage, entityType!, entityId).then((draft) => {
