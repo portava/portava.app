@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendPushNotification } from "../lib/push.js";
+import { awardStamp } from "../services/passport/StampAwardEngine.js";
 
 const router = Router();
 
@@ -29,6 +31,90 @@ function computeTripStatus(
     return "completed";
   }
   return "planning";
+}
+
+// ── Trip-completion stamp awards ──────────────────────────────────────────────
+// Called fire-and-forget (non-fatal) when a trip transitions → "completed".
+// awardStamp() is fully idempotent via (userId:definitionId:sourceType:sourceId)
+// so re-runs or concurrent completions are safe.
+
+async function awardTripCompletionStamps(
+  sc: SupabaseClient,
+  tripId: string,
+  ownerId: string,
+  trip: Record<string, any>,
+): Promise<void> {
+  // All accepted trip members (including the owner)
+  const { data: membersData } = await sc
+    .from("trip_members")
+    .select("user_id")
+    .eq("trip_id", tripId);
+
+  const memberIds: string[] = (membersData ?? []).map((m: any) => m.user_id as string);
+  if (!memberIds.includes(ownerId)) memberIds.push(ownerId);
+  const memberCount = memberIds.length;
+
+  const city: string | undefined    = trip["destination_city"]    ?? undefined;
+  const country: string | undefined = trip["destination_country"] ?? undefined;
+  const startDate: string | undefined = trip["start_date"] ?? undefined;
+  const endDate:   string | undefined = trip["end_date"]   ?? undefined;
+
+  // Duration in full days (0 = same-day trip)
+  let tripDays = 0;
+  if (startDate && endDate) {
+    const s = new Date(startDate + "T00:00:00Z");
+    const e = new Date(endDate   + "T00:00:00Z");
+    tripDays = Math.max(0, Math.round((e.getTime() - s.getTime()) / 86_400_000));
+  }
+
+  // Weekend trip: ≤3-day range that passes through at least one Sat (6) or Sun (0)
+  let isWeekendTrip = false;
+  if (tripDays <= 3 && startDate) {
+    const s   = new Date(startDate + "T00:00:00Z");
+    const end = endDate ? new Date(endDate + "T00:00:00Z") : new Date(s);
+    for (const d = new Date(s); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (d.getUTCDay() === 0 || d.getUTCDay() === 6) { isWeekendTrip = true; break; }
+    }
+  }
+
+  const awards: Array<{ userId: string; slug: string }> = [];
+
+  // ── Per-member stamps ──────────────────────────────────────────────────────
+  for (const uid of memberIds) {
+    awards.push({ userId: uid, slug: "first_trip" });
+    if (tripDays > 14)  awards.push({ userId: uid, slug: "long_haul" });
+    if (isWeekendTrip)  awards.push({ userId: uid, slug: "weekend_warrior" });
+    if (country)        awards.push({ userId: uid, slug: "international_voyager" });
+  }
+
+  // ── Owner-only stamps ──────────────────────────────────────────────────────
+  if (memberCount === 1) awards.push({ userId: ownerId, slug: "solo_adventurer" });
+  if (memberCount >= 3)  awards.push({ userId: ownerId, slug: "crew_captain" });
+
+  // Milestone stamps — count owner's completed trips (patch has already committed)
+  const { count: completedCount } = await sc
+    .from("trips")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", ownerId)
+    .eq("status", "completed");
+
+  const n = completedCount ?? 0;
+  if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
+  if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
+
+  // ── Fire all concurrently ──────────────────────────────────────────────────
+  await Promise.allSettled(
+    awards.map(({ userId, slug }) =>
+      awardStamp(sc, {
+        userId,
+        definitionSlug: slug,
+        sourceType:     "trips",
+        sourceId:       tripId,
+        city,
+        country,
+      }),
+    ),
+  );
 }
 
 router.post("/trips", async (req, res) => {
@@ -473,6 +559,9 @@ router.patch("/trips/:tripId", async (req, res) => {
         }
       } catch {}
     })();
+
+    // Passport stamp awards — fire-and-forget, fully idempotent
+    void awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>).catch(() => {});
   }
 
   res.json(updated);
