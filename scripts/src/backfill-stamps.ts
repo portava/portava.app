@@ -9,21 +9,21 @@
  * and checks whether they already have an award event — no writes occur.
  *
  * Usage:
- *   tsx ./src/backfill-stamps.ts                   # live (applies all awards)
- *   tsx ./src/backfill-stamps.ts --dry-run          # dry run (no writes)
+ *   tsx ./src/backfill-stamps.ts                    # dry run (default — no writes)
+ *   tsx ./src/backfill-stamps.ts --dry-run           # same as default
+ *   tsx ./src/backfill-stamps.ts --apply             # live (applies all awards)
+ *   tsx ./src/backfill-stamps.ts --apply --user=<uid>
+ *   tsx ./src/backfill-stamps.ts --apply --slug=first_trip_created
  *   tsx ./src/backfill-stamps.ts --dry-run --user=<uid>
  *   tsx ./src/backfill-stamps.ts --dry-run --slug=first_trip_created
- *   tsx ./src/backfill-stamps.ts --user=<uid>       # live single-user
- *   tsx ./src/backfill-stamps.ts --slug=<slug>      # live single-slug
  *
- * Required env vars (live mode):
+ * Required env vars (dry-run / default mode):
  *   SUPABASE_URL              — Supabase project URL
  *   SUPABASE_SERVICE_ROLE_KEY — service-role key for DB queries
+ *
+ * Additional env vars required for --apply (live) mode:
  *   INTERNAL_API_SECRET       — must match INTERNAL_API_SECRET in api-server
  *   API_PORT                  — api-server port (default: 8080)
- *
- * Required env vars (dry-run mode):
- *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (no API server needed)
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -31,7 +31,8 @@ import "dotenv/config";
 
 // ── CLI flags ─────────────────────────────────────────────────────────────────
 
-const DRY_RUN  = process.argv.includes("--dry-run");
+const APPLY    = process.argv.includes("--apply");
+const DRY_RUN  = !APPLY; // default: dry-run; pass --apply to write awards
 const USER_ARG = process.argv.find((a) => a.startsWith("--user="))?.split("=")[1];
 const SLUG_ARG = process.argv.find((a) => a.startsWith("--slug="))?.split("=")[1];
 
@@ -47,8 +48,8 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   process.exit(1);
 }
 
-if (!DRY_RUN && !INTERNAL_SECRET) {
-  console.error("ERROR: INTERNAL_API_SECRET is required for live mode (start the api-server first).");
+if (APPLY && !INTERNAL_SECRET) {
+  console.error("ERROR: INTERNAL_API_SECRET is required for --apply mode (start the api-server first).");
   process.exit(1);
 }
 
@@ -638,7 +639,7 @@ async function main() {
 
   if (DRY_RUN) {
     console.log(`\nSummary: ${eligible} eligible of ${total} candidates`);
-    console.log(`ℹ  Re-run without --dry-run to write awards via the engine.\n`);
+    console.log(`ℹ  Re-run with --apply to write awards via the engine.\n`);
   } else {
     console.log(`\nSummary: ${awarded} awarded, ${errors} errors of ${total} candidates`);
     if (errors > 0) process.exit(1);

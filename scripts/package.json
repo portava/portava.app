@@ -14,7 +14,8 @@
     "test:db-triggers": "node --import tsx/esm --test ./src/check-db-triggers.test.ts",
     "test:truncate-guard": "node --import tsx/esm --test ./src/saved-places-truncate-guard.test.ts",
     "seed:profiles": "tsx ./src/seed-test-profiles.ts",
-    "backfill:stamps": "tsx ./src/backfill-stamps.ts"
+    "backfill:stamps": "tsx ./src/backfill-stamps.ts",
+    "backfill:stamps:apply": "tsx ./src/backfill-stamps.ts --apply"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.108.2",
