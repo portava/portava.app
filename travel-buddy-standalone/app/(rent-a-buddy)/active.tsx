@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal, Switch,
+  View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal, Switch, Linking,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
