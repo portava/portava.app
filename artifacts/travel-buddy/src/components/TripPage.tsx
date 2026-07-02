@@ -592,7 +592,7 @@ export function TripStamps({ stamps }: { stamps: PassportStamp[] }) {
     <View>
       <TravelSectionHeader title="Trip Stamps" onAction={() => router.push('/stamps')} actionLabel="View all" />
       {stamps.length === 0 ? (
-        <TravelEmptyState title="No trip stamps yet" sub="Earn stamps by joining plans, checking in, and sharing discoveries." />
+        <TravelEmptyState title="No stamps yet — start exploring!" sub="Earn stamps by joining plans, checking in, and sharing discoveries." />
       ) : (
         <View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={ts.strip}>
@@ -670,7 +670,7 @@ export function TripPostsSection({ posts }: { posts: { id: string; city: string;
     <View>
       <TravelSectionHeader title="Trip Posts" onAction={posts.length ? () => router.push('/(tabs)/passport') : undefined} actionLabel="View all" />
       {posts.length === 0 ? (
-        <TravelEmptyState title="No trip posts yet" sub="Share a moment from this trip — it'll appear here and on your Passport." action="Add Post" onAction={() => router.push('/create')} />
+        <TravelEmptyState title="No trip posts yet" sub="Share your first post from this trip — it'll appear here and on your Passport." action="Add Post" onAction={() => router.push('/create')} />
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={tp.strip}>
           {posts.map((post) => (
