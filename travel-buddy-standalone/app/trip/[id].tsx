@@ -206,7 +206,7 @@ export default function TripDetail() {
         <SavedIdeas ideas={live ? [] : trip.savedIdeas} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
         {!live && <TripPlans plans={tripPlans} />}
-        {!live && <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />}
+        {!live && <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} tripId={trip.id} />}
 
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert, TextInput } from 'react-native';
-import { router } from 'expo-router';
-import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield } from 'lucide-react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield, UserPlus } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { openCircleChat } from '../src/services/messaging';
@@ -85,6 +85,7 @@ function next14Days(): string[] {
 //   <RichText content={circle.description} tags={circle.descriptionTags} hashtagUsages={circle.descriptionHashtags} />
 export default function Circle() {
   const { userId, isAuthed, configured } = useSession();
+  const { tripId } = useLocalSearchParams<{ tripId?: string }>();
   const [tab, setTab]               = useState<'circle' | 'followers'>('circle');
   const [following, setFollowing]   = useState<FollowUser[]>([]);
   const [followers, setFollowers]   = useState<FollowUser[]>([]);
@@ -213,6 +214,13 @@ export default function Circle() {
           </Pressable>
         }
       />
+
+      {tripId ? (
+        <View style={styles.tripInviteBanner}>
+          <UserPlus size={14} color={color.signal} />
+          <Text style={styles.tripInviteBannerText}>Select someone to invite to your trip</Text>
+        </View>
+      ) : null}
 
       {userId ? (
         <Pressable
@@ -496,4 +504,6 @@ const styles = StyleSheet.create({
   toggleOn: { backgroundColor: color.signal },
   toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: color.paperRaised },
   toggleThumbOn: { alignSelf: 'flex-end' },
+  tripInviteBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginTop: 8, marginBottom: 2, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#BFDBFE' },
+  tripInviteBannerText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8', flexShrink: 1 },
 });

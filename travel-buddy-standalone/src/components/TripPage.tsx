@@ -523,21 +523,22 @@ function MemberAvatar({ u, currentUserId }: { u: User; currentUserId?: string | 
 }
 
 /* ── Trip Circle ── */
-export function TripCircle({ cityCount, inCity, suggested, currentUserId }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null }) {
+export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null; tripId?: string }) {
+  const circlePath = tripId ? `/circle?tripId=${encodeURIComponent(tripId)}` : '/circle';
   return (
     <View>
-      <TravelSectionHeader title="Trip Circle" onAction={() => router.push('/circle')} actionLabel="View all" />
+      <TravelSectionHeader title="Trip Circle" onAction={() => router.push(circlePath as any)} actionLabel="View all" />
       <View style={cr.card}>
         <Text style={cr.count}>{cityCount} buddies are in Cebu</Text>
         <View style={cr.avatars}>
           {inCity.map((u) => (
             <MemberAvatar key={u.id} u={u} currentUserId={currentUserId} />
           ))}
-          <Pressable style={cr.inviteBtn} onPress={() => router.push('/circle')}>
+          <Pressable style={cr.inviteBtn} onPress={() => router.push(circlePath as any)}>
             <UserPlus size={16} color={color.signal} />
           </Pressable>
         </View>
-        <Pressable style={cr.inviteRow} onPress={() => router.push('/circle')}>
+        <Pressable style={cr.inviteRow} onPress={() => router.push(circlePath as any)}>
           <Plus size={14} color={color.signal} /><Text style={cr.inviteText}>Invite more buddies</Text>
         </Pressable>
         <View style={cr.divider} />
@@ -548,7 +549,7 @@ export function TripCircle({ cityCount, inCity, suggested, currentUserId }: { ci
               <Image source={{ uri: u.avatarUrl }} style={cr.suggestAvatar} />
             </Pressable>
           ))}
-          <Pressable style={cr.suggestMore} onPress={() => router.push('/circle')}><ChevronRight size={18} color={color.mute} /></Pressable>
+          <Pressable style={cr.suggestMore} onPress={() => router.push(circlePath as any)}><ChevronRight size={18} color={color.mute} /></Pressable>
         </ScrollView>
       </View>
     </View>

@@ -1367,4 +1367,72 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   res.json({ status: "reordered", itemId, sortOrder: parsed.data.sortOrder });
 });
 
+/* ===========================================================================
+ * GET /trips/:tripId/crew/map  — list crew members for the TripCrewSection
+ * ===========================================================================
+ * Returns all trip_members (owner + member + invited) with their profiles so
+ * TripCrewSection can render real names/avatars.  Every member gets
+ * statusLabel: "not_shared" as the default (location sharing is opt-in).
+ * Caller must be any trip member (including invited).
+ */
+router.get("/trips/:tripId/crew/map", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id, { status: "any" });
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
+
+  const { data: rows, error: rowsErr } = await sc
+    .from("trip_members")
+    .select("user_id, role")
+    .eq("trip_id", tripId)
+    .in("role", ["owner", "member", "invited"]);
+
+  if (rowsErr) { sendError(res, "db_error", rowsErr.message); return; }
+
+  const allIds = (rows ?? []).map((r: any) => r.user_id as string);
+
+  if (allIds.length === 0) {
+    res.status(200).json({ members: [], totalCount: 0, featureEnabled: true });
+    return;
+  }
+
+  const { data: profiles, error: profErr } = await sc
+    .from("profiles")
+    .select("id, handle, name, avatar_url")
+    .in("id", allIds);
+
+  if (profErr) { sendError(res, "db_error", profErr.message); return; }
+
+  const profileMap: Record<string, any> = {};
+  for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+
+  const members = (rows ?? []).map((r: any) => {
+    const p = profileMap[r.user_id] ?? {};
+    return {
+      userId: r.user_id as string,
+      name: (p.name as string) ?? null,
+      handle: (p.handle as string) ?? null,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+      statusLabel: "not_shared",
+      areaLabel: null,
+      planCheckInStatus: null,
+      safeReturnActive: false,
+      liveShareActive: false,
+      liveShareExpiresAt: null,
+      ghostMode: false,
+      updatedAt: null,
+    };
+  });
+
+  res.status(200).json({ members, totalCount: members.length, featureEnabled: true });
+});
+
 export default router;

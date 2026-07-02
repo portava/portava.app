@@ -18,7 +18,8 @@
     "test:watch": "node --import tsx/esm --test --watch src/test/requests.test.ts",
     "test:intelligence": "node --import tsx/esm --test src/test/intelligence.test.ts",
     "test:stories": "node --import tsx/esm --test src/test/stories.test.ts",
-    "test:trips-expansion": "node --import tsx/esm --test src/test/tripsExpansion.test.ts"
+    "test:trips-expansion": "node --import tsx/esm --test src/test/tripsExpansion.test.ts",
+    "test:crew-map": "node --import tsx/esm --test src/test/tripCrewMap.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
