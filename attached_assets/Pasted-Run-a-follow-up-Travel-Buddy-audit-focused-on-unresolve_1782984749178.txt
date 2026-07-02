@@ -1,0 +1,213 @@
+Run a follow-up Travel Buddy audit focused on unresolved items, partial repairs, regressions, and anything still not fully connected after the first full-system audit.
+
+This is not a fresh rebuild. This is a strict verification + repair follow-up pass to make sure nothing remains half-wired, misleading, or broken.
+
+GOAL:
+Close all gaps left after the main audit. Confirm that every repaired system is truly connected end-to-end, that no regressions were introduced, and that no feature remains partially implemented or disconnected from the rest of the app.
+
+IMPORTANT RULES:
+- First inspect the results of the previous audit and repair pass.
+- Reuse the previous audit report, connectivity matrix, broken path report, source-of-truth map, and manual QA notes.
+- Focus on unresolved items, partial items, regressions, weak spots, and anything marked follow-up.
+- Do not rebuild working systems unnecessarily.
+- Do not create fake data.
+- Do not mark anything complete unless the frontend reflects real backend truth.
+- If a button or screen still exists, it must work, be honestly disabled, or be removed.
+
+FIRST STEP — REVIEW PRIOR FINDINGS:
+Read the prior audit outputs and classify every remaining item into:
+- unresolved
+- partially fixed
+- fixed but not verified
+- regressed
+- blocked by missing dependency
+- intentionally deferred
+
+Create a follow-up tracker with:
+- item
+- original severity
+- current status
+- affected screens/routes
+- affected backend services/tables
+- required fix
+- verification needed
+
+FOCUS AREAS FOR FOLLOW-UP:
+Audit these specifically for anything still hanging:
+
+1. Navigation and routing
+- dead links
+- broken back paths
+- missing detail routes
+- blank screens from invalid ids
+- tabs/stacks not syncing correctly
+- deep-link or nested-route failures
+
+2. Shared source-of-truth drift
+- selected city vs GPS vs profile city
+- Discovery vs Pulse disagreements
+- place identity mismatches
+- event/trip membership state drift
+- save/rating state drift
+- notification unread count drift
+- message unread count drift
+- stale query caches or duplicate stores
+
+3. Frontend buttons and card actions
+- buttons that still no-op
+- menus with dead items
+- card taps that do not open details
+- actions that mutate locally but do not persist
+- actions that persist but do not rerender
+- stale optimistic updates
+- retry buttons that do not retry
+- empty state CTAs that go nowhere
+
+4. Discovery / Pulse / Places / Events follow-up
+- incorrect city context
+- wrong category mapping
+- blank sections despite backend data
+- inconsistent place/event cards
+- map marker/detail mismatches
+- broken search result taps
+- place details missing related actions
+- seeded places/rating/save state inconsistencies
+
+5. Posts / Memories / Highlights / Passport follow-up
+- post detail gaps
+- broken like/comment/save/share paths
+- tag navigation gaps
+- memory/highlight add/remove/reorder issues
+- Passport counters or sections out of sync
+- privacy visibility mismatches
+- hidden or deleted content still rendering incorrectly
+
+6. Trips / Events / Circles / Telegraph follow-up
+- join/request/invite flows not fully reflected
+- membership approval not updating UI
+- chat links not opening correct thread
+- event/trip location links not canonical
+- group chat/member state drift
+- itinerary or crew updates not rerendering
+- orphaned invites or members
+
+7. Notifications / Activity / Reporting follow-up
+- notifications with dead targets
+- unread count mismatch
+- missing notifications for expected actions
+- report/block/mute not fully enforced
+- moderation-hidden items still reachable
+- activity items that do not link correctly
+
+8. Settings / Privacy / Safety follow-up
+- toggles that do not actually change behavior
+- privacy not enforced across all surfaces
+- blocked users still leaving access paths
+- age/trust/verification gates inconsistent
+- location safety settings not reflected downstream
+
+9. Admin/internal follow-up
+- admin actions not reflected in normal UI
+- admin-only paths unintentionally exposed
+- status mismatches between admin and user views
+- stale dashboards or unmanaged internal-only features
+
+FOLLOW-UP REPAIR REQUIREMENTS:
+For every unresolved or partial item:
+- trace the actual frontend entry point
+- trace the real backend/service dependency
+- identify the missing connection
+- repair the path cleanly
+- remove duplicated logic where appropriate
+- make state updates consistent across all affected screens
+- ensure empty/loading/error states are honest
+- add regression tests where the original audit found a break
+
+BROKEN PATH ZERO-TOLERANCE CHECK:
+Do a second broken-path sweep across the app and explicitly verify:
+- every visible button
+- every card tap
+- every menu item
+- every filter chip
+- every save/share/report action
+- every detail link
+- every profile/avatar tap
+- every notification tap
+- every map marker tap
+- every create/edit/delete/archive action
+- every invite/join/request action
+
+If any of these are still broken, list them and fix them before passing.
+
+REGRESSION SWEEP:
+Verify that earlier fixes did not break:
+- auth/onboarding
+- Discovery
+- Pulse
+- Places
+- Events
+- Trips
+- Circles
+- Passport
+- Telegraph
+- notifications/activity
+- search
+- maps
+- saves
+- ratings
+- comments
+- membership flows
+- privacy enforcement
+
+SOURCE-OF-TRUTH RECHECK:
+Reconfirm there is one canonical source for:
+- session/auth user
+- selected/current city
+- GPS/device location
+- profile data
+- place identity
+- event membership
+- trip membership
+- save state
+- rating state
+- notification unread state
+- message unread state
+- privacy settings
+- trust/verification state
+
+If duplicates still exist, consolidate or adapt them so all consuming screens stay in sync.
+
+TESTING:
+Add/update follow-up regression tests for anything fixed in this pass.
+
+Run:
+- typecheck
+- lint if available
+- frontend tests
+- backend tests
+- integration/e2e tests if supported
+
+MANUAL QA:
+Do a follow-up manual QA sweep on the highest-risk user flows and confirm:
+- no dead buttons remain on core surfaces
+- no blank detail routes remain
+- no mismatched city/location context remains
+- no stale save/rating/membership state remains
+- no notification dead links remain
+- no major privacy/block leaks remain
+- no screen still depends on placeholder/mock data where backend truth exists
+
+FINAL DELIVERABLE:
+Return:
+1. follow-up audit summary
+2. unresolved-items tracker with final status
+3. regressions found and fixed
+4. broken paths found and fixed
+5. source-of-truth recheck summary
+6. files changed
+7. tests added/updated
+8. exact test/typecheck results
+9. manual QA proof
+10. remaining blockers, if any
+
+Do not pass the task until the follow-up audit confirms there are no core broken paths left hanging.

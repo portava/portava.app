@@ -1,0 +1,298 @@
+Run a full UX simplification pass on Travel Buddy.
+
+GOAL:
+Minimize visible feature clutter, merge overlapping sections, and create an in-app profile menu bar so non-essential or lower-frequency features are still accessible without overwhelming the main interface.
+
+This is not a rebuild. It is a product simplification and information-architecture cleanup pass. Keep the important systems, but reduce how many things compete for attention at once.
+
+IMPORTANT:
+Before changing anything, inspect the current app structure, bottom tabs, headers, profile/Passport layout, Discovery layout, Pulse layout, Create flow, Trips, Events, Memories, Highlights, settings, utilities, overflow menus, and any quick actions already present.
+
+Do not remove core capability just because it feels crowded. First identify:
+- what is used often
+- what is useful but secondary
+- what is duplicated
+- what can be merged
+- what should move into a menu instead of living on the main screen
+- what should be a tab vs section vs submenu vs overflow action
+
+MAIN OBJECTIVE:
+Make the app feel cleaner, more premium, and easier to use by reducing visible complexity while preserving the connected system underneath.
+
+==================================================
+PART 1 — AUDIT FEATURE CLUTTER
+==================================================
+
+Audit all current user-facing features and classify them into:
+1. Core / high-frequency / should stay immediately visible
+2. Secondary / useful but not always needed
+3. Advanced / occasional / should move behind menu
+4. Duplicate / overlapping / should merge
+5. Low-value / confusing / should remove or hide
+
+Review at minimum:
+- bottom nav items
+- top headers
+- profile/Passport sections
+- Discovery sections
+- Pulse sections
+- create options
+- trip/event utilities
+- place utilities
+- settings/privacy/safety tools
+- saved/collections/stamps/highlights/memories areas
+- notification/activity access
+- message access
+- any floating buttons
+- any profile quick-action rows
+- chips/tabs inside pages
+- admin or debug items accidentally too visible
+
+Return a recommended simplification map before or alongside implementation.
+
+==================================================
+PART 2 — MERGE SIMILAR/OVERLAPPING SECTIONS
+==================================================
+
+Identify and merge overlapping feature groups so the app feels more unified.
+
+Examples of likely merge candidates:
+- saved + collections
+- memories + highlights management surfaces
+- events + plans where distinctions are too fragmented
+- place actions duplicated across Discovery, Pulse, and detail pages
+- profile utility sections that split stats/content/settings too aggressively
+- separate city/location pickers that should be one shared control
+- duplicate filters/search chips that repeat the same logic
+- multiple small submenu rows that can become one cleaner “More” menu
+
+Do not merge things that need to stay conceptually different for user understanding, but do merge things that currently feel like fragmented versions of the same action.
+
+Possible merge targets:
+- “Saved” and “Collections” into one saved hub with filters
+- “Memories” and “Highlights” management into one media/moments manager
+- “Trips,” “Events,” and “Circles” entry shortcuts into one “Plans” entry point if the app currently over-surfaces each separately
+- “Trust,” “verification,” “safety,” and “privacy” utilities into a structured settings/safety area instead of scattered visibility
+
+Create cleaner IA while preserving all real functionality.
+
+==================================================
+PART 3 — PROFILE / PASSPORT MENU BAR
+==================================================
+
+Create a clean in-app menu bar on the Passport/profile screen for secondary features that do not need immediate visibility.
+
+The profile should prioritize what matters immediately:
+- profile identity
+- trust/verification badge
+- quick stats
+- primary content tabs
+- a small number of primary actions
+
+Move less urgent features into a visible but controlled menu access point such as:
+- a top-right menu button
+- segmented utility bar
+- sheet/drawer
+- icon row with overflow
+- profile “More” menu
+
+The profile menu bar should contain secondary or occasional actions such as:
+- saved items / collections
+- settings
+- privacy
+- safety tools
+- blocked/muted users
+- invite friends
+- share profile
+- notification preferences
+- language/preferences
+- Passport stamp management
+- highlight management tools
+- archived items
+- help/support
+- report/problem tools
+- account actions
+
+Keep the menu elegant and not buried. It should be easy to find, but not constantly occupying prime screen space.
+
+Requirements:
+- Primary content stays visible
+- Secondary tools move to menu
+- Do not force the user through too many taps for common actions
+- Distinguish between public profile actions and private owner-only tools
+- Make owner view and visitor view cleaner and clearly different where needed
+
+==================================================
+PART 4 — PRIORITIZE WHAT SHOULD STAY VISIBLE
+==================================================
+
+For Passport/profile, keep immediately visible only the most important items.
+
+Suggested visible profile structure:
+1. profile hero
+2. trust/verification + key stats
+3. primary CTA row
+4. content tabs
+5. core visible content feed/grid
+
+Suggested immediate profile CTAs:
+- edit profile or follow/friend/message depending on viewer
+- maybe one more context-aware action
+- menu button for everything else
+
+Suggested content tabs to keep visible:
+- All
+- Plans
+- Stamps
+or another minimal set based on existing implementation
+
+Do not over-tab the profile.
+
+==================================================
+PART 5 — SIMPLIFY NAVIGATION
+==================================================
+
+Inspect current bottom nav and section-level nav.
+
+Reduce visible nav clutter by:
+- removing duplicate entry points
+- collapsing secondary actions into menus
+- keeping only highest-frequency destinations in bottom nav
+- moving lesser-used destinations to in-screen menus or utility drawers
+- ensuring users can still reach all existing features without dead ends
+
+If multiple features have overlapping purpose, recommend and implement the cleanest single entry point.
+
+Examples:
+- if Messaging does not need bottom-nav priority, keep it accessible through profile/menu/notification/chat entry instead
+- if several trip/event/community paths compete, consider one parent destination with segmented subviews
+- if create has too many branches, make one clean composer with context-aware options
+
+==================================================
+PART 6 — DISCOVERY / PULSE / CREATE CLEANUP
+==================================================
+
+Minimize clutter on Discovery, Pulse, and Create.
+
+Discovery:
+- reduce too many sections competing at once
+- merge similar recommendation blocks
+- keep strongest nearby/relevant sections
+- move advanced filters into a drawer or refined chip row
+- keep search, city/location, and a few strong category filters prominent
+
+Pulse:
+- keep feed clean
+- reduce noisy mixed card types if too many are surfaced at once
+- move lower-priority utilities into menus
+- ensure cards focus on the most useful actions
+
+Create:
+- if too many creation options are shown at once, merge them into one cleaner create composer
+- use context-aware branching after initial selection rather than overwhelming the first screen
+
+==================================================
+PART 7 — KEEP FUNCTIONALITY, REDUCE SURFACE AREA
+==================================================
+
+This pass must preserve available functionality while reducing visible complexity.
+
+For every feature moved or merged:
+- ensure there is still a valid entry point
+- ensure button paths still work
+- ensure users can still discover the feature
+- ensure no orphaned backend capability remains unreachable
+- ensure no dead button is introduced
+- ensure no settings are hidden so deeply they become effectively unusable
+
+If a feature is truly low-value or unfinished, it can be hidden behind owner-only/admin-only/debug-only access or removed from visible consumer UI if appropriate.
+
+==================================================
+PART 8 — DESIGN / UX REQUIREMENTS
+==================================================
+
+Apply a cleaner premium design system:
+- fewer competing cards per screen
+- smaller but clear headers
+- less vertical clutter
+- fewer visible chips at once
+- more use of menus/drawers/overflow for secondary actions
+- stronger hierarchy
+- clearer spacing
+- more intentional CTA priority
+- reduce repeated labels and utility rows
+
+The UI should feel:
+- social
+- modern
+- premium
+- intuitive
+- not crowded
+- not childish
+- not like too many mini apps glued together
+
+==================================================
+PART 9 — IMPLEMENTATION RULES
+==================================================
+
+Before editing, identify:
+- sections to keep
+- sections to merge
+- sections to move into menu
+- sections to hide/remove
+- owner-only vs public-only actions
+- high-frequency vs low-frequency actions
+
+Then implement the simplification safely.
+
+Do not:
+- break navigation
+- break backend connections
+- remove data access
+- remove privacy/safety access
+- remove important saved/review/rating/invite/report flows
+- leave hidden features unreachable
+
+==================================================
+PART 10 — TESTING / QA
+==================================================
+
+Add/update tests as needed for:
+- profile menu bar renders
+- moved features remain reachable
+- merged sections still show correct data
+- no key actions disappear
+- bottom nav still routes correctly
+- owner vs visitor profile views still work
+- Discovery/Pulse/Create still load and route correctly
+- no broken buttons introduced by the simplification pass
+
+Run:
+- typecheck
+- lint if available
+- frontend tests
+- backend tests if affected
+- manual QA on key screens
+
+MANDATORY MANUAL VERIFICATION:
+Do not pass until you verify:
+- profile is cleaner
+- secondary tools are accessible from the new profile menu bar
+- no key feature is lost
+- merged sections still function
+- bottom nav feels less cluttered
+- Discovery/Pulse/Create feel cleaner and easier to scan
+- all moved buttons still reach a real destination
+- no broken paths were introduced
+
+FINAL DELIVERABLE:
+Return:
+- feature-clutter audit summary
+- sections merged
+- sections moved into profile menu bar
+- sections hidden/removed
+- updated navigation structure
+- files changed
+- tests added/updated
+- exact test/typecheck results
+- manual QA proof that functionality remains intact while visible complexity is reduced
