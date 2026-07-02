@@ -18,6 +18,10 @@ import {
   type TrustedContact,
   type SafeReturnContactInput,
 } from '../../services/safeReturn';
+import {
+  listEmergencyContacts,
+  type EmergencyContact,
+} from '../../services/emergencyContacts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,6 +65,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   const [emergencyNote, setEmergencyNote] = useState('');
   const [trustedContacts, setTrustedContacts] = useState<TrustedContact[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
+  const [selectedEmergencyContacts, setSelectedEmergencyContacts] = useState<Set<string>>(new Set());
   const [contactsLoading, setContactsLoading] = useState(false);
   const [showWhyExpanded, setShowWhyExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,8 +74,12 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   useEffect(() => {
     if (visible) {
       setContactsLoading(true);
-      getTrustedContacts().then((c) => {
-        setTrustedContacts(c);
+      Promise.all([
+        getTrustedContacts(),
+        listEmergencyContacts(),
+      ]).then(([tc, ec]) => {
+        setTrustedContacts(tc);
+        setEmergencyContacts(ec.contacts);
         setContactsLoading(false);
       });
     }
@@ -90,16 +100,35 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     });
   }
 
+  function toggleEmergencyContact(id: string) {
+    setSelectedEmergencyContacts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   async function handleStart() {
     setSaving(true);
-    const contacts: SafeReturnContactInput[] = trustedContacts
-      .filter((c) => selectedContacts.has(c.userId))
-      .map((c) => ({
-        contactUserId: c.userId,
-        contactName: c.displayName,
-        contactMethod: 'in_app' as const,
-        canReceiveLiveLocation: liveShareEnabled,
-      }));
+    const contacts: SafeReturnContactInput[] = [
+      ...trustedContacts
+        .filter((c) => selectedContacts.has(c.userId))
+        .map((c) => ({
+          contactUserId: c.userId,
+          contactName: c.displayName,
+          contactMethod: 'in_app' as const,
+          canReceiveLiveLocation: liveShareEnabled,
+        })),
+      ...emergencyContacts
+        .filter((ec) => selectedEmergencyContacts.has(ec.id))
+        .map((ec) => ({
+          contactName: ec.name,
+          contactPhone: ec.phone ?? undefined,
+          contactEmail: ec.email ?? undefined,
+          contactMethod: ec.notifyMethod,
+          canReceiveLiveLocation: liveShareEnabled && ec.notifyMethod !== 'sms',
+        })),
+    ];
 
     const created = await createSession({
       timerMinutes: timerMinutes ?? undefined,
@@ -217,27 +246,67 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           {/* Trusted contacts (shown when escalation >= 1) */}
           {escalationLevel >= 1 && (
             <>
-              <Text style={styles.sectionLabel}>Trusted contacts to alert</Text>
-              {contactsLoading
-                ? <ActivityIndicator color={color.deep} style={{ marginVertical: space.md }} />
-                : trustedContacts.length === 0
-                  ? <Text style={styles.emptyMsg}>No contacts found. Follow people to add them as trusted contacts.</Text>
-                  : trustedContacts.map((c) => (
-                    <Pressable
-                      key={c.userId}
-                      style={[styles.contactRow, selectedContacts.has(c.userId) && styles.contactRowActive]}
-                      onPress={() => toggleContact(c.userId)}
-                    >
-                      <View style={[styles.checkBox, selectedContacts.has(c.userId) && styles.checkBoxActive]}>
-                        {selectedContacts.has(c.userId) && <Text style={styles.checkMark}>✓</Text>}
-                      </View>
-                      <View>
-                        <Text style={styles.contactName}>{c.displayName ?? c.handle ?? 'Traveler'}</Text>
-                        {c.handle ? <Text style={styles.contactHandle}>@{c.handle}</Text> : null}
-                      </View>
-                    </Pressable>
-                  ))
-              }
+              <Text style={styles.sectionLabel}>Contacts to alert</Text>
+              {contactsLoading ? (
+                <ActivityIndicator color={color.deep} style={{ marginVertical: space.md }} />
+              ) : (
+                <>
+                  {/* Profile-level emergency contacts */}
+                  {emergencyContacts.length > 0 && (
+                    <>
+                      <Text style={styles.contactGroupLabel}>Saved emergency contacts</Text>
+                      {emergencyContacts.map((ec) => (
+                        <Pressable
+                          key={ec.id}
+                          style={[styles.contactRow, selectedEmergencyContacts.has(ec.id) && styles.contactRowActive]}
+                          onPress={() => toggleEmergencyContact(ec.id)}
+                        >
+                          <View style={[styles.checkBox, selectedEmergencyContacts.has(ec.id) && styles.checkBoxActive]}>
+                            {selectedEmergencyContacts.has(ec.id) && <Text style={styles.checkMark}>✓</Text>}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.contactName}>{ec.name}</Text>
+                            {ec.label ? <Text style={styles.contactHandle}>{ec.label}</Text> : null}
+                          </View>
+                          <View style={styles.methodBadge}>
+                            <Text style={styles.methodBadgeText}>
+                              {ec.notifyMethod === 'sms' ? 'SMS' : ec.notifyMethod === 'email' ? 'Email' : 'In-app'}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      ))}
+                    </>
+                  )}
+
+                  {/* In-app trusted contacts */}
+                  {trustedContacts.length > 0 && (
+                    <>
+                      <Text style={styles.contactGroupLabel}>People on this app</Text>
+                      {trustedContacts.map((c) => (
+                        <Pressable
+                          key={c.userId}
+                          style={[styles.contactRow, selectedContacts.has(c.userId) && styles.contactRowActive]}
+                          onPress={() => toggleContact(c.userId)}
+                        >
+                          <View style={[styles.checkBox, selectedContacts.has(c.userId) && styles.checkBoxActive]}>
+                            {selectedContacts.has(c.userId) && <Text style={styles.checkMark}>✓</Text>}
+                          </View>
+                          <View>
+                            <Text style={styles.contactName}>{c.displayName ?? c.handle ?? 'Traveler'}</Text>
+                            {c.handle ? <Text style={styles.contactHandle}>@{c.handle}</Text> : null}
+                          </View>
+                        </Pressable>
+                      ))}
+                    </>
+                  )}
+
+                  {emergencyContacts.length === 0 && trustedContacts.length === 0 && (
+                    <Text style={styles.emptyMsg}>
+                      No contacts saved yet. Add emergency contacts in Settings, or follow people on the app.
+                    </Text>
+                  )}
+                </>
+              )}
             </>
           )}
 
@@ -383,6 +452,9 @@ const styles = StyleSheet.create({
   contactName: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
   contactHandle: { ...t.small, color: color.mute, fontSize: 11 },
   emptyMsg: { ...t.small, color: color.mute, fontSize: 12 },
+  contactGroupLabel: { ...t.small, color: color.mute, fontSize: 11, fontWeight: '600', marginTop: space.sm, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
+  methodBadge: { backgroundColor: color.haze, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
+  methodBadgeText: { ...t.small, color: color.ink, fontSize: 10, fontWeight: '600' },
   toggleRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     backgroundColor: color.paperRaised, borderRadius: radius.md,
