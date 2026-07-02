@@ -1016,7 +1016,7 @@ router.get("/discovery/community", async (req, res) => {
     return;
   }
 
-  if (!isServiceClientReady) {
+  if (!getServiceClient()) {
     res.json({ items: [], city, total: 0 });
     return;
   }
