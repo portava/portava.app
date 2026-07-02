@@ -266,13 +266,11 @@ export default function DiscoveryHub() {
     }
   }, [params.category]);
 
-  // Reset to list view and filters when the user switches tabs.
-  // activeFilters reset here keeps counts consistent until the newly-mounted
-  // DiscoveryCategoryTab fires its own onFiltersChange with its initial state.
+  // Switching tabs resets view mode to list; filters are kept so persisted
+  // preferences carry over naturally when moving between category tabs.
   const handleTabChange = (key: DiscoveryCategory) => {
     setActiveTab(key);
     setViewMode('list');
-    setActiveFilters({ radiusKm: 10, openNow: false, minRating: null });
   };
 
 
@@ -534,7 +532,7 @@ export default function DiscoveryHub() {
               )}
 
               <FilterStrip filters={activeFilters} onChange={handleFiltersChange} />
-              {hasNonDefaultFilters && (
+              {(activeFilters.radiusKm !== 10 || activeFilters.openNow || activeFilters.minRating !== null || activeFilters.sortBy != null) && (
                 <Pressable style={styles.resetFiltersBtn} onPress={handleResetFilters}>
                   <Text style={styles.resetFiltersText}>Reset filters</Text>
                 </Pressable>
