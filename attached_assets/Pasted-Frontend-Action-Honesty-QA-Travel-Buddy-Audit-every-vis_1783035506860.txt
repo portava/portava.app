@@ -1,0 +1,276 @@
+Frontend Action Honesty QA — Travel Buddy
+
+Audit every visible button, CTA, tap target, menu item, icon action, form submit, sheet action, and list-card action across the app.
+
+Do not rebuild systems.
+Do not add new features.
+Do not make cosmetic-only changes.
+Only fix proven dead actions, fake success, misleading buttons, broken navigation, missing handlers, or actions that claim to work but have no backend/real flow.
+
+Goal:
+Every visible user action must be one of these:
+1. Fully working and wired to the intended real flow.
+2. Disabled/hidden because the feature is not live yet.
+3. Shown with honest copy such as "coming soon" or "not available yet."
+4. Routed to a safe fallback instead of crashing or doing nothing.
+
+Scope:
+Audit all major frontend surfaces:
+
+1. Main tabs
+   - Pulse
+   - Discovery
+   - Create
+   - Trips
+   - Passport
+   - Any relocated Telegraph/messages entry
+   - Notifications/Activity Center
+   - Settings
+
+2. Auth/onboarding
+   - Sign up
+   - Sign in
+   - Forgot password
+   - Onboarding next/skip/save
+   - Profile setup
+   - Language/default settings
+   - Session restore actions
+
+3. Passport/profile
+   - Edit profile
+   - Upload/change avatar
+   - Upload/change cover
+   - View another user from avatar tap
+   - Block/unblock
+   - Follow/add/trust if present
+   - Message user
+   - View stamps
+   - View memories/postcards
+   - Report profile
+   - Share profile
+
+4. Pulse/posts/memories
+   - Create post
+   - Add image/video
+   - Post submit
+   - Like/unlike
+   - Comment
+   - Save/unsave
+   - Share
+   - Report
+   - Open post detail
+   - Open user profile from post
+   - Hashtag tap
+   - Tagged user tap
+   - Delayed posting/location privacy controls
+   - Post settings/privacy controls
+
+5. Discovery
+   - Search
+   - Filter chips
+   - Save/unsave place
+   - Open place detail
+   - Open hidden gem
+   - Add community place
+   - Report place
+   - Ask Compass
+   - Add-to-trip/add-to-plan
+   - Map buttons
+   - Empty/error retry actions
+
+6. Trips
+   - Create trip
+   - Edit trip
+   - Delete/cancel trip
+   - Open trip detail
+   - Add saved idea
+   - Add event/place to trip
+   - TripCircle actions
+   - Invite member
+   - Remove member
+   - Open trip chat/Telegraph
+   - Safe Return setup/check-in/end
+   - Share trip
+   - Route planner buttons
+
+7. Events/plans
+   - Create event/plan
+   - Add cover/media if visible
+   - Submit event
+   - RSVP/join/request/maybe/decline/leave
+   - Host accept/decline
+   - Open event detail
+   - Open event chat
+   - Add event to trip
+   - Link circle
+   - Report event
+   - Share event
+   - View attendees
+   - Availability actions
+   - Age/trust/language filters
+
+8. Telegraph messaging
+   - Open thread
+   - Send message
+   - Retry failed send
+   - Retry failed translation
+   - Show original/show translation
+   - Accept/decline message request
+   - Start message from profile
+   - Group chat actions
+   - Mark read behavior
+   - Attachment button must be hidden/disabled or show honest "coming soon"
+   - Call/video/info buttons if present must not be fake
+
+9. Notifications / Activity Center
+   - Open notification
+   - Deep link navigation
+   - Mark read
+   - Mark all read
+   - Filter tabs
+   - Admin tab
+   - Retry/error states
+
+10. Safe Return
+   - Start
+   - Check in
+   - Missed check-in response
+   - End/cancel session
+   - Add trusted contact
+   - Add emergency contact
+   - Open safety history
+   - Share status
+   - Privacy controls
+
+11. Rent a Buddy
+   - Become a buddy
+   - Application submit
+   - Search/filter buddies
+   - Open buddy profile
+   - Request booking
+   - Accept/decline booking
+   - Complete booking
+   - Review booking
+   - Report issue
+   - Open chat
+   - Payment/deposit buttons must not fake success
+   - Reschedule/dispute/refund/no-show buttons must show honest unavailable/report-flow copy if backend is 501
+
+12. Admin/moderation
+   - Trust review actions
+   - Content report actions
+   - Gaming flag actions
+   - Feature flag actions
+   - Hashtag actions
+   - Hidden Gem moderation actions
+   - RAB admin actions
+   - Non-admin access should redirect or block honestly
+
+13. Global/mobile polish actions
+   - Back buttons
+   - Close buttons
+   - Refresh buttons
+   - Pull-to-refresh
+   - Empty-state CTAs
+   - Error-state retry buttons
+   - Keyboard submit buttons
+   - Image picker buttons
+   - Menu buttons
+   - Share buttons
+   - External-link buttons
+
+Required process:
+
+1. Survey first.
+   Use targeted greps for:
+   - onPress={() => {}}
+   - onPress={undefined}
+   - console.log inside action handlers
+   - Alert.alert with "coming soon"
+   - TODO near buttons
+   - disabled={false} with missing handler
+   - router.push paths
+   - TouchableOpacity / Pressable / Button / IconButton
+   - share handlers
+   - upload handlers
+   - submit handlers
+   - fake success toasts
+   - "coming soon"
+   - "TODO"
+   - "stub"
+   - "not implemented"
+   - "mock"
+
+2. Build an action honesty matrix:
+   Columns:
+   - Screen/component
+   - Visible action
+   - Current behavior
+   - Backend/service route if applicable
+   - Status: working / honest-disabled / honest-coming-soon / broken / fake-success / unclear
+   - Evidence
+   - Fix needed
+
+3. Fix only proven issues:
+   - Dead/no-op button
+   - Fake success toast
+   - Broken route
+   - Missing handler
+   - Button claims real action but backend/service is absent
+   - Button calls direct Supabase mutation when API route exists and direct mutation can silently fail
+   - Error retry button that does not retry
+   - Share/upload/message actions that do nothing
+
+4. Allowed fixes:
+   - Wire to existing service/route/screen
+   - Hide the action if feature is not live
+   - Disable the action with clear copy
+   - Change copy to "coming soon" if backend is intentionally 501
+   - Add simple safe fallback
+   - Replace fake success with honest failure/unavailable state
+   - Add missing loading/error handling for submit actions
+
+5. Not allowed:
+   - New product features
+   - Large redesigns
+   - Cosmetic-only edits
+   - Rewriting working systems
+   - Inventing backend APIs
+   - Fake placeholders presented as live data
+
+6. Pay special attention to previously known risky areas:
+   - Trip share button
+   - Telegraph attachment button
+   - Discovery map buttons
+   - Add-to-trip / Add-to-plan CTAs
+   - Event cover/media button
+   - Trip cover/media button
+   - RAB payment/deposit/reschedule/dispute/refund/no-show actions
+   - Admin action buttons that show success without confirming backend response
+   - Any mock/demo cards that look live
+   - Direct Supabase mutations from frontend services
+
+7. After fixes, run:
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if applicable
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - relevant frontend/backend tests for changed files if available
+
+8. Final report must include:
+   - Action honesty matrix
+   - Broken/fake actions found
+   - Fixes completed
+   - Files changed
+   - Tests added/updated
+   - Remaining real blockers
+   - Remaining honest-coming-soon items
+   - Validation table
+   - Commit message
+
+Important:
+If an action is not live, it is acceptable only if the user is clearly told it is not live yet.
+No button should silently do nothing.
+No button should show success before a real service/backend confirms success.
+No visible marketplace, trip, event, message, notification, or admin action should use fake data as if it is live.
