@@ -3,23 +3,19 @@ import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { router } from 'expo-router';
 import { MapPin, ChevronRight } from 'lucide-react-native';
 import type { CityEvent } from '../types/models';
-import { users } from '../data/cebu';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
-/* avatar stack for attendees */
+/* avatar stack for attendees — shows count without fixture data */
 function AvatarStack({ count }: { count: number }) {
-  const faces = users.slice(0, Math.min(3, count));
+  if (count === 0) return null;
   return (
     <View style={styles.stack}>
-      {faces.map((u, i) => (
-        <Image key={u.id} source={{ uri: u.avatarUrl }} style={[styles.stackImg, { marginLeft: i === 0 ? 0 : -10, zIndex: 3 - i }]} />
-      ))}
-      {count > 3 && (
-        <View style={[styles.plus, { marginLeft: -10 }]}><Text style={styles.plusText}>+{count - 3}</Text></View>
-      )}
+      <View style={styles.plus}>
+        <Text style={styles.plusText}>{count > 99 ? '99+' : count}</Text>
+      </View>
     </View>
   );
 }

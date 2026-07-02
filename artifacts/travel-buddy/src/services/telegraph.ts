@@ -71,53 +71,53 @@ export async function getActivityRecommendations(
 function buildMockRecommendations(
   ctx: TelegraphRecommendContext,
 ): TelegraphActivityRecommendation[] {
-  const dest = ctx.destination ?? 'Cebu';
+  const dest = ctx.destination ?? 'your destination';
   const interests = ctx.interests ?? [];
   const count = ctx.count ?? 3;
 
   const all: TelegraphActivityRecommendation[] = [
     {
       id: 'rec_mock_1',
-      title: `Island Hopping near ${dest}`,
+      title: `Coastal exploration near ${dest}`,
       category: 'beach',
       reason: 'Matches your beach and adventure interests. Top-rated by solo travelers.',
-      locationContext: '45 min from Mactan Pier',
+      locationContext: `Near ${dest}`,
       estimatedTime: 'Full day',
       priceLevel: '$$',
     },
     {
       id: 'rec_mock_2',
-      title: 'Lechón at CNT Lechon',
+      title: `Top-rated local cuisine in ${dest}`,
       category: 'food',
-      reason: 'Best-rated lechón in the Visayas — a must for food lovers.',
-      locationContext: '1.4 km from downtown Cebu City',
+      reason: 'One of the best local dining experiences — a must for food lovers.',
+      locationContext: `${dest} city center`,
       estimatedTime: '1–2 hours',
       priceLevel: '$',
     },
     {
       id: 'rec_mock_3',
-      title: 'IT Park Night Crawl',
+      title: `Nightlife district in ${dest}`,
       category: 'nightlife',
       reason: 'Great bar-hopping area for solo travelers and nightlife fans.',
-      locationContext: 'IT Park, Cebu City',
+      locationContext: `${dest} entertainment district`,
       estimatedTime: '3–4 hours',
       priceLevel: '$$',
     },
     {
       id: 'rec_mock_4',
-      title: 'Kawasan Falls Canyoneering',
+      title: `Adventure day trip from ${dest}`,
       category: 'activity',
       reason: 'Top adventure activity in the region. Book a guide in advance.',
-      locationContext: 'Badian, 3 hrs from Cebu City',
+      locationContext: `Day trip from ${dest}`,
       estimatedTime: 'Full day',
       priceLevel: '$$',
     },
     {
       id: 'rec_mock_5',
-      title: 'Heritage Walk: Colon Street',
+      title: `Heritage walk in ${dest}`,
       category: 'activity',
-      reason: 'Oldest street in the Philippines — great for culture and photography.',
-      locationContext: 'Downtown Cebu City',
+      reason: 'Great for culture and photography. Free to explore at your own pace.',
+      locationContext: `${dest} historic district`,
       estimatedTime: '2–3 hours',
       priceLevel: 'free',
     },

@@ -505,13 +505,13 @@ function MemberAvatar({ u, currentUserId }: { u: User; currentUserId?: string | 
 }
 
 /* ── Trip Circle ── */
-export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null; tripId?: string }) {
+export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId, city }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null; tripId?: string; city?: string }) {
   const circlePath = tripId ? `/circle?tripId=${encodeURIComponent(tripId)}` : '/circle';
   return (
     <View>
       <TravelSectionHeader title="Trip Circle" onAction={() => router.push(circlePath as any)} actionLabel="View all" />
       <View style={cr.card}>
-        <Text style={cr.count}>{cityCount} buddies are in Cebu</Text>
+        <Text style={cr.count}>{cityCount} {cityCount === 1 ? 'buddy' : 'buddies'} near {city ?? 'your destination'}</Text>
         <View style={cr.avatars}>
           {inCity.map((u) => (
             <MemberAvatar key={u.id} u={u} currentUserId={currentUserId} />
@@ -597,7 +597,7 @@ export function TripMapPreview() {
           <View style={[mp.pin, { top: '30%', left: '25%', backgroundColor: color.signal }]} />
           <View style={[mp.pin, { top: '55%', left: '60%', backgroundColor: color.deep }]} />
           <View style={[mp.pin, { top: '40%', left: '75%', backgroundColor: color.success }]} />
-          <View style={mp.cityLabel}><Text style={mp.cityText}>Cebu City</Text></View>
+          <View style={mp.cityLabel}><Text style={mp.cityText}>Destination</Text></View>
         </View>
         <View style={mp.legend}>
           <View style={mp.legendItem}><View style={[mp.dot, { backgroundColor: color.signal }]} /><Text style={mp.legendText}>Plans</Text></View>

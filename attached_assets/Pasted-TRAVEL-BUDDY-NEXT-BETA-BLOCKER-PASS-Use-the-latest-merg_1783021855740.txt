@@ -1,0 +1,292 @@
+TRAVEL BUDDY — NEXT BETA BLOCKER PASS
+
+Use the latest merged state as source of truth. Do not rebuild working systems. Check what exists first, then make the smallest safe fixes. Do not insert fake users, fake reviews, fake places, or placeholder production content. Do not modify Supabase env vars. Do not expose service-role keys. Do not sync artifacts/travel-buddy unless explicitly told.
+
+This pass focuses on proving and fixing the next beta blockers after onboarding/search/Pulse city fallback.
+
+==================================================
+1. PULSE REAL FEED / FIXTURE CLEANUP PROOF
+==================================================
+
+Audit Pulse/Home and all production-facing feed surfaces.
+
+Check:
+- app/(tabs)/index.tsx
+- any Pulse services/hooks
+- src/data/cebu.ts references
+- any mock/feed fixtures imported into live screens
+
+Required:
+- No Cebu fixture posts should appear as live user content.
+- No hardcoded city should drive Pulse.
+- Pulse should use real backend feed data, Compass feed data, or an honest empty/setup state.
+- If backend feed is unavailable, show retry/empty state, not fake content.
+- Keep test/dev fixtures only behind explicit dev/test flags.
+
+Fix if needed:
+- Remove remaining live fixture imports.
+- Replace fake fallbacks with honest empty states.
+- Ensure Pulse source-of-truth city order is clear:
+  1. selected city/location context
+  2. profile current city
+  3. detected current location city if available
+  4. setup CTA / empty state
+
+Verify:
+- Search repo for cebu.ts imports.
+- Search repo for hardcoded Cebu/Cebu City in live screens.
+- Report all remaining references and whether they are test-only or live.
+
+==================================================
+2. TRIP GROUP CHAT AUTO-CREATION
+==================================================
+
+Event chat auto-creation was confirmed. Now prove trip chat.
+
+Check:
+- trip creation route/service
+- trip publish/update route if drafts exist
+- trip invite/member routes
+- trip detail UI
+- Telegraph conversation/thread services
+
+Required:
+- New trip should auto-create or link a Telegraph group chat.
+- Trip detail should open the linked Telegraph group chat.
+- Trip members should be participants in the chat.
+- Adding/removing trip members should update chat access if that pattern exists.
+- If the backend service exists but is not triggered, add the minimal hook.
+
+Verify:
+- Identify exact call site that creates trip Telegraph chat.
+- If missing, implement it.
+- Confirm route/button from Trip detail opens correct chat.
+- Report whether member changes sync to chat participants.
+
+==================================================
+3. TELEGRAPH MESSAGE REQUEST FLOW
+==================================================
+
+Audit and prove unknown-user messaging.
+
+Required:
+- If User A messages User B and they are not connected/friends/buddies, it should create a message request.
+- Receiver can accept or decline.
+- Accepted request becomes normal Telegraph chat.
+- Declined request does not create broken chat state.
+- Blocked users cannot message.
+- Report button exists from chat or profile.
+- Message request screen/inbox entry must be reachable.
+
+Fix if needed:
+- Wire missing route/screen entry.
+- Add minimal accept/decline UI if service already exists.
+- Do not rebuild the whole chat system.
+
+Verify:
+- Service exists.
+- Screen/route exists.
+- Entry point exists.
+- Accept/decline actions persist.
+- Blocked users are enforced.
+
+==================================================
+4. TELEGRAPH AUTO-TRANSLATION STATUS
+==================================================
+
+Audit translation only. Do not fake translation.
+
+Required:
+- Check whether message schema stores:
+  - original text
+  - translated text
+  - original language
+  - target language
+  - translation status/provider
+- Check whether backend translation service exists.
+- Check whether UI shows translated indicator and view-original option.
+- Check whether user profile/default language from onboarding is used.
+
+If translation backend exists:
+- Wire minimal UI toggle/indicator if missing.
+- Ensure private translation keys stay backend-only.
+
+If translation backend does not exist:
+- Report as MISSING.
+- Do not fake translated messages.
+
+Verify:
+- Spanish → English path can be represented by code.
+- English → Spanish path can be represented by code.
+- Original text is preserved.
+- Group chats can support per-recipient translation or are clearly marked as not yet supported.
+
+==================================================
+5. UNIVERSAL SEARCH HARDENING
+==================================================
+
+The /search screen exists now. Prove it works safely.
+
+Check:
+- People search
+- Places search
+- Events search
+- Hashtags search
+- Routing from each result type
+- Empty state
+- Error state
+- Block/private filtering
+
+Required:
+- Blocked users/content excluded.
+- Private profiles/content excluded unless viewer is allowed.
+- Tapping a person opens correct Passport.
+- Tapping a place opens place detail or map/detail route.
+- Tapping an event opens event detail.
+- Tapping a hashtag opens hashtag/feed result route or honest not-yet-supported state.
+- No fake results.
+- Recent searches only if existing storage pattern supports it safely.
+
+Fix if needed:
+- Add missing route handling.
+- Add blocked/private filtering where service supports it.
+- Add honest empty/error state.
+
+Verify:
+- Search compiles.
+- All result taps route correctly.
+- Empty query does not crash.
+- Failed API does not crash.
+
+==================================================
+6. DISCOVERY / MAP REAL DATA VERIFICATION
+==================================================
+
+Audit real place pipeline.
+
+Check:
+- discovery_places table usage
+- OSM/provider seed script if present
+- Discovery cards
+- Place detail
+- Map pins
+- Save place
+- Add to trip/add to plan
+
+Required:
+- Discovery uses real provider/user data.
+- Map pins come from valid lat/lng.
+- Saves persist after restart.
+- Saved places do not disappear during API outage if local fallback exists.
+- Add-to-trip/add-to-plan works from:
+  - Discovery card
+  - place detail
+  - map pin if available
+- No fake provider reviews.
+
+If discovery_places is empty:
+- Do not insert fake data.
+- Report empty table and point to/create server-side OSM seed script only.
+- Do not apply schema migrations without approval.
+
+Verify:
+- Report row count query used.
+- Report whether cards match DB/provider rows.
+- Report whether pins match DB/provider rows.
+
+==================================================
+7. PASSPORT PROFILE REFLECTION / VIEWER STATES
+==================================================
+
+Onboarding was expanded. Now prove Passport reflects it.
+
+Required:
+- Own Passport shows saved onboarding fields:
+  - display name
+  - handle
+  - home city/country
+  - languages
+  - interests/travel style
+- Edit profile updates Passport in same session or after refresh.
+- Other-user Passport handles viewer states:
+  - self
+  - stranger
+  - connected/friend/buddy
+  - pending request
+  - blocked by me
+  - blocked me if detectable
+- Any avatar/profile image in feed/search/chat routes to correct Passport.
+
+Fix if needed:
+- Add profile cache invalidation/refetch after onboarding/edit.
+- Wire missing viewer-state actions.
+- Do not rebuild Passport UI.
+
+Verify:
+- Passport does not show Cebu fixture postcards.
+- Empty profile sections have clean empty states.
+- Relationship buttons match viewer state.
+
+==================================================
+8. VALIDATION / FINAL REPORT
+==================================================
+
+Run:
+- typecheck
+- route guard if available
+- targeted tests if available
+- search for fixture references
+- search for hardcoded city references
+- any sync/source-drift checks used in this repo
+
+Final report format:
+
+1. Summary
+- What was fixed
+- What was already working
+- What remains
+- Updated beta readiness estimate
+
+2. Files changed
+- File
+- Reason
+- Risk level
+
+3. Pulse fixture cleanup
+- Remaining fixture references
+- Live vs test-only classification
+
+4. Trip chat
+- Auto-create status
+- Call sites
+- Remaining gaps
+
+5. Telegraph
+- Message request status
+- Translation status
+- Block/report status
+
+6. Search
+- Result types verified
+- Routing verified
+- Privacy/block filtering status
+
+7. Discovery/Map
+- Real data status
+- Row counts if available
+- Save/add-to-trip status
+
+8. Passport
+- Onboarding reflection status
+- Viewer-state status
+
+9. Validation
+- Commands run
+- Exact pass/fail counts
+- Failed checks
+- Blocked checks
+
+10. Next recommended tasks
+- Immediate blockers
+- Beta blockers
+- Post-beta polish
