@@ -49,13 +49,20 @@ const ZERO_SAVES = { ...BASE_ROW, id: "place-zero",  name: "Zero Saves",  saved_
 const POPULAR_OLD = { ...BASE_ROW, id: "place-popular-old", name: "Popular Old", saved_count: 999, created_at: "2024-01-01T00:00:00.000Z" };
 const OBSCURE_NEW = { ...BASE_ROW, id: "place-obscure-new", name: "Obscure New", saved_count: 1,   created_at: "2025-06-01T00:00:00.000Z" };
 
+// Rows for testing all-NULL / all-zero saved_count (different created_at for ordering check)
+const NULL_A = { ...BASE_ROW, id: "place-null-a", name: "Null A", saved_count: null, created_at: "2025-03-01T00:00:00.000Z" };
+const NULL_B = { ...BASE_ROW, id: "place-null-b", name: "Null B", saved_count: null, created_at: "2025-05-01T00:00:00.000Z" };
+const NULL_C = { ...BASE_ROW, id: "place-null-c", name: "Null C", saved_count: null, created_at: "2025-01-01T00:00:00.000Z" };
+const ZERO_A = { ...BASE_ROW, id: "place-zero-a", name: "Zero A", saved_count: 0,    created_at: "2025-02-01T00:00:00.000Z" };
+const ZERO_B = { ...BASE_ROW, id: "place-zero-b", name: "Zero B", saved_count: 0,    created_at: "2025-06-01T00:00:00.000Z" };
+
 // ── Fake client (tracks .order() and applies real sorting) ─────────────────────
 
 function makeFakeClient(allRows: Record<string, unknown>[]) {
   function chain(table: string) {
     const eqFilters: Array<{ col: string; val: unknown }> = [];
-    let orderCol: string | null = null;
-    let orderAsc = true;
+    // Tracks multiple sort keys in declaration order (first = highest priority).
+    const orderKeys: Array<{ col: string; asc: boolean }> = [];
 
     const obj: any = {
       select()         { return obj; },
@@ -70,8 +77,7 @@ function makeFakeClient(allRows: Record<string, unknown>[]) {
         return obj;
       },
       order(col: string, opts?: { ascending?: boolean }) {
-        orderCol = col;
-        orderAsc = opts?.ascending ?? true;
+        orderKeys.push({ col, asc: opts?.ascending ?? true });
         return obj;
       },
       then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
@@ -87,17 +93,17 @@ function makeFakeClient(allRows: Record<string, unknown>[]) {
           rows = rows.filter((r) => r[col] === val);
         }
 
-        if (orderCol) {
-          const col = orderCol;
-          const asc = orderAsc;
+        if (orderKeys.length > 0) {
           rows.sort((a, b) => {
-            const av = a[col] ?? null;
-            const bv = b[col] ?? null;
-            if (av === null && bv === null) return 0;
-            if (av === null) return asc ? 1 : -1;
-            if (bv === null) return asc ? -1 : 1;
-            if (av < bv) return asc ? -1 : 1;
-            if (av > bv) return asc ? 1 : -1;
+            for (const { col, asc } of orderKeys) {
+              const av = a[col] ?? null;
+              const bv = b[col] ?? null;
+              if (av === null && bv === null) continue;
+              if (av === null) return asc ? 1 : -1;
+              if (bv === null) return asc ? -1 : 1;
+              if (av < bv) return asc ? -1 : 1;
+              if (av > bv) return asc ? 1 : -1;
+            }
             return 0;
           });
         }
@@ -236,6 +242,127 @@ describe("GET /api/discovery/community — default sort uses created_at desc (no
     assert.ok(
       obscureNewPos < popularOldPos,
       `newer but less-saved place (pos=${obscureNewPos}) should rank before older high-saved (pos=${popularOldPos})`,
+    );
+  });
+});
+
+// ── Tests — all saved_counts NULL (no saves on any row) ───────────────────────
+
+describe("GET /api/discovery/community — sortBy=popular with all-NULL saved_count", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient([NULL_A, NULL_B, NULL_C]), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns HTTP 200 (no 500) when every row has saved_count=NULL", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  });
+
+  it("returns all three items even when saved_count is NULL on all rows", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.total, 3, `expected total=3, got ${r.total}`);
+    assert.equal(r.items.length, 3, `expected 3 items, got ${r.items.length}`);
+  });
+
+  it("maps NULL saved_count to savedCount=0 in the response", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    for (const item of r.items) {
+      assert.equal(
+        item.savedCount,
+        0,
+        `expected savedCount=0 for ${item.id}, got ${item.savedCount}`,
+      );
+    }
+  });
+
+  it("response shape is valid — required fields present on each item", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    assert.ok(r.items.length > 0, "expected at least one item");
+    const item = r.items[0];
+    assert.equal(typeof item.id,         "string",  "item.id must be a string");
+    assert.equal(typeof item.name,       "string",  "item.name must be a string");
+    assert.equal(typeof item.savedCount, "number",  "item.savedCount must be a number");
+    assert.equal(typeof r.total,         "number",  "total must be a number");
+  });
+
+  it("ties broken by created_at desc — newest place comes first when saves are all NULL", async () => {
+    // NULL_B is 2025-05-01 (newest), NULL_A is 2025-03-01, NULL_C is 2025-01-01 (oldest)
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.items.length, 3, "expected 3 items");
+    assert.equal(
+      r.items[0].id,
+      NULL_B.id,
+      `expected newest place (${NULL_B.id}) first, got ${r.items[0].id}`,
+    );
+    assert.equal(
+      r.items[2].id,
+      NULL_C.id,
+      `expected oldest place (${NULL_C.id}) last, got ${r.items[2].id}`,
+    );
+  });
+});
+
+// ── Tests — all saved_counts zero ─────────────────────────────────────────────
+
+describe("GET /api/discovery/community — sortBy=popular with all-zero saved_count", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient([ZERO_A, ZERO_B]), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns HTTP 200 (no 500) when every row has saved_count=0", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  });
+
+  it("returns both items when saved_count=0 on all rows", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.total, 2, `expected total=2, got ${r.total}`);
+    assert.equal(r.items.length, 2, `expected 2 items, got ${r.items.length}`);
+  });
+
+  it("response shape is valid — savedCount=0 on each item", async () => {
+    const r = await getItems(url, "sortBy=popular");
+    for (const item of r.items) {
+      assert.equal(
+        item.savedCount,
+        0,
+        `expected savedCount=0 for ${item.id}, got ${item.savedCount}`,
+      );
+    }
+    assert.equal(typeof r.total, "number", "total must be a number");
+  });
+
+  it("ties broken by created_at desc — newest place comes first when saves are all zero", async () => {
+    // ZERO_B is 2025-06-01 (newest), ZERO_A is 2025-02-01 (oldest)
+    const r = await getItems(url, "sortBy=popular");
+    assert.equal(r.items.length, 2, "expected 2 items");
+    assert.equal(
+      r.items[0].id,
+      ZERO_B.id,
+      `expected newest place (${ZERO_B.id}) first, got ${r.items[0].id}`,
+    );
+    assert.equal(
+      r.items[1].id,
+      ZERO_A.id,
+      `expected oldest place (${ZERO_A.id}) last, got ${r.items[1].id}`,
     );
   });
 });

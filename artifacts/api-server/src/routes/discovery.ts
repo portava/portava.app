@@ -1104,8 +1104,16 @@ router.get("/discovery/community", async (req, res) => {
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
-      .order(sortBy === "rating" ? "rating" : sortBy === "popular" ? "saved_count" : "created_at", { ascending: false, nullsFirst: false })
-      .limit(limit);
+      .order(sortBy === "rating" ? "rating" : sortBy === "popular" ? "saved_count" : "created_at", { ascending: false, nullsFirst: false });
+
+    // Secondary tiebreaker: when primary scores are tied or all NULL (e.g. a city
+    // with no saves yet on popular sort), fall back to newest-first so the ordering
+    // is deterministic and never silently reverts to arbitrary DB natural order.
+    if (sortBy === "popular" || sortBy === "rating") {
+      query = query.order("created_at", { ascending: false });
+    }
+
+    query = query.limit(limit);
 
     if (typeFilter !== "all") {
       query = query.eq("place_type", typeFilter);
