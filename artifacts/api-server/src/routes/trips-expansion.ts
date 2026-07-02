@@ -17,6 +17,7 @@ import {
   sendError,
   type ApiErrorCode,
 } from "../lib/http.js";
+import { sendPushNotification } from "../lib/push.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -744,6 +745,24 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
     .eq("id", requestId);
 
   await logActivity(sc, tripId, user.id, "join_request_approved", { userId: requestedUserId });
+
+  // Fire-and-forget: notify the requester their join request was approved.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const [{ data: tripRow }, { data: requesterRow }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("profiles").select("expo_push_token").eq("id", requestedUserId).maybeSingle(),
+      ]);
+      await sendPushNotification([(requesterRow as any)?.expo_push_token], {
+        title: "Join request approved!",
+        body:  `You've been added to ${(tripRow as any)?.title ?? "the trip"}`,
+        data:  { type: "trip_join_approved", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
+
   res.json({ status: "approved", requestId, userId: requestedUserId });
 });
 
@@ -773,7 +792,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
 
   const { data: req_ } = await sc
     .from("trip_join_requests")
-    .select("status")
+    .select("status, user_id")
     .eq("id", requestId)
     .eq("trip_id", tripId)
     .maybeSingle();
@@ -790,6 +809,25 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
     .eq("id", requestId);
 
   await logActivity(sc, tripId, user.id, "join_request_declined", { requestId });
+
+  // Fire-and-forget: notify the requester their join request was declined.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const declinedUserId = (req_ as any).user_id as string;
+      const [{ data: tripRow }, { data: requesterRow }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("profiles").select("expo_push_token").eq("id", declinedUserId).maybeSingle(),
+      ]);
+      await sendPushNotification([(requesterRow as any)?.expo_push_token], {
+        title: "Join request update",
+        body:  `Your request to join ${(tripRow as any)?.title ?? "the trip"} was not approved`,
+        data:  { type: "trip_join_declined", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
+
   res.json({ status: "declined", requestId });
 });
 

@@ -569,6 +569,26 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
   if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
 
+  // Fire-and-forget: notify the invitee they've been invited.
+  (async () => {
+    try {
+      const sc2 = getServiceClient();
+      if (!sc2) return;
+      const [{ data: tripRow }, { data: inviterRow }, { data: inviteeRow }] = await Promise.all([
+        sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
+        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        sc2.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle(),
+      ]);
+      const tripTitle   = (tripRow as any)?.title   ?? "a trip";
+      const inviterName = (inviterRow as any)?.display_name ?? "Someone";
+      await sendPushNotification([(inviteeRow as any)?.expo_push_token], {
+        title: "Trip invitation",
+        body:  `${inviterName} invited you to join ${tripTitle}`,
+        data:  { type: "trip_invite_received", tripId },
+      });
+    } catch { /* best-effort */ }
+  })();
+
   res.status(201).json({ status: "invited", tripId, userId });
 });
 
