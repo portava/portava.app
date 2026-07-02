@@ -238,6 +238,26 @@ async function getGoingCount(sc: any, eventId: string): Promise<number> {
   return ((data as any[]) ?? []).length;
 }
 
+/**
+ * Keep event_attendees in sync with event_rsvps.
+ * Call after every RSVP upsert/delete — non-fatal (swallows errors).
+ * - going/maybe/interested → upsert into event_attendees
+ * - cant_go / null (remove) → delete from event_attendees
+ */
+async function syncAttendee(sc: any, eventId: string, userId: string, status: string | null): Promise<void> {
+  if (status && status !== "cant_go") {
+    await sc.from("event_attendees")
+      .upsert({ event_id: eventId, user_id: userId }, { onConflict: "event_id,user_id" })
+      .then(undefined, () => {});
+  } else {
+    await sc.from("event_attendees")
+      .delete()
+      .eq("event_id", eventId)
+      .eq("user_id", userId)
+      .then(undefined, () => {});
+  }
+}
+
 /** Auto-transition event state based on capacity */
 async function hasActiveWaitlistOffer(sc: any, eventId: string): Promise<boolean> {
   const { data } = await sc
@@ -1667,10 +1687,11 @@ router.post("/events/:id/rsvp", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "rsvp event"); sendError(res, "db_error", error.message); return; }
 
-  // Update going_count + sync state
+  // Update going_count + sync state + attendees table
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncAttendee(sc, id, user.id, status);
 
   // Add to event chat thread if going and chat enabled
   if (status === "going" && (ev as any).chat_thread_id && (ev as any).chat_enabled) {
@@ -1704,10 +1725,11 @@ router.delete("/events/:id/rsvp", async (req, res) => {
 
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", user.id);
 
-  // Sync state and maybe promote waitlisted user
+  // Sync state, attendees, and maybe promote waitlisted user
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncAttendee(sc, id, user.id, null);
 
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
@@ -2005,6 +2027,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     going_count: goingNow,
     waitlist_count: ((wlAfterAccept as any[]) ?? []).length,
   }).eq("id", id);
+  await syncAttendee(sc, id, user.id, "going");
 
   res.json({ status: "going", eventId: id });
 });
@@ -2258,6 +2281,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
     await sc.from("events").update({ going_count: going }).eq("id", id);
+    await syncAttendee(sc, id, userId, "going");
 
     // Add to chat
     if ((evFull as any)?.chat_thread_id && (evFull as any)?.chat_enabled) {
@@ -2325,6 +2349,7 @@ router.post("/events/:id/roles", async (req, res) => {
       going_count: going,
       waitlist_count: ((wlAfterBan as any[]) ?? []).length,
     }).eq("id", id);
+    await syncAttendee(sc, id, targetId, null);
 
     const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
     if ((ev as any)?.chat_thread_id) {
@@ -3445,6 +3470,7 @@ router.patch("/events/:id/attendees/:userId/status", async (req, res) => {
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncAttendee(sc, id, userId, status);
 
   await logEventActivity(sc, id, user.id, "attendee_status_updated", { targetUserId: userId, newStatus: status });
 
@@ -3473,6 +3499,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncAttendee(sc, id, userId, null);
 
   const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
   if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
@@ -3582,6 +3609,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncAttendee(sc, id, targetId, "going");
 
   await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId });
 
@@ -3709,48 +3737,57 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
   if ((invite as any).invitee_id !== user.id) { sendError(res, "forbidden", "This invite is not for you"); return; }
   if ((invite as any).status !== "pending") { sendError(res, "invalid_payload", "Invite is no longer pending"); return; }
 
-  await sc.from("event_invites").update({ status: "accepted", updated_at: new Date().toISOString() }).eq("id", inviteId);
-
-  // Auto-RSVP as going — apply the same capacity/waitlist logic as POST /join
+  // Check eligibility BEFORE marking the invite as accepted — rejected users must
+  // not receive an "accepted" outcome even if a previous invite exists.
   const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (elig.ok) {
-      // Event is full — route to waitlist rather than over-accept
-      if (["full","waitlist"].includes((ev as any).state)) {
-        if (!(ev as any).waitlist_enabled) {
-          // Invite accepted but event is full with no waitlist — just record acceptance, no RSVP
-        } else {
-          const { data: alreadyWaitlisted } = await sc
+    if (!elig.ok) {
+      sendError(res, elig.errorCode as any, `Cannot accept invite: ${elig.message}`);
+      return;
+    }
+  }
+
+  // Now safe to record acceptance
+  await sc.from("event_invites").update({ status: "accepted", updated_at: new Date().toISOString() }).eq("id", inviteId);
+
+  // Auto-RSVP as going — apply the same capacity/waitlist logic as POST /join
+  if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
+    // Event is full — route to waitlist rather than over-accept
+    if (["full","waitlist"].includes((ev as any).state)) {
+      if (!(ev as any).waitlist_enabled) {
+        // Invite accepted but event is full with no waitlist — just record acceptance, no RSVP
+      } else {
+        const { data: alreadyWaitlisted } = await sc
+          .from("event_waitlist")
+          .select("position")
+          .eq("event_id", id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (!alreadyWaitlisted) {
+          const { data: maxPos } = await sc
             .from("event_waitlist")
             .select("position")
             .eq("event_id", id)
-            .eq("user_id", user.id)
+            .order("position", { ascending: false })
+            .limit(1)
             .maybeSingle();
-          if (!alreadyWaitlisted) {
-            const { data: maxPos } = await sc
-              .from("event_waitlist")
-              .select("position")
-              .eq("event_id", id)
-              .order("position", { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-            await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-            await sc.from("events").update({ waitlist_count: nextPos }).eq("id", id);
-          }
-          res.json({ ok: true, status: "waitlisted" }); return;
+          const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+          await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
+          await sc.from("events").update({ waitlist_count: nextPos }).eq("id", id);
         }
-      } else {
-        // Event is open — RSVP as going
-        await sc.from("event_rsvps").upsert(
-          { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
-          { onConflict: "event_id,user_id" },
-        );
-        await syncEventState(sc, id);
-        const going = await getGoingCount(sc, id);
-        await sc.from("events").update({ going_count: going }).eq("id", id);
+        res.json({ ok: true, status: "waitlisted" }); return;
       }
+    } else {
+      // Event is open — RSVP as going
+      await sc.from("event_rsvps").upsert(
+        { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
+        { onConflict: "event_id,user_id" },
+      );
+      await syncEventState(sc, id);
+      const going = await getGoingCount(sc, id);
+      await sc.from("events").update({ going_count: going }).eq("id", id);
+      await syncAttendee(sc, id, user.id, "going");
     }
   }
 
@@ -4386,6 +4423,7 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
   const going = await getGoingCount(sc, id);
   const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
   await sc.from("events").update({ going_count: going, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+  await syncAttendee(sc, id, userId, null);
 
   await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
 

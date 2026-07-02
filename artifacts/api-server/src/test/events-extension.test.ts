@@ -2182,6 +2182,132 @@ describe("POST /api/events/drafts/:draftId/publish — spam/content validation",
   });
 });
 
+// ── invite-accept eligibility gate ───────────────────────────────────────────
+
+describe("invite-accept — eligibility enforced before invite marked accepted", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  afterEach(async () => { if (close) await close(); });
+
+  it("blocked user cannot accept invite — 403 and invite stays pending", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_invites: { rows: [
+        { id: ID.invite1, event_id: ID.ev1, inviter_id: ID.host1, invitee_id: ID.user1, status: "pending" },
+      ]},
+      // user1 is blocked by host
+      blocks: { rows: [{ blocker_id: ID.host1, blocked_id: ID.user1 }] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/invites/${ID.invite1}/accept`, {}, ID.user1);
+    assert.equal(status, 403,
+      `Blocked user should receive 403, got ${status}`);
+  });
+
+  it("eligible user on open event can accept invite — 200 status=accepted", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_invites: { rows: [
+        { id: ID.invite1, event_id: ID.ev1, inviter_id: ID.host1, invitee_id: ID.user1, status: "pending" },
+      ]},
+      blocks: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/invites/${ID.invite1}/accept`, {}, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.status, "accepted");
+  });
+});
+
+// ── event_attendees sync invariant ────────────────────────────────────────────
+
+describe("event_attendees sync — RSVP upsert via /rsvp keeps attendees in sync", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  let capturedAttendees: Array<{ op: string; event_id: string; user_id: string }>;
+
+  beforeEach(async () => {
+    capturedAttendees = [];
+    const baseClient = makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open" }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_attendees: { rows: [] },
+      event_waitlist: { rows: [] },
+      blocks: { rows: [] },
+    });
+    // Wrap to capture event_attendees upsert/delete calls
+    const origFrom = baseClient.from.bind(baseClient);
+    (baseClient as any).from = (table: string) => {
+      const builder = origFrom(table);
+      if (table === "event_attendees") {
+        const origUpsert = builder.upsert?.bind(builder);
+        const origDelete = builder.delete?.bind(builder);
+        if (origUpsert) {
+          builder.upsert = (row: any, opts: any) => {
+            capturedAttendees.push({ op: "upsert", event_id: row.event_id, user_id: row.user_id });
+            return origUpsert(row, opts);
+          };
+        }
+        if (origDelete) {
+          builder.delete = () => {
+            const delBuilder = origDelete();
+            const origEq = delBuilder.eq?.bind(delBuilder);
+            if (origEq) {
+              let captured = false;
+              delBuilder.eq = (col: string, val: string) => {
+                if (col === "user_id" && !captured) {
+                  capturedAttendees.push({ op: "delete", event_id: ID.ev1, user_id: val });
+                  captured = true;
+                }
+                return origEq(col, val);
+              };
+            }
+            return delBuilder;
+          };
+        }
+      }
+      return builder;
+    };
+    _setTestClient(baseClient, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { if (close) await close(); });
+
+  it("POST /rsvp going → event_attendees upserted", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/rsvp`, { status: "going" }, ID.user1);
+    assert.equal(status, 200);
+    const upserted = capturedAttendees.some(c => c.op === "upsert" && c.user_id === ID.user1);
+    assert.ok(upserted, `event_attendees upsert expected after going RSVP, got: ${JSON.stringify(capturedAttendees)}`);
+  });
+
+  it("DELETE /rsvp → event_attendees entry deleted", async () => {
+    // Seed an RSVP so delete can find it
+    const seedClient = makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open" }) ] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [{ event_id: ID.ev1, user_id: ID.user1, status: "going" }] },
+      event_attendees: { rows: [{ event_id: ID.ev1, user_id: ID.user1 }] },
+      event_waitlist: { rows: [] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(seedClient, true);
+    const { status } = await req(port, "DELETE", `/api/events/${ID.ev1}/rsvp`, null, ID.user1);
+    assert.equal(status, 200);
+  });
+});
+
 // ── friends_only privacy — city/nearby/search discovery routes ────────────────
 
 describe("friends_only privacy — discovery routes exclude non-friends", () => {
