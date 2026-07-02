@@ -1,20 +1,21 @@
 /**
  * Events tab — /(tabs)/events
  *
- * Sections: Today, This Weekend, Near Me (GPS-gated), Following, Saved,
- * Your Drafts, Pending Invites banner.
- * Filter bar: date presets, Free only, Verified host, category chips.
+ * Sections: Today, Tomorrow, This Weekend, Near Me (GPS-gated), Following, Saved,
+ * Your Drafts, Pending Invites banner, category-based rows.
+ * Filter bar: date presets, city text input, radius chips, free/verified/capacity toggles,
+ * category chips.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, RefreshControl, FlatList, Alert,
+  StyleSheet, RefreshControl, FlatList, Alert, TextInput,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Plus, CalendarX, MapPin, Navigation, ChevronRight,
-  Bookmark, Users, FileEdit, Bell, Filter, Check,
+  Bookmark, Users, FileEdit, Bell, Filter, Check, X,
 } from 'lucide-react-native';
 import {
   listEvents, listFollowingEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
@@ -35,26 +36,21 @@ function todayRange(): { dateFrom: string; dateTo: string } {
   return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
 }
 
+function tomorrowRange(): { dateFrom: string; dateTo: string } {
+  const now = new Date();
+  const start = new Date(now); start.setDate(now.getDate() + 1); start.setHours(0, 0, 0, 0);
+  const end = new Date(start); end.setHours(23, 59, 59, 999);
+  return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
+}
+
 function weekendRange(): { dateFrom: string; dateTo: string } {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun,6=Sat
+  const day = now.getDay();
   const daysUntilSat = day === 6 ? 0 : (6 - day);
   const sat = new Date(now); sat.setDate(now.getDate() + daysUntilSat); sat.setHours(0, 0, 0, 0);
   const sun = new Date(sat); sun.setDate(sat.getDate() + 1); sun.setHours(23, 59, 59, 999);
   return { dateFrom: sat.toISOString(), dateTo: sun.toISOString() };
 }
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const CATEGORIES = ['All', 'Hiking', 'Food', 'Music', 'Art', 'Nightlife', 'Sports', 'Wellness', 'Travel'];
-
-type DatePreset = 'all' | 'today' | 'weekend' | 'next7';
-const DATE_PRESETS: { key: DatePreset; label: string }[] = [
-  { key: 'all',     label: 'Any time' },
-  { key: 'today',   label: 'Today' },
-  { key: 'weekend', label: 'Weekend' },
-  { key: 'next7',   label: 'Next 7 days' },
-];
 
 function next7Range(): { dateFrom: string; dateTo: string } {
   const now = new Date();
@@ -62,10 +58,34 @@ function next7Range(): { dateFrom: string; dateTo: string } {
   return { dateFrom: now.toISOString(), dateTo: end.toISOString() };
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const CATEGORIES = ['All', 'Hiking', 'Food', 'Music', 'Art', 'Nightlife', 'Sports', 'Wellness', 'Travel'];
+
+// Categories shown as dedicated discovery rows (when no date filter is active)
+const FEATURED_CATEGORIES = ['Hiking', 'Food', 'Music', 'Nightlife'];
+
+type DatePreset = 'all' | 'today' | 'tomorrow' | 'weekend' | 'next7';
+const DATE_PRESETS: { key: DatePreset; label: string }[] = [
+  { key: 'all',      label: 'Any time' },
+  { key: 'today',    label: 'Today' },
+  { key: 'tomorrow', label: 'Tomorrow' },
+  { key: 'weekend',  label: 'Weekend' },
+  { key: 'next7',    label: 'Next 7 days' },
+];
+
+const RADIUS_OPTIONS: { label: string; km: number }[] = [
+  { label: '5 km',  km: 5 },
+  { label: '25 km', km: 25 },
+  { label: '50 km', km: 50 },
+  { label: '100 km', km: 100 },
+];
+
 function datePresetToRange(preset: DatePreset): { dateFrom?: string; dateTo?: string } {
-  if (preset === 'today')   return todayRange();
-  if (preset === 'weekend') return weekendRange();
-  if (preset === 'next7')   return next7Range();
+  if (preset === 'today')    return todayRange();
+  if (preset === 'tomorrow') return tomorrowRange();
+  if (preset === 'weekend')  return weekendRange();
+  if (preset === 'next7')    return next7Range();
   return {};
 }
 
@@ -74,10 +94,11 @@ function formatDraftDate(iso: string): string {
 }
 
 const STEP_LABELS_MAP: Record<DatePreset, string> = {
-  all:     'Upcoming',
-  today:   'Today',
-  weekend: 'This Weekend',
-  next7:   'Next 7 Days',
+  all:      'Upcoming',
+  today:    'Today',
+  tomorrow: 'Tomorrow',
+  weekend:  'This Weekend',
+  next7:    'Next 7 Days',
 };
 
 export default function EventsTabScreen() {
@@ -88,31 +109,43 @@ export default function EventsTabScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // ── Discovery events ──────────────────────────────────────────────────────
-  const [todayEvents, setTodayEvents]       = useState<EventListItem[]>([]);
-  const [weekendEvents, setWeekendEvents]   = useState<EventListItem[]>([]);
-  const [nearMeEvents, setNearMeEvents]     = useState<EventListItem[]>([]);
+  const [todayEvents, setTodayEvents]         = useState<EventListItem[]>([]);
+  const [tomorrowEvents, setTomorrowEvents]   = useState<EventListItem[]>([]);
+  const [weekendEvents, setWeekendEvents]     = useState<EventListItem[]>([]);
+  const [nearMeEvents, setNearMeEvents]       = useState<EventListItem[]>([]);
   const [followingEvents, setFollowingEvents] = useState<EventListItem[]>([]);
-  const [savedEvents, setSavedEvents]       = useState<EventListItem[]>([]);
-  const [drafts, setDrafts]                 = useState<EventDraft[]>([]);
-  const [pendingInvites, setPendingInvites] = useState<EventInvite[]>([]);
-  const [loading, setLoading]               = useState(true);
-  const [error, setError]                   = useState<string | null>(null);
+  const [savedEvents, setSavedEvents]         = useState<EventListItem[]>([]);
+  const [drafts, setDrafts]                   = useState<EventDraft[]>([]);
+  const [pendingInvites, setPendingInvites]   = useState<EventInvite[]>([]);
+  const [categoryRows, setCategoryRows]       = useState<Record<string, EventListItem[]>>({});
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState<string | null>(null);
 
   // ── Filters ────────────────────────────────────────────────────────────────
-  const [showFilters, setShowFilters]     = useState(false);
-  const [category, setCategory]           = useState('All');
-  const [datePreset, setDatePreset]       = useState<DatePreset>('all');
-  const [freeOnly, setFreeOnly]           = useState(false);
+  const [showFilters, setShowFilters]         = useState(false);
+  const [category, setCategory]               = useState('All');
+  const [datePreset, setDatePreset]           = useState<DatePreset>('all');
+  const [cityInput, setCityInput]             = useState('');
+  const [cityFilter, setCityFilter]           = useState('');
+  const [radiusKm, setRadiusKm]               = useState(25);
+  const [freeOnly, setFreeOnly]               = useState(false);
   const [verifiedHostOnly, setVerifiedHostOnly] = useState(false);
+  const [capacityAvailable, setCapacityAvailable] = useState(false);
 
   // ── Near-me location request ───────────────────────────────────────────────
   const [nearMeRequested, setNearMeRequested] = useState(false);
-  const [nearMeLoading, setNearMeLoading] = useState(false);
+  const [nearMeLoading, setNearMeLoading]     = useState(false);
 
   // ── Optimistic save state ──────────────────────────────────────────────────
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
 
-  const activeFilters = (category !== 'All' ? 1 : 0) + (freeOnly ? 1 : 0) + (verifiedHostOnly ? 1 : 0) + (datePreset !== 'all' ? 1 : 0);
+  const activeFilters =
+    (category !== 'All' ? 1 : 0) +
+    (freeOnly ? 1 : 0) +
+    (verifiedHostOnly ? 1 : 0) +
+    (capacityAvailable ? 1 : 0) +
+    (datePreset !== 'all' ? 1 : 0) +
+    (cityFilter ? 1 : 0);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!configured || !isAuthed) { setLoading(false); return; }
@@ -122,13 +155,24 @@ export default function EventsTabScreen() {
 
     const cat = category !== 'All' ? category : undefined;
     const dateRange = datePresetToRange(datePreset);
-    // When a specific preset is active, use it for both sections; otherwise use today/weekend defaults
-    const todayParams  = datePreset !== 'all' ? dateRange : todayRange();
+    const city = cityFilter || undefined;
+    const sharedFilters = {
+      category: cat,
+      city,
+      free: freeOnly || undefined,
+      verifiedHostOnly: verifiedHostOnly || undefined,
+      capacityAvailable: capacityAvailable || undefined,
+    };
+
+    // When a specific preset is active, collapse into a single results list
+    const todayParams   = datePreset !== 'all' ? dateRange : todayRange();
+    const tomorrowParams = datePreset !== 'all' ? dateRange : tomorrowRange();
     const weekendParams = datePreset !== 'all' ? dateRange : weekendRange();
 
-    const [todayRes, weekendRes, followRes, savedRes, draftsRes, invitesRes] = await Promise.all([
-      listEvents({ ...todayParams,   category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
-      listEvents({ ...weekendParams, category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
+    const [todayRes, tomorrowRes, weekendRes, followRes, savedRes, draftsRes, invitesRes] = await Promise.all([
+      listEvents({ ...todayParams,   ...sharedFilters, limit: 10 }),
+      listEvents({ ...tomorrowParams, ...sharedFilters, limit: 10 }),
+      listEvents({ ...weekendParams, ...sharedFilters, limit: 10 }),
       listFollowingEvents({ limit: 10 }),
       getSavedEvents(1),
       getMyDrafts(),
@@ -136,6 +180,7 @@ export default function EventsTabScreen() {
     ]);
 
     if (todayRes.ok) setTodayEvents(todayRes.data?.events ?? []);
+    if (tomorrowRes.ok) setTomorrowEvents(tomorrowRes.data?.events ?? []);
     if (weekendRes.ok) setWeekendEvents(weekendRes.data?.events ?? []);
     if (followRes.ok) setFollowingEvents(followRes.data?.events ?? []);
     if (savedRes.ok) {
@@ -146,10 +191,24 @@ export default function EventsTabScreen() {
     if (draftsRes.ok) setDrafts(draftsRes.data?.drafts ?? []);
     if (invitesRes.ok) setPendingInvites((invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending'));
 
+    // Category discovery rows — only when no category filter and no date preset
+    if (datePreset === 'all' && category === 'All') {
+      const catResults = await Promise.all(
+        FEATURED_CATEGORIES.map((c) => listEvents({ category: c, free: freeOnly || undefined, city, limit: 8 })),
+      );
+      const rows: Record<string, EventListItem[]> = {};
+      FEATURED_CATEGORIES.forEach((c, i) => {
+        if (catResults[i].ok) rows[c] = catResults[i].data?.events ?? [];
+      });
+      setCategoryRows(rows);
+    } else {
+      setCategoryRows({});
+    }
+
     if (!todayRes.ok && !weekendRes.ok) setError('Failed to load events');
     setLoading(false);
     setRefreshing(false);
-  }, [configured, isAuthed, category, datePreset, freeOnly, verifiedHostOnly]);
+  }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -172,7 +231,7 @@ export default function EventsTabScreen() {
     const res = await listEvents({
       nearLat: locationState.coords.lat,
       nearLng: locationState.coords.lng,
-      nearRadiusKm: 25,
+      nearRadiusKm: radiusKm,
       limit: 15,
     });
     if (res.ok) setNearMeEvents(res.data?.events ?? []);
@@ -188,18 +247,28 @@ export default function EventsTabScreen() {
 
   // ── Save toggle ────────────────────────────────────────────────────────────
   async function handleSaveToggle(ev: EventListItem) {
-    const isSaved = savedIds.has(ev.id);
+    const wasSaved = savedIds.has(ev.id);
     setSavedIds((prev) => {
       const next = new Set(prev);
-      if (isSaved) next.delete(ev.id); else next.add(ev.id);
+      if (wasSaved) next.delete(ev.id); else next.add(ev.id);
       return next;
     });
-    if (isSaved) {
+    if (wasSaved) {
       await unsaveEvent(ev.id);
       setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
     } else {
       await saveEvent(ev.id);
     }
+  }
+
+  // ── City search submit ─────────────────────────────────────────────────────
+  function handleCitySubmit() {
+    setCityFilter(cityInput.trim());
+  }
+
+  function clearCityFilter() {
+    setCityInput('');
+    setCityFilter('');
   }
 
   function renderSection(
@@ -242,7 +311,11 @@ export default function EventsTabScreen() {
     );
   }
 
-  const hasContent = todayEvents.length > 0 || weekendEvents.length > 0 || nearMeEvents.length > 0 || followingEvents.length > 0;
+  const hasContent =
+    todayEvents.length > 0 || tomorrowEvents.length > 0 ||
+    weekendEvents.length > 0 || nearMeEvents.length > 0 ||
+    followingEvents.length > 0 ||
+    Object.values(categoryRows).some((r) => r.length > 0);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -290,6 +363,49 @@ export default function EventsTabScreen() {
             ))}
           </ScrollView>
 
+          {/* City text input */}
+          <View style={styles.cityRow}>
+            <MapPin size={14} color={color.mute} />
+            <TextInput
+              style={styles.cityInput}
+              placeholder="Filter by city (e.g. Paris)"
+              placeholderTextColor={color.faint}
+              value={cityInput}
+              onChangeText={setCityInput}
+              onSubmitEditing={handleCitySubmit}
+              returnKeyType="search"
+            />
+            {cityInput.length > 0 && (
+              <Pressable onPress={clearCityFilter} hitSlop={8}>
+                <X size={14} color={color.mute} />
+              </Pressable>
+            )}
+            {cityInput.length > 0 && cityInput !== cityFilter && (
+              <Pressable style={styles.citySearchBtn} onPress={handleCitySubmit}>
+                <Text style={styles.citySearchBtnText}>Search</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* Radius chips — shown when near-me has results or location is available */}
+          {(nearMeEvents.length > 0 || locationState.coords) && (
+            <ScrollView
+              horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              <Text style={styles.chipLabel}>Radius:</Text>
+              {RADIUS_OPTIONS.map((r) => (
+                <Pressable
+                  key={r.km}
+                  style={[styles.chip, radiusKm === r.km && styles.chipActive]}
+                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(); }}
+                >
+                  <Text style={[styles.chipText, radiusKm === r.km && styles.chipTextActive]}>{r.label}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+
           {/* Category chips */}
           <ScrollView
             horizontal showsHorizontalScrollIndicator={false}
@@ -322,10 +438,24 @@ export default function EventsTabScreen() {
               {verifiedHostOnly && <Check size={12} color={color.onInk} />}
               <Text style={[styles.toggleChipText, verifiedHostOnly && styles.toggleChipTextActive]}>Verified host</Text>
             </Pressable>
+            <Pressable
+              style={[styles.toggleChip, capacityAvailable && styles.toggleChipActive]}
+              onPress={() => setCapacityAvailable((v) => !v)}
+            >
+              {capacityAvailable && <Check size={12} color={color.onInk} />}
+              <Text style={[styles.toggleChipText, capacityAvailable && styles.toggleChipTextActive]}>Spots available</Text>
+            </Pressable>
             {activeFilters > 0 && (
               <Pressable
                 style={styles.clearFilters}
-                onPress={() => { setCategory('All'); setDatePreset('all'); setFreeOnly(false); setVerifiedHostOnly(false); }}
+                onPress={() => {
+                  setCategory('All');
+                  setDatePreset('all');
+                  setFreeOnly(false);
+                  setVerifiedHostOnly(false);
+                  setCapacityAvailable(false);
+                  clearCityFilter();
+                }}
               >
                 <Text style={styles.clearFiltersText}>Clear all</Text>
               </Pressable>
@@ -333,6 +463,17 @@ export default function EventsTabScreen() {
           </View>
         </View>
       )}
+
+      {/* Active city filter pill */}
+      {cityFilter ? (
+        <View style={styles.activeCityPill}>
+          <MapPin size={12} color={color.signal} />
+          <Text style={styles.activeCityText}>{cityFilter}</Text>
+          <Pressable onPress={clearCityFilter} hitSlop={8}>
+            <X size={12} color={color.signal} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Invites banner */}
       {pendingInvites.length > 0 && (
@@ -417,7 +558,14 @@ export default function EventsTabScreen() {
             todayEvents,
           )}
 
-          {/* This Weekend — only shown when preset is 'all' (not overriding) */}
+          {/* Tomorrow — only when preset is 'all' */}
+          {datePreset === 'all' && renderSection(
+            'Tomorrow',
+            <CalendarX size={15} color={color.mute} />,
+            tomorrowEvents,
+          )}
+
+          {/* This Weekend — only shown when preset is 'all' */}
           {datePreset === 'all' && renderSection(
             'This Weekend',
             <CalendarX size={15} color={color.mute} />,
@@ -469,6 +617,18 @@ export default function EventsTabScreen() {
             followingEvents,
           )}
 
+          {/* Category discovery rows — only when no category filter and no date preset */}
+          {datePreset === 'all' && category === 'All' && FEATURED_CATEGORIES.map((cat) => {
+            const items = categoryRows[cat] ?? [];
+            if (items.length === 0) return null;
+            return renderSection(
+              cat,
+              <CalendarX size={15} color={color.mute} />,
+              items,
+              () => { setCategory(cat); setShowFilters(true); },
+            );
+          })}
+
           {/* Saved */}
           {renderSection(
             'Saved',
@@ -479,7 +639,6 @@ export default function EventsTabScreen() {
           {/* Empty states */}
           {!loading && !hasContent && drafts.length === 0 && (
             error ? (
-              /* Backend error */
               <View style={styles.emptyState}>
                 <CalendarX size={44} color={color.faint} />
                 <Text style={styles.emptyTitle}>Couldn't load events</Text>
@@ -489,23 +648,20 @@ export default function EventsTabScreen() {
                 </Pressable>
               </View>
             ) : !isAuthed ? (
-              /* Not signed in */
               <View style={styles.emptyState}>
                 <CalendarX size={44} color={color.faint} />
                 <Text style={styles.emptyTitle}>Sign in to see events</Text>
                 <Text style={styles.emptySub}>Discover events from travellers around you.</Text>
               </View>
             ) : nearMeRequested && !locationState.coords ? (
-              /* Location denied */
               <View style={styles.emptyState}>
                 <MapPin size={44} color={color.faint} />
                 <Text style={styles.emptyTitle}>Location not available</Text>
                 <Text style={styles.emptySub}>
-                  Enable location in your device settings to find events near you, or browse by date.
+                  Enable location in your device settings to find events near you, or browse by city.
                 </Text>
               </View>
             ) : (
-              /* No events in any section */
               <View style={styles.emptyState}>
                 <CalendarX size={44} color={color.faint} />
                 <Text style={styles.emptyTitle}>No events yet</Text>
@@ -542,11 +698,21 @@ const styles = StyleSheet.create({
 
   filterDrawer:       { backgroundColor: color.paperRaised, borderBottomWidth: 1, borderBottomColor: color.haze, paddingVertical: space.sm, gap: 4 },
   chipRow:            { paddingHorizontal: space.lg, gap: space.sm, alignItems: 'center' },
+  chipLabel:          { ...t.small, color: color.mute, fontWeight: '600' },
   chip:               { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.haze },
   chipActive:         { backgroundColor: color.ink },
   chipText:           { ...t.small, color: color.mute, fontWeight: '600' },
   chipTextActive:     { color: color.onInk },
-  toggleRow:          { flexDirection: 'row', paddingHorizontal: space.lg, gap: space.sm, alignItems: 'center', paddingBottom: space.sm },
+
+  cityRow:            { flexDirection: 'row', alignItems: 'center', marginHorizontal: space.lg, marginVertical: 4, paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, gap: 8 },
+  cityInput:          { flex: 1, ...t.small, color: color.ink, padding: 0 },
+  citySearchBtn:      { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: color.signal, borderRadius: radius.pill },
+  citySearchBtnText:  { ...t.stamp, color: color.onInk, fontWeight: '700' },
+
+  activeCityPill:     { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginHorizontal: space.lg, marginTop: 6, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#EEF2FF', borderRadius: radius.pill, borderWidth: 1, borderColor: '#C7D2FE' },
+  activeCityText:     { ...t.stamp, color: color.signal, fontWeight: '600' },
+
+  toggleRow:          { flexDirection: 'row', paddingHorizontal: space.lg, gap: space.sm, alignItems: 'center', paddingBottom: space.sm, flexWrap: 'wrap' },
   toggleChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
   toggleChipActive:   { backgroundColor: color.signal, borderColor: color.signal },
   toggleChipText:     { ...t.small, color: color.mute, fontWeight: '600' },

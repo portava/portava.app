@@ -1,9 +1,23 @@
 /**
  * Event detail screen — /event/:id
  *
- * Shows cover photo, title, dates, location, RSVP button, attendee count/avatars,
- * waitlist position, host info, eligibility gates, safety notes, tags, save/share/report.
+ * Shows cover photo, title, dates, location map pin, RSVP button, attendee strip,
+ * waitlist position, host info, eligibility gates, safety notes, tags,
+ * chat / reminders / add-to-trip entry points, save/share/report.
  * Host/co-host: tap Settings icon for HostDashboardPanel.
+ *
+ * RSVP state machine (action bar):
+ *   cancelled/archived → static note
+ *   eligibility blocked → blocked row
+ *   rsvpClosed → "RSVPs closed" note
+ *   already RSVP'd → change RSVP dropdown + chat button
+ *   invite_only, no pending request → "Request to join"
+ *   invite_only, pending request → "Request sent" (disabled)
+ *   on waitlist with offer → Accept / Leave
+ *   on waitlist, no offer → Leave waitlist
+ *   event full + waitlist → Join waitlist
+ *   event full + no waitlist → "Full — no waitlist"
+ *   open/started → RSVP dropdown
  */
 import React, { useCallback, useState } from 'react';
 import {
@@ -16,7 +30,7 @@ import {
   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
   ChevronDown, MessageSquare, Shield, Star, Link, Settings,
   Bookmark, BookmarkCheck, Share2, MoreVertical, Flag,
-  Bell, Briefcase, Compass,
+  Bell, Briefcase, Compass, Map, Lock,
 } from 'lucide-react-native';
 import {
   getEvent,
@@ -65,6 +79,25 @@ function relDateTime(iso: string | null | undefined): string {
   }) + ' · ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+/** Open the event location in the platform's native maps app. */
+function openMap(locationName: string | null, lat: number | null, lng: number | null, city: string | null) {
+  if (lat != null && lng != null) {
+    const label = encodeURIComponent(locationName ?? 'Event location');
+    if (Platform.OS === 'ios') {
+      Linking.openURL(`maps:?q=${label}&ll=${lat},${lng}`).catch(() =>
+        Linking.openURL(`https://maps.apple.com/?q=${label}&ll=${lat},${lng}`).catch(() => {}),
+      );
+    } else {
+      Linking.openURL(`geo:${lat},${lng}?q=${label}`).catch(() =>
+        Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {}),
+      );
+    }
+  } else if (locationName) {
+    const q = encodeURIComponent(locationName + (city ? `, ${city}` : ''));
+    Linking.openURL(`https://maps.google.com/?q=${q}`).catch(() => {});
+  }
+}
+
 export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -77,6 +110,8 @@ export default function EventDetailScreen() {
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  // Track whether the viewer has a pending join request (invite_only events)
+  const [hasPendingRequest, setHasPendingRequest] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -105,7 +140,6 @@ export default function EventDetailScreen() {
     handleJoinChat: rsvpJoinChat,
   } = useEventRsvp(event, load, (updater) => setEvent((e) => e ? updater(e) : e));
 
-  // Wrap handleRsvp so we can also close the menu
   function handleRsvpWithMenu(status: EventRsvpStatus) {
     setShowRsvpMenu(false);
     handleRsvp(status);
@@ -113,6 +147,11 @@ export default function EventDetailScreen() {
 
   function handleJoinChat() {
     rsvpJoinChat((threadId) => router.push(`/messages/${threadId}` as any));
+  }
+
+  async function handleSendRequest() {
+    await handleRequestJoin();
+    setHasPendingRequest(true);
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -196,13 +235,8 @@ export default function EventDetailScreen() {
   const stateBadge = event ? (STATE_BADGE[event.state] ?? STATE_BADGE.open) : null;
 
   // ── Eligibility gate ───────────────────────────────────────────────────────
-  // Returns a gate explanation string if the viewer cannot join, null if they can.
-  // We check the explicit server flag first; if absent we fall back to showing
-  // the requirement labels so the user understands what the restrictions are
-  // and the action bar is still disabled for unqualified viewers.
   function getEligibilityBlock(): string | null {
     if (!event) return null;
-    // Server has told us explicitly this viewer is ineligible
     const viewerEligibility = (event as any).viewerEligibility;
     if (viewerEligibility?.eligible === false) {
       const reason = viewerEligibility.reason as string | undefined;
@@ -215,11 +249,12 @@ export default function EventDetailScreen() {
       }
       return parts.length ? parts.join(' · ') : 'You do not meet this event\'s requirements';
     }
-    // If the event has hard gates AND the server hasn't confirmed eligibility, show requirements
-    // but don't block — we surface the info in the requirements box only
     return null;
   }
   const eligibilityBlock = getEligibilityBlock();
+
+  // Does the event have a known location to show on map?
+  const hasMapLocation = !!(event?.locationLat || event?.locationLng || event?.locationName);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -230,7 +265,6 @@ export default function EventDetailScreen() {
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{event?.title ?? 'Event'}</Text>
         <View style={styles.headerRight}>
-          {/* Save */}
           {event && !isHost && (
             <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8}>
               {saveLoading
@@ -240,13 +274,11 @@ export default function EventDetailScreen() {
                   : <Bookmark size={20} color={color.mute} />}
             </Pressable>
           )}
-          {/* Share */}
           {event && (
             <Pressable style={styles.headerBtn} onPress={handleShare} hitSlop={8}>
               <Share2 size={20} color={color.mute} />
             </Pressable>
           )}
-          {/* Host dashboard */}
           {isHost ? (
             <Pressable style={styles.headerBtn} onPress={() => setShowDashboard(true)} hitSlop={8}>
               <Settings size={20} color={color.ink} />
@@ -308,12 +340,44 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Location */}
+            {/* Location row — tappable to open map */}
             {event.locationName && (
-              <View style={styles.metaRow}>
-                <MapPin size={14} color={color.mute} />
-                <Text style={styles.meta}>{event.locationName}{event.city ? `, ${event.city}` : ''}</Text>
-              </View>
+              <Pressable
+                style={styles.metaRow}
+                onPress={() => openMap(event.locationName, event.locationLat, event.locationLng, event.city)}
+              >
+                <MapPin size={14} color={color.signal} />
+                <Text style={[styles.meta, { color: color.signal }]}>
+                  {event.locationName}{event.city ? `, ${event.city}` : ''}
+                </Text>
+              </Pressable>
+            )}
+
+            {/* Map tile — native deep link with platform fallback */}
+            {hasMapLocation && (
+              <Pressable
+                style={styles.mapTile}
+                onPress={() => openMap(event.locationName, event.locationLat, event.locationLng, event.city)}
+                accessibilityRole="button"
+                accessibilityLabel="Open location in maps"
+              >
+                <View style={styles.mapTileInner}>
+                  <Map size={22} color={color.signal} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mapTileTitle}>
+                      {event.locationName ?? `${event.locationLat?.toFixed(4)}, ${event.locationLng?.toFixed(4)}`}
+                    </Text>
+                    {event.city && <Text style={styles.mapTileCity}>{event.city}</Text>}
+                  </View>
+                  <Compass size={16} color={color.mute} />
+                </View>
+                {!event.showExactLocation && !event.isHost && event.myRsvp !== 'going' && (
+                  <View style={styles.mapTilePrivate}>
+                    <Lock size={11} color={color.mute} />
+                    <Text style={styles.mapTilePrivateText}>Exact location shown after RSVP</Text>
+                  </View>
+                )}
+              </Pressable>
             )}
 
             {/* Capacity */}
@@ -336,7 +400,7 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Eligibility requirements box (always shown if present) */}
+            {/* Eligibility requirements box */}
             {(event.trustScoreMin || event.ageMin || event.ageMax || event.verifiedOnly || (event.priceType === 'external' && event.priceUrl)) && (
               <View style={styles.gateBox}>
                 <Text style={styles.gateBoxTitle}>Requirements</Text>
@@ -385,7 +449,7 @@ export default function EventDetailScreen() {
               </Pressable>
             )}
 
-            {/* Going avatars */}
+            {/* Attendee strip */}
             {event.goingAttendees.length > 0 && (
               <View style={styles.attendeeRow}>
                 {event.goingAttendees.slice(0, 5).map((a) => (
@@ -458,39 +522,52 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Entry points row: Chat · Add to trip · Explore location */}
-            {(event.chatEnabled || event.locationName) && (
-              <View style={styles.entryRow}>
-                {event.chatEnabled && (
-                  <Pressable style={styles.entryBtn} onPress={handleJoinChat}>
-                    <MessageSquare size={16} color={color.signal} />
-                    <Text style={styles.entryBtnText}>Event chat</Text>
-                  </Pressable>
-                )}
+            {/* Entry points row: Chat · Reminders · Add to trip · Map */}
+            <View style={styles.entryRow}>
+              {event.chatEnabled && (
+                <Pressable style={styles.entryBtn} onPress={handleJoinChat}>
+                  <MessageSquare size={16} color={color.signal} />
+                  <Text style={styles.entryBtnText}>Event chat</Text>
+                </Pressable>
+              )}
+              {/* Reminders — navigates to reminders screen for this event */}
+              <Pressable
+                style={styles.entryBtn}
+                onPress={() => router.push({ pathname: '/event/reminders', params: { eventId: event.id } } as any)}
+              >
+                <Bell size={16} color={color.signal} />
+                <Text style={styles.entryBtnText}>Reminders</Text>
+              </Pressable>
+              {/* Add to trip */}
+              <Pressable
+                style={styles.entryBtn}
+                onPress={() => router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)}
+              >
+                <Briefcase size={16} color={color.signal} />
+                <Text style={styles.entryBtnText}>Add to trip</Text>
+              </Pressable>
+              {/* Map — open native maps */}
+              {hasMapLocation && (
                 <Pressable
                   style={styles.entryBtn}
-                  onPress={() =>
-                    router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)
-                  }
+                  onPress={() => openMap(event.locationName, event.locationLat, event.locationLng, event.city)}
                 >
-                  <Briefcase size={16} color={color.signal} />
-                  <Text style={styles.entryBtnText}>Add to trip</Text>
+                  <Compass size={16} color={color.signal} />
+                  <Text style={styles.entryBtnText}>Directions</Text>
                 </Pressable>
-                {event.locationName && (
-                  <Pressable
-                    style={styles.entryBtn}
-                    onPress={() => {
-                      const q = encodeURIComponent(
-                        event.locationName + (event.city ? `, ${event.city}` : ''),
-                      );
-                      Linking.openURL(`https://maps.google.com/?q=${q}`).catch(() => {});
-                    }}
-                  >
-                    <Compass size={16} color={color.signal} />
-                    <Text style={styles.entryBtnText}>Map</Text>
-                  </Pressable>
-                )}
-              </View>
+              )}
+            </View>
+
+            {/* Comments / event updates — visible to attendees and host */}
+            {event.chatEnabled && (event.myRsvp === 'going' || event.myRsvp === 'maybe' || isHost) && (
+              <Pressable
+                style={styles.commentsRow}
+                onPress={() => router.push({ pathname: '/event/comments', params: { eventId: event.id } } as any)}
+              >
+                <MessageSquare size={15} color={color.mute} />
+                <Text style={styles.commentsText}>View event updates & comments</Text>
+                <ChevronDown size={13} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
+              </Pressable>
             )}
 
             {/* Report link */}
@@ -518,16 +595,23 @@ export default function EventDetailScreen() {
       {event && !isBanned && !loading && (
         <View style={[styles.actionBar, { paddingBottom: insets.bottom + space.md }]}>
           {event.state === 'cancelled' || event.state === 'archived' ? (
+            /* ① Cancelled / archived */
             <View style={styles.cancelledNote}>
               <Text style={styles.cancelledText}>This event was {event.state}</Text>
             </View>
           ) : eligibilityBlock ? (
-            /* Eligibility gate — RSVP button disabled with explanation */
+            /* ② Eligibility gate */
             <View style={styles.blockedRow}>
               <Shield size={15} color="#B45309" />
               <Text style={styles.blockedText} numberOfLines={2}>{eligibilityBlock}</Text>
             </View>
+          ) : event.rsvpClosed && !event.myRsvp ? (
+            /* ③ RSVPs closed — already RSVP'd viewers still see their status above */
+            <View style={styles.cancelledNote}>
+              <Text style={styles.cancelledText}>RSVPs are closed for this event</Text>
+            </View>
           ) : event.myRsvp ? (
+            /* ④ Already RSVP'd — show current status + change dropdown */
             <View style={styles.rsvpRow}>
               <Pressable
                 style={styles.rsvpCurrentBtn}
@@ -546,11 +630,21 @@ export default function EventDetailScreen() {
                 </Pressable>
               )}
             </View>
+          ) : event.visibility === 'invite_only' && hasPendingRequest ? (
+            /* ⑤ Invite-only — request sent, waiting */
+            <View style={styles.requestSentRow}>
+              <Check size={15} color="#059669" />
+              <Text style={styles.requestSentText}>Request sent — waiting for host approval</Text>
+            </View>
           ) : event.visibility === 'invite_only' ? (
-            <Pressable style={styles.rsvpBtn} onPress={() => handleRequestJoin()} disabled={rsvpLoading}>
-              <Text style={styles.rsvpBtnText}>Request to join</Text>
+            /* ⑥ Invite-only — no request yet */
+            <Pressable style={styles.rsvpBtn} onPress={handleSendRequest} disabled={rsvpLoading}>
+              {rsvpLoading
+                ? <ActivityIndicator color={color.onInk} />
+                : <Text style={styles.rsvpBtnText}>Request to join</Text>}
             </Pressable>
           ) : event.myWaitlistPosition != null && event.myWaitlistOfferExpiresAt ? (
+            /* ⑦ Waitlist offer active */
             <View style={styles.offerRow}>
               <Pressable style={styles.rsvpBtn} onPress={handleAcceptOffer} disabled={rsvpLoading}>
                 {rsvpLoading
@@ -562,18 +656,24 @@ export default function EventDetailScreen() {
               </Pressable>
             </View>
           ) : event.myWaitlistPosition != null ? (
+            /* ⑧ On waitlist, no offer */
             <Pressable style={styles.leaveWaitlistBtn} onPress={handleLeaveWaitlist} disabled={rsvpLoading}>
               <Text style={styles.leaveWaitlistText}>Leave waitlist</Text>
             </Pressable>
           ) : ['full', 'waitlist'].includes(event.state) && event.waitlistEnabled ? (
+            /* ⑨ Full + waitlist */
             <Pressable style={styles.waitlistBtn} onPress={handleJoinWaitlist} disabled={rsvpLoading}>
-              <Text style={styles.waitlistBtnText}>Join waitlist</Text>
+              {rsvpLoading
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.waitlistBtnText}>Join waitlist</Text>}
             </Pressable>
           ) : ['full', 'waitlist'].includes(event.state) && !event.waitlistEnabled ? (
+            /* ⑩ Full, no waitlist */
             <View style={styles.cancelledNote}>
               <Text style={styles.cancelledText}>This event is full — no waitlist available</Text>
             </View>
-          ) : ['open', 'started', 'full', 'waitlist'].includes(event.state) ? (
+          ) : ['open', 'started'].includes(event.state) ? (
+            /* ⑪ Open — RSVP picker */
             <Pressable
               style={styles.rsvpBtn}
               onPress={() => setShowRsvpMenu((v) => !v)}
@@ -605,7 +705,7 @@ export default function EventDetailScreen() {
             ))}
             {event.myRsvp && (
               <Pressable style={styles.rsvpMenuLeave} onPress={() => { setShowRsvpMenu(false); handleLeave(); }}>
-                <Text style={styles.rsvpMenuLeaveText}>Leave event</Text>
+                <Text style={styles.rsvpMenuLeaveText}>Remove RSVP</Text>
               </Pressable>
             )}
           </View>
@@ -643,6 +743,14 @@ const styles = StyleSheet.create({
   title:              { ...t.title, color: color.ink, fontWeight: '800', fontSize: 22 },
   metaRow:            { flexDirection: 'row', alignItems: 'center', gap: 6 },
   meta:               { ...t.body, color: color.mute },
+
+  mapTile:            { borderRadius: radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
+  mapTileInner:       { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
+  mapTileTitle:       { ...t.body, color: color.ink, fontWeight: '600' },
+  mapTileCity:        { ...t.small, color: color.mute, marginTop: 1 },
+  mapTilePrivate:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingBottom: space.sm },
+  mapTilePrivateText: { ...t.stamp, color: color.mute },
+
   eligibilityBlock:   { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#FEF3C7', borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: '#F59E0B' },
   eligibilityTitle:   { ...t.body, color: '#92400E', fontWeight: '700' },
   eligibilityDesc:    { ...t.small, color: '#92400E', marginTop: 2 },
@@ -672,6 +780,13 @@ const styles = StyleSheet.create({
   reportLink:         { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center', paddingVertical: space.sm },
   reportLinkText:     { ...t.small, color: color.faint },
 
+  entryRow:           { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
+  entryBtn:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paperRaised, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
+  entryBtnText:       { ...t.small, color: color.signal, fontWeight: '600' },
+
+  commentsRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, padding: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze },
+  commentsText:       { ...t.body, color: color.mute, flex: 1 },
+
   actionBar:          { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: color.paperRaised, borderTopWidth: 1, borderTopColor: color.haze, padding: space.lg, ...shadow.card },
   blockedRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF3C7', borderRadius: radius.md, padding: space.md },
   blockedText:        { ...t.small, color: '#92400E', flex: 1, fontWeight: '600' },
@@ -688,6 +803,8 @@ const styles = StyleSheet.create({
   leaveWaitlistText:  { ...t.body, color: color.mute, fontWeight: '600' },
   cancelledNote:      { flex: 1, alignItems: 'center', paddingVertical: space.sm },
   cancelledText:      { ...t.body, color: color.mute },
+  requestSentRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F0FDF4', borderRadius: radius.md, padding: space.md },
+  requestSentText:    { ...t.small, color: '#16A34A', flex: 1, fontWeight: '600' },
   rsvpMenuOverlay:    { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 49 },
   rsvpMenu:           { position: 'absolute', left: space.lg, right: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, ...shadow.card, overflow: 'hidden', zIndex: 50 },
   rsvpMenuItem:       { padding: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
@@ -695,7 +812,4 @@ const styles = StyleSheet.create({
   rsvpMenuItemText:   { ...t.body, color: color.ink },
   rsvpMenuLeave:      { padding: space.md },
   rsvpMenuLeaveText:  { ...t.body, color: '#DC2626', fontWeight: '600' },
-  entryRow:           { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
-  entryBtn:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paperRaised, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
-  entryBtnText:       { ...t.small, color: color.signal, fontWeight: '600' },
 });

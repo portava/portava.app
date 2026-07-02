@@ -68,6 +68,8 @@ export interface EventSummary {
   category: string | null;
   city: string | null;
   country: string | null;
+  rsvpClosed: boolean;
+  showExactLocation: boolean;
   isHost: boolean;
   createdAt: string;
   updatedAt: string;
@@ -188,6 +190,7 @@ export interface ListEventsParams {
   nearRadiusKm?: number;
   free?: boolean;
   verifiedHostOnly?: boolean;
+  capacityAvailable?: boolean;
   page?: number;
   limit?: number;
 }
@@ -203,9 +206,10 @@ export async function listEvents(
   if (params.dateTo)          qs.set('dateTo', params.dateTo);
   if (params.nearLat != null) qs.set('nearLat', String(params.nearLat));
   if (params.nearLng != null) qs.set('nearLng', String(params.nearLng));
-  if (params.nearRadiusKm)    qs.set('nearRadiusKm', String(params.nearRadiusKm));
-  if (params.free)            qs.set('free', '1');
-  if (params.verifiedHostOnly) qs.set('verifiedHostOnly', '1');
+  if (params.nearRadiusKm)        qs.set('nearRadiusKm', String(params.nearRadiusKm));
+  if (params.free)                qs.set('free', '1');
+  if (params.verifiedHostOnly)    qs.set('verifiedHostOnly', '1');
+  if (params.capacityAvailable)   qs.set('capacityAvailable', '1');
   if (params.page)            qs.set('page', String(params.page));
   if (params.limit)           qs.set('limit', String(params.limit));
   const q = qs.toString();
