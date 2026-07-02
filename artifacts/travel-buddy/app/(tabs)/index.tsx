@@ -24,10 +24,10 @@ import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { Plane, Users, MapPin } from 'lucide-react-native';
+import { Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 
-const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
+const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Hidden Gems', 'Circle'];
 
 type FeedMode = 'forYou' | 'following';
 
@@ -200,13 +200,7 @@ export default function Pulse() {
       {/* When you're flexible */}
       <FlexibleStrip events={buckets.flexible} />
 
-      {/* Layover Mode entry point */}
-      <Pressable style={styles.layoverBanner} onPress={() => setLayoverSheetOpen(true)}>
-        <Plane size={16} color="#1565C0" />
-        <Text style={styles.layoverBannerText}>Got a layover? Get activities, safety tips & more →</Text>
-      </Pressable>
-
-      {/* Available Buddies in [City] — city-level buddy module shown below Layover banner */}
+      {/* Available Buddies in [City] — city-level buddy module shown below Fits strip */}
       {rentBuddyEnabled && (
         <View style={styles.buddyModule}>
           {/* Module header */}
@@ -417,8 +411,6 @@ const styles = StyleSheet.create({
   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
-  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
   /* Available Buddies in [City] module */
   buddyModule: { marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: '#E5393530', padding: space.md, gap: space.sm },
   buddyModuleHead: { flexDirection: 'row', alignItems: 'flex-start' },

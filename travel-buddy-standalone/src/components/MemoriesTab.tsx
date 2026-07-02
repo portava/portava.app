@@ -222,11 +222,14 @@ interface MemoriesTabProps {
   memories: PassportMemory[];
   loading?: boolean;
   onReload: () => void;
+  /** When true, renders as a collapsible section (for embedding inside another tab). */
+  collapsed?: boolean;
 }
 
-export function MemoriesTab({ memories, loading, onReload }: MemoriesTabProps) {
+export function MemoriesTab({ memories, loading, onReload, collapsed }: MemoriesTabProps) {
   const [localMemories, setLocalMemories] = useState<PassportMemory[]>(memories);
   const [createOpen, setCreateOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   React.useEffect(() => {
     setLocalMemories(memories);
@@ -242,10 +245,54 @@ export function MemoriesTab({ memories, loading, onReload }: MemoriesTabProps) {
     onReload();
   }, [onReload]);
 
-  if (loading) {
+  if (loading && !collapsed) {
     return (
       <View style={mt.center}>
         <ActivityIndicator color={color.signal} />
+      </View>
+    );
+  }
+
+  if (collapsed) {
+    return (
+      <View style={mt.collapsedWrap}>
+        <Pressable style={mt.collapsedHeader} onPress={() => setExpanded((v) => !v)}>
+          <Text style={mt.collapsedTitle}>Memories{localMemories.length > 0 ? ` (${localMemories.length})` : ''}</Text>
+          <Text style={mt.collapsedChevron}>{expanded ? '▲' : '▼'}</Text>
+        </Pressable>
+        {expanded && (
+          <>
+            {localMemories.length === 0 ? (
+              <View style={mt.collapsedEmpty}>
+                <Text style={mt.emptySub}>No memories yet. Memories are added when you check in or complete a Safe Return.</Text>
+                <Pressable style={mt.addBtn} onPress={() => setCreateOpen(true)}>
+                  <Plus size={14} color="#fff" />
+                  <Text style={mt.addBtnText}>Add memory</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={mt.list}>
+                {localMemories.slice(0, 5).map((m) => (
+                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} />
+                ))}
+                {localMemories.length > 5 && (
+                  <Pressable style={mt.addBtnLarge} onPress={() => setCreateOpen(true)}>
+                    <Text style={mt.addBtnLargeText}>+{localMemories.length - 5} more memories</Text>
+                  </Pressable>
+                )}
+                <Pressable style={mt.addBtn} onPress={() => setCreateOpen(true)}>
+                  <Plus size={14} color="#fff" />
+                  <Text style={mt.addBtnText}>Add memory</Text>
+                </Pressable>
+              </View>
+            )}
+            <CreateMemoryModal
+              visible={createOpen}
+              onClose={() => setCreateOpen(false)}
+              onCreated={handleCreated}
+            />
+          </>
+        )}
       </View>
     );
   }
@@ -357,4 +404,16 @@ const mt = StyleSheet.create({
   addBtnLarge: { marginTop: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingVertical: space.md, paddingHorizontal: space.xl },
   addBtnLargeText: { ...t.bodyStrong, color: color.ink },
   list: { paddingBottom: space.xxxl },
+  collapsedWrap: {
+    marginHorizontal: space.lg, marginTop: space.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    backgroundColor: color.paperRaised, overflow: 'hidden',
+  },
+  collapsedHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: space.md, paddingVertical: 12,
+  },
+  collapsedTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  collapsedChevron: { color: color.mute, fontSize: 11 },
+  collapsedEmpty: { padding: space.md, gap: space.md, borderTopWidth: 1, borderTopColor: color.haze },
 });

@@ -33,14 +33,12 @@ import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
 
-type Tab = 'postcards' | 'stamps' | 'memories' | 'trips' | 'map' | 'about';
+type Tab = 'postcards' | 'stamps' | 'trips' | 'map';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'postcards', label: 'Postcards' },
   { key: 'stamps', label: 'Stamps' },
-  { key: 'memories', label: 'Memories' },
   { key: 'trips', label: 'Trips' },
   { key: 'map', label: 'Map' },
-  { key: 'about', label: 'About' },
 ];
 
 export default function PassportScreen() {
@@ -381,23 +379,18 @@ function PassportContent({
         {/* Tab content */}
         <View style={styles.tabContent}>
           {tab === 'postcards' && (
-            <PostcardsTab
-              postcards={postcards}
-              isOwner
-              actions={actions}
-            />
+            <>
+              <PostcardsTab
+                postcards={postcards}
+                isOwner
+                actions={actions}
+              />
+              <MemoriesTab memories={memories} onReload={reload} collapsed />
+            </>
           )}
           {tab === 'stamps' && <StampsTab stamps={stamps} isOwner />}
-          {tab === 'memories' && <MemoriesTab memories={memories} onReload={reload} />}
           {tab === 'trips' && <TripsTab trips={trips} isOwner />}
           {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}
-          {tab === 'about' && (
-            <AboutTab
-              profile={profile}
-              isOwner
-              onOpenSettings={() => openSettings('preferences')}
-            />
-          )}
         </View>
       </ScrollView>
 
