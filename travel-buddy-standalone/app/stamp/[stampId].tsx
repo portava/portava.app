@@ -259,11 +259,7 @@ export default function StampDeepLinkScreen() {
   useEffect(() => { load(); }, [load]);
 
   function goBack() {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/(tabs)/passport' as any);
-    }
+    router.replace('/(tabs)/passport' as any);
   }
 
   return (

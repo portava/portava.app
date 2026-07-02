@@ -215,7 +215,8 @@ export async function getStampById(
     const json = await res.json();
     const stamp = mapStamp((json as any).stamp);
     const { data: { user } } = await supabase.auth.getUser();
-    const isOwner = user?.id != null && (json as any).stamp?.user_id === user.id;
+    // formatStamp() in the API server converts user_id → userId (camelCase)
+    const isOwner = user?.id != null && (json as any).stamp?.userId === user.id;
     return { ok: true, data: { stamp, isOwner } };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
