@@ -380,7 +380,7 @@ export default function DiscoveryHub() {
         {/* Tab content fills the full content area */}
         {activeTab === 'for_you' ? (
           <ForYouTab
-            key={`${destination}-${contextMode}-${communityRefreshKey}`}
+            key={`${destination}-${contextMode}-${communityRefreshKey}-${activeFilters.sortBy ?? ''}`}
             destination={destination}
             onAddToPlan={handleAddToPlan}
             onAddToRoute={handleAddToRoute}
