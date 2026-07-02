@@ -27,14 +27,57 @@ export function stampToLegacy(s: PassportStampNew): PassportStamp {
 }
 
 /**
+ * Resolve the web origin from env vars.
+ * Mirrors the logic in passportShareUtils.ts so both share features use the
+ * same base URL without creating a circular dependency.
+ */
+function resolveWebOrigin(): string {
+  const webOrigin = process.env.EXPO_PUBLIC_WEB_ORIGIN;
+  if (webOrigin) return webOrigin.replace(/\/$/, '');
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  try { return new URL(apiBase).origin; } catch { return ''; }
+}
+
+/**
+ * Return a { deepLink, webUrl } pair for a stamp share.
+ *
+ * Deep link:  travelbuddy://passport/@<username>?stamp=<id>  (with username)
+ *             travelbuddy://stamps/<id>                      (without username)
+ * Web URL:    <origin>/u/<username>                          (with username)
+ *             <origin>/passport                              (without username)
+ */
+export function makeStampShareLinks(
+  stamp: PassportStampNew,
+  username?: string | null,
+): { deepLink: string; webUrl: string } {
+  const base = resolveWebOrigin() || 'https://travelbuddy.app';
+  const id = encodeURIComponent(stamp.id);
+
+  if (username) {
+    const u = encodeURIComponent(username);
+    return {
+      deepLink: `travelbuddy://passport/@${u}?stamp=${id}`,
+      webUrl: `${base}/u/${u}`,
+    };
+  }
+  return {
+    deepLink: `travelbuddy://stamps/${id}`,
+    webUrl: `${base}/passport`,
+  };
+}
+
+/**
  * Build the human-readable share message for a stamp.
+ *
+ * Always includes deep link + web fallback URL so recipients can open the
+ * stamp whether or not they have the app installed.
  *
  * Examples:
  *   makeStampShareMessage(cityStamp, 'alice')
- *   → '@alice just earned the "Cebu" passport stamp in Cebu! 🌍\n\nCheck it out on Travel Buddy'
+ *   → '@alice just earned the "Cebu" passport stamp in Cebu! 🌍\n\nOpen in app: travelbuddy://...\nView online: https://...'
  *
  *   makeStampShareMessage(eventStamp, null)
- *   → 'I just earned the "Attended Jazz Night" passport stamp! 🌍\n\nCheck it out on Travel Buddy'
+ *   → 'I just earned the "Attended Jazz Night" passport stamp! 🌍\n\nOpen in app: travelbuddy://...\nView online: https://...'
  */
 export function makeStampShareMessage(stamp: PassportStampNew, username?: string | null): string {
   const name =
@@ -45,10 +88,12 @@ export function makeStampShareMessage(stamp: PassportStampNew, username?: string
     'a stamp';
   const loc = stamp.city ?? stamp.country ?? null;
   const who = username ? `@${username}` : 'I';
+  const { deepLink, webUrl } = makeStampShareLinks(stamp, username);
   return [
     `${who} just earned the "${name}" passport stamp${loc ? ` in ${loc}` : ''}! 🌍`,
     '',
-    'Check it out on Travel Buddy',
+    `Open in app: ${deepLink}`,
+    `View online: ${webUrl}`,
   ].join('\n');
 }
 

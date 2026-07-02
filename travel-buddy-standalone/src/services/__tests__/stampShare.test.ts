@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { stampToLegacy, makeStampShareMessage, toFileUri } from '../stampShareUtils.ts';
+import { stampToLegacy, makeStampShareMessage, makeStampShareLinks, toFileUri } from '../stampShareUtils.ts';
 import type { PassportStampNew } from '../passportStamps.ts';
 
 // ── Minimal stub factory ────────────────────────────────────────────────────
@@ -120,9 +120,9 @@ describe('makeStampShareMessage', () => {
   });
 
   it('omits city text when city and country are both null', () => {
-    const msg = makeStampShareMessage(makeStamp({ city: null, country: null, titleOverride: null, definition: null }), null);
-    assert.doesNotMatch(msg, /in null/);
-    assert.doesNotMatch(msg, / in /);
+    const firstLine = makeStampShareMessage(makeStamp({ city: null, country: null, titleOverride: null, definition: null }), null).split('\n')[0];
+    assert.doesNotMatch(firstLine, /in null/);
+    assert.doesNotMatch(firstLine, / in /);
   });
 
   it('falls back to country in location when city is null', () => {
@@ -139,9 +139,67 @@ describe('makeStampShareMessage', () => {
     assert.match(msg, /"Island Hopper"/);
   });
 
-  it('ends with Travel Buddy call-to-action', () => {
+  it('includes a View online URL', () => {
     const msg = makeStampShareMessage(makeStamp(), 'bob');
-    assert.match(msg, /Travel Buddy/);
+    assert.match(msg, /View online: https?:\/\//);
+  });
+});
+
+// ── makeStampShareLinks ────────────────────────────────────────────────────
+describe('makeStampShareLinks', () => {
+  it('deep link includes username when present', () => {
+    const { deepLink } = makeStampShareLinks(makeStamp({ id: 'abc' }), 'alice');
+    assert.match(deepLink, /travelbuddy:\/\/passport\/@alice/);
+    assert.match(deepLink, /stamp=abc/);
+  });
+
+  it('deep link uses stamps/ path when no username', () => {
+    const { deepLink } = makeStampShareLinks(makeStamp({ id: 'abc' }), null);
+    assert.match(deepLink, /travelbuddy:\/\/stamps\/abc/);
+  });
+
+  it('webUrl includes username in path when present', () => {
+    const { webUrl } = makeStampShareLinks(makeStamp(), 'alice');
+    assert.match(webUrl, /\/u\/alice/);
+  });
+
+  it('webUrl falls back to /passport when no username', () => {
+    const { webUrl } = makeStampShareLinks(makeStamp(), null);
+    assert.match(webUrl, /\/passport/);
+  });
+
+  it('falls back to travelbuddy.app domain when no env vars set', () => {
+    const saved = process.env.EXPO_PUBLIC_WEB_ORIGIN;
+    delete process.env.EXPO_PUBLIC_WEB_ORIGIN;
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    const { webUrl } = makeStampShareLinks(makeStamp(), 'bob');
+    assert.match(webUrl, /travelbuddy\.app/);
+    process.env.EXPO_PUBLIC_WEB_ORIGIN = saved;
+  });
+
+  it('URL-encodes stamp id and username', () => {
+    const { deepLink } = makeStampShareLinks(makeStamp({ id: 'id with spaces' }), 'user name');
+    assert.doesNotMatch(deepLink, / /);
+    assert.match(deepLink, /%20/);
+  });
+});
+
+// ── makeStampShareMessage — URL presence ───────────────────────────────────
+describe('makeStampShareMessage — URLs', () => {
+  it('includes "Open in app:" deep link', () => {
+    const msg = makeStampShareMessage(makeStamp(), 'alice');
+    assert.match(msg, /Open in app: travelbuddy:\/\//);
+  });
+
+  it('includes "View online:" web URL', () => {
+    const msg = makeStampShareMessage(makeStamp(), 'alice');
+    assert.match(msg, /View online: /);
+  });
+
+  it('message has both links even without a username', () => {
+    const msg = makeStampShareMessage(makeStamp(), null);
+    assert.match(msg, /Open in app:/);
+    assert.match(msg, /View online:/);
   });
 });
 

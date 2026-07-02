@@ -3,16 +3,17 @@
  * Owner sees visibility controls (Public / Friends only / Private)
  * and a display_on_passport toggle. Non-owner view is read-only.
  */
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Modal, View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator,
 } from 'react-native';
-import { X, Share2 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import { X, Share2, Link } from 'lucide-react-native';
 import { StampArtwork } from '../StampArtwork';
 import { StampShareCard } from '../StampShareCard';
 import { useStampShare } from '../../hooks/useStampShare';
 import { updateStampVisibility, toggleDisplayOnPassport } from '../../services/stamps';
-import { stampToLegacy } from '../../services/stampShareUtils';
+import { stampToLegacy, makeStampShareLinks } from '../../services/stampShareUtils';
 import type { NewStampVisibility } from '../../services/stamps';
 import type { PassportStampNew } from '../../services/passportStamps';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
@@ -58,6 +59,15 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
   const [visUpdating, setVisUpdating] = useState(false);
   const [displayUpdating, setDisplayUpdating] = useState(false);
   const { cardRef, share, sharing } = useStampShare(stamp, username ?? null);
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = useCallback(async () => {
+    if (!stamp) return;
+    const { webUrl } = makeStampShareLinks(stamp, username);
+    await Clipboard.setStringAsync(webUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [stamp, username]);
 
   if (!stamp) return null;
 
@@ -204,22 +214,34 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
               </>
             )}
 
-            {/* Share button (public stamps only) */}
+            {/* Share / copy-link row (public stamps only) */}
             {stamp.visibility === 'public' && !stamp.isRevoked && (
-              <Pressable
-                style={[styles.shareBtn, sharing && styles.shareBtnDisabled]}
-                onPress={share}
-                disabled={sharing}
-              >
-                {sharing ? (
-                  <ActivityIndicator size="small" color={color.ink} />
-                ) : (
-                  <Share2 size={16} color={color.ink} />
-                )}
-                <Text style={styles.shareBtnText}>
-                  {sharing ? 'Sharing…' : 'Share stamp'}
-                </Text>
-              </Pressable>
+              <View style={styles.shareRow}>
+                <Pressable
+                  style={[styles.shareBtn, sharing && styles.shareBtnDisabled, { flex: 1 }]}
+                  onPress={share}
+                  disabled={sharing}
+                >
+                  {sharing ? (
+                    <ActivityIndicator size="small" color={color.ink} />
+                  ) : (
+                    <Share2 size={16} color={color.ink} />
+                  )}
+                  <Text style={styles.shareBtnText}>
+                    {sharing ? 'Sharing…' : 'Share'}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.shareBtn, copied && styles.shareBtnCopied, { flex: 1 }]}
+                  onPress={copyLink}
+                >
+                  <Link size={16} color={copied ? '#16A34A' : color.ink} />
+                  <Text style={[styles.shareBtnText, copied && styles.shareBtnTextCopied]}>
+                    {copied ? 'Copied!' : 'Copy link'}
+                  </Text>
+                </Pressable>
+              </View>
             )}
           </ScrollView>
         </Pressable>
@@ -333,7 +355,10 @@ const styles = StyleSheet.create({
     backgroundColor: color.paper,
     marginTop: space.sm,
   },
-  shareBtnDisabled: { opacity: 0.6 },
-  shareBtnText: { ...t.bodyStrong, color: color.ink },
-  offscreen: { position: 'absolute', left: -2000, top: 0 },
+  shareRow:           { flexDirection: 'row', gap: space.sm, width: '100%', marginTop: space.sm },
+  shareBtnDisabled:   { opacity: 0.6 },
+  shareBtnCopied:     { borderColor: '#16A34A', backgroundColor: '#F0FDF4' },
+  shareBtnText:       { ...t.bodyStrong, color: color.ink },
+  shareBtnTextCopied: { color: '#16A34A' },
+  offscreen:          { position: 'absolute', left: -2000, top: 0 },
 });
