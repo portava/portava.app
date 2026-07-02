@@ -64,6 +64,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     event_activity_log:    tables.event_activity_log     ?? { rows: [] },
     event_reminders:       tables.event_reminders        ?? { rows: [] },
     event_drafts:          tables.event_drafts           ?? { rows: [] },
+    event_attendees:       tables.event_attendees        ?? { rows: [] },
     profiles:              tables.profiles               ?? { rows: [] },
     blocks:                tables.blocks                 ?? { rows: [] },
     user_friendships:      tables.user_friendships       ?? { rows: [] },
@@ -251,6 +252,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
 const ID = {
   ev1:    "00000000-0000-0000-0000-000000000001",
   ev2:    "00000000-0000-0000-0000-000000000002",
+  ev3:    "00000000-0000-0000-0000-000000000003",
   host1:  "00000000-0000-0000-0001-000000000001",
   user1:  "00000000-0000-0000-0002-000000000001",
   user2:  "00000000-0000-0000-0002-000000000002",
@@ -1582,5 +1584,170 @@ describe("POST /api/events/:id/block-user/:userId", () => {
   it("non-host gets 403", async () => {
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/block-user/${ID.user2}`, {}, ID.user1);
     assert.equal(status, 403);
+  });
+});
+
+// ── POST /join and POST /leave ─────────────────────────────────────────────────
+
+describe("POST /api/events/:id/join and /leave", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+        makeEvent({ id: ID.ev2, host_id: ID.host1, state: "open", visibility: "invite_only", rsvp_closed: false }),
+        makeEvent({ id: ID.ev3, host_id: ID.host1, state: "open", rsvp_closed: true }),
+      ]},
+      event_roles: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, role: "host" },
+        { event_id: ID.ev2, user_id: ID.host1, role: "host" },
+        { event_id: ID.ev3, user_id: ID.host1, role: "host" },
+      ]},
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.user1, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("user can join a public event", async () => {
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}`, null, ID.user2);
+    // Only test the join endpoint, not the generic GET
+    const { status: joinStatus, body: joinBody } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user2);
+    assert.equal(joinStatus, 200);
+    assert.ok(joinBody.ok);
+  });
+
+  it("cannot join an invite-only event via /join", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev2}/join`, {}, ID.user2);
+    assert.equal(status, 403);
+  });
+
+  it("cannot join when rsvp_closed is true", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev3}/join`, {}, ID.user2);
+    assert.equal(status, 403);
+  });
+
+  it("user can leave an event they joined", async () => {
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/leave`, {}, ID.user1);
+    assert.equal(status, 200);
+    assert.ok(body.ok);
+  });
+
+  it("leave returns 404 when no RSVP exists", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/leave`, {}, ID.user2);
+    assert.equal(status, 404);
+  });
+});
+
+// ── POST /api/events/:id/comments ─────────────────────────────────────────────
+
+describe("POST /api/events/:id/comments", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", attendee_comments_enabled: true }),
+      ]},
+      event_roles: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, role: "host" },
+      ]},
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.user1, status: "going" },
+      ]},
+      event_updates: { rows: [] },
+      event_activity_log: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("host can post a comment", async () => {
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/comments`, { body: "Hello attendees!" }, ID.host1);
+    assert.equal(status, 201);
+    assert.ok(body.body === "Hello attendees!");
+  });
+
+  it("going attendee can post a comment", async () => {
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/comments`, { body: "Excited to attend!" }, ID.user1);
+    assert.equal(status, 201);
+    assert.ok(body.body === "Excited to attend!");
+  });
+
+  it("non-attendee gets 403 when posting comment", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/comments`, { body: "Let me in!" }, ID.user2);
+    assert.equal(status, 403);
+  });
+
+  it("rejects empty body", async () => {
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/comments`, { body: "" }, ID.host1);
+    assert.equal(status, 400);
+  });
+});
+
+// ── Private-field leakage — priceUrl and safetyNotes ─────────────────────────
+
+describe("Private-field leakage — priceUrl and safetyNotes", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({
+          id: ID.ev1,
+          host_id: ID.host1,
+          state: "open",
+          visibility: "public",
+          price_url: "https://eventbrite.com/e/123",
+          safety_notes: "Meet near the main entrance",
+          show_exact_location: true,
+        }),
+      ]},
+      event_roles: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, role: "host" },
+      ]},
+      event_rsvps: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("non-participant cannot see priceUrl in event response", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 200);
+    assert.strictEqual(body.priceUrl, null,
+      `Expected priceUrl to be null for non-participant, got: ${JSON.stringify(body.priceUrl)}`);
+  });
+
+  it("host always sees priceUrl", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.host1);
+    assert.equal(status, 200);
+    assert.strictEqual(body.priceUrl, "https://eventbrite.com/e/123");
+  });
+
+  it("non-host cannot see safetyNotes", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 200);
+    assert.strictEqual(body.safetyNotes, null,
+      `Expected safetyNotes to be null for non-host, got: ${JSON.stringify(body.safetyNotes)}`);
+  });
+
+  it("host always sees safetyNotes", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.host1);
+    assert.equal(status, 200);
+    assert.strictEqual(body.safetyNotes, "Meet near the main entrance");
   });
 });

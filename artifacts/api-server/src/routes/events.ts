@@ -88,7 +88,12 @@
  * POST   /api/events/:id/posts                    — create event post (host/cohost/attendee)
  * GET    /api/events/:id/media                    — list event media
  * POST   /api/events/:id/media                    — upload event media
- * GET    /api/events/:id/comments                 — alias: event updates for public
+ * GET    /api/events/:id/comments                 — list event updates (attendees)
+ * POST   /api/events/:id/comments                 — post comment (host/cohost/attendee)
+ *
+ * ── Convenience attendance shortcuts ─────────────────────────────────────────
+ * POST   /api/events/:id/join                     — shortcut: RSVP going (full gate checks)
+ * POST   /api/events/:id/leave                    — shortcut: cancel RSVP and remove attendee
  *
  * ── Safety / Moderation ─────────────────────────────────────────────────────
  * POST   /api/events/:id/report                   — report event
@@ -436,6 +441,22 @@ router.post("/events", async (req, res) => {
 
   if (b.ageMin != null && b.ageMax != null && b.ageMax < b.ageMin) {
     sendError(res, "invalid_payload", "ageMax must be >= ageMin"); return;
+  }
+
+  // Spam / content validation (only enforced when publishing immediately)
+  if (b.publishNow && b.title) {
+    const prohibitedErr = checkProhibitedContent(b.title, b.description);
+    if (prohibitedErr) { sendError(res, "invalid_payload", prohibitedErr); return; }
+
+    if (b.endsAt && b.startsAt && new Date(b.endsAt) <= new Date(b.startsAt)) {
+      sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
+    }
+
+    const ticketErr = checkTicketUrl((b as any).ticketUrl ?? (b as any).priceUrl);
+    if (ticketErr) { sendError(res, "invalid_payload", ticketErr); return; }
+
+    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (isDuplicate) { sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return; }
   }
 
   const initialState = b.publishNow ? "open" : "draft";
@@ -1576,6 +1597,92 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/events/:id/join ─────────────────────────────────────────────────
+// Convenience shortcut: RSVP going with full gate checks (capacity, age/trust,
+// visibility, block status, RSVP-closed, duplicate prevention).
+
+router.post("/events/:id/join", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Check event state
+  const evData = ev as any;
+  if (["draft","cancelled","archived"].includes(evData.state)) {
+    sendError(res, "not_found", "Event not available"); return;
+  }
+  if (evData.rsvp_closed) { sendError(res, "forbidden", "RSVPs are closed for this event"); return; }
+  if (evData.visibility === "invite_only") {
+    sendError(res, "forbidden", "This event requires an invitation to join"); return;
+  }
+
+  const result = await checkEventEligibility(sc, evData, user.id);
+  if (!result.ok) { sendError(res, result.errorCode as any, result.message ?? "Cannot join"); return; }
+
+  await sc.from("event_rsvps").upsert(
+    { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
+    { onConflict: "event_id,user_id" },
+  );
+
+  const going = await getGoingCount(sc, id);
+  await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncEventState(sc, id);
+  await sc.from("event_attendees")
+    .upsert({ event_id: id, user_id: user.id }, { onConflict: "event_id,user_id" })
+    .then(undefined, () => {});
+  await logEventActivity(sc, id, user.id, "joined", {});
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/leave ────────────────────────────────────────────────
+// Convenience shortcut: cancel going RSVP and remove from attendees list.
+
+router.post("/events/:id/leave", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc
+    .from("event_rsvps")
+    .select("status")
+    .eq("event_id", id).eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!existing) { sendError(res, "not_found", "No active RSVP found"); return; }
+
+  await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", user.id);
+  await sc.from("event_attendees").delete().eq("event_id", id).eq("user_id", user.id);
+
+  const going = await getGoingCount(sc, id);
+  await sc.from("events").update({ going_count: going }).eq("id", id);
+  await syncEventState(sc, id);
+
+  if ((existing as any).status === "going") {
+    const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
+    if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+  }
+
+  await logEventActivity(sc, id, user.id, "left", {});
+
+  res.json({ ok: true });
+});
+
 // ── POST /api/events/:id/waitlist ─────────────────────────────────────────────
 
 router.post("/events/:id/waitlist", async (req, res) => {
@@ -2533,10 +2640,11 @@ router.get("/users/:userId/events", async (req, res) => {
 
 function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) {
   const isHost = ev.host_id === viewerId;
+  const isParticipant = isHost || (opts?.goingRsvp ?? false);
   // Exact coordinates are only visible to: the host, or any viewer who has a
   // going RSVP (opts.goingRsvp). When show_exact_location is false and the
   // viewer is neither host nor confirmed attendee, redact lat/lng.
-  const showCoords = isHost || opts?.goingRsvp || (ev.show_exact_location !== false);
+  const showCoords = isParticipant || (ev.show_exact_location !== false);
   return {
     id:                  ev.id,
     hostId:              ev.host_id,
@@ -2558,8 +2666,11 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) 
     chatEnabled:         ev.chat_enabled ?? true,
     chatThreadId:        ev.chat_thread_id ?? null,
     waitlistEnabled:     ev.waitlist_enabled ?? true,
+    // priceType is always public (informs intent to attend).
+    // priceUrl and safetyNotes are private — only host/participants see them.
     priceType:           ev.price_type ?? null,
-    priceUrl:            ev.price_url ?? null,
+    priceUrl:            isParticipant ? (ev.price_url ?? null) : null,
+    safetyNotes:         isHost ? (ev.safety_notes ?? null) : null,
     rsvpOptions:         ev.rsvp_options ?? ["going","maybe","interested","cant_go"],
     goingCount:          ev.going_count ?? 0,
     waitlistCount:       ev.waitlist_count ?? 0,
@@ -2568,11 +2679,70 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) 
     country:             ev.country ?? null,
     showExactLocation:   ev.show_exact_location ?? false,
     rsvpClosed:          ev.rsvp_closed ?? false,
+    isRecurring:         ev.is_recurring ?? false,
     tags:                ev.tags ?? [],
     isHost,
     createdAt:           ev.created_at,
     updatedAt:           ev.updated_at,
   };
+}
+
+// ── Spam / prohibited-content validation ──────────────────────────────────────
+// Applied on both POST /events (publishNow=true) and POST /events/:id/publish.
+
+const PROHIBITED_PATTERNS = [
+  /\b(free\s*money|get\s*rich\s*quick|pyramid\s*scheme|ponzi)\b/i,
+  /\b(xxx|pornography|escort)\b/i,
+  /\b(drugs?\s+for\s+sale|buy\s+drugs?|sell\s+drugs?)\b/i,
+];
+
+const ALLOWED_TICKET_HOSTS = [
+  "eventbrite.com", "ticketmaster.com", "dice.fm", "ra.co",
+  "stubhub.com", "axs.com", "ticketweb.com", "universe.com",
+];
+
+function checkProhibitedContent(title: string, description?: string | null): string | null {
+  const text = `${title} ${description ?? ""}`;
+  for (const pat of PROHIBITED_PATTERNS) {
+    if (pat.test(text)) return "Content contains prohibited keywords";
+  }
+  return null;
+}
+
+function checkTicketUrl(url?: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    if (!ALLOWED_TICKET_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) {
+      return `Ticket URL host is not on the allowlist (${ALLOWED_TICKET_HOSTS.join(", ")})`;
+    }
+  } catch {
+    return "Ticket URL is not a valid URL";
+  }
+  return null;
+}
+
+async function checkDuplicateEvent(
+  sc: any,
+  hostId: string,
+  locationName: string | null | undefined,
+  startsAt: string | null | undefined,
+  excludeId?: string,
+): Promise<boolean> {
+  if (!locationName || !startsAt) return false;
+  const windowStart = new Date(new Date(startsAt).getTime() - 3 * 60 * 60 * 1000).toISOString();
+  const windowEnd   = new Date(new Date(startsAt).getTime() + 3 * 60 * 60 * 1000).toISOString();
+  let q = sc.from("events")
+    .select("id")
+    .eq("host_id", hostId)
+    .ilike("location_name", locationName.trim())
+    .gte("starts_at", windowStart)
+    .lte("starts_at", windowEnd)
+    .not("state", "in", '("cancelled","archived")');
+  if (excludeId) q = q.neq("id", excludeId);
+  const { data } = await q;
+  return Array.isArray(data) && data.length > 0;
 }
 
 async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
@@ -2844,6 +3014,25 @@ router.post("/events/:id/publish", async (req, res) => {
   if (!e.location_name?.trim()) { sendError(res, "invalid_payload", "locationName is required to publish"); return; }
   if (e.ends_at && new Date(e.ends_at) <= new Date(e.starts_at)) {
     sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
+  }
+
+  // Spam / prohibited-content validation on publish
+  const prohibitedErr = checkProhibitedContent(e.title, e.description);
+  if (prohibitedErr) {
+    await logEventActivity(sc, id, user.id, "publish_rejected_content", { reason: prohibitedErr });
+    sendError(res, "invalid_payload", prohibitedErr); return;
+  }
+
+  const ticketErr = checkTicketUrl(e.ticket_url ?? e.price_url);
+  if (ticketErr) {
+    await logEventActivity(sc, id, user.id, "publish_rejected_ticket_url", { reason: ticketErr });
+    sendError(res, "invalid_payload", ticketErr); return;
+  }
+
+  const isDuplicate = await checkDuplicateEvent(sc, user.id, e.location_name, e.starts_at, id);
+  if (isDuplicate) {
+    await logEventActivity(sc, id, user.id, "publish_rejected_duplicate", {});
+    sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return;
   }
 
   const { data: updated, error } = await sc.from("events")
@@ -3785,6 +3974,62 @@ router.get("/events/:id/comments", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get event comments"); sendError(res, "db_error", error.message); return; }
 
   res.json({ updates: updates ?? [], page, limit });
+});
+
+// ── POST /api/events/:id/comments ─────────────────────────────────────────────
+// Host, co-hosts, and going attendees can post comments (stored as event_updates).
+
+router.post("/events/:id/comments", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc
+    .from("events")
+    .select("host_id, state, attendee_comments_enabled")
+    .eq("id", id)
+    .maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Only host/cohosts or going attendees may post
+  const role = await getEventRole(sc, id, user.id);
+  const isHostOrCohost = role === "host" || role === "co_host";
+  if (!isHostOrCohost) {
+    if (!(ev as any).attendee_comments_enabled) {
+      sendError(res, "forbidden", "Comments are disabled for this event"); return;
+    }
+    const { data: rsvp } = await sc
+      .from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if (!rsvp || (rsvp as any).status !== "going") {
+      sendError(res, "forbidden", "Only going attendees can post comments"); return;
+    }
+  }
+
+  const parsed = z.object({
+    body:   z.string().min(1).max(1000),
+    pinned: z.boolean().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { data: comment, error } = await sc.from("event_updates").insert({
+    event_id:  id,
+    author_id: user.id,
+    body:      parsed.data.body,
+    pinned:    isHostOrCohost ? (parsed.data.pinned ?? false) : false,
+  }).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "post event comment"); sendError(res, "db_error", error.message); return; }
+
+  await logEventActivity(sc, id, user.id, "comment_posted", {});
+
+  res.status(201).json(comment);
 });
 
 // ── POST /api/events/:id/report ───────────────────────────────────────────────

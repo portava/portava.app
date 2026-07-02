@@ -51,7 +51,8 @@ export type ApiErrorCode =
   | "duplicate_report"
   | "appeal_already_active"
   | "invalid_state_transition"
-  | "collection_create_failed";
+  | "collection_create_failed"
+  | "duplicate_event";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -73,6 +74,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   appeal_already_active: 409,
   invalid_state_transition: 409,
   collection_create_failed: 503,
+  duplicate_event: 409,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {

@@ -3,12 +3,63 @@
 -- All statements are idempotent (IF NOT EXISTS / IF NOT EXISTS column).
 
 -- ── Extend events table ───────────────────────────────────────────────────────
-
+-- Privacy / safety
 ALTER TABLE events
   ADD COLUMN IF NOT EXISTS show_exact_location BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS rsvp_closed          BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS safety_notes         TEXT,
   ADD COLUMN IF NOT EXISTS tags                 TEXT[] NOT NULL DEFAULT '{}';
+
+-- Recurring event readiness (schema-only; scheduling engine is out of scope)
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS is_recurring         BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS recurring_config     JSONB;
+
+-- Payment / ticket readiness
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS ticket_url           TEXT;
+
+-- Cross-system link columns (wired in Task 3)
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS circle_id            UUID,
+  ADD COLUMN IF NOT EXISTS trip_id              UUID;
+
+-- ── event_attendees ───────────────────────────────────────────────────────────
+-- Confirmed attendees (users with going RSVP or approved join request).
+-- Created/maintained by the API server (service role). Provides a fast
+-- denormalised join-ready table for attendee-count and eligibility checks.
+
+CREATE TABLE IF NOT EXISTS event_attendees (
+  event_id    UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (event_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS event_attendees_user_idx  ON event_attendees(user_id);
+CREATE INDEX IF NOT EXISTS event_attendees_event_idx ON event_attendees(event_id);
+
+ALTER TABLE event_attendees ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_attendees_participant_read" ON event_attendees;
+  CREATE POLICY "event_attendees_participant_read" ON event_attendees
+    FOR SELECT USING (
+      user_id = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM events e
+        WHERE e.id = event_id
+          AND (e.host_id = auth.uid()
+               OR EXISTS (SELECT 1 FROM event_roles er
+                          WHERE er.event_id = e.id AND er.user_id = auth.uid()
+                            AND er.role IN ('host','co_host','moderator')))
+      )
+    );
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_attendees_service_all" ON event_attendees;
+  CREATE POLICY "event_attendees_service_all" ON event_attendees
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_saves ───────────────────────────────────────────────────────────────
 
@@ -47,9 +98,15 @@ CREATE INDEX IF NOT EXISTS event_invites_invitee_idx ON event_invites(invitee_id
 
 ALTER TABLE event_invites ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
-  DROP POLICY IF EXISTS "event_invites_invitee_read" ON event_invites;
-  CREATE POLICY "event_invites_invitee_read" ON event_invites
-    FOR SELECT USING (invitee_id = auth.uid() OR inviter_id = auth.uid());
+  DROP POLICY IF EXISTS "event_invites_participant_read" ON event_invites;
+  CREATE POLICY "event_invites_participant_read" ON event_invites
+    FOR SELECT USING (
+      invitee_id = auth.uid()
+      OR inviter_id = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid()
+      )
+    );
 EXCEPTION WHEN others THEN NULL; END $$;
 DO $$ BEGIN
   DROP POLICY IF EXISTS "event_invites_inviter_insert" ON event_invites;
@@ -57,8 +114,8 @@ DO $$ BEGIN
     FOR INSERT WITH CHECK (inviter_id = auth.uid());
 EXCEPTION WHEN others THEN NULL; END $$;
 DO $$ BEGIN
-  DROP POLICY IF EXISTS "event_invites_invitee_update" ON event_invites;
-  CREATE POLICY "event_invites_invitee_update" ON event_invites
+  DROP POLICY IF EXISTS "event_invites_participant_update" ON event_invites;
+  CREATE POLICY "event_invites_participant_update" ON event_invites
     FOR UPDATE USING (invitee_id = auth.uid() OR inviter_id = auth.uid());
 EXCEPTION WHEN others THEN NULL; END $$;
 
@@ -78,10 +135,33 @@ CREATE INDEX IF NOT EXISTS event_cohosts_event_idx ON event_cohosts(event_id);
 CREATE INDEX IF NOT EXISTS event_cohosts_user_idx  ON event_cohosts(user_id);
 
 ALTER TABLE event_cohosts ENABLE ROW LEVEL SECURITY;
+-- Cohosts are visible to: the cohost themselves, the host, and other cohosts/mods.
+-- Permissions JSONB is private to outsiders.
 DO $$ BEGIN
   DROP POLICY IF EXISTS "event_cohosts_read" ON event_cohosts;
   CREATE POLICY "event_cohosts_read" ON event_cohosts
-    FOR SELECT USING (true);
+    FOR SELECT USING (
+      user_id = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid()
+      )
+      OR EXISTS (
+        SELECT 1 FROM event_cohosts ec WHERE ec.event_id = event_cohosts.event_id
+          AND ec.user_id = auth.uid()
+      )
+    );
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_cohosts_host_write" ON event_cohosts;
+  CREATE POLICY "event_cohosts_host_write" ON event_cohosts
+    FOR ALL USING (
+      EXISTS (SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid())
+    );
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_cohosts_service_all" ON event_cohosts;
+  CREATE POLICY "event_cohosts_service_all" ON event_cohosts
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_posts ───────────────────────────────────────────────────────────────
@@ -100,15 +180,35 @@ CREATE TABLE IF NOT EXISTS event_posts (
 CREATE INDEX IF NOT EXISTS event_posts_event_idx ON event_posts(event_id, created_at DESC);
 
 ALTER TABLE event_posts ENABLE ROW LEVEL SECURITY;
+-- Posts are visible only to participants (host, cohosts, going/maybe attendees).
+-- Not public; prevents private event content leaking to outsiders.
 DO $$ BEGIN
-  DROP POLICY IF EXISTS "event_posts_read" ON event_posts;
-  CREATE POLICY "event_posts_read" ON event_posts
-    FOR SELECT USING (true);
+  DROP POLICY IF EXISTS "event_posts_participant_read" ON event_posts;
+  CREATE POLICY "event_posts_participant_read" ON event_posts
+    FOR SELECT USING (
+      author_id = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid()
+      )
+      OR EXISTS (
+        SELECT 1 FROM event_rsvps er WHERE er.event_id = event_posts.event_id
+          AND er.user_id = auth.uid() AND er.status IN ('going','maybe')
+      )
+      OR EXISTS (
+        SELECT 1 FROM event_cohosts ec WHERE ec.event_id = event_posts.event_id
+          AND ec.user_id = auth.uid()
+      )
+    );
 EXCEPTION WHEN others THEN NULL; END $$;
 DO $$ BEGIN
   DROP POLICY IF EXISTS "event_posts_author_write" ON event_posts;
   CREATE POLICY "event_posts_author_write" ON event_posts
     FOR ALL USING (author_id = auth.uid());
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_posts_service_all" ON event_posts;
+  CREATE POLICY "event_posts_service_all" ON event_posts
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_media ───────────────────────────────────────────────────────────────
@@ -127,15 +227,34 @@ CREATE TABLE IF NOT EXISTS event_media (
 CREATE INDEX IF NOT EXISTS event_media_event_idx ON event_media(event_id, created_at DESC);
 
 ALTER TABLE event_media ENABLE ROW LEVEL SECURITY;
+-- Media visible to participants only (same scope as event_posts).
 DO $$ BEGIN
-  DROP POLICY IF EXISTS "event_media_read" ON event_media;
-  CREATE POLICY "event_media_read" ON event_media
-    FOR SELECT USING (true);
+  DROP POLICY IF EXISTS "event_media_participant_read" ON event_media;
+  CREATE POLICY "event_media_participant_read" ON event_media
+    FOR SELECT USING (
+      uploader_id = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid()
+      )
+      OR EXISTS (
+        SELECT 1 FROM event_rsvps er WHERE er.event_id = event_media.event_id
+          AND er.user_id = auth.uid() AND er.status IN ('going','maybe')
+      )
+      OR EXISTS (
+        SELECT 1 FROM event_cohosts ec WHERE ec.event_id = event_media.event_id
+          AND ec.user_id = auth.uid()
+      )
+    );
 EXCEPTION WHEN others THEN NULL; END $$;
 DO $$ BEGIN
   DROP POLICY IF EXISTS "event_media_uploader_write" ON event_media;
   CREATE POLICY "event_media_uploader_write" ON event_media
     FOR ALL USING (uploader_id = auth.uid());
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_media_service_all" ON event_media;
+  CREATE POLICY "event_media_service_all" ON event_media
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_reports ─────────────────────────────────────────────────────────────
@@ -169,6 +288,11 @@ DO $$ BEGIN
   CREATE POLICY "event_reports_reporter_insert" ON event_reports
     FOR INSERT WITH CHECK (reporter_id = auth.uid());
 EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_reports_service_all" ON event_reports;
+  CREATE POLICY "event_reports_service_all" ON event_reports
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_activity_log ────────────────────────────────────────────────────────
 
@@ -199,8 +323,16 @@ DO $$ BEGIN
       )
     );
 EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_activity_service_all" ON event_activity_log;
+  CREATE POLICY "event_activity_service_all" ON event_activity_log
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_share_links ─────────────────────────────────────────────────────────
+-- Share tokens are sensitive — they grant join access. The list is restricted
+-- to the creator/host. The API server uses the service role for token lookups
+-- (preview endpoint), so no public RLS row is needed.
 
 CREATE TABLE IF NOT EXISTS event_share_links (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -220,12 +352,15 @@ ALTER TABLE event_share_links ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
   DROP POLICY IF EXISTS "event_share_links_creator_manage" ON event_share_links;
   CREATE POLICY "event_share_links_creator_manage" ON event_share_links
-    FOR ALL USING (creator_id = auth.uid());
+    FOR ALL USING (
+      creator_id = auth.uid()
+      OR EXISTS (SELECT 1 FROM events e WHERE e.id = event_id AND e.host_id = auth.uid())
+    );
 EXCEPTION WHEN others THEN NULL; END $$;
 DO $$ BEGIN
-  DROP POLICY IF EXISTS "event_share_links_public_read" ON event_share_links;
-  CREATE POLICY "event_share_links_public_read" ON event_share_links
-    FOR SELECT USING (true);
+  DROP POLICY IF EXISTS "event_share_links_service_all" ON event_share_links;
+  CREATE POLICY "event_share_links_service_all" ON event_share_links
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_reminders ───────────────────────────────────────────────────────────
@@ -250,6 +385,11 @@ DO $$ BEGIN
   CREATE POLICY "event_reminders_own" ON event_reminders
     FOR ALL USING (user_id = auth.uid());
 EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_reminders_service_all" ON event_reminders;
+  CREATE POLICY "event_reminders_service_all" ON event_reminders
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── event_drafts ──────────────────────────────────────────────────────────────
 
@@ -269,14 +409,20 @@ DO $$ BEGIN
   CREATE POLICY "event_drafts_own" ON event_drafts
     FOR ALL USING (host_id = auth.uid());
 EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "event_drafts_service_all" ON event_drafts;
+  CREATE POLICY "event_drafts_service_all" ON event_drafts
+    FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 -- ── Feature flag seeds ────────────────────────────────────────────────────────
 
 INSERT INTO feature_flags (flag, enabled, description)
 VALUES
-  ('events_invites_enabled',   true,  'Event invite system'),
-  ('events_cohosts_enabled',   true,  'Event co-host system'),
-  ('events_reports_enabled',   true,  'Event reporting'),
-  ('events_reminders_enabled', true,  'Event reminders'),
-  ('events_share_links_enabled', true, 'Event shareable links')
+  ('events_invites_enabled',     true,  'Event invite system'),
+  ('events_cohosts_enabled',     true,  'Event co-host system'),
+  ('events_reports_enabled',     true,  'Event reporting'),
+  ('events_reminders_enabled',   true,  'Event reminders'),
+  ('events_share_links_enabled', true,  'Event shareable links'),
+  ('events_join_leave_enabled',  true,  'Convenience join/leave shortcuts')
 ON CONFLICT (flag) DO NOTHING;
