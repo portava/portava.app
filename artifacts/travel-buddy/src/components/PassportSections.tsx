@@ -84,7 +84,7 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
 
 function PostcardMediaImage({ url }: { url: string }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return null;
+  if (failed) return <View style={[styles.pcMedia, { backgroundColor: '#E5E7EB' }]} />;
   return <Image source={{ uri: url }} style={styles.pcMedia} onError={() => setFailed(true)} />;
 }
 

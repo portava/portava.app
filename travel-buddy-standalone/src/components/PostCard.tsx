@@ -152,17 +152,21 @@ function StandardCard({ post }: { post: Post }) {
           <MoreVertical size={16} color={color.mute} />
         </Pressable>
       </View>
-      {hasMedia && !imgFailed && (
+      {hasMedia && (
         <View>
-          <Image
-            source={{ uri: post.media[0].url }}
-            style={[
-              styles.stdImage,
-              shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
-            ]}
-            onError={() => setImgFailed(true)}
-          />
-          {post.media[0]?.kind === 'video' && (
+          {!imgFailed ? (
+            <Image
+              source={{ uri: post.media[0].url }}
+              style={[
+                styles.stdImage,
+                shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
+              ]}
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <View style={[styles.stdImage, { backgroundColor: '#E5E7EB' }]} />
+          )}
+          {!imgFailed && post.media[0]?.kind === 'video' && (
             <View style={styles.playBadge}>
               <PlayCircle size={32} color="#FFFFFF" />
             </View>

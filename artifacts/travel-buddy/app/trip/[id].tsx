@@ -8,7 +8,7 @@ import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   CompassTripBrief, TripStamps, TripPostsSection,
-  TripCrewSection,
+  TripCrewSection, TripCircle,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
@@ -274,6 +274,17 @@ export default function TripDetail() {
 
         <SavedIdeas ideas={[]} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
+
+        {live && (
+          <TripCircle
+            cityCount={0}
+            inCity={[]}
+            suggested={[]}
+            currentUserId={userId}
+            tripId={trip.id}
+            city={trip.destinationCity ?? undefined}
+          />
+        )}
 
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
