@@ -51,6 +51,9 @@ function CircleUserRow({
         setInviteState('idle');
         Alert.alert('Could not send invite', res.message ?? 'Please try again.');
       }
+    } catch {
+      setInviteState('idle');
+      Alert.alert('Could not send invite', 'Network error. Please try again.');
     } finally {
       invitingRef.current = false;
     }
