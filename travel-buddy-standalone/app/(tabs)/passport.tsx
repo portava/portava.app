@@ -28,7 +28,6 @@ import { PassportSettingsSheet } from '../../src/components/PassportSettingsShee
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
 import { PassportShareCard } from '../../src/components/PassportShareCard';
-import { mockPassport } from '../../src/data/passport';
 import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -156,66 +155,31 @@ export default function PassportScreen() {
   }
 
   if (error || !profile) {
-    const mock = mockPassport;
-    const fallbackProfile: OwnProfile = {
-      id: mock.user.id, handle: mock.user.handle, name: mock.user.name,
-      displayName: mock.user.name, username: mock.user.handle,
-      bio: mock.user.bio ?? null, avatarUrl: mock.user.avatarUrl,
-      homeCity: mock.user.homeCity, homeCountry: mock.user.homeCountry,
-      currentCity: mock.user.currentCity ?? null, travelStyle: mock.user.travelStyle,
-      interests: mock.user.interests, verified: mock.user.verified,
-      verificationStatus: mock.user.verified ? 'verified' : 'unverified',
-      verifiedAt: null,
-      openToMeet: mock.user.openToMeet, isPrivate: mock.user.isPrivate,
-      passportVisibility: 'public', coverPhotoUrl: null,
-      usernameUpdatedAt: null, createdAt: '2026-01-01T00:00:00Z',
-      spokenLanguages: [], defaultLanguage: null, travelStyles: [],
-      travelPace: null, budgetStyle: null, travelGroupStyle: [],
-      lookingFor: [], comfortLevel: null, availabilityTags: [],
-      planningStyle: null, publicSocialLinks: {}, preferredLanguage: null,
-      dateOfBirth: null, dobVerified: false,
-    };
     return (
-      <View style={{ flex: 1 }}>
-        <PassportContent
-          profile={fallbackProfile}
-          postcards={[]}
-          stamps={mock.stamps}
-          memories={[]}
-          trips={[]}
-          tab={tab}
-          setTab={setTab}
-          menuOpen={menuOpen}
-          setMenuOpen={setMenuOpen}
-          settingsOpen={settingsOpen}
-          setSettingsOpen={setSettingsOpen}
-          settingsSection={settingsSection}
-          openSettings={openSettings}
-          actions={actions}
-          handleSaved={handleSaved}
-          handleEditProfile={handleEditProfile}
-          handleViewAsPublic={handleViewAsPublic}
-          reload={reload}
-          insets={insets}
-          hasHighlights={hasOwnHighlights}
-          allHighlightsViewed={allOwnHighlightsViewed}
-          onHighlightRingPress={handleOwnRingPress}
-          onNewHighlightPress={handleNewHighlightPress}
-          rentBuddyEnabled={rentBuddyEnabled}
-        />
-        <HighlightViewer
-          visible={highlightViewerOpen}
-          highlights={ownRingState?.highlights ?? []}
-          currentUserId={ownUserId ?? undefined}
-          onClose={() => setHighlightViewerOpen(false)}
-          onAddHighlight={handleAddHighlightFromViewer}
-          onDeleted={handleHighlightDeleted}
-        />
-        <HighlightComposer
-          visible={highlightComposerOpen}
-          onClose={() => setHighlightComposerOpen(false)}
-          onSuccess={handleHighlightSuccess}
-        />
+      <View style={[styles.center, { paddingTop: insets.top + 32, paddingHorizontal: space.xl, gap: space.lg }]}>
+        <Text style={{ ...t.heading, color: color.ink, textAlign: 'center' }}>
+          {error ? 'Could not load your passport' : 'Sign in to view your passport'}
+        </Text>
+        <Text style={{ ...t.body, color: color.mute, textAlign: 'center' }}>
+          {error
+            ? 'Check your connection and try again.'
+            : 'Your travel passport, stamps, and memories live here once you sign in.'}
+        </Text>
+        {error ? (
+          <Pressable
+            style={{ backgroundColor: color.signal, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.md }}
+            onPress={reload}
+          >
+            <Text style={{ ...t.bodyStrong, color: '#fff' }}>Retry</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            style={{ backgroundColor: color.signal, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.md }}
+            onPress={() => router.push('/sign-in')}
+          >
+            <Text style={{ ...t.bodyStrong, color: '#fff' }}>Sign in</Text>
+          </Pressable>
+        )}
       </View>
     );
   }

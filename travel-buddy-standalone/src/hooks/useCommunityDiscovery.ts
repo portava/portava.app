@@ -36,6 +36,7 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
           id:        item.submittedBy.id,
           name:      item.submittedBy.name,
           avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
+          handle:    item.submittedBy.handle ?? null,
         }
       : undefined,
     savedCount:   item.savedCount,
@@ -53,6 +54,7 @@ function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
           id:        item.submittedBy.id,
           name:      item.submittedBy.name,
           avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
+          handle:    item.submittedBy.handle ?? null,
         }
       : { name: 'Traveler', avatarUrl: 'https://i.pravatar.cc/120' },
     place:  item.name,

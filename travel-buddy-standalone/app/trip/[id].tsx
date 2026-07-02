@@ -157,7 +157,7 @@ export default function TripDetail() {
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
-        <TodayNextUp nextUp={mockNextUp} />
+        <TodayNextUp nextUp={live ? null : mockNextUp} />
 
         {/* ── Gap-day nudge ── */}
         {live && gapDays.length > 0 && trip.status !== 'planning' && (
@@ -203,10 +203,10 @@ export default function TripDetail() {
           <EventsNearTripSection tripId={trip.id} />
         ) : null}
 
-        <SavedIdeas ideas={trip.savedIdeas} tripId={trip.id} />
+        <SavedIdeas ideas={live ? [] : trip.savedIdeas} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
-        <TripPlans plans={tripPlans} />
-        <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />
+        {!live && <TripPlans plans={tripPlans} />}
+        {!live && <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} />}
 
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
@@ -221,18 +221,18 @@ export default function TripDetail() {
             tripId={trip.id}
             startDate={realTrip?.startDate ?? undefined}
             endDate={realTrip?.endDate ?? undefined}
-            groupSize={String((Array.isArray(tripCircle.inCity) ? tripCircle.inCity.length : tripCircle.inCity) + 1)}
+            groupSize={String(live ? 1 : (Array.isArray(tripCircle.inCity) ? tripCircle.inCity.length : tripCircle.inCity) + 1)}
           />
         )}
 
         <CompassTripBrief />
-        <TripStamps stamps={tripStamps} />
+        <TripStamps stamps={live ? [] : tripStamps} />
         <TripMapPlaceholder />
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} />
         ) : null}
-        <TripSafety />
-        <TripPostsSection posts={tripPosts} />
+        <TripSafety tripId={live ? trip.id : undefined} />
+        <TripPostsSection posts={live ? [] : tripPosts} />
         {live && trip.id ? (
           <TripMemorySection
             tripId={trip.id}

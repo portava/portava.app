@@ -29,7 +29,7 @@ export default function NewTrip() {
     setError(null);
     if (!title.trim()) { setError('Add a trip name.'); return; }
     if (!place) { setError('Add a destination.'); return; }
-    if (!live) { router.replace('/trip/t_1'); return; }
+    if (!live) { setError('Sign in to create a trip.'); return; }
     setBusy(true);
     try {
       const trip = await createTrip({

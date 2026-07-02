@@ -68,7 +68,7 @@ export interface CommunityPlaceItem {
   neighborhood: string | null;
   blurb: string | null;
   imageUrl: string | null;
-  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  submittedBy: { id: string; name: string; avatarUrl: string | null; handle: string | null } | null;
   savedCount: number;
   tag: string | null;
   note: string | null;

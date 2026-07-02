@@ -500,7 +500,7 @@ export default function EventDetailScreen() {
             {event.host && (
               <Pressable
                 style={styles.hostRow}
-                onPress={() => router.push(`/profile/${event.host!.id}` as any)}
+                onPress={event.host!.handle ? () => router.push(`/u/${encodeURIComponent(event.host!.handle!)}` as any) : undefined}
               >
                 <Avatar uri={event.host.avatarUrl ?? ''} size={36} />
                 <View>

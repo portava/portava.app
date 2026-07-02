@@ -1033,7 +1033,7 @@ router.get("/discovery/community", async (req, res) => {
         created_at,
         lat,
         lng,
-        profiles:submitted_by!left ( id, name, avatar_url )
+        profiles:submitted_by!left ( id, name, avatar_url, username )
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
@@ -1082,6 +1082,7 @@ router.get("/discovery/community", async (req, res) => {
               id:        profile.id as string,
               name:      (profile.name ?? "Traveler") as string,
               avatarUrl: (profile.avatar_url ?? null) as string | null,
+              handle:    (profile.username ?? null) as string | null,
             }
           : null,
         savedCount: (row.saved_count as number) ?? 0,

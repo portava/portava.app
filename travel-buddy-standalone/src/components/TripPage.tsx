@@ -68,7 +68,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
 
       <View style={hero.actions}>
         <Action icon={<CalendarPlus size={18} color={color.signal} />} label="Add Plan" onPress={() => router.push('/create')} />
-        <Action icon={<UserPlus size={18} color={color.ink} />} label="Invite Buddy" onPress={() => router.push('/circle')} />
+        <Action icon={<UserPlus size={18} color={color.ink} />} label="Invite Buddy" onPress={() => router.push(`/circle?tripId=${encodeURIComponent(trip.id)}` as any)} />
         <Action icon={<Sparkles size={18} color={color.signal} />} label="Ask Compass" onPress={() => router.push('/(tabs)/ai')} />
         <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push('/settings')} />
       </View>
@@ -631,21 +631,31 @@ export function TripMapPreview() {
 export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection';
 
 /* ── Safety / Check-In (compact stub) ── */
-export function TripSafety() {
+export function TripSafety({ tripId }: { tripId?: string }) {
   return (
     <View>
       <TravelSectionHeader title="Safety & Check-In" />
       <View style={sf.card}>
         <View style={sf.head}>
-          <View style={sf.icon}><ShieldCheck size={18} color={color.success} /></View>
+          <View style={sf.icon}><ShieldCheck size={18} color={color.deep} /></View>
           <View style={{ flex: 1 }}>
-            <Text style={sf.title}>All good!</Text>
-            <Text style={sf.sub}>You're checked in and sharing your trip with your Circle.</Text>
+            <Text style={sf.title}>Trip safety tools</Text>
+            <Text style={sf.sub}>Share your location and emergency contacts with your Circle while travelling.</Text>
           </View>
         </View>
         <View style={sf.btns}>
-          <Pressable style={sf.btn} onPress={() => Alert.alert('Coming Soon', 'Safe Return check-ins are coming in a future update.', [{ text: 'OK' }])}><Text style={sf.btnText}>Start Safe Return</Text></Pressable>
-          <Pressable style={sf.btn} onPress={() => Alert.alert('Coming Soon', 'Emergency Contacts management is coming in a future update.', [{ text: 'OK' }])}><Text style={sf.btnText}>Emergency Contacts</Text></Pressable>
+          <Pressable
+            style={sf.btn}
+            onPress={() => tripId ? router.push(`/safety-history` as any) : router.push('/settings' as any)}
+          >
+            <Text style={sf.btnText}>Safe Return</Text>
+          </Pressable>
+          <Pressable
+            style={sf.btn}
+            onPress={() => router.push('/settings' as any)}
+          >
+            <Text style={sf.btnText}>Emergency Contacts</Text>
+          </Pressable>
         </View>
         <View style={sf.noteRow}><Info size={11} color={color.mute} /><Text style={sf.note}>Privacy-first — you control what your Circle sees.</Text></View>
       </View>

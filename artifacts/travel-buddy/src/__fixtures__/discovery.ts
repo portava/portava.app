@@ -26,7 +26,7 @@ export interface DiscoveryItem {
   city: string;
   blurb: string;            // "why it's special" / short note
   imageUrl?: string;
-  submittedBy?: { name: string; avatarUrl: string; id?: string };
+  submittedBy?: { name: string; avatarUrl: string; id?: string; handle?: string | null };
   savedCount?: number;
   source: DiscoverySource;
   status: DiscoveryStatus;
@@ -105,7 +105,7 @@ export const neighborhoods: NeighborhoodVibe[] = [
 
 export interface TravelerPick {
   id: string;
-  user: { name: string; avatarUrl: string; id?: string };
+  user: { name: string; avatarUrl: string; id?: string; handle?: string | null };
   place: string;
   note: string;
   city: string;

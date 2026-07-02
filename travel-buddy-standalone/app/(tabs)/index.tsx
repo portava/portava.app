@@ -217,7 +217,7 @@ export default function Pulse() {
           <View style={styles.buddyModuleHead}>
             <View style={{ flex: 1 }}>
               <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity}</Text>
-              <Text style={styles.buddyModuleCount}>12 locals ready to help</Text>
+              <Text style={styles.buddyModuleCount}>Local buddies available</Text>
             </View>
             <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
               <Text style={styles.buddyModuleViewAll}>View all →</Text>
@@ -235,27 +235,14 @@ export default function Pulse() {
               </Pressable>
             ))}
           </ScrollView>
-          {/* 3 preview buddy cards */}
-          <View style={styles.buddyPreviewRow}>
-            {[
-              { name: 'Marco T.', category: 'City Tour', rating: '4.9' },
-              { name: 'Ana R.', category: 'Arrival Help', rating: '5.0' },
-              { name: 'Jin S.', category: 'Nightlife', rating: '4.8' },
-            ].map((buddy) => (
-              <Pressable
-                key={buddy.name}
-                style={styles.buddyPreviewCard}
-                onPress={() => router.push('/(rent-a-buddy)/search' as any)}
-              >
-                <View style={styles.buddyPreviewAvatar} />
-                <Text style={styles.buddyPreviewName} numberOfLines={1}>{buddy.name}</Text>
-                <Text style={styles.buddyPreviewCat} numberOfLines={1}>{buddy.category}</Text>
-                <View style={styles.buddyPreviewRating}>
-                  <Text style={styles.buddyPreviewRatingText}>★ {buddy.rating}</Text>
-                </View>
-              </Pressable>
-            ))}
-          </View>
+          {/* Browse all buddies CTA */}
+          <Pressable
+            style={styles.buddyBrowseBtn}
+            onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity)}` as any)}
+          >
+            <Users size={16} color="#E53935" />
+            <Text style={styles.buddyBrowseBtnText}>Browse local buddies in {activeCity}</Text>
+          </Pressable>
         </View>
       )}
 
@@ -432,11 +419,6 @@ const styles = StyleSheet.create({
   buddyCategoryRow: { gap: space.sm },
   buddyCategoryChip: { borderWidth: 1.5, borderColor: '#E53935', borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 5, backgroundColor: '#fff' },
   buddyCategoryText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 11 },
-  buddyPreviewRow: { flexDirection: 'row', gap: space.sm },
-  buddyPreviewCard: { flex: 1, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: color.haze, padding: space.sm, alignItems: 'center', gap: 3 },
-  buddyPreviewAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: color.haze, marginBottom: 2 },
-  buddyPreviewName: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 11 },
-  buddyPreviewCat: { ...t.small, color: color.mute, fontSize: 10 },
-  buddyPreviewRating: { backgroundColor: '#FFF3CD', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-  buddyPreviewRatingText: { ...t.small, color: '#9A6700', fontWeight: '700', fontSize: 10 },
+  buddyBrowseBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E53935', borderRadius: 10, paddingVertical: 12 },
+  buddyBrowseBtnText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 13 },
 });

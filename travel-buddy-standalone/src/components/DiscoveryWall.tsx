@@ -230,13 +230,13 @@ export function SectionHead({ title, onViewAll }: { title: string; onViewAll?: (
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** Shared avatar with optional HighlightRing for Discovery user avatars. */
-function DiscoveryUserAvatar({ userId, avatarUrl, size }: { userId?: string; avatarUrl: string; size: number }) {
+function DiscoveryUserAvatar({ userId, avatarUrl, size, handle }: { userId?: string; avatarUrl: string; size: number; handle?: string | null }) {
   const ringState = useHighlightRingState(userId ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const onPress = ringState?.hasActive
     ? () => setViewerOpen(true)
-    : userId
-    ? () => router.push(`/profile/${userId}` as any)
+    : handle
+    ? () => router.push(`/u/${encodeURIComponent(handle)}` as any)
     : undefined;
   return (
     <>
@@ -316,10 +316,10 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
           )}
           {gem.submittedBy ? (
             <View style={g.byRow}>
-              <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} />
+              <DiscoveryUserAvatar userId={gem.submittedBy.id} avatarUrl={gem.submittedBy.avatarUrl} size={18} handle={gem.submittedBy.handle} />
               <Pressable
                 hitSlop={layout.hitSlop}
-                onPress={gem.submittedBy.id ? () => router.push(`/profile/${gem.submittedBy!.id}` as any) : undefined}
+                onPress={gem.submittedBy.handle ? () => router.push(`/u/${encodeURIComponent(gem.submittedBy!.handle!)}` as any) : undefined}
               >
                 <Text style={g.by}>By {gem.submittedBy.name}</Text>
               </Pressable>
@@ -421,11 +421,11 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   return (
     <View style={tpk.card}>
       <View style={tpk.head}>
-        <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} />
+        <DiscoveryUserAvatar userId={pick.user.id} avatarUrl={pick.user.avatarUrl} size={32} handle={pick.user.handle} />
         <View style={{ flex: 1 }}>
           <Pressable
             hitSlop={layout.hitSlop}
-            onPress={pick.user.id ? () => router.push(`/profile/${pick.user.id}` as any) : undefined}
+            onPress={pick.user.handle ? () => router.push(`/u/${encodeURIComponent(pick.user.handle!)}` as any) : undefined}
           >
             <Text style={tpk.user}>{pick.user.name}</Text>
           </Pressable>
