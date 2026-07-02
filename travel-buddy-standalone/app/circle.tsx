@@ -129,11 +129,13 @@ export default function Circle() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (tripId) {
-      getTrip(tripId).then((t) => setTripTitle(t?.title ?? null));
-    } else {
-      setTripTitle(null);
-    }
+    setTripTitle(null);
+    if (!tripId) return;
+    let active = true;
+    getTrip(tripId).then((t) => {
+      if (active) setTripTitle(t?.title ?? null);
+    });
+    return () => { active = false; };
   }, [tripId]);
 
   useEffect(() => {
