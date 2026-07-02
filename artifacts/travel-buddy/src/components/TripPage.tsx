@@ -462,7 +462,7 @@ export function TripPlans({ plans }: { plans: TripPlan[] }) {
         ))}
       </ScrollView>
       {visible.length === 0 ? (
-        <TravelEmptyState title="No trip plans yet" sub="Add one from Pulse or create your own." action="Browse Pulse" onAction={() => router.push('/' as any)} />
+        <TravelEmptyState title="No trip plans yet" sub="Add your first plan to start building your itinerary." action="Add a Plan" onAction={() => router.push('/create' as any)} />
       ) : (
         <View style={pl.list}>
           {visible.map((plan) => (
