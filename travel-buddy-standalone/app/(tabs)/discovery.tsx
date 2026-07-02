@@ -483,6 +483,7 @@ export default function DiscoveryHub() {
                 const isEmpty = !countsLoading && count !== undefined && count === 0;
                 const iconColor = active ? color.signal : (isEmpty ? color.faint : color.mute);
                 const countSuffix = !countsLoading && count !== undefined && count > 0 ? ` · ${count}` : '';
+                const showSortedIndicator = active && activeFilters.sortBy != null;
                 return (
                   <Pressable
                     key={tab.key}
@@ -490,9 +491,14 @@ export default function DiscoveryHub() {
                     onPress={() => handleTabChange(tab.key)}
                   >
                     <tab.Icon size={16} color={iconColor} />
-                    <Text style={[styles.tabLabel, active && styles.tabLabelActive, !active && isEmpty && styles.tabLabelDim]}>
-                      {tab.label}{countSuffix}
-                    </Text>
+                    <View style={styles.tabLabelColumn}>
+                      <Text style={[styles.tabLabel, active && styles.tabLabelActive, !active && isEmpty && styles.tabLabelDim]}>
+                        {tab.label}{countSuffix}
+                      </Text>
+                      {showSortedIndicator && (
+                        <Text style={styles.tabSortedLabel}>★ sorted</Text>
+                      )}
+                    </View>
                   </Pressable>
                 );
               })}
@@ -825,6 +831,17 @@ const styles = StyleSheet.create({
   },
   tabLabelDim: {
     color: color.faint,
+  },
+  tabLabelColumn: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  tabSortedLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: color.signal,
+    letterSpacing: 0.3,
+    marginTop: -1,
   },
   modeBar: {
     flexGrow: 0,
