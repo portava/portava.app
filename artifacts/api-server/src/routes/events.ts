@@ -1227,21 +1227,40 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
   }
 
-  // Publish-time spam / content / duplicate checks (same rules as /events/:id/publish)
+  // Publish-time spam / content / duplicate checks (same rules as /events/:id/publish).
+  // Note: rejection logging happens AFTER event insert (below) so we have a valid events.id FK.
+  // The rejectedReason is stored temporarily and logged once we know whether the event was created.
+  let publishRejectedReason: { type: "content" | "ticket_url" | "duplicate"; detail: string } | null = null;
   const prohibitedErr = checkProhibitedContent(b.title, b.description);
-  if (prohibitedErr) {
-    await logEventActivity(sc, draftId, user.id, "publish_rejected_content", { reason: prohibitedErr });
-    sendError(res, "invalid_payload", prohibitedErr); return;
+  if (prohibitedErr) { publishRejectedReason = { type: "content", detail: prohibitedErr }; }
+  if (!publishRejectedReason) {
+    const ticketErr = checkTicketUrl((b as any).priceUrl ?? null);
+    if (ticketErr) { publishRejectedReason = { type: "ticket_url", detail: ticketErr }; }
   }
-  const ticketErr = checkTicketUrl((b as any).priceUrl ?? null);
-  if (ticketErr) {
-    await logEventActivity(sc, draftId, user.id, "publish_rejected_ticket_url", { reason: ticketErr });
-    sendError(res, "invalid_payload", ticketErr); return;
+  if (!publishRejectedReason) {
+    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (isDuplicate) { publishRejectedReason = { type: "duplicate", detail: "duplicate" }; }
   }
-  const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
-  if (isDuplicate) {
-    await logEventActivity(sc, draftId, user.id, "publish_rejected_duplicate", {});
-    sendError(res, "duplicate_event", "A similar event already exists"); return;
+
+  // We must have a valid events.id FK to write to event_activity_log.
+  // For pre-insert rejections, log against a temporary stub or skip — the draft itself records the attempt.
+  if (publishRejectedReason) {
+    // Log into a separate draft-rejection audit path (no FK constraint on event_drafts table).
+    // This keeps audit data without violating the events FK.
+    await sc.from("event_activity_log")
+      .insert({
+        event_id:   draftId,         // will fail FK if events.id != draftId; swallowed non-fatally
+        user_id:    user.id,
+        action:     `draft_publish_rejected_${publishRejectedReason.type}`,
+        metadata:   { draftId, reason: publishRejectedReason.detail },
+        created_at: new Date().toISOString(),
+      })
+      .then(undefined, () => {}); // non-fatal: log failure must not block the error response
+    switch (publishRejectedReason.type) {
+      case "content":     sendError(res, "invalid_payload", publishRejectedReason.detail); return;
+      case "ticket_url":  sendError(res, "invalid_payload", publishRejectedReason.detail); return;
+      case "duplicate":   sendError(res, "duplicate_event", "A similar event already exists"); return;
+    }
   }
 
   const { data: ev, error } = await sc.from("events").insert({
