@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   createReview,
@@ -19,6 +20,12 @@ import {
   REVIEW_TAGS,
   type ReviewEntityType,
 } from '../../../src/services/reviews';
+import {
+  loadReviewDraft,
+  saveReviewDraft,
+  clearReviewDraft,
+  isNetworkError,
+} from '../../../src/services/reviewDraftStorage';
 import { useSession } from '../../../src/context/SessionContext';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
@@ -78,13 +85,14 @@ export default function ReviewComposerScreen() {
   const [anonymous, setAnonymous]     = useState(false);
   const [saving, setSaving]           = useState(false);
   const [loading, setLoading]         = useState(false);
+  const [hasDraft, setHasDraft]       = useState(false);
 
   // Edit-mode state
   const [existingReviewId, setExistingReviewId] = useState<string | null>(null);
   const isEditing = existingReviewId !== null;
 
-  // On mount: check if the user has already reviewed this entity.
-  // If so, pre-fill the form fields for editing.
+  // On mount for non-event types: check if the user already reviewed this
+  // entity (edit mode) and, if not, load any saved offline draft.
   useEffect(() => {
     if (!isAuthed || !entityId || entityType === 'event') return;
     const validType = ['trip', 'rent_buddy_booking', 'place'].includes(entityType ?? '');
@@ -95,10 +103,20 @@ export default function ReviewComposerScreen() {
       .then((result) => {
         if (result.exists && result.reviewId) {
           setExistingReviewId(result.reviewId);
-          if (result.rating)    setRating(result.rating);
-          if (result.body)      setBody(result.body);
-          if (result.tags)      setTags(result.tags);
-          if (result.anonymous !== undefined) setAnonymous(result.anonymous);
+          if (result.rating)                    setRating(result.rating);
+          if (result.body)                      setBody(result.body);
+          if (result.tags)                      setTags(result.tags);
+          if (result.anonymous !== undefined)   setAnonymous(result.anonymous);
+        } else {
+          // Not editing an existing review — restore a saved offline draft if one exists.
+          return loadReviewDraft(AsyncStorage, entityType!, entityId).then((draft) => {
+            if (!draft) return;
+            setRating(draft.rating);
+            setBody(draft.body);
+            setTags(draft.tags);
+            setAnonymous(draft.anonymous);
+            setHasDraft(true);
+          });
         }
       })
       .catch(() => {
@@ -106,6 +124,19 @@ export default function ReviewComposerScreen() {
       })
       .finally(() => setLoading(false));
   }, [isAuthed, entityType, entityId]);
+
+  // On mount for events: restore any saved offline draft.
+  useEffect(() => {
+    if (!entityId || entityType !== 'event') return;
+    loadReviewDraft(AsyncStorage, entityType, entityId).then((draft) => {
+      if (!draft) return;
+      setRating(draft.rating);
+      setBody(draft.body);
+      setTags(draft.tags);
+      setAnonymous(draft.anonymous);
+      setHasDraft(true);
+    });
+  }, [entityType, entityId]);
 
   const toggleTag = (value: string) => {
     setTags((prev) =>
@@ -134,6 +165,7 @@ export default function ReviewComposerScreen() {
           tags,
           anonymous,
         });
+        clearReviewDraft(AsyncStorage, entityType!, entityId);
         Alert.alert('Review updated', 'Your review has been updated.', [
           { text: 'OK', onPress: () => router.back() },
         ]);
@@ -144,6 +176,7 @@ export default function ReviewComposerScreen() {
           body:      body.trim() || undefined,
           anonymous,
         });
+        clearReviewDraft(AsyncStorage, entityType!, entityId);
         Alert.alert('Review submitted', 'Thank you for your review!', [
           { text: 'OK', onPress: () => router.back() },
         ]);
@@ -156,18 +189,30 @@ export default function ReviewComposerScreen() {
           tags,
           anonymous,
         });
+        clearReviewDraft(AsyncStorage, entityType!, entityId);
         Alert.alert('Review submitted', 'Thank you for your review!', [
           { text: 'OK', onPress: () => router.back() },
         ]);
       }
     } catch (e: any) {
-      const code = (e as any).code;
-      if (code === 'duplicate_review') {
-        Alert.alert('Already reviewed', 'You have already submitted a review for this.');
-      } else if (code === 'review_not_eligible') {
-        Alert.alert('Not eligible', 'You need confirmed attendance to leave a review.');
+      if (isNetworkError(e)) {
+        saveReviewDraft(AsyncStorage, entityType!, entityId, {
+          rating,
+          body: body.trim(),
+          tags,
+          anonymous,
+        });
+        setHasDraft(true);
+        // Stay on screen — the draft banner prompts the user to retry.
       } else {
-        Alert.alert('Error', e?.message ?? 'Could not submit review. Please try again.');
+        const code = (e as any).code;
+        if (code === 'duplicate_review') {
+          Alert.alert('Already reviewed', 'You have already submitted a review for this.');
+        } else if (code === 'review_not_eligible') {
+          Alert.alert('Not eligible', 'You need confirmed attendance to leave a review.');
+        } else {
+          Alert.alert('Error', e?.message ?? 'Could not submit review. Please try again.');
+        }
       }
     } finally {
       setSaving(false);
@@ -209,6 +254,15 @@ export default function ReviewComposerScreen() {
           </Text>
         )}
       </View>
+
+      {/* Draft banner — shown when a draft was loaded from storage or just saved after a network error */}
+      {hasDraft && (
+        <View style={s.draftBanner}>
+          <Text style={s.draftBannerText}>
+            Saved as draft — tap Submit to retry
+          </Text>
+        </View>
+      )}
 
       {/* Star rating */}
       <View style={s.section}>
@@ -302,7 +356,7 @@ const s = StyleSheet.create({
   container:    { flex: 1, backgroundColor: '#FAF9F6' },
   content:      { padding: 20, paddingBottom: 48 },
 
-  header:   { marginBottom: 24 },
+  header:   { marginBottom: 16 },
   title:    { fontSize: 22, fontWeight: '700', color: '#11110F', marginBottom: 4 },
   subtitle: { fontSize: 14, color: '#6B7280' },
   editNote: {
@@ -313,6 +367,19 @@ const s = StyleSheet.create({
     padding: 10,
     marginTop: 10,
     lineHeight: 18,
+  },
+
+  draftBanner: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+  },
+  draftBannerText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#92400E',
   },
 
   section:  { marginBottom: 20 },
