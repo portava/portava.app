@@ -163,7 +163,9 @@ run_check "bundle-id-placeholder" \
 # Confirms the BEFORE DELETE / BEFORE TRUNCATE triggers that protect the
 # collections and collection_items tables (migrations 0071–0074) are present in
 # the Supabase production database, and that the profile_emergency_contacts
-# table (migration 0076) exists with RLS enabled and the expected policies.
+# table (migration 0076), safe_return_sessions (migration 0040), and
+# notification_devices (migration 0041, push token storage) exist with RLS
+# enabled and their expected policies.
 #
 # Requires:
 #   SUPABASE_ACCESS_TOKEN  — Supabase personal access token (Management API)
@@ -175,7 +177,7 @@ run_check "bundle-id-placeholder" \
 # If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
 # release never ships without confirming the guards are live.
 run_check "db-triggers" \
-  "DB protection triggers + schema presence (migrations 0040, 0071–0074, 0076)" \
+  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076)" \
   bash scripts/check-db-triggers.sh
 
 # ── 9. Version / build-number floor guard ────────────────────────────────────
@@ -263,6 +265,8 @@ for entry in "${results[@]}"; do
         printf '     fix: apply missing migrations via Supabase dashboard or psql:\n'
         printf '            artifacts/api-server/migrations/0040_safe_return.sql\n'
         printf '          (0040 creates safe_return_sessions + RLS policy srs_own)\n'
+        printf '            artifacts/api-server/migrations/0041_notifications.sql\n'
+        printf '          (0041 creates notification_devices for push token storage + RLS policy nd_own)\n'
         printf '            artifacts/api-server/src/migrations/0071_protect_default_collection.sql\n'
         printf '            artifacts/api-server/src/migrations/0072_block_collections_truncate.sql\n'
         printf '            artifacts/api-server/src/migrations/0073_block_collection_items_truncate.sql\n'

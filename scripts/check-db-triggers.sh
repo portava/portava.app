@@ -95,6 +95,20 @@ SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
 FROM pg_policies \
 WHERE tablename = 'safe_return_sessions' AND schemaname = 'public'"
 
+# ── push tokens schema SQL (migration 0041) ───────────────────────────────────
+# Checks that notification_devices exists, has RLS enabled, and carries the
+# nd_own policy.  This table stores Expo push tokens; without it the device
+# registration endpoint returns a DB error and push notifications cannot be
+# delivered.
+PUSH_TOKENS_SQL="SELECT 'table' AS check_type, relname AS name, relrowsecurity::text AS detail \
+FROM pg_class \
+WHERE relname = 'notification_devices' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+UNION ALL \
+SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
+FROM pg_policies \
+WHERE tablename = 'notification_devices' AND schemaname = 'public'"
+
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   PSQL_URL="${TRIGGER_PSQL_URL:-}"
@@ -146,7 +160,24 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   SAFE_RETURN_SCHEMA_RESPONSE="$SR_JSON" node "${SCRIPT_DIR}/src/verify-db-safe-return.mjs"
   SR_EXIT=$?
 
-  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 ]] && exit 0 || exit 1
+  # ── Push tokens schema check (psql) ──────────────────────────────────────────
+  printf "  ℹ  Checking notification_devices schema (push tokens) (psql)\n"
+  PT_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${PUSH_TOKENS_SQL}) q"
+  PT_JSON=$(psql "$PSQL_URL" -t -A -c "$PT_JSON_SQL" 2>&1)
+  PT_PSQL_EXIT=$?
+  if [[ $PT_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql push_tokens schema query failed (exit %d):\n" "$PT_PSQL_EXIT"
+    printf "     %s\n" "$PT_JSON"
+    exit 1
+  fi
+  SCHEMA_TABLE="notification_devices" \
+  SCHEMA_POLICIES="nd_own" \
+  SCHEMA_MIGRATION="artifacts/api-server/migrations/0041_notifications.sql" \
+  SCHEMA_RESPONSE="$PT_JSON" \
+    node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
+  PT_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -264,4 +295,28 @@ fi
 SAFE_RETURN_SCHEMA_RESPONSE="$SR_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-safe-return.mjs"
 SR_EXIT=$?
 
-[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 ]] && exit 0 || exit 1
+# ── Push tokens schema check — notification_devices (migration 0041) ──────────
+printf "  ℹ  Checking notification_devices schema (push tokens)\n"
+PT_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${PUSH_TOKENS_SQL}\"}")
+
+PT_HTTP_BODY=$(printf "%s" "$PT_CURL_RESPONSE" | head -n -1)
+PT_HTTP_CODE=$(printf "%s" "$PT_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$PT_HTTP_CODE" != "200" && "$PT_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for push_tokens schema check\n" "$PT_HTTP_CODE"
+  printf "     Response: %s\n" "$PT_HTTP_BODY"
+  exit 1
+fi
+
+SCHEMA_TABLE="notification_devices" \
+SCHEMA_POLICIES="nd_own" \
+SCHEMA_MIGRATION="artifacts/api-server/migrations/0041_notifications.sql" \
+SCHEMA_RESPONSE="$PT_HTTP_BODY" \
+  node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
+PT_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 ]] && exit 0 || exit 1
