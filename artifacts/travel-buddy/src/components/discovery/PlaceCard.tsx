@@ -15,9 +15,11 @@ interface PlaceCardProps {
   onPress: () => void;
   onAddToPlan: () => void;
   onAddToRoute?: (draft: RouteStopDraft) => void;
+  /** Show the distance badge. Defaults to true; pass false to hide it (e.g. non-nearest sorts). */
+  showDistance?: boolean;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
@@ -86,13 +88,13 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
               </Text>
             </View>
           ) : null}
-          {place.distanceKm != null && (
-            <View style={styles.distRow}>
-              <MapPin size={11} color={color.faint} />
-              <Text style={styles.dist}>
+          {place.distanceKm != null && showDistance && (
+            <View style={styles.distBadge}>
+              <MapPin size={10} color="#0891B2" />
+              <Text style={styles.distBadgeText}>
                 {place.distanceKm < 1
-                  ? `${Math.round(place.distanceKm * 1000)}m`
-                  : `${place.distanceKm}km`}
+                  ? `${Math.round(place.distanceKm * 1000)} m`
+                  : `${place.distanceKm} km`}
               </Text>
             </View>
           )}
@@ -305,15 +307,20 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textTransform: 'capitalize',
   },
-  distRow: {
+  distBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
+    backgroundColor: '#0891B215',
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
   },
-  dist: {
+  distBadgeText: {
     ...t.stamp,
-    color: color.faint,
+    color: '#0891B2',
     fontSize: 10,
+    fontWeight: '600',
   },
   hours: {
     ...t.stamp,

@@ -359,6 +359,7 @@ export function DiscoveryCategoryTab({
               onPress={() => onSelectPlace(item)}
               onAddToPlan={() => onAddToPlan(item)}
               onAddToRoute={onAddToRoute}
+              showDistance={filters.sortBy === 'nearest'}
             />
           )}
           contentContainerStyle={styles.list}

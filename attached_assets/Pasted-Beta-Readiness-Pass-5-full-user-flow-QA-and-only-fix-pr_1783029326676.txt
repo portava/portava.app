@@ -1,0 +1,152 @@
+Beta Readiness Pass 5 — full user-flow QA and only fix proven blockers.
+
+Do not rebuild systems. Do not add new features. Do not widen scope unless a real blocker is proven by code or validation.
+
+Goal:
+Verify the app is ready for beta by testing the most important end-to-end user flows across mobile, backend, auth, navigation, data loading, permissions, and empty/error states.
+
+Scope:
+1. Auth + onboarding
+   - Sign up / sign in / sign out
+   - Onboarding required fields
+   - Profile creation
+   - Session restore after app restart
+   - Unauthenticated route protection
+
+2. Passport/profile
+   - Load own Passport
+   - Load another user profile from avatar tap
+   - Edit profile settings
+   - Upload/change profile photo if already wired
+   - Block/unblock user
+   - Friend/add/trust interactions if present
+
+3. Pulse/posts/memories
+   - Feed loads real data
+   - Create post/memory
+   - Image/video post display
+   - Like/comment/save if present
+   - Report post
+   - Delayed-posting/location privacy does not expose live location
+   - Empty/error/loading states
+
+4. Discovery
+   - Discovery feed loads
+   - Search users/events/places
+   - Save/unsave places
+   - Hidden Gems/community places
+   - Privacy/block filtering
+   - Fallback behavior when APIs fail
+
+5. Trips
+   - Create trip
+   - View trip detail
+   - Trip timeline/saved ideas/TripCircle
+   - Add-to-trip flow
+   - Safe Return entry works from trip detail
+   - Trip chat or Telegraph group link if present
+
+6. Events/plans
+   - Create event/plan
+   - View event detail
+   - Join/request/accept/decline flow if present
+   - Event cover/image fallbacks
+   - Availability-aware behavior if present
+   - Age/trust/privacy filters if present
+
+7. Telegraph messaging
+   - 1:1 message thread loads
+   - Send message
+   - Message request flow for unknown users
+   - Accept/decline request
+   - Auto-translation states:
+     - pending
+     - translated
+     - failed
+     - retry
+     - show original
+   - Group chat behavior
+   - Attachment button must either work or be hidden/disabled honestly
+
+8. Notifications / Activity Center
+   - Notification list loads
+   - Unread dots
+   - Mark read
+   - Mark all read
+   - Deep links route correctly
+   - Invalid deep links fail safely
+   - Admin tab hidden or guarded correctly for non-admins
+
+9. Safe Return
+   - Start Safe Return from trip
+   - Active session card
+   - Check-in flow
+   - Missed check-in state
+   - Trusted contacts/emergency contacts
+   - End session
+   - Confirm trip scoping prevents unrelated sessions from showing
+
+10. Rent a Buddy
+   - Provider onboarding
+   - Boundary policy copy
+   - Booking request
+   - Accept/decline
+   - Chat link
+   - Complete booking
+   - Review only after completed booking
+   - Support report
+   - Admin review/flags if admin
+
+11. Admin/moderation
+   - Non-admin cannot access admin screens
+   - Admin can access admin screens
+   - Trust reviews
+   - Content reports
+   - Gaming flags
+   - Feature flags
+   - Hashtags
+   - Hidden Gem moderation
+   - RAB admin screens
+
+12. Mobile polish / crash audit
+   - All main tabs load without crash
+   - No blank white screens
+   - No dead buttons pretending to work
+   - No broken image blanks
+   - Pull-to-refresh works where present
+   - Loading states do not hang forever
+   - Error states are honest and recoverable
+   - Navigation back behavior works
+   - Keyboard does not block message composer/forms
+
+Required process:
+1. Survey first with targeted reads/greps.
+2. Build a table of every tested flow:
+   - Flow
+   - Files/screens involved
+   - Status: pass / partial / fail
+   - Evidence
+   - Fix needed
+3. Only fix issues that are proven real blockers or dishonest UI.
+4. Do not fix cosmetic preferences unless they cause confusion, broken navigation, or beta failure.
+5. Do not introduce new systems.
+6. Reuse existing services/components wherever possible.
+7. After fixes, run:
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard, if available
+8. Final report must include:
+   - User-flow QA table
+   - Fixes made
+   - Files changed
+   - Real remaining beta blockers
+   - Non-blocking polish
+   - Validation table
+   - Commit message
+
+Important:
+If a button is not wired, either wire it to the existing intended flow or disable/hide it with honest copy. Do not leave fake actions.
+If a feature is partially built, make the current state honest and safe rather than pretending it is complete.
+If reviewer feedback asks for extra scope after this pass, classify it separately from actual beta blockers.
