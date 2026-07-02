@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield, UserPlus } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
+import { getTrip } from '../src/services/trips';
 import { openCircleChat } from '../src/services/messaging';
 import {
   getMyCircleAgeSettings, updateCircleAgeSettings,
@@ -86,6 +87,7 @@ function next14Days(): string[] {
 export default function Circle() {
   const { userId, isAuthed, configured } = useSession();
   const { tripId } = useLocalSearchParams<{ tripId?: string }>();
+  const [tripTitle, setTripTitle] = useState<string | null>(null);
   const [tab, setTab]               = useState<'circle' | 'followers'>('circle');
   const [following, setFollowing]   = useState<FollowUser[]>([]);
   const [followers, setFollowers]   = useState<FollowUser[]>([]);
@@ -125,6 +127,14 @@ export default function Circle() {
   }, [live, userId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (tripId) {
+      getTrip(tripId).then((t) => setTripTitle(t?.title ?? null));
+    } else {
+      setTripTitle(null);
+    }
+  }, [tripId]);
 
   useEffect(() => {
     if (!live) return;
@@ -218,7 +228,9 @@ export default function Circle() {
       {tripId ? (
         <View style={styles.tripInviteBanner}>
           <UserPlus size={14} color={color.signal} />
-          <Text style={styles.tripInviteBannerText}>Select someone to invite to your trip</Text>
+          <Text style={styles.tripInviteBannerText}>
+            {tripTitle ? `Select someone to invite to ${tripTitle}` : 'Select someone to invite to your trip'}
+          </Text>
         </View>
       ) : null}
 
