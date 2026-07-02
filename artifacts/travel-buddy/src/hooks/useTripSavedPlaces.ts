@@ -55,7 +55,7 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     async (place: BookmarkedPlace): Promise<boolean> => {
       // Pass tripId as the listId so that when the last saved place is removed,
       // categoryStorageKey(tripId) is cleared instead of the default 'global' key.
-      const nowSaved = await toggleSave(place, tripId);
+      const { added: nowSaved } = await toggleSave(place, tripId);
       // Refresh the list so the UI reflects the new state.
       load();
       return nowSaved;

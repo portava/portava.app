@@ -7,7 +7,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
-  TripPlans, TripCircle, CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
+  CompassTripBrief, TripStamps, TripSafety, TripPostsSection,
   TripCrewSection,
 } from '../../src/components/TripPage';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
@@ -17,7 +17,8 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
-import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
+import { mockTripDetail } from '../../src/data/tripDetail';
+import type { TripDetail } from '../../src/types/models';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
@@ -61,18 +62,32 @@ export default function TripDetail() {
     setTimeout(() => { commandBarRef.current?.focus(); }, 350);
   }, []);
 
-  const trip = live && realTrip ? {
-    ...mockTripDetail,
-    id: realTrip.id,
-    title: realTrip.title,
-    destinationCity: realTrip.destinationCity,
-    destinationCountry: realTrip.destinationCountry ?? mockTripDetail.destinationCountry,
-    startDate: realTrip.startDate ?? mockTripDetail.startDate,
-    endDate: realTrip.endDate ?? mockTripDetail.endDate,
-    status: realTrip.status,
-    visibility: realTrip.visibility,
-    coverUrl: realTrip.coverUrl ?? mockTripDetail.coverUrl,
-  } : mockTripDetail;
+  const trip: TripDetail = (live && realTrip)
+    ? {
+        id: realTrip.id,
+        title: realTrip.title,
+        destinationCity: realTrip.destinationCity,
+        destinationCountry: realTrip.destinationCountry ?? '',
+        neighborhoods: realTrip.neighborhoods,
+        startDate: realTrip.startDate ?? '',
+        endDate: realTrip.endDate ?? '',
+        nights: (realTrip.startDate && realTrip.endDate)
+          ? Math.max(0, Math.round(
+              (new Date(realTrip.endDate).getTime() - new Date(realTrip.startDate).getTime()) / 86_400_000,
+            ))
+          : 0,
+        status: realTrip.status,
+        visibility: realTrip.visibility,
+        travelStyle: realTrip.travelStyle ?? '',
+        openToMeet: realTrip.openToMeet,
+        coverUrl: realTrip.coverUrl ?? '',
+        progress: realTrip.progress,
+        progressSteps: [],
+        timeline: [],
+        savedIdeas: [],
+        safetyStatus: 'unknown',
+      }
+    : mockTripDetail;
 
   async function handleOpenChat() {
     if (!trip.id || chatLoading) return;
@@ -90,6 +105,21 @@ export default function TripDetail() {
 
   if (live && loading) {
     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
+  }
+
+  if (live && !loading && !realTrip) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+        <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Trip not found</Text>
+        <Text style={{ ...t.small, color: color.mute, textAlign: 'center' }}>This trip may have been deleted or you may not have access to it.</Text>
+        <Pressable
+          style={{ marginTop: space.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal }}
+          onPress={() => router.back()}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Go back</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   const todayDate = new Date().toISOString().slice(0, 10);
@@ -170,7 +200,7 @@ export default function TripDetail() {
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
-        <TodayNextUp nextUp={live ? null : mockNextUp} />
+        <TodayNextUp nextUp={null} />
 
         {/* ── Gap-day nudge ── */}
         {live && gapDays.length > 0 && trip.status !== 'planning' && (
@@ -216,10 +246,8 @@ export default function TripDetail() {
           <EventsNearTripSection tripId={trip.id} />
         ) : null}
 
-        <SavedIdeas ideas={live ? [] : trip.savedIdeas} tripId={trip.id} />
+        <SavedIdeas ideas={[]} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
-        {!live && <TripPlans plans={tripPlans} />}
-        {!live && <TripCircle cityCount={tripCircle.cityCount} inCity={tripCircle.inCity} suggested={tripCircle.suggested} tripId={trip.id} />}
 
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
@@ -234,18 +262,18 @@ export default function TripDetail() {
             tripId={trip.id}
             startDate={realTrip?.startDate ?? undefined}
             endDate={realTrip?.endDate ?? undefined}
-            groupSize={String(live ? 1 : (Array.isArray(tripCircle.inCity) ? tripCircle.inCity.length : tripCircle.inCity) + 1)}
+            groupSize="1"
           />
         )}
 
         <CompassTripBrief />
-        <TripStamps stamps={live ? [] : tripStamps} />
+        <TripStamps stamps={[]} />
         <TripMapPlaceholder />
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
         ) : null}
         <TripSafety tripId={live ? trip.id : undefined} />
-        <TripPostsSection posts={live ? [] : tripPosts} />
+        <TripPostsSection posts={[]} />
         {live && trip.id ? (
           <TripMemorySection
             tripId={trip.id}

@@ -133,6 +133,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     mediaUrl: p.mediaUrls[0],
     caption: p.content,
     source: 'user',
+    relatedTripId: p.tripId ?? null,
     neighborhood: p.locationName ?? undefined,
     visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
     likeCount: p.likeCount ?? 0,

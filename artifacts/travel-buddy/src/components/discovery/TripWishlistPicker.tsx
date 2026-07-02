@@ -100,7 +100,7 @@ export function TripWishlistPicker({
     });
     try {
       const bookmark = placeToBookmark(place);
-      const nowSaved = await toggleSave(bookmark, trip.id);
+      const { added: nowSaved } = await toggleSave(bookmark, trip.id);
       setSavedIds((prev) => {
         const next = new Set(prev);
         if (nowSaved) {

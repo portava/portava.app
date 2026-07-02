@@ -1,0 +1,60 @@
+Use the completed connectivity audit as the execution backlog and begin the repair pass.
+
+Do not do another broad audit. Start fixing in this exact order:
+
+PHASE 1 — CRITICAL TRUTH REPAIR
+1. Replace Passport fixture-based data with the real API source.
+   - Remove src/data/passport fixture dependency from the Passport tab.
+   - Wire usePassport to the real backend endpoint that should power the logged-in user's Passport.
+   - Ensure stats, trust score, plans, perks, and related sections reflect the authenticated user only.
+   - Add regression tests so no other user's fixture data can ever appear again.
+
+2. Replace Pulse fixture-based feed with the real backend source.
+   - Remove src/data/cebu.ts / pulse fixture dependency from the main home feed.
+   - Wire useCityPulse to the real API route.
+   - Ensure feed content uses real backend data and honest empty states if data is missing.
+   - Add regression tests proving Pulse is no longer fixture-driven.
+
+3. Remove trip detail fixture fallback.
+   - app/trip/[id].tsx must render only the real trip data path.
+   - Eliminate any fallback that can show mockTripDetail or other fixture content for a real trip.
+   - Add tests for correct trip detail rendering and load-failure handling.
+
+4. Fix save-state desync.
+   - discoveryBookmarks.ts must not let AsyncStorage claim success before the server path is settled, or must clearly reconcile/retry.
+   - Ensure saved places stay consistent across Discovery, Saved, Collections, backend, and refresh/restart.
+   - Add tests for offline/network-failure behavior and sync reconciliation.
+
+PHASE 2 — BROKEN CORE FLOWS
+5. Fix Join Plan routing from Pulse feed cards to open the actual /trip/[id] detail.
+6. Implement Trip Share or remove/disable it honestly until implemented.
+7. Replace Live Map placeholder with real map/data flow if the backend path exists; otherwise hide/gate the entry point honestly.
+8. Replace local-only Add to Plan attachments with backend persistence, or disable the feature honestly until backend support exists.
+9. Review Rent a Buddy checkout payment and active-session SOS:
+   - if safe to implement now, implement
+   - otherwise remove from main production flow or clearly gate as unavailable
+   - do not leave misleading active CTAs
+
+PHASE 3 — CONSISTENCY / SOURCE-OF-TRUTH CLEANUP
+10. Reconcile place identity across discovery_places, wishlist_places, and collections.
+11. Unify selected city / live GPS / profile city behavior where practical.
+12. Remove or clearly badge Coming Soon items in settings (Muted words, Report history, Trusted Circle entry).
+13. Remove misleading hardcoded AI prompt arrays or route them through a real service if already available.
+
+RULES
+- Reuse existing backend routes where they already exist.
+- Do not introduce fake data.
+- Do not leave a visible button if it still does nothing.
+- Do not pass a phase unless the frontend visibly reflects backend truth.
+- Add/update tests after each repaired area.
+- Report after each phase with files changed, tests added, and exact pass/fail results.
+
+DELIVERABLE PER PHASE
+Return:
+- what was repaired
+- what fixture/mock path was removed
+- what source of truth now powers the screen/action
+- files changed
+- tests added/updated
+- exact test/typecheck results
+- manual verification proof

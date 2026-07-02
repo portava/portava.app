@@ -249,7 +249,7 @@ export default function Settings() {
     await updateTelegraphChatSettings({ [key]: value }).catch(() => {});
   }
 
-  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts', 'Report history', 'Muted words'];
+  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
   const ACCOUNT_ITEMS = ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];

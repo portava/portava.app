@@ -134,14 +134,25 @@ export async function isSaved(id: string): Promise<boolean> {
 }
 
 /**
+ * Result of a toggleSave call.
+ * `added`  — true when the place was added, false when removed.
+ * `synced` — true when the API call succeeded (or auth is absent so local is canonical).
+ *            false means the change is local-only and will reconcile on next listSaved().
+ */
+export interface ToggleSaveResult {
+  added: boolean;
+  synced: boolean;
+}
+
+/**
  * Toggle a place in/out of a specific list (trip id or 'global').
  * Existence is checked by (place.id, listId) so the same place can be saved
  * independently to multiple trips without interfering.
  *
- * Returns true  → place was added to the list.
- * Returns false → place was removed from the list.
+ * Returns { added, synced } — callers can surface a "saved offline" indicator
+ * when synced is false.
  */
-export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<boolean> {
+export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<ToggleSaveResult> {
   // Wrap the storage read+write in the write queue so concurrent calls (e.g. a
   // rapid save→unsave tap) are serialised.  Without this, both calls could read
   // the same stale list, both decide to remove the item, and both fire
@@ -169,28 +180,29 @@ export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<b
 
     // 2. Sync to Supabase via API (best-effort; failure does not revert local state)
     const token = await getAuthToken();
-    if (token) {
-      const base = apiBase();
-      try {
-        if (removing) {
-          await fetch(
+    if (!token) {
+      // Unauthenticated — local storage is canonical; treat as synced
+      return { added: !removing, synced: true };
+    }
+
+    const base = apiBase();
+    try {
+      const res = removing
+        ? await fetch(
             `${base}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(listId)}`,
             { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
-          );
-        } else {
-          await fetch(`${base}/api/wishlist`, {
+          )
+        : await fetch(`${base}/api/wishlist`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ placeId: place.id, placeData: place, listId }),
           });
-        }
-      } catch {
-        // Network error — local state already updated; Supabase will reconcile on
-        // the next successful listSaved() call.
-      }
+      // Local state already updated; Supabase will reconcile on the next listSaved() call.
+      return { added: !removing, synced: res.ok };
+    } catch {
+      // Network error — local state already updated
+      return { added: !removing, synced: false };
     }
-
-    return !removing;
   });
 }
 

@@ -218,7 +218,7 @@ function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         >
           <Text style={s.outlineText}>Add to Plan</Text>
         </Pressable>
-        <Pressable style={s.solidBtn} onPress={() => router.push('/(tabs)/trips' as any)}><Text style={s.solidText}>Join Plan</Text></Pressable>
+        <Pressable style={s.solidBtn} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}><Text style={s.solidText}>Join Plan</Text></Pressable>
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}

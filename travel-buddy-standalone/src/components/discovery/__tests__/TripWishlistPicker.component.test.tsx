@@ -117,7 +117,7 @@ async function mountPicker(
 describe('TripWishlistPicker — pre-saved chip', () => {
   beforeEach(() => {
     mockListMyTrips.mockResolvedValue([TRIP_A, TRIP_B]);
-    mockToggleSave.mockResolvedValue(false);
+    mockToggleSave.mockResolvedValue({ added: false, synced: true });
     mockGetSavedListIds.mockResolvedValue(new Set(['trip-a']));
   });
 
@@ -198,7 +198,7 @@ describe('TripWishlistPicker — toggle behaviour', () => {
   });
 
   it('tapping an unsaved row adds the "Already saved" chip when toggleSave returns true', async () => {
-    mockToggleSave.mockResolvedValue(true);
+    mockToggleSave.mockResolvedValue({ added: true, synced: true });
     const { getByText, queryAllByText } = await mountPicker();
     await waitFor(() => getByText('Berlin Weekend'));
 
@@ -210,7 +210,7 @@ describe('TripWishlistPicker — toggle behaviour', () => {
   });
 
   it('calls onSaved with the trip when toggleSave returns true', async () => {
-    mockToggleSave.mockResolvedValue(true);
+    mockToggleSave.mockResolvedValue({ added: true, synced: true });
     const onSaved = jest.fn();
     const { getByText } = await mountPicker({ onSaved });
     await waitFor(() => getByText('Berlin Weekend'));
