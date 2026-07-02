@@ -33,9 +33,19 @@ jest.mock('../useTripSavedPlaces', () => ({
 }));
 
 // Prevent expo-router from loading its native runtime.
-jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
-}));
+// useFocusEffect is also mocked: the real hook requires a navigation context,
+// but in tests we only need mount-time semantics.  We use React.useEffect so
+// the callback runs after render (deferred), avoiding "too many re-renders".
+jest.mock('expo-router', () => {
+  const React = require('react');
+  return {
+    router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
+    useFocusEffect: jest.fn((cb: () => void) => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      React.useEffect(() => { cb(); }, []);
+    }),
+  };
+});
 
 // The remaining mocks prevent native-module imports inside TripPage.tsx's
 // other exported functions from blowing up when jest loads the module.

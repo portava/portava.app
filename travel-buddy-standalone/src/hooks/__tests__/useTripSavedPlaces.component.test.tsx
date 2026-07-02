@@ -15,6 +15,19 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useTripSavedPlaces } from '../useTripSavedPlaces';
 import type { BookmarkedPlace } from '../../services/discoveryBookmarks';
 
+// useFocusEffect requires a navigation context at runtime.  In tests we only
+// need mount-time semantics, so we delegate to React.useEffect (deferred, not
+// synchronous) to avoid "too many re-renders" from state updates during render.
+jest.mock('expo-router', () => {
+  const React = require('react');
+  return {
+    useFocusEffect: jest.fn((cb: () => void) => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      React.useEffect(() => { cb(); }, []);
+    }),
+  };
+});
+
 jest.mock('../../services/discoveryBookmarks', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),
@@ -186,7 +199,7 @@ describe('useTripSavedPlaces — toggle add success', () => {
     const place = makePlace('p1');
     const { result } = await renderAndLoad([]);
     listSaved.mockResolvedValueOnce([place]);
-    toggleSaveMock.mockResolvedValue(true);
+    toggleSaveMock.mockResolvedValue({ added: true, synced: true });
 
     let returnVal!: boolean;
     await act(async () => {
@@ -201,7 +214,7 @@ describe('useTripSavedPlaces — toggle add success', () => {
     const { result } = await renderAndLoad([]);
     // Post-toggle load returns the newly added place
     listSaved.mockResolvedValueOnce([place]);
-    toggleSaveMock.mockResolvedValue(true);
+    toggleSaveMock.mockResolvedValue({ added: true, synced: true });
 
     await act(async () => { await result.current.toggle(place); });
 
@@ -213,7 +226,7 @@ describe('useTripSavedPlaces — toggle add success', () => {
     const place = makePlace('q1');
     const { result } = await renderAndLoad([]);
     listSaved.mockResolvedValueOnce([]);
-    toggleSaveMock.mockResolvedValue(true);
+    toggleSaveMock.mockResolvedValue({ added: true, synced: true });
 
     await act(async () => { await result.current.toggle(place); });
 
@@ -230,7 +243,7 @@ describe('useTripSavedPlaces — toggle remove success', () => {
     const place = makePlace('r1');
     const { result } = await renderAndLoad([place]);
     listSaved.mockResolvedValueOnce([]);
-    toggleSaveMock.mockResolvedValue(false);
+    toggleSaveMock.mockResolvedValue({ added: false, synced: true });
 
     let returnVal!: boolean;
     await act(async () => {
@@ -246,7 +259,7 @@ describe('useTripSavedPlaces — toggle remove success', () => {
     expect(result.current.places).toHaveLength(1);
     // Post-toggle load returns empty (place removed from storage)
     listSaved.mockResolvedValueOnce([]);
-    toggleSaveMock.mockResolvedValue(false);
+    toggleSaveMock.mockResolvedValue({ added: false, synced: true });
 
     await act(async () => { await result.current.toggle(place); });
 
