@@ -167,4 +167,10 @@ describe("POST /api/discovery/community — rating bounds validation", () => {
     assert.equal(r.status, 201, `expected 201 for rating=5, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.ok, true);
   });
+
+  it("accepts rating=5.0 (float form of upper boundary) and returns 201", async () => {
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: 5.0 });
+    assert.equal(r.status, 201, `expected 201 for rating=5.0, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
+  });
 });
