@@ -481,6 +481,7 @@ export function DiscoveryCategoryTab({
               onPress={() => onSelectPlace(item)}
               onAddToPlan={() => onAddToPlan(item)}
               onAddToRoute={onAddToRoute}
+              showDistance={filters.sortBy === 'nearest'}
             />
           )}
           contentContainerStyle={listTopInset > 0 ? [styles.list, { paddingTop: listTopInset }] : styles.list}
