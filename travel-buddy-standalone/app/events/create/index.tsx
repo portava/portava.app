@@ -32,6 +32,8 @@ import {
   createEvent, createDraft, updateDraft, publishDraft, getDraft, inviteUserToEvent,
   type EventVisibility, type EventRsvpStatus, type EventDraft,
 } from '../../../src/services/events';
+import { getMyCircles, type CircleRow } from '../../../src/services/circles';
+import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
@@ -53,9 +55,11 @@ const STEP_LABELS: Record<Step, string> = {
 };
 
 const VISIBILITIES: { key: EventVisibility; label: string; desc: string; icon: any }[] = [
-  { key: 'public',       label: 'Public',       desc: 'Anyone can discover & RSVP', icon: Eye },
-  { key: 'friends_only', label: 'Friends only',  desc: 'Only your friends can see it', icon: Users },
-  { key: 'invite_only',  label: 'Invite only',   desc: 'Requires your approval to join', icon: Lock },
+  { key: 'public',       label: 'Public',         desc: 'Anyone can discover & RSVP',                  icon: Eye },
+  { key: 'friends_only', label: 'Friends only',    desc: 'Only your friends can see it',                icon: Users },
+  { key: 'invite_only',  label: 'Invite only',     desc: 'Requires your approval to join',              icon: Lock },
+  { key: 'circle',       label: 'Circle members',  desc: 'Only members of a selected circle can see it', icon: Users },
+  { key: 'trip',         label: 'Trip crew',        desc: 'Only crew members of a selected trip',         icon: MapPin },
 ];
 
 const RSVP_OPTION_KEYS: { key: EventRsvpStatus; label: string; desc: string }[] = [
@@ -115,6 +119,10 @@ export default function CreateEventScreen() {
   const [visibility, setVisibility] = useState<EventVisibility>('public');
   const [circleId, setCircleId] = useState<string | undefined>(preCircleId);
   const [tripId, setTripId] = useState<string | undefined>(preTripId);
+  const [circles, setCircles] = useState<CircleRow[]>([]);
+  const [trips, setTrips] = useState<TripRow[]>([]);
+  const [circlesLoading, setCirclesLoading] = useState(false);
+  const [tripsLoading, setTripsLoading] = useState(false);
 
   // ── Step 7: Tickets ─────────────────────────────────────────────────────────
   const [priceType, setPriceType] = useState<'free' | 'external'>('free');
@@ -189,6 +197,27 @@ export default function CreateEventScreen() {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => saveDraftSilent(), 2500);
   }, []);
+
+  // ── Load circles + trips when entering the Privacy step ─────────────────────
+  useEffect(() => {
+    if (step !== 'privacy') return;
+    if (circles.length === 0 && !circlesLoading) {
+      setCirclesLoading(true);
+      getMyCircles().then((c) => { setCircles(c); setCirclesLoading(false); });
+    }
+    if (trips.length === 0 && !tripsLoading) {
+      setTripsLoading(true);
+      listMyTrips().then((t) => { setTrips(t); setTripsLoading(false); });
+    }
+  }, [step]);
+
+  // ── Visibility setter — clears orphaned circleId/tripId ─────────────────────
+  function handleSetVisibility(v: EventVisibility) {
+    if (v !== 'circle') setCircleId(undefined);
+    if (v !== 'trip')   setTripId(undefined);
+    setVisibility(v);
+    scheduleSave();
+  }
 
   // ── Invite search ───────────────────────────────────────────────────────────
   function handleInviteQueryChange(q: string) {
@@ -276,6 +305,14 @@ export default function CreateEventScreen() {
   function nextStep() {
     if (step === 'basics' && !title.trim()) {
       setError('Title is required');
+      return;
+    }
+    if (step === 'privacy' && visibility === 'circle' && !circleId) {
+      setError('Select a circle to scope this event to');
+      return;
+    }
+    if (step === 'privacy' && visibility === 'trip' && !tripId) {
+      setError('Select a trip to attach this event to');
       return;
     }
     if (step === 'tickets' && priceType === 'external' && priceUrl && !priceUrl.startsWith('http')) {
@@ -677,7 +714,7 @@ export default function CreateEventScreen() {
                   <Pressable
                     key={v.key}
                     style={[styles.optRow, visibility === v.key && styles.optRowActive]}
-                    onPress={() => { setVisibility(v.key); scheduleSave(); }}
+                    onPress={() => handleSetVisibility(v.key)}
                   >
                     <Icon size={16} color={visibility === v.key ? color.signal : color.mute} />
                     <View style={{ flex: 1 }}>
@@ -689,17 +726,63 @@ export default function CreateEventScreen() {
                 );
               })}
 
-              {circleId && (
-                <View style={styles.infoBox}>
-                  <Lock size={14} color={color.mute} />
-                  <Text style={styles.infoText}>This event is attached to a circle. Visibility defaults to circle members.</Text>
-                </View>
+              {/* Circle picker — shown when 'circle' visibility is selected */}
+              {visibility === 'circle' && (
+                <>
+                  <Text style={styles.label}>Which circle?</Text>
+                  {circlesLoading ? (
+                    <ActivityIndicator size="small" color={color.signal} style={{ marginTop: space.sm }} />
+                  ) : circles.length === 0 ? (
+                    <View style={styles.infoBox}>
+                      <Users size={14} color={color.mute} />
+                      <Text style={styles.infoText}>You don't have any circles yet. Create one from your profile.</Text>
+                    </View>
+                  ) : (
+                    circles.map((c) => (
+                      <Pressable
+                        key={c.id}
+                        style={[styles.optRow, circleId === c.id && styles.optRowActive]}
+                        onPress={() => { setCircleId(c.id); scheduleSave(); }}
+                      >
+                        <Users size={16} color={circleId === c.id ? color.signal : color.mute} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.optLabel, circleId === c.id && styles.optLabelActive]}>{c.name}</Text>
+                        </View>
+                        {circleId === c.id && <View style={styles.optDot} />}
+                      </Pressable>
+                    ))
+                  )}
+                </>
               )}
-              {tripId && (
-                <View style={styles.infoBox}>
-                  <MapPin size={14} color={color.mute} />
-                  <Text style={styles.infoText}>This event is attached to a trip itinerary.</Text>
-                </View>
+
+              {/* Trip picker — shown when 'trip' visibility is selected */}
+              {visibility === 'trip' && (
+                <>
+                  <Text style={styles.label}>Which trip?</Text>
+                  {tripsLoading ? (
+                    <ActivityIndicator size="small" color={color.signal} style={{ marginTop: space.sm }} />
+                  ) : trips.length === 0 ? (
+                    <View style={styles.infoBox}>
+                      <MapPin size={14} color={color.mute} />
+                      <Text style={styles.infoText}>You don't have any trips yet. Create one from the Trips tab.</Text>
+                    </View>
+                  ) : (
+                    trips.map((trip) => (
+                      <Pressable
+                        key={trip.id}
+                        style={[styles.optRow, tripId === trip.id && styles.optRowActive]}
+                        onPress={() => { setTripId(trip.id); scheduleSave(); }}
+                      >
+                        <MapPin size={16} color={tripId === trip.id ? color.signal : color.mute} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.optLabel, tripId === trip.id && styles.optLabelActive]}>{trip.title}</Text>
+                          <Text style={styles.optDesc}>{trip.destinationCity}{trip.destinationCountry ? `, ${trip.destinationCountry}` : ''}</Text>
+                        </View>
+                        {tripId === trip.id && <View style={styles.optDot} />}
+                      </Pressable>
+                    ))
+                  )}
+                </>
               )}
             </>
           )}
@@ -853,6 +936,23 @@ export default function CreateEventScreen() {
                     {VISIBILITIES.find((v) => v.key === visibility)?.label ?? visibility}
                   </Text>
                 </View>
+
+                {visibility === 'circle' && circleId && (
+                  <View style={styles.reviewRow}>
+                    <Users size={13} color={color.mute} />
+                    <Text style={styles.reviewMeta}>
+                      Circle: {circles.find((c) => c.id === circleId)?.name ?? circleId}
+                    </Text>
+                  </View>
+                )}
+                {visibility === 'trip' && tripId && (
+                  <View style={styles.reviewRow}>
+                    <MapPin size={13} color={color.mute} />
+                    <Text style={styles.reviewMeta}>
+                      Trip: {trips.find((tr) => tr.id === tripId)?.title ?? tripId}
+                    </Text>
+                  </View>
+                )}
 
                 {priceType === 'external' ? (
                   <View style={styles.reviewRow}>

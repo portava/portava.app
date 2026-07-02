@@ -11,7 +11,7 @@ const BASE = (() => {
 export type EventState =
   | 'draft' | 'open' | 'full' | 'waitlist' | 'started' | 'completed' | 'cancelled' | 'archived';
 
-export type EventVisibility = 'public' | 'friends_only' | 'invite_only';
+export type EventVisibility = 'public' | 'friends_only' | 'invite_only' | 'circle' | 'trip';
 
 export type EventRsvpStatus = 'going' | 'maybe' | 'interested' | 'cant_go';
 
