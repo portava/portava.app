@@ -2,16 +2,15 @@
 
 **Task:** #1183 — Follow-up audit & repair pass  
 **Date:** 2026-07-02  
-**Author:** Agent  
 **Baseline:** Task #1054 (QA audit), `docs/qa-audit-2026-07.md`, `docs/qa-report-final.md`, `artifacts/travel-buddy/docs/BETA_READINESS_CHECKLIST.md`
 
 ---
 
 ## 1. Follow-Up Audit Summary
 
-This pass revisited all 12 issues from the July 2026 QA audit, swept 21 previously uncovered screens, verified the source-of-truth for all 8 shared data domains, confirmed no regressions from tasks #1–#137, and executed the full broken-path zero-tolerance list across all core surfaces.
+This pass revisited all 12 issues from the July 2026 QA audit, swept **35 previously uncovered screens** (all `gems/`, `settings/`, `admin/`, `review/`, and remaining core screens), verified the source-of-truth for all 8 shared data domains, confirmed no regressions from tasks #1–#137, and executed the full broken-path zero-tolerance list across all core surfaces.
 
-**Net result:** 1 new fixture leak found and fixed (`post/[id].tsx`); all prior audit fixes confirmed clean; 0 regressions found; all pipeline checks pass.
+**Net result:** 5 fixture leaks found and fixed; all prior audit fixes confirmed clean (with 2 corrections where prior-audit verification was wrong); 1 new regression test added (fixture-import guard, 2/2 pass); all pipeline checks pass.
 
 ---
 
@@ -21,37 +20,60 @@ See `docs/qa-follow-up-tracker.md` for the full table. Summary:
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Prior audit fixes confirmed | 12 | ✅ All verified |
-| New fixture leaks found | 1 | ✅ Fixed (`post/[id].tsx`) |
-| Intentional deferred stubs | 6 | 🔵 All honestly labeled in UI |
+| Prior audit items verified clean | 10 | ✅ All clean |
+| Prior audit items that needed a fix | 2 | ✅ Fixed (trips mockTrips fallback, Pulse editorial/interests) |
+| New fixture leaks found via guard test | 5 total | ✅ All 5 fixed |
+| Intentional deferred stubs | 8 | 🔵 All honestly labeled in UI |
 | Out-of-scope blockers | 5 | 🔵 Documented |
 
 ---
 
 ## 3. Regressions Found and Fixed
 
-**None.** All 12 prior audit fixes were re-verified clean. Post-merge systems (Telegraph, Daily Brief, Meetup, Plan builder, Follow/passport, Notifications/push) showed no regressions. The 2,324-test backend suite is unaffected by this pass (only client-side files changed).
+Two prior-audit "verified clean" items turned out to need fixes:
+
+**Item 11 (Pulse feed):** The prior audit classified editorial posts as `__DEV__`-gated. The artifact version (`artifacts/travel-buddy/app/(tabs)/index.tsx`) had no `__DEV__` check — the render block was gated only by `feedMode === 'forYou'`, so any authenticated user in For You mode saw fabricated cebu posts. Additionally, `me.interests` (the fixture user's interest list) was passed to `useCityPulse` as the initial interests array for all users, seeding the category engine with wrong data. Both removed.
+
+**Item 3 (Trips tab):** The prior audit noted the fixture fallback was "unauthenticated only" and marked it correct. The task spec requires fixture-backed states be replaced with honest gated states. Replaced `mockTrips.map(...)` with a sign-in CTA.
 
 ---
 
-## 4. Broken Paths Found and Fixed
+## 4. Fixture Leaks Found and Fixed
 
-### Fixed: `post/[id].tsx` — Fixture data shown to authenticated users
+### Summary table
 
-**Root cause:** Screen called `postById(id)` from `src/data/cebu` synchronously. This returned a hardcoded cebu trip post (or undefined) regardless of authentication state. An authenticated user navigating to any `/post/<real-id>` would either see "Post not found" or — if the ID happened to match a fixture ID — see fabricated cebu data as if it were their own post.
+| File | Fixture | Visible to authenticated users? | Fix |
+|------|---------|--------------------------------|-----|
+| `app/post/[id].tsx` | `postById()` from cebu | YES — shown unconditionally | `getPostById()` → `GET /api/posts/:postId` |
+| `app/(tabs)/ai.tsx` | `aiOpening` from cebu | YES — pre-populated chat | Removed; chat starts blank |
+| `app/(tabs)/index.tsx` | `me.interests` (always) + `editorialPosts` (For You mode) | YES | Both removed from import and render |
+| `app/(tabs)/trips.tsx` | `mockTrips` (unauthenticated) | No — but honest gating required | Replaced with sign-in CTA |
+| `app/destination/[slug].tsx` | `cebu`, `posts` — entire screen | YES — slug param ignored | Replaced with honest "coming soon" stub |
 
-**Fix:**
-1. Added `getPostById(postId: string): Promise<PostResult<PostRow>>` to `src/services/posts.ts`. The function calls `GET /api/posts/:postId` (already implemented in the API server), uses `freshToken()` for auth, and maps the response through the existing `mapPost()` function.
-2. Rewrote `app/post/[id].tsx` to:
-   - Remove `postById` cebu fixture import (and unused `PostCard` import)
-   - Import `getPostById, PostRow` from the posts service
-   - Use `useState + useEffect` to fetch asynchronously on mount
-   - Show a loading spinner, a typed error message, or the post content
-   - Display post data via a new `PostDetailCard` component that renders `PostRow` fields directly (author avatar, content, media, location, engagement counts)
-   - Change the comments placeholder text from "Comments thread shell — wire to backend later." to the honest "Comments coming soon."
-3. Ran `bash scripts/sync-standalone.sh --fix-source` — 2 files synced.
+### Detail: `post/[id].tsx`
 
-**Verification:** `cd travel-buddy-standalone && pnpm typecheck` → 0 errors.
+`postById(id)` was a synchronous cebu fixture call. Any real `/post/<uuid>` either returned `undefined` or a fabricated cebu post. Fixed by:
+- Adding `getPostById(postId)` to `src/services/posts.ts` (same pattern as `listGlobalPosts`: `freshToken()`, `mapApiError`, `mapPost`)
+- Rewriting the screen with `useState + useEffect` async fetch, loading spinner, typed error/not-found states, and an inline `PostDetailCard` component rendering live `PostRow` fields
+- Overflow sheet (share/report) hidden for own posts; `ReportPostSheet` wired; 5-second undo banner on report
+
+### Detail: `ai.tsx` (Compass chat)
+
+`aiOpening` pre-populated the Compass chat with a Cebu travel conversation seed shown to every user. The chat looked "broken" for users who weren't in Cebu. Removed entirely; `openingToEntries` helper and `ChatMessage` import removed too. Chat now opens blank — the first message is from the user, which is the correct product behavior.
+
+### Detail: `index.tsx` (Pulse / For You feed)
+
+Two separate leaks:
+1. `me.interests` — the fixture user's interest array (`['beach', 'food', 'nightlife']`) was passed to `useCityPulse` for all users, biasing the category engine. Replaced with `[]` (service uses inferred interests from the preference engine via `fetchPreferences()`).
+2. `editorialPosts.slice(0, 3)` — rendered as "INSPIRATION · EDITORIAL" in For You mode with no `__DEV__` gate in the artifact. The standalone copy had `__DEV__` gating (so it was genuinely dev-only there), but the artifact copy didn't. Both editorial blocks now removed from both copies.
+
+### Detail: `trips.tsx` (unauthenticated fallback)
+
+When `!live` (unauthenticated), `mockTrips.map(...)` rendered 3 fabricated cebu trip cards. While authenticated users never saw this, the task spec requires an honest gated state. Replaced with a `Pressable` sign-in CTA ("Sign in to see your trips") that routes to `/(auth)/sign-in`.
+
+### Detail: `destination/[slug].tsx`
+
+The entire screen was hardcoded to Cebu: `cebu.coverUrl`, `cebu.city`, `cebu.travelerCount`, `posts.filter(...)` — the `[slug]` param was destructured but ignored. Every destination tap in the app showed "Cebu City, Philippines." Replaced with an honest stub that renders the destination name (derived from the slug) and "Destination pages coming soon" with a `MapPin` icon.
 
 ---
 
@@ -76,38 +98,66 @@ No duplicate stores or stale cross-invalidation issues found.
 
 | File | Change |
 |------|--------|
-| `artifacts/travel-buddy/src/services/posts.ts` | Added `getPostById(postId)` — 20-line function wired to existing `GET /api/posts/:postId` |
-| `artifacts/travel-buddy/app/post/[id].tsx` | Full rewrite — removed cebu fixture + PostCard, added async fetch + loading/error/not-found states + PostDetailCard |
-| `travel-buddy-standalone/src/services/posts.ts` | Auto-synced from artifact via `sync-standalone.sh --fix-source` |
-| `travel-buddy-standalone/app/post/[id].tsx` | Auto-synced from artifact via `sync-standalone.sh --fix-source` |
-| `docs/qa-follow-up-tracker.md` | New — full item classification table |
+| `artifacts/travel-buddy/src/services/posts.ts` | Added `getPostById(postId)` |
+| `artifacts/travel-buddy/app/post/[id].tsx` | Replaced cebu fixture with real API + PostDetailCard + overflow/report/undo |
+| `artifacts/travel-buddy/app/(tabs)/ai.tsx` | Removed `aiOpening`, `openingToEntries`, `ChatMessage` import; chat starts blank |
+| `artifacts/travel-buddy/app/(tabs)/index.tsx` | Removed `editorialPosts`, `me`; `me.interests` → `[]`; editorial render block removed |
+| `artifacts/travel-buddy/app/(tabs)/trips.tsx` | Removed `mockTrips`; unauthenticated fallback → sign-in CTA |
+| `artifacts/travel-buddy/app/destination/[slug].tsx` | Replaced hardcoded cebu content with honest "coming soon" stub |
+| `travel-buddy-standalone/app/(tabs)/index.tsx` | Same edits as artifact (standalone-owned, edited directly) |
+| `travel-buddy-standalone/src/services/posts.ts` | Auto-synced |
+| `travel-buddy-standalone/app/post/[id].tsx` | Auto-synced |
+| `travel-buddy-standalone/app/(tabs)/ai.tsx` | Auto-synced |
+| `travel-buddy-standalone/app/(tabs)/trips.tsx` | Auto-synced |
+| `travel-buddy-standalone/app/destination/[slug].tsx` | Auto-synced |
+| `scripts/src/fixture-import-guard.test.ts` | New guard test |
+| `scripts/package.json` | Added `test:fixture-guard` npm script |
+| `docs/qa-follow-up-tracker.md` | Full classification table |
 | `docs/qa-follow-up-final.md` | This document |
 
 ---
 
 ## 7. Tests Added / Updated
 
-**Backend tests:** None added. No API server code was changed — `GET /api/posts/:postId` was already tested as part of the existing 2,324-test suite. Adding a test for an endpoint that existed before this pass is not warranted.
+### New: `scripts/src/fixture-import-guard.test.ts`
 
-**Frontend verification:** TypeScript typecheck validates that `PostRow` fields are used correctly in `PostDetailCard` and that the optional `post.author?.id` chaining is correct. `pnpm typecheck` passes with 0 errors across all workspaces.
+**Pattern:** `node:test` + pure filesystem scan — no fake client needed (this is a static import check, not an API test).
 
-**Why no new backend test needed:** The bug was a frontend architectural decision (using a fixture call instead of the service). The right gate for this class of bug is typecheck (confirmed passing) + the sync check (confirmed passing) + a code review that catches `import … from 'cebu'` in a non-fixture context. The `getPostById` function mirrors `listGlobalPosts` exactly and is exercised by the existing API integration once the app runs on device.
+**What it catches:** Any import from `src/data/cebu`, `__fixtures__`, `fixtures/`, `mockData`, or `@fixtures` in a production screen file. Excludes `.test.ts`, `.spec.ts`, `.stories.tsx` files.
+
+**Would it have caught these bugs?** Yes, for all 5 leaks. All were `import { … } from '../../src/data/cebu'`.
+
+**Run:** `pnpm --filter @workspace/scripts run test:fixture-guard`
+
+**Result (after fixes):**
+```
+▶ fixture-import guard
+  ✔ no production screen in artifacts/travel-buddy/app imports fixture/cebu data (79ms)
+  ✔ no production screen in travel-buddy-standalone/app imports fixture/cebu data (100ms)
+✔ fixture-import guard (180ms)
+ℹ tests 2 | pass 2 | fail 0
+```
+
+**Backend tests:** No API server code changed; the existing 2,324-test backend suite covers `GET /api/posts/:postId`. TypeScript typecheck validates all `PostRow` field accesses in `PostDetailCard`.
 
 ---
 
-## 8. Exact Test / Typecheck Results
+## 8. Exact Pipeline Results
 
 ```
 cd travel-buddy-standalone && pnpm typecheck
   → tsc -p tsconfig.json --noEmit
   → EXIT 0 (0 errors)
 
-pnpm run typecheck  (full monorepo)
+pnpm run typecheck  (full monorepo — 8 packages)
   → artifacts/travel-buddy typecheck: Done
   → artifacts/mockup-sandbox typecheck: Done
   → artifacts/api-server typecheck: Done
   → scripts typecheck: Done
   → EXIT 0 (0 errors)
+
+pnpm --filter @workspace/scripts run test:fixture-guard
+  → ✔ 2/2 pass, 0 fail
 
 bash scripts/sync-standalone.sh --check-source
   → Total drifted files: 0
@@ -117,42 +167,58 @@ bash scripts/sync-standalone.sh --check-deps
   → PASS: No dependency drift — standalone is in sync with the monorepo app.
 
 pnpm --filter @workspace/api-server run build
-  → (esbuild bundle — see CI output)
+  → esbuild bundle ⚡ Done in 2341ms
 ```
 
 ---
 
 ## 9. Manual QA Proof
 
-The following logical walkthrough confirms the fix is correct:
+### `post/[id].tsx`
 
-**Before (broken):** `const post = postById(id)` — synchronous, uses cebu fixture. Any real `/post/<uuid>` returns either `undefined` (showing "Post not found") or a fabricated cebu post.
+| Before | After |
+|--------|-------|
+| `const post = postById(id)` — synchronous; always cebu or undefined | `getPostById(id)` — async; calls `GET /api/posts/:postId` with JWT |
+| Any real UUID showed "Post not found" or cebu post | Shows real post data, loading spinner, typed error states |
+| Comments labeled "wire to backend later" | "Comments coming soon." |
 
-**After (fixed):**
-1. Screen mounts → shows `ActivityIndicator`
-2. `getPostById(id)` fires `GET /api/posts/<id>` with a fresh JWT
-3. API server route (`router.get("/posts/:postId", ...)`) fetches from Supabase, checks visibility/RLS
-4. On success: `PostDetailCard` renders author, content, media, location, and engagement counts from the real `PostRow`
-5. On `not_found` (404): shows "Post not found."
-6. On other error: shows "Could not load this post."
-7. Unauthenticated call: `freshToken()` returns null → `errorKind: 'unauthenticated'` → shows error message
-8. Share / Report overflow menu still works (uses `post.id`, `post.author?.id`)
-9. Comments section: "Comments coming soon." — honest, no stale placeholder text
+### `ai.tsx` (Compass)
+
+| Before | After |
+|--------|-------|
+| Opened with 4 pre-populated cebu messages | Opens blank — user sends the first message |
+| Tokyo/Paris users saw "Hey, I'm in Cebu…" context | No misleading context |
+
+### `index.tsx` (Pulse)
+
+| Before | After |
+|--------|-------|
+| `useCityPulse({ interests: me.interests })` — always used cebu fixture user's beach/food/nightlife interests | `useCityPulse({ interests: [] })` — preference engine uses inferred interests from `fetchPreferences()` |
+| For You feed showed 3 cebu editorial posts (no `__DEV__` gate in artifact) | Editorial section removed; feed shows only real global posts |
+
+### `trips.tsx`
+
+| Before | After |
+|--------|-------|
+| Logged-out state: rendered 3 cebu trip cards | Logged-out state: "Sign in to see your trips" CTA → `/(auth)/sign-in` |
+
+### `destination/[slug].tsx`
+
+| Before | After |
+|--------|-------|
+| `slug` param read but ignored; always rendered Cebu City with cebu cover image | Reads `slug`, formats it as a display name; shows "Destination pages coming soon" placeholder |
 
 ---
 
 ## 10. Remaining Blockers
-
-These are documented per task spec but are out of scope for this code audit pass:
 
 | Blocker | Priority | Owner |
 |---------|----------|-------|
 | EAS build setup (bundle identifier, `eas.json`, Expo account) | P0 | Operator |
 | Permission usage strings (iOS required for App Store) | P0 | Operator |
 | Crash logging (Sentry or equivalent) | P1 | Engineer |
-| Compass opening text — needs real context API, currently uses seed | P2 | Engineer |
 | Comments backend (`GET/POST /posts/:postId/comments`) | P3 | Engineer |
 | MapLibre native map (pre-existing native-only constraint) | P3 | Engineer |
 | Telegraph SSE multi-instance (Redis layer needed for multi-pod) | P3 | Architect |
 
-**Beta-blocking blockers:** Items 1–2 (EAS + permissions) block any device beta. Items 3–7 do not block a functional beta.
+**Beta-blocking:** Items 1–2 (EAS + permissions) block any device beta. Items 3–6 do not block a functional beta.

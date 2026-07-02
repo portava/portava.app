@@ -10,9 +10,7 @@ import type { CompassAskRecommendation } from '../../src/services/compass';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { aiOpening } from '../../src/data/cebu';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
-import type { ChatMessage } from '../../src/types/models';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -21,18 +19,10 @@ type ChatEntry =
   | { kind: 'rec';     id: string; rec: CompassAskRecommendation }
   | { kind: 'typing';  id: string };
 
-function openingToEntries(msgs: ChatMessage[]): ChatEntry[] {
-  return msgs.map((m) =>
-    m.role === 'assistant'
-      ? { kind: 'ai_text', id: m.id, text: m.text }
-      : { kind: 'user',    id: m.id, text: m.text },
-  );
-}
-
 export default function AiChat() {
   const router = useRouter();
   const planPicker = usePlanPicker();
-  const [entries, setEntries]       = useState<ChatEntry[]>(openingToEntries(aiOpening));
+  const [entries, setEntries]       = useState<ChatEntry[]>([]);
   const [input, setInput]           = useState('');
   const [loading, setLoading]       = useState(false);
   const [layoverOpen, setLayoverOpen] = useState(false);

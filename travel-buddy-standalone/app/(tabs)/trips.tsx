@@ -14,7 +14,6 @@ import {
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Stamp } from '../../src/components/ui';
-import { trips as mockTrips } from '../../src/data/cebu';
 import { useSession } from '../../src/context/SessionContext';
 import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
@@ -191,20 +190,10 @@ export default function Trips() {
         {live ? (
           <LiveTrips trips={realTrips} loading={loading} error={error} />
         ) : (
-          mockTrips.map((tr) => (
-            <Pressable key={tr.id} style={styles.card} onPress={() => router.push(`/trip/${tr.id}`)}>
-              <Image source={{ uri: tr.coverUrl }} style={styles.cover} />
-              <View style={styles.body}>
-                <View style={styles.stampRow}>
-                  <Stamp label={tr.destination.city} tone="deep" />
-                  <Stamp label={tr.isPublic ? 'public' : 'private'} rotate={2} />
-                </View>
-                <Text style={styles.title}>{tr.title}</Text>
-                <View style={styles.metaRow}><CalendarDays size={14} color={color.mute} /><Text style={styles.meta}>{tr.startDate} – {tr.endDate} · {tr.dayCount} days</Text></View>
-                <View style={styles.metaRow}><Users size={14} color={color.mute} /><Text style={styles.meta}>{tr.collaborators.length + 1} travelers · {tr.savedPostIds.length} saved</Text></View>
-              </View>
-            </Pressable>
-          ))
+          <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
+            <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
+            <Text style={styles.signInCtaSub}>Log or plan a trip, track destinations, and share your travel story.</Text>
+          </Pressable>
         )}
         <Pressable style={styles.empty} onPress={() => router.push('/trip/new')}>
           <Plus size={20} color={color.deep} />
@@ -255,6 +244,17 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; 
 }
 
 const styles = StyleSheet.create({
+  signInCta: {
+    alignItems: 'center',
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.lg,
+    padding: space.xl,
+    gap: space.sm,
+  },
+  signInCtaTitle: { ...t.bodyStrong, color: color.ink, fontSize: 15, textAlign: 'center' },
+  signInCtaSub: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 18 },
   newBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: color.ink, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill },
   newBtnText: { ...t.small, fontWeight: '700', color: color.onInk },
   meetupsCard: {

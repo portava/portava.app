@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { posts as editorialPosts, me } from '../../src/data/cebu';
 import { pulseFeed } from '../../src/data/pulseFeed';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
@@ -95,7 +94,7 @@ export default function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: me.interests, categoryAffinities });
+  const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
   const realFeed = useGlobalFeed();
   const followingFeed = useFollowingFeed();
@@ -320,15 +319,7 @@ export default function Pulse() {
           <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
         ) : null
       )}
-      {/* Editorial inspiration — shown only in For You mode */}
-      {feedMode === 'forYou' && (
-        <>
-          <Text style={styles.inspoLabel}>INSPIRATION · EDITORIAL</Text>
-          {editorialPosts.slice(0, 3).map((p) => (
-            <View key={p.id} style={{ paddingHorizontal: space.lg, marginBottom: space.lg }}><PostCard post={p} /></View>
-          ))}
-        </>
-      )}
+      
     </View>
   );
 
