@@ -2658,9 +2658,9 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   let close: () => Promise<void>;
   afterEach(async () => { if (close) await close(); });
 
-  it("circle event: non-member cannot join (no linked_circle_id → 403)", async () => {
+  it("circle event: non-member cannot join (no circle_id → 403)", async () => {
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: null }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: null }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
@@ -2673,7 +2673,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("circle event: non-member cannot join (no circle_members row → 403)", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
@@ -2687,7 +2687,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("circle event: circle member can join", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       event_attendees: { rows: [] },
@@ -2699,9 +2699,9 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
     assert.equal(status, 200, `Circle member must be able to join, got ${status}`);
   });
 
-  it("trip event: non-trip-member cannot join (no linked_trip_id → 403)", async () => {
+  it("trip event: non-trip-member cannot join (no trip_id → 403)", async () => {
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, linked_trip_id: null }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, trip_id: null }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
@@ -2714,7 +2714,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("trip event: non-trip-member cannot join (no trip_members row → 403)", async () => {
     const tripId = "tttttttt-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, linked_trip_id: tripId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "trip" as any, trip_id: tripId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
@@ -2728,7 +2728,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("trip event: accepted trip member can join", async () => {
     const tripId = "tttttttt-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "trip" as any, linked_trip_id: tripId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", max_attendees: 10, visibility: "trip" as any, trip_id: tripId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       event_attendees: { rows: [] },
@@ -2743,7 +2743,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("circle event: non-member cannot RSVP (403)", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
@@ -2757,7 +2757,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
   it("circle event: non-member cannot view event detail (canViewEvent → 404)", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, linked_circle_id: circleId }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [] },
       event_rsvps: { rows: [] },
       circle_members: { rows: [] },

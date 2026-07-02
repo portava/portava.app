@@ -444,6 +444,8 @@ const CreateEventSchema = z.object({
   trustScoreMin:   z.number().min(0).max(100).optional().nullable(),
   verifiedOnly:    z.boolean().optional(),
   visibility:      z.enum(["public", "friends_only", "invite_only", "circle", "trip"]).default("public"),
+  circleId:        z.string().uuid().optional().nullable(),
+  tripId:          z.string().uuid().optional().nullable(),
   chatEnabled:     z.boolean().optional(),
   waitlistEnabled: z.boolean().optional(),
   priceType:       z.enum(["free", "external"]).optional(),
@@ -470,6 +472,8 @@ const UpdateEventSchema = z.object({
   trustScoreMin:   z.number().min(0).max(100).nullable().optional(),
   verifiedOnly:    z.boolean().optional(),
   visibility:      z.enum(["public", "friends_only", "invite_only", "circle", "trip"]).optional(),
+  circleId:        z.string().uuid().nullable().optional(),
+  tripId:          z.string().uuid().nullable().optional(),
   state:           z.enum(["draft", "open", "started", "completed", "cancelled", "archived"]).optional(),
   chatEnabled:     z.boolean().optional(),
   waitlistEnabled: z.boolean().optional(),
@@ -547,6 +551,8 @@ router.post("/events", async (req, res) => {
       trust_score_min:  b.trustScoreMin ?? null,
       verified_only:    b.verifiedOnly ?? false,
       visibility:       b.visibility,
+      circle_id:        b.circleId ?? null,
+      trip_id:          b.tripId ?? null,
       state:            initialState,
       chat_enabled:     b.chatEnabled ?? true,
       waitlist_enabled: b.waitlistEnabled ?? true,
@@ -1250,7 +1256,7 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     await sc.from("event_activity_log")
       .insert({
         event_id:   draftId,         // will fail FK if events.id != draftId; swallowed non-fatally
-        user_id:    user.id,
+        actor_id:   user.id,
         action:     `draft_publish_rejected_${publishRejectedReason.type}`,
         metadata:   { draftId, reason: publishRejectedReason.detail },
         created_at: new Date().toISOString(),
@@ -1279,6 +1285,8 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     trust_score_min:  b.trustScoreMin ?? null,
     verified_only:    b.verifiedOnly ?? false,
     visibility:       b.visibility,
+    circle_id:        b.circleId ?? null,
+    trip_id:          b.tripId ?? null,
     state:            "open",
     chat_enabled:     b.chatEnabled ?? true,
     waitlist_enabled: b.waitlistEnabled ?? true,
@@ -1488,6 +1496,8 @@ router.patch("/events/:id", async (req, res) => {
   if (b.trustScoreMin   !== undefined) patch.trust_score_min  = b.trustScoreMin;
   if (b.verifiedOnly    !== undefined) patch.verified_only    = b.verifiedOnly;
   if (b.visibility      !== undefined) patch.visibility       = b.visibility;
+  if (b.circleId        !== undefined) patch.circle_id        = b.circleId;
+  if (b.tripId          !== undefined) patch.trip_id          = b.tripId;
   if (b.state           !== undefined) patch.state            = b.state;
   if (b.chatEnabled     !== undefined) patch.chat_enabled     = b.chatEnabled;
   if (b.waitlistEnabled !== undefined) patch.waitlist_enabled = b.waitlistEnabled;
@@ -1668,12 +1678,12 @@ router.post("/events/:id/rsvp", async (req, res) => {
   }
   // Circle/trip visibility: must be a member to RSVP
   if ((ev as any).visibility === "circle") {
-    if (!(ev as any).linked_circle_id || !await isCircleMember(sc, (ev as any).linked_circle_id, user.id)) {
+    if (!(ev as any).circle_id || !await isCircleMember(sc, (ev as any).circle_id, user.id)) {
       sendError(res, "forbidden", "This event is only open to circle members"); return;
     }
   }
   if ((ev as any).visibility === "trip") {
-    if (!(ev as any).linked_trip_id || !await isTripEventMember(sc, (ev as any).linked_trip_id, user.id)) {
+    if (!(ev as any).trip_id || !await isTripEventMember(sc, (ev as any).trip_id, user.id)) {
       sendError(res, "forbidden", "This event is only open to trip members"); return;
     }
   }
@@ -1799,12 +1809,12 @@ router.post("/events/:id/join", async (req, res) => {
     sendError(res, "forbidden", "This event requires an invitation to join"); return;
   }
   if (evData.visibility === "circle") {
-    if (!evData.linked_circle_id || !await isCircleMember(sc, evData.linked_circle_id, user.id)) {
+    if (!evData.circle_id || !await isCircleMember(sc, evData.circle_id, user.id)) {
       sendError(res, "forbidden", "This event is only open to circle members"); return;
     }
   }
   if (evData.visibility === "trip") {
-    if (!evData.linked_trip_id || !await isTripEventMember(sc, evData.linked_trip_id, user.id)) {
+    if (!evData.trip_id || !await isTripEventMember(sc, evData.trip_id, user.id)) {
       sendError(res, "forbidden", "This event is only open to trip members"); return;
     }
   }
@@ -3044,13 +3054,13 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
   }
   if (ev.visibility === "circle") {
     // Must be a member of the linked circle
-    if (!ev.linked_circle_id) return false;
-    return isCircleMember(sc, ev.linked_circle_id, userId);
+    if (!ev.circle_id) return false;
+    return isCircleMember(sc, ev.circle_id, userId);
   }
   if (ev.visibility === "trip") {
     // Must be an accepted member of the linked trip
-    if (!ev.linked_trip_id) return false;
-    return isTripEventMember(sc, ev.linked_trip_id, userId);
+    if (!ev.trip_id) return false;
+    return isTripEventMember(sc, ev.trip_id, userId);
   }
   // invite_only / unknown: must have an RSVP, approved join request, or role
   const [rsvp, role] = await Promise.all([
