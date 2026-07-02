@@ -34,7 +34,7 @@ import {
 } from 'lucide-react-native';
 import {
   getEvent,
-  saveEvent, unsaveEvent, shareEvent, reportEvent,
+  saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
@@ -100,7 +100,7 @@ function openMap(locationName: string | null, lat: number | null, lng: number | 
 
 export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tripId: tripIdParam } = useLocalSearchParams<{ id: string; tripId?: string }>();
   const { userId } = useSession();
 
   const [event, setEvent] = useState<EventDetail | null>(null);
@@ -110,6 +110,8 @@ export default function EventDetailScreen() {
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [addingToTrip, setAddingToTrip] = useState(false);
+  const [addedToTrip, setAddedToTrip] = useState(false);
   // hasPendingRequest is seeded from backend on load; optimistically set true
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
@@ -156,6 +158,21 @@ export default function EventDetailScreen() {
     const ok = await handleRequestJoin();
     if (ok) setHasPendingRequest(true);
     // if !ok the hook already showed an Alert — do not set pending
+  }
+
+  // ── Add to itinerary (when arriving from Trip Detail with tripId param) ────
+  async function handleAddToItinerary() {
+    if (!event || !tripIdParam || addingToTrip || addedToTrip) return;
+    setAddingToTrip(true);
+    const res = await addEventToTrip(event.id, tripIdParam);
+    setAddingToTrip(false);
+    if (res.ok) {
+      setAddedToTrip(true);
+    } else if (res.data && (res.data as any).alreadyAdded) {
+      setAddedToTrip(true);
+    } else {
+      Alert.alert('Could not add', res.message ?? 'Something went wrong adding this event to your trip.');
+    }
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -542,14 +559,31 @@ export default function EventDetailScreen() {
                 <Bell size={16} color={color.signal} />
                 <Text style={styles.entryBtnText}>Reminders</Text>
               </Pressable>
-              {/* Add to trip */}
-              <Pressable
-                style={styles.entryBtn}
-                onPress={() => router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)}
-              >
-                <Briefcase size={16} color={color.signal} />
-                <Text style={styles.entryBtnText}>Add to trip</Text>
-              </Pressable>
+              {/* Add to trip / Add to Itinerary */}
+              {tripIdParam ? (
+                <Pressable
+                  style={[styles.entryBtn, addedToTrip && { borderColor: '#16A34A' }]}
+                  onPress={handleAddToItinerary}
+                  disabled={addingToTrip || addedToTrip}
+                >
+                  {addingToTrip
+                    ? <ActivityIndicator size="small" color={color.signal} />
+                    : addedToTrip
+                      ? <Check size={16} color="#16A34A" />
+                      : <Briefcase size={16} color={color.signal} />}
+                  <Text style={[styles.entryBtnText, addedToTrip && { color: '#16A34A' }]}>
+                    {addedToTrip ? 'Added!' : 'Add to Itinerary'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={styles.entryBtn}
+                  onPress={() => router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)}
+                >
+                  <Briefcase size={16} color={color.signal} />
+                  <Text style={styles.entryBtnText}>Add to trip</Text>
+                </Pressable>
+              )}
               {/* Map — open native maps */}
               {hasMapLocation && (
                 <Pressable

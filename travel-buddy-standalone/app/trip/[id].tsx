@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
@@ -21,6 +21,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
+import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 // RichText surface note: the TripDetail model (`src/types/models.ts: TripDetail`)
@@ -197,6 +198,11 @@ export default function TripDetail() {
             onPlanMeetup={(date) => setMeetupDate(date)}
           />
         ) : null}
+        {/* ── Events near this destination ── */}
+        {live && trip.id ? (
+          <EventsNearTripSection tripId={trip.id} />
+        ) : null}
+
         <SavedIdeas ideas={trip.savedIdeas} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
         <TripPlans plans={tripPlans} />
@@ -532,6 +538,89 @@ function TripMapPlaceholder() {
     </View>
   );
 }
+
+// ── EventsNearTripSection ─────────────────────────────────────────────────────
+
+function formatEventDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' · ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function EventsNearTripSection({ tripId }: { tripId: string }) {
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getEventsNearTrip(tripId).then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.data) setEvents(res.data.events.slice(0, 10));
+      setLoaded(true);
+    }).catch(() => {
+      if (!cancelled) setLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [tripId]);
+
+  if (!loaded || events.length === 0) return null;
+
+  return (
+    <View style={ev.wrap}>
+      <View style={ev.head}>
+        <CalendarClock size={15} color={color.signal} />
+        <Text style={ev.title}>Events here</Text>
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={ev.row}
+      >
+        {events.map((e) => (
+          <Pressable
+            key={e.id}
+            style={ev.card}
+            onPress={() => router.push(`/event/${e.id}?tripId=${tripId}` as any)}
+          >
+            {e.coverUrl ? (
+              <Image source={{ uri: e.coverUrl }} style={ev.cover} />
+            ) : (
+              <View style={[ev.cover, ev.coverEmpty]}>
+                <CalendarClock size={18} color={color.faint} />
+              </View>
+            )}
+            <View style={ev.cardBody}>
+              <Text style={ev.cardTitle} numberOfLines={2}>{e.title}</Text>
+              {e.startsAt ? (
+                <Text style={ev.cardMeta}>{formatEventDate(e.startsAt)}</Text>
+              ) : null}
+              {e.locationName ? (
+                <View style={ev.cardLocRow}>
+                  <MapPin size={10} color={color.mute} />
+                  <Text style={ev.cardMeta} numberOfLines={1}>{e.locationName}</Text>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+const ev = StyleSheet.create({
+  wrap:        { paddingHorizontal: space.lg, marginTop: space.xl, gap: space.sm },
+  head:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  title:       { ...t.bodyStrong, color: color.ink, fontSize: 16 },
+  row:         { gap: space.md, paddingVertical: space.xs, paddingRight: space.lg },
+  card:        { width: 160, backgroundColor: color.paperRaised, borderRadius: 12, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
+  cover:       { width: '100%', height: 90 },
+  coverEmpty:  { backgroundColor: '#E8F0F2', alignItems: 'center', justifyContent: 'center' },
+  cardBody:    { padding: space.sm, gap: 3 },
+  cardTitle:   { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12, lineHeight: 16 },
+  cardMeta:    { ...t.small, color: color.mute, fontSize: 10, flex: 1 },
+  cardLocRow:  { flexDirection: 'row', alignItems: 'center', gap: 3 },
+});
 
 const mp = StyleSheet.create({
   wrap: { paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md },

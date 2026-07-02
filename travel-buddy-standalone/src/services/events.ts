@@ -652,3 +652,33 @@ export async function getUserEvents(
 ): Promise<ApiResult<{ hosted: EventSummary[]; attending: EventSummary[] }>> {
   return apiCall(`/api/users/${userId}/events`);
 }
+
+// ── Near-trip events ─────────────────────────────────────────────────────────
+
+export interface NearTripEventsResult {
+  events: EventSummary[];
+  tripId: string;
+  city: string;
+}
+
+export async function getEventsNearTrip(
+  tripId: string,
+): Promise<ApiResult<NearTripEventsResult>> {
+  return apiCall<NearTripEventsResult>(`/api/events/near-trip/${tripId}`);
+}
+
+export interface AddEventToTripResult {
+  planItemId: string;
+  tripId: string;
+  alreadyAdded?: boolean;
+}
+
+export async function addEventToTrip(
+  eventId: string,
+  tripId: string,
+): Promise<ApiResult<AddEventToTripResult>> {
+  return apiCall<AddEventToTripResult>(`/api/events/${eventId}/add-to-trip`, {
+    method: 'POST',
+    body: JSON.stringify({ tripId }),
+  });
+}
