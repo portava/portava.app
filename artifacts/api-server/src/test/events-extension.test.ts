@@ -1696,6 +1696,147 @@ describe("POST /api/events/:id/comments", () => {
   });
 });
 
+// ── POST /join capacity enforcement ──────────────────────────────────────────
+
+describe("POST /api/events/:id/join — capacity enforcement", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { await close(); });
+
+  it("join on full event without waitlist returns 403", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "full", visibility: "public", waitlist_enabled: false }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403);
+  });
+
+  it("join on full event with waitlist returns 202 and waitlisted status", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "full", visibility: "public", waitlist_enabled: true }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 202);
+    assert.equal(body.status, "waitlisted");
+  });
+
+  it("join when max_attendees reached mid-flight redirects to waitlist (202)", async () => {
+    // 3 slots, 3 already going → full at capacity check
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public",
+          max_attendees: 3, waitlist_enabled: true }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.user1, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user2, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user3, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const hostId = ID.host1; // host joining their own full event
+    const newUser = "00000000-0000-0000-0009-000000000099";
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, newUser);
+    assert.equal(status, 202);
+    assert.equal(body.status, "waitlisted");
+  });
+});
+
+// ── GET /posts participant-only access ────────────────────────────────────────
+
+describe("GET /api/events/:id/posts — participant-only access", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { await close(); });
+
+  it("non-participant gets 403 on public event posts", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_posts: { rows: [] },
+      profiles: { rows: [] },
+      blocks: { rows: [] },
+      user_friendships: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    // user1 has no RSVP and is not host/cohost
+    const { status } = await req(port, "GET", `/api/events/${ID.ev1}/posts`, null, ID.user1);
+    assert.equal(status, 403);
+  });
+
+  it("going attendee can read posts", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [{ event_id: ID.ev1, user_id: ID.user1, status: "going" }] },
+      event_posts: { rows: [] },
+      profiles: { rows: [] },
+      blocks: { rows: [] },
+      user_friendships: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "GET", `/api/events/${ID.ev1}/posts`, null, ID.user1);
+    assert.equal(status, 200);
+  });
+});
+
+// ── Safety-summary host-only (co-host excluded) ───────────────────────────────
+
+describe("GET /api/events/:id/safety-summary — host-only access", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { await close(); });
+
+  it("co-host gets 403 (only host may view safety summary)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1 }) ] },
+      event_roles: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, role: "host" },
+        { event_id: ID.ev1, user_id: ID.user1, role: "co_host" },
+      ]},
+      event_reports: { rows: [] },
+      event_attendee_states: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "GET", `/api/events/${ID.ev1}/safety-summary`, null, ID.user1);
+    assert.equal(status, 403);
+  });
+});
+
 // ── Private-field leakage — priceUrl and safetyNotes ─────────────────────────
 
 describe("Private-field leakage — priceUrl and safetyNotes", () => {

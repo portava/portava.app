@@ -1628,6 +1628,46 @@ router.post("/events/:id/join", async (req, res) => {
   const result = await checkEventEligibility(sc, evData, user.id);
   if (!result.ok) { sendError(res, result.errorCode as any, result.message ?? "Cannot join"); return; }
 
+  // Capacity enforcement: if full/waitlist, redirect to waitlist (same logic as RSVP POST)
+  if (["full", "waitlist"].includes(evData.state)) {
+    if (!evData.waitlist_enabled) {
+      sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
+    }
+    const { data: existingWl } = await sc
+      .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if (!existingWl) {
+      const { data: maxPos } = await sc
+        .from("event_waitlist").select("position").eq("event_id", id)
+        .order("position", { ascending: false }).limit(1).maybeSingle();
+      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+      await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
+      await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+    }
+    res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
+  }
+
+  // Check that adding this user won't exceed capacity (race-condition guard)
+  if (evData.max_attendees != null) {
+    const currentGoing = await getGoingCount(sc, id);
+    if (currentGoing >= evData.max_attendees) {
+      if (!evData.waitlist_enabled) {
+        sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
+      }
+      const { data: existingWl2 } = await sc
+        .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+      if (!existingWl2) {
+        const { data: maxPos2 } = await sc
+          .from("event_waitlist").select("position").eq("event_id", id)
+          .order("position", { ascending: false }).limit(1).maybeSingle();
+        const nextPos2 = ((maxPos2 as any)?.position ?? 0) + 1;
+        await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos2 });
+        const wlCount = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+        await sc.from("events").update({ waitlist_count: ((wlCount as any).data ?? []).length, updated_at: new Date().toISOString() }).eq("id", id);
+      }
+      res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
+    }
+  }
+
   await sc.from("event_rsvps").upsert(
     { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
     { onConflict: "event_id,user_id" },
@@ -3787,7 +3827,17 @@ router.get("/events/:id/posts", async (req, res) => {
 
   const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
-  if (!await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
+
+  // Posts are participant-scoped: host/cohost or going/maybe attendees only.
+  const role = await getEventRole(sc, id, user.id);
+  const isStaff = role === "host" || role === "co_host";
+  if (!isStaff) {
+    const { data: rsvp } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if (!rsvp || !["going","maybe"].includes((rsvp as any).status)) {
+      sendError(res, "forbidden", "Posts are only visible to event participants"); return;
+    }
+  }
 
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
@@ -3885,7 +3935,18 @@ router.get("/events/:id/media", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
-  if (!ev || !await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found"); return; }
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Media is participant-scoped: host/cohost or going/maybe attendees only.
+  const mediaRole = await getEventRole(sc, id, user.id);
+  const isMediaStaff = mediaRole === "host" || mediaRole === "co_host";
+  if (!isMediaStaff) {
+    const { data: mediaRsvp } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if (!mediaRsvp || !["going","maybe"].includes((mediaRsvp as any).status)) {
+      sendError(res, "forbidden", "Media is only visible to event participants"); return;
+    }
+  }
 
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
@@ -3959,7 +4020,18 @@ router.get("/events/:id/comments", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { data: ev } = await sc.from("events").select("visibility, host_id, state").eq("id", id).maybeSingle();
-  if (!ev || !await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found"); return; }
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Comments/updates are participant-scoped: host/cohost or going/maybe attendees only.
+  const commRole = await getEventRole(sc, id, user.id);
+  const isCommStaff = commRole === "host" || commRole === "co_host";
+  if (!isCommStaff) {
+    const { data: commRsvp } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if (!commRsvp || !["going","maybe"].includes((commRsvp as any).status)) {
+      sendError(res, "forbidden", "Comments are only visible to event participants"); return;
+    }
+  }
 
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
@@ -4196,8 +4268,8 @@ router.get("/events/:id/safety-summary", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const role = await getEventRole(sc, id, user.id);
-  if (role !== "host" && role !== "co_host") {
-    sendError(res, "forbidden", "Only host or co-host can view safety summary"); return;
+  if (role !== "host") {
+    sendError(res, "forbidden", "Only the host can view the safety summary"); return;
   }
 
   const [reportRes, noShowRes, blockedRes] = await Promise.all([
