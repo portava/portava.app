@@ -51,7 +51,7 @@ function makeClient(state: FakeState) {
       const filters: Array<(r: any) => boolean> = [];
 
       function source(): any[] {
-        if (table === "profiles")           return state.profiles;
+        if (table === "profiles")           return state.profiles.map((p) => ({ account_status: "active", ...p }));
         if (table === "blocks")             return state.blocks;
         if (table === "user_follows")       return state.user_follows ?? [];
         if (table === "user_friendships")   return state.user_friendships ?? [];

@@ -741,7 +741,7 @@ describe("POST /api/events/:id/postpone, /complete, /archive", () => {
 
   beforeEach(async () => {
     const client = makeFakeClient({
-      events: { rows: [ makeEvent({ id: ID.ev1, state: "open", host_id: ID.host1 }) ] },
+      events: { rows: [ makeEvent({ id: ID.ev1, state: "started", host_id: ID.host1 }) ] },
       event_roles: { rows: [ { event_id: ID.ev1, user_id: ID.host1, role: "host" } ] },
       event_rsvps: { rows: [] },
       profiles: { rows: [] },

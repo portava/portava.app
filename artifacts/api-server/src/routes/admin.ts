@@ -1779,4 +1779,50 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   res.json({ eventId, action, ok: true });
 });
 
+/** GET /admin/users/:userId/moderation-summary — focused moderation view for admin */
+router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+  const { userId } = req.params;
+
+  const [profileRes, accountStateRes, modActionsRes, reportsReceivedRes, reportsFiledRes] = await Promise.all([
+    sc.from("profiles")
+      .select("id, handle, name, avatar_url, role, verification_status, account_status, created_at")
+      .eq("id", userId)
+      .maybeSingle(),
+    sc.from("user_account_states")
+      .select("state, reason, expires_at, set_by, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    sc.from("moderation_actions")
+      .select("id, action_type, reason, performed_by, created_at")
+      .eq("target_user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, reason_code, severity, status, created_at")
+      .eq("target_id", userId)
+      .in("target_type", ["user", "profile"])
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, target_id, reason_code, severity, status, created_at")
+      .eq("reporter_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20),
+  ]);
+
+  if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+
+  res.json({
+    profile:           profileRes.data,
+    accountStates:     accountStateRes.data    ?? [],
+    moderationActions: modActionsRes.data      ?? [],
+    reportsReceived:   reportsReceivedRes.data ?? [],
+    reportsFiled:      reportsFiledRes.data    ?? [],
+  });
+});
+
 export default router;
