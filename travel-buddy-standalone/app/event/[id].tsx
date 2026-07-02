@@ -8,7 +8,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform,
+  StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform, Linking,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,13 +16,14 @@ import {
   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
   ChevronDown, MessageSquare, Shield, Star, Link, Settings,
   Bookmark, BookmarkCheck, Share2, MoreVertical, Flag,
+  Bell, Briefcase, Compass,
 } from 'lucide-react-native';
 import {
-  getEvent, rsvpEvent, leaveEvent, joinWaitlist, leaveWaitlist,
-  acceptWaitlistOffer, requestToJoinEvent, joinEventChat,
+  getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
+import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { Avatar } from '../../src/components/ui';
@@ -72,7 +73,6 @@ export default function EventDetailScreen() {
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rsvpLoading, setRsvpLoading] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -93,86 +93,26 @@ export default function EventDetailScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // ── RSVP ──────────────────────────────────────────────────────────────────
-  async function handleRsvp(status: EventRsvpStatus) {
-    if (!event) return;
-    setRsvpLoading(true);
+  // ── RSVP state machine (centralised hook) ─────────────────────────────────
+  const {
+    busy: rsvpLoading,
+    handleRsvp,
+    handleLeave,
+    handleJoinWaitlist,
+    handleLeaveWaitlist,
+    handleAcceptOffer,
+    handleRequestJoin,
+    handleJoinChat: rsvpJoinChat,
+  } = useEventRsvp(event, load, (updater) => setEvent((e) => e ? updater(e) : e));
+
+  // Wrap handleRsvp so we can also close the menu
+  function handleRsvpWithMenu(status: EventRsvpStatus) {
     setShowRsvpMenu(false);
-    const res = await rsvpEvent(event.id, status);
-    setRsvpLoading(false);
-    if (!res.ok) {
-      Alert.alert('Error', res.message ?? 'Could not update RSVP');
-      return;
-    }
-    if (res.data && 'status' in res.data && (res.data as any).status === 'waitlisted') {
-      Alert.alert('Added to waitlist', (res.data as any).message ?? 'You have been added to the waitlist.');
-      await load();
-      return;
-    }
-    setEvent((e) => e ? { ...e, myRsvp: status } : e);
-    await load();
+    handleRsvp(status);
   }
 
-  async function handleLeave() {
-    if (!event) return;
-    Alert.alert('Leave event?', 'Your RSVP will be removed.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Leave', style: 'destructive',
-        onPress: async () => {
-          const res = await leaveEvent(event.id);
-          if (!res.ok) Alert.alert('Error', res.message);
-          else await load();
-        },
-      },
-    ]);
-  }
-
-  async function handleJoinWaitlist() {
-    if (!event) return;
-    const res = await joinWaitlist(event.id);
-    if (!res.ok) Alert.alert('Error', res.message ?? 'Could not join waitlist');
-    else { Alert.alert('Added!', `You are #${res.data?.position} on the waitlist.`); await load(); }
-  }
-
-  async function handleAcceptOffer() {
-    if (!event) return;
-    setRsvpLoading(true);
-    const res = await acceptWaitlistOffer(event.id);
-    setRsvpLoading(false);
-    if (!res.ok) Alert.alert('Error', res.message ?? 'Could not accept offer');
-    else { Alert.alert("You're in!", 'Your RSVP has been confirmed.'); await load(); }
-  }
-
-  async function handleLeaveWaitlist() {
-    if (!event) return;
-    Alert.alert('Leave waitlist?', 'Your spot in the queue will be removed.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Leave', style: 'destructive',
-        onPress: async () => {
-          setRsvpLoading(true);
-          const res = await leaveWaitlist(event.id);
-          setRsvpLoading(false);
-          if (!res.ok) Alert.alert('Error', res.message ?? 'Could not leave waitlist');
-          else await load();
-        },
-      },
-    ]);
-  }
-
-  async function handleJoinChat() {
-    if (!event) return;
-    const res = await joinEventChat(event.id);
-    if (!res.ok) { Alert.alert('Error', res.message ?? 'Could not join chat'); return; }
-    if (res.data?.threadId) router.push(`/messages/${res.data.threadId}` as any);
-  }
-
-  async function handleRequestJoin() {
-    if (!event) return;
-    const res = await requestToJoinEvent(event.id);
-    if (!res.ok) Alert.alert('Error', res.message ?? 'Could not send request');
-    else Alert.alert('Request sent', 'The host will review your request.');
+  function handleJoinChat() {
+    rsvpJoinChat((threadId) => router.push(`/messages/${threadId}` as any));
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -496,10 +436,17 @@ export default function EventDetailScreen() {
             {event.priceType === 'external' && event.priceUrl ? (
               <Pressable
                 style={styles.ticketBtn}
-                onPress={() => Alert.alert('External tickets', `Open ${event.priceUrl} to purchase tickets.`, [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Open link', onPress: () => { } },
-                ])}
+                onPress={async () => {
+                  const url = event.priceUrl!;
+                  const supported = await Linking.canOpenURL(url).catch(() => false);
+                  if (supported) {
+                    Linking.openURL(url).catch(() =>
+                      Alert.alert('Could not open link', 'Copy the URL and open it in your browser.'),
+                    );
+                  } else {
+                    Alert.alert('Ticket link', url);
+                  }
+                }}
               >
                 <Link size={14} color="#2563EB" />
                 <Text style={styles.ticketBtnText}>Get tickets</Text>
@@ -508,6 +455,41 @@ export default function EventDetailScreen() {
               <View style={styles.freeTag}>
                 <Check size={12} color="#16A34A" />
                 <Text style={styles.freeTagText}>Free event</Text>
+              </View>
+            )}
+
+            {/* Entry points row: Chat · Add to trip · Explore location */}
+            {(event.chatEnabled || event.locationName) && (
+              <View style={styles.entryRow}>
+                {event.chatEnabled && (
+                  <Pressable style={styles.entryBtn} onPress={handleJoinChat}>
+                    <MessageSquare size={16} color={color.signal} />
+                    <Text style={styles.entryBtnText}>Event chat</Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  style={styles.entryBtn}
+                  onPress={() =>
+                    router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)
+                  }
+                >
+                  <Briefcase size={16} color={color.signal} />
+                  <Text style={styles.entryBtnText}>Add to trip</Text>
+                </Pressable>
+                {event.locationName && (
+                  <Pressable
+                    style={styles.entryBtn}
+                    onPress={() => {
+                      const q = encodeURIComponent(
+                        event.locationName + (event.city ? `, ${event.city}` : ''),
+                      );
+                      Linking.openURL(`https://maps.google.com/?q=${q}`).catch(() => {});
+                    }}
+                  >
+                    <Compass size={16} color={color.signal} />
+                    <Text style={styles.entryBtnText}>Map</Text>
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -565,7 +547,7 @@ export default function EventDetailScreen() {
               )}
             </View>
           ) : event.visibility === 'invite_only' ? (
-            <Pressable style={styles.rsvpBtn} onPress={handleRequestJoin} disabled={rsvpLoading}>
+            <Pressable style={styles.rsvpBtn} onPress={() => handleRequestJoin()} disabled={rsvpLoading}>
               <Text style={styles.rsvpBtnText}>Request to join</Text>
             </Pressable>
           ) : event.myWaitlistPosition != null && event.myWaitlistOfferExpiresAt ? (
@@ -616,7 +598,7 @@ export default function EventDetailScreen() {
               <Pressable
                 key={o.key}
                 style={[styles.rsvpMenuItem, event.myRsvp === o.key && styles.rsvpMenuItemActive]}
-                onPress={() => handleRsvp(o.key)}
+                onPress={() => handleRsvpWithMenu(o.key)}
               >
                 <Text style={styles.rsvpMenuItemText}>{o.emoji} {o.label}</Text>
               </Pressable>
@@ -713,4 +695,7 @@ const styles = StyleSheet.create({
   rsvpMenuItemText:   { ...t.body, color: color.ink },
   rsvpMenuLeave:      { padding: space.md },
   rsvpMenuLeaveText:  { ...t.body, color: '#DC2626', fontWeight: '600' },
+  entryRow:           { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
+  entryBtn:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paperRaised, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
+  entryBtnText:       { ...t.small, color: color.signal, fontWeight: '600' },
 });

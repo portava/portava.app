@@ -18,7 +18,7 @@ import {
 } from 'lucide-react-native';
 import {
   listEvents, listFollowingEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
-  saveEvent, unsaveEvent,
+  saveEvent, unsaveEvent, deleteDraft,
   type EventListItem, type EventDraft, type EventInvite,
 } from '../../src/services/events';
 import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
@@ -386,6 +386,24 @@ export default function EventsTabScreen() {
                     <Text style={styles.draftTitle} numberOfLines={1}>{d.title ?? 'Untitled draft'}</Text>
                     <Text style={styles.draftMeta}>Saved {formatDraftDate(d.updatedAt)}</Text>
                   </View>
+                  <Pressable
+                    hitSlop={12}
+                    onPress={() =>
+                      Alert.alert('Discard draft?', 'This draft will be permanently deleted.', [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Discard', style: 'destructive',
+                          onPress: async () => {
+                            await deleteDraft(d.id);
+                            setDrafts((prev) => prev.filter((x) => x.id !== d.id));
+                          },
+                        },
+                      ])
+                    }
+                    style={styles.draftDiscardBtn}
+                  >
+                    <Text style={styles.draftDiscardText}>Discard</Text>
+                  </Pressable>
                   <ChevronRight size={14} color={color.mute} />
                 </Pressable>
               ))}
@@ -458,22 +476,51 @@ export default function EventsTabScreen() {
             savedEvents,
           )}
 
-          {/* Empty state when nothing loaded */}
+          {/* Empty states */}
           {!loading && !hasContent && drafts.length === 0 && (
-            <View style={styles.emptyState}>
-              <CalendarX size={44} color={color.faint} />
-              <Text style={styles.emptyTitle}>No events yet</Text>
-              <Text style={styles.emptySub}>
-                Be the first — create an event for your city.
-              </Text>
-              <Pressable
-                style={styles.emptyBtn}
-                onPress={() => router.push('/events/create' as any)}
-              >
-                <Plus size={16} color={color.onInk} />
-                <Text style={styles.emptyBtnText}>Create an event</Text>
-              </Pressable>
-            </View>
+            error ? (
+              /* Backend error */
+              <View style={styles.emptyState}>
+                <CalendarX size={44} color={color.faint} />
+                <Text style={styles.emptyTitle}>Couldn't load events</Text>
+                <Text style={styles.emptySub}>{error}</Text>
+                <Pressable style={styles.emptyBtn} onPress={() => load(false)}>
+                  <Text style={styles.emptyBtnText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : !isAuthed ? (
+              /* Not signed in */
+              <View style={styles.emptyState}>
+                <CalendarX size={44} color={color.faint} />
+                <Text style={styles.emptyTitle}>Sign in to see events</Text>
+                <Text style={styles.emptySub}>Discover events from travellers around you.</Text>
+              </View>
+            ) : nearMeRequested && !locationState.coords ? (
+              /* Location denied */
+              <View style={styles.emptyState}>
+                <MapPin size={44} color={color.faint} />
+                <Text style={styles.emptyTitle}>Location not available</Text>
+                <Text style={styles.emptySub}>
+                  Enable location in your device settings to find events near you, or browse by date.
+                </Text>
+              </View>
+            ) : (
+              /* No events in any section */
+              <View style={styles.emptyState}>
+                <CalendarX size={44} color={color.faint} />
+                <Text style={styles.emptyTitle}>No events yet</Text>
+                <Text style={styles.emptySub}>
+                  Be the first — create an event for your city.
+                </Text>
+                <Pressable
+                  style={styles.emptyBtn}
+                  onPress={() => router.push('/events/create' as any)}
+                >
+                  <Plus size={16} color={color.onInk} />
+                  <Text style={styles.emptyBtnText}>Create an event</Text>
+                </Pressable>
+              </View>
+            )
           )}
         </ScrollView>
       )}
@@ -527,6 +574,8 @@ const styles = StyleSheet.create({
   hCard:              { width: 280 },
 
   draftCard:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze, gap: space.md },
+  draftDiscardBtn:    { paddingHorizontal: space.sm, paddingVertical: 4 },
+  draftDiscardText:   { ...t.small, color: '#DC2626', fontWeight: '600' },
   draftTitle:         { ...t.body, color: color.ink, fontWeight: '600' },
   draftMeta:          { ...t.small, color: color.faint },
 

@@ -29,11 +29,13 @@ import {
   Users, Lock, Clock, Shield, Ticket, UserPlus,
 } from 'lucide-react-native';
 import {
-  createEvent, createDraft, updateDraft, publishDraft, getDraft,
+  createEvent, createDraft, updateDraft, publishDraft, getDraft, inviteUserToEvent,
   type EventVisibility, type EventRsvpStatus, type EventDraft,
 } from '../../../src/services/events';
+import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
+import { Avatar } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 
 type Step = 'basics' | 'datetime' | 'location' | 'capacity' | 'age_trust' | 'privacy' | 'tickets' | 'invite' | 'preview';
@@ -118,6 +120,14 @@ export default function CreateEventScreen() {
   const [priceType, setPriceType] = useState<'free' | 'external'>('free');
   const [priceUrl, setPriceUrl] = useState('');
 
+  // ── Step 8: Invite ──────────────────────────────────────────────────────────
+  const [inviteQuery, setInviteQuery] = useState('');
+  const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
+  const [inviteSearching, setInviteSearching] = useState(false);
+  const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
+  const [inviteSending, setInviteSending] = useState<string | null>(null);
+  const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const stepIndex = STEPS.indexOf(step);
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === STEPS.length - 1;
@@ -162,6 +172,44 @@ export default function CreateEventScreen() {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => saveDraftSilent(), 2500);
   }, []);
+
+  // ── Invite search ───────────────────────────────────────────────────────────
+  function handleInviteQueryChange(q: string) {
+    setInviteQuery(q);
+    if (inviteTimer.current) clearTimeout(inviteTimer.current);
+    if (!q.trim()) { setInviteResults([]); return; }
+    inviteTimer.current = setTimeout(async () => {
+      setInviteSearching(true);
+      const res = await searchUsers(q.trim());
+      setInviteResults(res.ok ? (res.data ?? []) : []);
+      setInviteSearching(false);
+    }, 400);
+  }
+
+  async function handleSendInvite(user: TravelerSearchResult) {
+    if (!draftId) {
+      // Need a draft first so we have an event id to invite against
+      setInviteSending(user.id);
+      const payload = buildPayload();
+      const res = await createDraft(payload);
+      if (!res.ok || !res.data) {
+        setInviteSending(null);
+        Alert.alert('Save draft first', res.message ?? 'Could not create draft to send invite.');
+        return;
+      }
+      setDraftId(res.data.id);
+      const invRes = await inviteUserToEvent(res.data.id, user.id);
+      setInviteSending(null);
+      if (invRes.ok) setInvitedIds((prev) => new Set([...prev, user.id]));
+      else Alert.alert('Error', invRes.message ?? 'Could not send invite');
+      return;
+    }
+    setInviteSending(user.id);
+    const invRes = await inviteUserToEvent(draftId, user.id);
+    setInviteSending(null);
+    if (invRes.ok) setInvitedIds((prev) => new Set([...prev, user.id]));
+    else Alert.alert('Error', invRes.message ?? 'Could not send invite');
+  }
 
   function buildPayload() {
     return {
@@ -688,12 +736,59 @@ export default function CreateEventScreen() {
 
           {/* ── Step 8: Invite People ── */}
           {step === 'invite' && (
-            <View style={styles.comingSoon}>
-              <UserPlus size={40} color={color.faint} />
-              <Text style={styles.comingSoonTitle}>Invite people</Text>
-              <Text style={styles.comingSoonText}>
-                You can invite friends, circle members, and trip crew after publishing. Skip to preview your event.
-              </Text>
+            <View style={styles.inviteStep}>
+              <Text style={styles.label}>Invite friends</Text>
+              <Text style={styles.hint}>Search by name or handle. You can also invite more after publishing.</Text>
+              <TextInput
+                style={[styles.input, { marginTop: space.sm }]}
+                placeholder="Search travellers…"
+                placeholderTextColor={color.faint}
+                value={inviteQuery}
+                onChangeText={handleInviteQueryChange}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {inviteSearching && (
+                <ActivityIndicator size="small" color={color.signal} style={{ marginTop: space.sm }} />
+              )}
+              {inviteResults.length > 0 && (
+                <View style={styles.inviteResults}>
+                  {inviteResults.map((u) => {
+                    const sent = invitedIds.has(u.id);
+                    const sending = inviteSending === u.id;
+                    return (
+                      <View key={u.id} style={styles.inviteRow}>
+                        <Avatar uri={u.avatarUrl ?? ''} size={36} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.inviteName} numberOfLines={1}>
+                            {u.displayName ?? u.username ?? ''}
+                          </Text>
+                          {u.username && u.displayName && (
+                            <Text style={styles.inviteHandle}>@{u.username}</Text>
+                          )}
+                        </View>
+                        <Pressable
+                          style={[styles.inviteBtn, sent && styles.inviteBtnSent]}
+                          onPress={() => !sent && handleSendInvite(u)}
+                          disabled={sent || sending}
+                        >
+                          {sending
+                            ? <ActivityIndicator size="small" color={color.onInk} />
+                            : <Text style={styles.inviteBtnText}>{sent ? 'Invited ✓' : 'Invite'}</Text>}
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+              {invitedIds.size > 0 && (
+                <View style={styles.infoBox}>
+                  <UserPlus size={14} color={color.success} />
+                  <Text style={[styles.infoText, { color: color.success }]}>
+                    {invitedIds.size} invite{invitedIds.size !== 1 ? 's' : ''} sent
+                  </Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -861,6 +956,15 @@ const styles = StyleSheet.create({
   comingSoon:        { alignItems: 'center', paddingVertical: space.xxl, gap: space.md },
   comingSoonTitle:   { ...t.title, color: color.ink, fontWeight: '800' },
   comingSoonText:    { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 280 },
+  hint:              { ...t.small, color: color.mute },
+  inviteStep:        { gap: space.md },
+  inviteResults:     { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
+  inviteRow:         { flexDirection: 'row', alignItems: 'center', padding: space.md, gap: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
+  inviteName:        { ...t.body, color: color.ink, fontWeight: '600' },
+  inviteHandle:      { ...t.small, color: color.mute },
+  inviteBtn:         { backgroundColor: color.signal, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill },
+  inviteBtnSent:     { backgroundColor: color.haze },
+  inviteBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
   reviewCard:        { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.md },
   reviewTitle:       { ...t.title, color: color.ink, fontWeight: '800', fontSize: 18 },
   reviewDesc:        { ...t.body, color: color.mute },
