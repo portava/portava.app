@@ -35,8 +35,44 @@ function computeTripStatus(
 
 // ── Trip-completion stamp awards ──────────────────────────────────────────────
 // Called fire-and-forget (non-fatal) when a trip transitions → "completed".
-// awardStamp() is fully idempotent via (userId:definitionId:sourceType:sourceId)
-// so re-runs or concurrent completions are safe.
+//
+// Every award routes through POST /stamps/award (internal HTTP endpoint) so the
+// endpoint is exercised by a real server-side trigger.  If INTERNAL_API_SECRET
+// is not set (local dev without the env var) we fall back to calling awardStamp()
+// directly — stamps still work, only the HTTP path is skipped.
+//
+// awardStamp() / the endpoint are fully idempotent via
+// (userId:definitionId:sourceType:sourceId) key, so re-runs are safe.
+
+async function callInternalStampAward(
+  input: {
+    userId: string;
+    definitionSlug: string;
+    sourceType: string;
+    sourceId: string;
+    city?: string;
+    country?: string;
+  },
+  sc: SupabaseClient,
+): Promise<void> {
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) {
+    // Env var not configured (e.g. local dev) — fall back to direct engine call
+    await awardStamp(sc, input);
+    return;
+  }
+  const port = process.env.PORT ?? "8080";
+  await fetch(`http://localhost:${port}/api/stamps/award`, {
+    method:  "POST",
+    headers: {
+      "Content-Type":     "application/json",
+      "X-Internal-Secret": secret,
+    },
+    body: JSON.stringify(input),
+  });
+  // Non-fatal: HTTP errors are intentionally swallowed here — the caller uses
+  // Promise.allSettled, so any individual failure does not block others.
+}
 
 async function awardTripCompletionStamps(
   sc: SupabaseClient,
@@ -44,11 +80,12 @@ async function awardTripCompletionStamps(
   ownerId: string,
   trip: Record<string, any>,
 ): Promise<void> {
-  // All accepted trip members (including the owner)
+  // Only accepted participants earn completion stamps — exclude pending invitees.
   const { data: membersData } = await sc
     .from("trip_members")
     .select("user_id")
-    .eq("trip_id", tripId);
+    .eq("trip_id", tripId)
+    .in("role", ["owner", "member"]);
 
   const memberIds: string[] = (membersData ?? []).map((m: any) => m.user_id as string);
   if (!memberIds.includes(ownerId)) memberIds.push(ownerId);
@@ -102,17 +139,13 @@ async function awardTripCompletionStamps(
   if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
   if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
 
-  // ── Fire all concurrently ──────────────────────────────────────────────────
+  // ── Fire all via internal endpoint (concurrent, idempotent) ───────────────
   await Promise.allSettled(
     awards.map(({ userId, slug }) =>
-      awardStamp(sc, {
-        userId,
-        definitionSlug: slug,
-        sourceType:     "trips",
-        sourceId:       tripId,
-        city,
-        country,
-      }),
+      callInternalStampAward(
+        { userId, definitionSlug: slug, sourceType: "trips", sourceId: tripId, city, country },
+        sc,
+      ),
     ),
   );
 }
