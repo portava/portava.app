@@ -1,5 +1,6 @@
 /**
- * Tests for POST /api/discovery/community — required field validation and duplicate detection
+ * Tests for POST /api/discovery/community — required field validation, duplicate detection,
+ * and DB insert failure handling
  *
  * Uses _setTestClient to inject a fake Supabase service client, bypassing the
  * real DB entirely. No network calls are made.
@@ -14,6 +15,7 @@
  *  - valid body with both valid place_type values returns 201
  *  - duplicate city+name (active) returns 409 duplicate_place
  *  - first submission (no existing place) returns 201
+ *  - DB insert error returns 500 with structured error body
  *
  * Run: node --import tsx/esm --test src/test/discoveryCommunityRequiredFields.test.ts
  */
@@ -40,7 +42,10 @@ const VALID_BODY = {
 
 // ── Fake client ────────────────────────────────────────────────────────────────
 
-function makeFakeClient({ duplicateExists = false }: { duplicateExists?: boolean } = {}) {
+function makeFakeClient({
+  duplicateExists = false,
+  insertFails = false,
+}: { duplicateExists?: boolean; insertFails?: boolean } = {}) {
   const insertedRow = {
     id:         "place-required-1",
     name:       VALID_BODY.name,
@@ -53,9 +58,9 @@ function makeFakeClient({ duplicateExists = false }: { duplicateExists?: boolean
   const existingRow = { id: "place-existing-1" };
 
   function chain() {
-    let _singleMode     = false;
+    let _singleMode      = false;
     let _maybeSingleMode = false;
-    let _isInsert       = false;
+    let _isInsert        = false;
 
     const obj: any = {
       select()      { return obj; },
@@ -68,11 +73,14 @@ function makeFakeClient({ duplicateExists = false }: { duplicateExists?: boolean
       then(onF: any, onR: any) { return resolve().then(onF, onR); },
     };
 
-    async function resolve(): Promise<{ data: any; error: null }> {
+    async function resolve(): Promise<{ data: any; error: any }> {
       if (_maybeSingleMode) {
         return { data: duplicateExists ? existingRow : null, error: null };
       }
       if (_isInsert) {
+        if (insertFails) {
+          return { data: null, error: { message: "db error" } };
+        }
         return { data: _singleMode ? insertedRow : [insertedRow], error: null };
       }
       return { data: _singleMode ? insertedRow : [insertedRow], error: null };
@@ -242,5 +250,35 @@ describe("POST /api/discovery/community — duplicate detection", () => {
     const r = await post(url, "/api/discovery/community", VALID_BODY);
     assert.equal(r.status, 201, `expected 201 for first submission, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.ok, true);
+  });
+});
+
+describe("POST /api/discovery/community — DB insert failure", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient({ insertFails: true }), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns 500 with ok:false when the Supabase insert returns an error", async () => {
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.equal(r.status, 500, `expected 500 for insert failure, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, false, "expected ok:false in error response");
+  });
+
+  it("includes a reason field in the 500 response body", async () => {
+    const r = await post(url, "/api/discovery/community", VALID_BODY);
+    assert.equal(r.status, 500, `expected 500 for insert failure, got ${r.status}`);
+    assert.ok(
+      typeof r.body.reason === "string" && r.body.reason.length > 0,
+      `expected a non-empty reason string, got: ${JSON.stringify(r.body)}`,
+    );
   });
 });
