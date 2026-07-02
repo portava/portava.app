@@ -259,18 +259,21 @@ export default function DiscoveryHub() {
     }).catch(() => {});
   }, [isAuthed, locationState.place.city]);
 
-  // Re-apply deep-link category if params change (e.g. in-app navigation)
+  // Re-apply deep-link category if params change (e.g. in-app navigation).
+  // Also clears sortBy so deep-link navigation doesn't silently carry a stale sort.
   useEffect(() => {
     if (params.category && VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)) {
       setActiveTab(params.category as DiscoveryCategory);
+      setActiveFilters((prev) => ({ ...prev, sortBy: null }));
     }
   }, [params.category]);
 
-  // Switching tabs resets view mode to list; filters are kept so persisted
-  // preferences carry over naturally when moving between category tabs.
+  // Switching tabs resets view mode to list and clears sortBy so users don't
+  // silently carry a rating sort from one category into another.
   const handleTabChange = (key: DiscoveryCategory) => {
     setActiveTab(key);
     setViewMode('list');
+    setActiveFilters((prev) => ({ ...prev, sortBy: null }));
   };
 
 
