@@ -1,0 +1,698 @@
+/**
+ * Passport Stamps v2 — Public & Owner Routes
+ *
+ * Mounted at /api (full paths: /api/stamps/...)
+ *
+ * GET  /stamps/definitions                 — all active stamp definitions
+ * GET  /stamps/me                          — caller's own stamps
+ * GET  /stamps/me/progress                 — caller's stamp progress
+ * GET  /stamps/me/collections              — caller's earned stamps per collection
+ * GET  /stamps/user/:userId                — another user's stamps (visibility-gated)
+ * GET  /stamps/profile/:username           — stamps by username (privacy-gated, uses PassportPrivacyGuard CallerContext)
+ * GET  /stamps/recent                      — recently earned public stamps
+ * GET  /stamps/city/:city                  — public stamps for a city
+ * GET  /stamps/country/:country            — public stamps for a country
+ * GET  /stamps/:stampId                    — single user_stamp (visibility-gated)
+ * PATCH /stamps/:userStampId/visibility    — update stamp visibility (owner only)
+ * PATCH /stamps/:userStampId/display       — toggle display_on_passport (owner only)
+ * POST /stamps/check-eligibility           — dry-run eligibility check
+ * POST /stamps/recalculate/me              — safe idempotent recalculate for caller
+ * POST /stamps/recalculate/:userId         — admin-only recalculate for any user
+ *
+ * NOTE: stamp award is service-role internal only (awardStamp() called directly from
+ * trigger/service code). Admin HTTP award goes through /api/admin/stamps/award.
+ */
+
+import { Router } from "express";
+import { z } from "zod";
+import { requireUser, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import type { CallerContext } from "../services/passport/PassportPrivacyGuard.js";
+import { filterStampsV2 } from "../services/passport/PassportPrivacyGuard.js";
+import {
+  awardStamp,
+  checkEligibility,
+  recalculateForUser,
+} from "../services/passport/StampAwardEngine.js";
+
+const router = Router();
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(s: string) { return UUID_RE.test(s); }
+
+const VISIBILITY = z.enum(["public", "friends_only", "private"]);
+
+// ── Column sets (lat/lng and metadata intentionally excluded from public reads) ──
+// OWNER_STAMP_COLS  — used when the caller is the stamp owner (includes metadata)
+// PUBLIC_STAMP_COLS — used for all non-owner reads (metadata excluded)
+const OWNER_STAMP_COLS =
+  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
+  "title_override, metadata, visibility, display_on_passport, is_revoked, created_at";
+const PUBLIC_STAMP_COLS =
+  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
+  "title_override, visibility, display_on_passport, is_revoked, created_at";
+
+// ── Friendship helper ─────────────────────────────────────────────────────────
+// Returns true if caller and target have an accepted friendship.
+
+async function areFriends(
+  sc: ReturnType<typeof getServiceClient>,
+  callerId: string,
+  targetId: string,
+): Promise<boolean> {
+  if (!sc) return false;
+  const { data } = await sc
+    .from("user_friendships")
+    .select("user_a")
+    .or(`and(user_a.eq.${callerId},user_b.eq.${targetId}),and(user_a.eq.${targetId},user_b.eq.${callerId})`)
+    .maybeSingle();
+  return data != null;
+}
+
+// ── Block check helper ────────────────────────────────────────────────────────
+
+async function isBlocked(
+  sc: ReturnType<typeof getServiceClient>,
+  callerId: string,
+  targetId: string,
+): Promise<boolean> {
+  if (!sc) return false;
+  const { data } = await sc
+    .from("blocks")
+    .select("id")
+    .or(
+      `and(blocker_id.eq.${callerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${callerId})`,
+    )
+    .maybeSingle();
+  return data != null;
+}
+
+// ── Internal award gate ───────────────────────────────────────────────────────
+// POST /stamps/award is service-role internal only. Caller must supply
+// X-Internal-Secret matching INTERNAL_API_SECRET env var (same pattern as
+// notifications.ts internal routes). No user auth is involved.
+
+function requireInternalSecret(req: any, res: any): boolean {
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) {
+    res.status(503).json({
+      error: "misconfigured",
+      message: "INTERNAL_API_SECRET is not set; internal stamp award is disabled",
+    });
+    return false;
+  }
+  const provided = req.headers["x-internal-secret"];
+  if (provided !== secret) {
+    res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal secret" });
+    return false;
+  }
+  return true;
+}
+
+// ── GET /stamps/definitions ───────────────────────────────────────────────────
+
+router.get("/stamps/definitions", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const category = req.query.category as string | undefined;
+  const stampType = req.query.type as string | undefined;
+
+  let query = sc
+    .from("stamp_definitions")
+    .select(
+      "id, slug, name, description, stamp_type, category, icon_url, rarity, " +
+      "is_repeatable, max_awards_per_user, visibility_default, city, country, starts_at, ends_at",
+    )
+    .eq("is_active", true)
+    .order("category")
+    .order("rarity");
+
+  if (category) query = (query as any).eq("category", category);
+  if (stampType) query = (query as any).eq("stamp_type", stampType);
+
+  const { data, error } = await query;
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ definitions: data ?? [] });
+});
+
+// ── GET /stamps/me ────────────────────────────────────────────────────────────
+
+router.get("/stamps/me", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const city    = req.query.city as string | undefined;
+  const country = req.query.country as string | undefined;
+
+  // Owner sees all stamps including revoked and hidden — use full column set with metadata
+  let query = sc
+    .from("user_stamps")
+    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .eq("user_id", user.id)
+    .order("earned_at", { ascending: false })
+    .limit(200);
+
+  if (city)    query = (query as any).eq("city", city);
+  if (country) query = (query as any).eq("country", country);
+
+  const { data, error } = await query;
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.json({ stamps: (data ?? []).map(formatStamp) });
+});
+
+// ── GET /stamps/me/progress ───────────────────────────────────────────────────
+
+router.get("/stamps/me/progress", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data, error } = await sc
+    .from("stamp_progress")
+    .select("stamp_definition_id, progress_count, progress_target, updated_at, stamp_definitions(slug, name, icon_url)")
+    .eq("user_id", user.id);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ progress: data ?? [] });
+});
+
+// ── GET /stamps/me/collections ────────────────────────────────────────────────
+
+router.get("/stamps/me/collections", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const [collectionsRes, earnedRes] = await Promise.all([
+    sc.from("stamp_collections")
+      .select("id, slug, name, description, icon_url, stamp_collection_items(stamp_definition_id)")
+      .eq("is_active", true),
+    sc.from("user_stamps")
+      .select("stamp_definition_id")
+      .eq("user_id", user.id)
+      .eq("is_revoked", false),
+  ]);
+
+  if (collectionsRes.error) { sendError(res, "db_error", collectionsRes.error.message); return; }
+
+  const earnedDefIds = new Set(
+    ((earnedRes.data ?? []) as any[]).map((s: any) => s.stamp_definition_id),
+  );
+
+  const collections = ((collectionsRes.data ?? []) as any[]).map((col: any) => {
+    const items: any[] = col.stamp_collection_items ?? [];
+    const total = items.length;
+    const earned = items.filter((i: any) => earnedDefIds.has(i.stamp_definition_id)).length;
+    return {
+      id:          col.id,
+      slug:        col.slug,
+      name:        col.name,
+      description: col.description,
+      iconUrl:     col.icon_url,
+      total,
+      earned,
+      complete:    total > 0 && earned === total,
+    };
+  });
+
+  res.json({ collections });
+});
+
+// ── GET /stamps/user/:userId ──────────────────────────────────────────────────
+// Static routes (me, recent, city, country) MUST come before :stampId and :userId
+// to avoid Express matching them as dynamic params.
+
+router.get("/stamps/user/:userId", async (req, res) => {
+  const { userId } = req.params;
+  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
+
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const callerId = auth.user.id;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const isSelf = callerId === userId;
+
+  // Block check — both directions
+  if (!isSelf) {
+    const blocked = await isBlocked(sc, callerId, userId);
+    if (blocked) { sendError(res, "forbidden", "User not available"); return; }
+  }
+
+  if (isSelf) {
+    // Owner path: sees all stamps including revoked and hidden, with metadata
+    const { data, error } = await sc
+      .from("user_stamps")
+      .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+      .eq("user_id", userId)
+      .order("earned_at", { ascending: false })
+      .limit(200);
+    if (error) { sendError(res, "db_error", error.message); return; }
+    res.json({ stamps: (data ?? []).map(formatStamp) });
+    return;
+  }
+
+  // Non-owner: check friendship to determine if friends_only stamps are visible
+  const friend = await areFriends(sc, callerId, userId);
+
+  let query = sc
+    .from("user_stamps")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .eq("user_id", userId)
+    .eq("is_revoked", false)
+    .eq("display_on_passport", true)
+    .order("earned_at", { ascending: false })
+    .limit(100);
+
+  if (friend) {
+    // Friends see public + friends_only (no private)
+    query = (query as any).in("visibility", ["public", "friends_only"]);
+  } else {
+    // Public sees only public stamps
+    query = (query as any).eq("visibility", "public");
+  }
+
+  const { data, error } = await query;
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.json({ stamps: (data ?? []).map(formatStamp) });
+});
+
+// ── GET /stamps/profile/:username ─────────────────────────────────────────────
+// Uses PassportPrivacyGuard CallerContext to respect passport_visibility setting
+// and map friendship to "circle" context for friends_only stamps.
+
+router.get("/stamps/profile/:username", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { username } = req.params;
+
+  const { data: profile, error: profileErr } = await sc
+    .from("profiles")
+    .select("id, passport_visibility")
+    .eq("username", username)
+    .maybeSingle();
+
+  if (profileErr || !profile) { sendError(res, "not_found", "User not found"); return; }
+
+  const targetUserId = (profile as any).id;
+
+  // If the passport is set to private, return empty without leaking existence
+  if ((profile as any).passport_visibility === "private") {
+    res.json({ stamps: [] });
+    return;
+  }
+
+  // Derive CallerContext following the same pattern as passportStamps.ts
+  let callerCtx: CallerContext = "public";
+  const authHeader = req.headers.authorization ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  let callerId: string | null = null;
+
+  if (token) {
+    const { data: authData } = await sc.auth.getUser(token);
+    callerId = authData?.user?.id ?? null;
+
+    if (callerId === targetUserId) {
+      callerCtx = "owner";
+    } else if (callerId) {
+      // Block check — blocked users see nothing
+      const blocked = await isBlocked(sc, callerId, targetUserId);
+      if (blocked) { res.json({ stamps: [] }); return; }
+
+      // Friendship → "circle" context (grants access to friends_only stamps)
+      const { data: friendRow } = await sc
+        .from("user_friendships")
+        .select("user_a")
+        .or(`and(user_a.eq.${callerId},user_b.eq.${targetUserId}),and(user_a.eq.${targetUserId},user_b.eq.${callerId})`)
+        .maybeSingle();
+
+      if (friendRow) callerCtx = "circle";
+    }
+  }
+
+  // Load stamps — use OWNER_STAMP_COLS for owner (includes metadata), PUBLIC for others
+  const colSet = callerCtx === "owner" ? OWNER_STAMP_COLS : PUBLIC_STAMP_COLS;
+
+  let stampQuery = sc
+    .from("user_stamps")
+    .select(colSet + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .eq("user_id", targetUserId)
+    .order("earned_at", { ascending: false })
+    .limit(100);
+
+  // Non-owners should only see non-revoked, display-on-passport stamps
+  if (callerCtx !== "owner") {
+    stampQuery = (stampQuery as any).eq("is_revoked", false).eq("display_on_passport", true);
+  }
+
+  const { data: rows, error } = await stampQuery;
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Apply PassportPrivacyGuard filterStampsV2 — uses CallerContext-based visibility
+  const stamps = filterStampsV2(
+    (rows ?? []) as unknown as Array<{ visibility: string }>,
+    callerCtx,
+  ).map(formatStamp);
+
+  res.json({ stamps });
+});
+
+// ── GET /stamps/recent ────────────────────────────────────────────────────────
+
+router.get("/stamps/recent", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const limit = Math.min(50, Number(req.query.limit) || 20);
+
+  const { data, error } = await sc
+    .from("user_stamps")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .eq("is_revoked", false)
+    .eq("visibility", "public")
+    .eq("display_on_passport", true)
+    .order("earned_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ stamps: (data ?? []).map(formatStamp) });
+});
+
+// ── GET /stamps/city/:city ────────────────────────────────────────────────────
+
+router.get("/stamps/city/:city", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const limit = Math.min(100, Number(req.query.limit) || 50);
+
+  const { data, error } = await sc
+    .from("user_stamps")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .eq("city", req.params.city)
+    .eq("is_revoked", false)
+    .eq("visibility", "public")
+    .order("earned_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ stamps: (data ?? []).map(formatStamp) });
+});
+
+// ── GET /stamps/country/:country ──────────────────────────────────────────────
+
+router.get("/stamps/country/:country", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const limit = Math.min(100, Number(req.query.limit) || 50);
+
+  const { data, error } = await sc
+    .from("user_stamps")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .eq("country", req.params.country)
+    .eq("is_revoked", false)
+    .eq("visibility", "public")
+    .order("earned_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ stamps: (data ?? []).map(formatStamp) });
+});
+
+// ── GET /stamps/:stampId ──────────────────────────────────────────────────────
+// Must be after all static /stamps/... routes to avoid shadowing them.
+
+router.get("/stamps/:stampId", async (req, res) => {
+  const { stampId } = req.params;
+  if (!isUuid(stampId)) { sendError(res, "invalid_payload", "Invalid stampId"); return; }
+
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const callerId = auth.user.id;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  // Fetch with owner columns first — we'll check ownership after
+  const { data, error } = await sc
+    .from("user_stamps")
+    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, description, icon_url, rarity, stamp_type, category)")
+    .eq("id", stampId)
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Stamp not found"); return; }
+
+  const stamp = data as any;
+  const isOwner = stamp.user_id === callerId;
+
+  if (isOwner) {
+    // Owner gets full metadata-included response
+    res.json({ stamp: formatStamp(stamp) });
+    return;
+  }
+
+  // Revoked stamps are never visible to non-owners
+  if (stamp.is_revoked) { sendError(res, "not_found", "Stamp not found"); return; }
+
+  // Private stamps — non-owners cannot see
+  if (stamp.visibility === "private") { sendError(res, "not_found", "Stamp not found"); return; }
+
+  // Block check
+  const blocked = await isBlocked(sc, callerId, stamp.user_id);
+  if (blocked) { sendError(res, "not_found", "Stamp not found"); return; }
+
+  // friends_only — require friendship
+  if (stamp.visibility === "friends_only") {
+    const friend = await areFriends(sc, callerId, stamp.user_id);
+    if (!friend) { sendError(res, "not_found", "Stamp not found"); return; }
+  }
+
+  // Non-owner: strip metadata from response (same as PUBLIC_STAMP_COLS exclusion)
+  const { metadata: _stripped, ...publicStamp } = stamp;
+  res.json({ stamp: formatStamp(publicStamp) });
+});
+
+// ── PATCH /stamps/:userStampId/visibility ─────────────────────────────────────
+
+const patchVisibilitySchema = z.object({
+  visibility: VISIBILITY,
+});
+
+router.patch("/stamps/:userStampId/visibility", async (req, res) => {
+  const { userStampId } = req.params;
+  if (!isUuid(userStampId)) { sendError(res, "invalid_payload", "Invalid userStampId"); return; }
+
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const parsed = patchVisibilitySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("user_stamps")
+    .update({ visibility: parsed.data.visibility })
+    .eq("id", userStampId)
+    .eq("user_id", user.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Stamp not found or not yours"); return; }
+
+  res.json({ id: userStampId, visibility: parsed.data.visibility });
+});
+
+// ── PATCH /stamps/:userStampId/display ────────────────────────────────────────
+
+const patchDisplaySchema = z.object({
+  displayOnPassport: z.boolean(),
+});
+
+router.patch("/stamps/:userStampId/display", async (req, res) => {
+  const { userStampId } = req.params;
+  if (!isUuid(userStampId)) { sendError(res, "invalid_payload", "Invalid userStampId"); return; }
+
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const parsed = patchDisplaySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("user_stamps")
+    .update({ display_on_passport: parsed.data.displayOnPassport })
+    .eq("id", userStampId)
+    .eq("user_id", user.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Stamp not found or not yours"); return; }
+
+  res.json({ id: userStampId, displayOnPassport: parsed.data.displayOnPassport });
+});
+
+// ── POST /stamps/award (service-role internal only) ──────────────────────────
+// Called ONLY by server-side trigger/service code via X-Internal-Secret header.
+// No user auth involved. Requires INTERNAL_API_SECRET env var to be set.
+// All user-facing award flows go through StampAwardEngine.awardStamp() directly.
+// Admin HTTP award (manual grants) goes through /api/admin/stamps/award.
+
+const internalAwardSchema = z.object({
+  userId:         z.string().uuid(),
+  definitionSlug: z.string().min(1),
+  sourceType:     z.string().optional(),
+  sourceId:       z.string().optional(),
+  city:           z.string().optional(),
+  country:        z.string().optional(),
+  lat:            z.number().optional(),
+  lng:            z.number().optional(),
+  metadata:       z.record(z.unknown()).optional(),
+  awardReason:    z.string().optional(),
+});
+
+router.post("/stamps/award", async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const parsed = internalAwardSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
+    return;
+  }
+
+  const result = await awardStamp(sc, parsed.data);
+  res.status(result.awarded ? 201 : 200).json(result);
+});
+
+// ── POST /stamps/check-eligibility ───────────────────────────────────────────
+
+const eligibilitySchema = z.object({
+  userId:         z.string().uuid(),
+  definitionSlug: z.string().min(1),
+  sourceType:     z.string().optional(),
+  sourceId:       z.string().optional(),
+});
+
+router.post("/stamps/check-eligibility", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const parsed = eligibilitySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
+    return;
+  }
+
+  const result = await checkEligibility(
+    sc,
+    parsed.data.userId,
+    parsed.data.definitionSlug,
+    parsed.data.sourceType,
+    parsed.data.sourceId,
+  );
+
+  res.json(result);
+});
+
+// ── POST /stamps/recalculate/me ───────────────────────────────────────────────
+
+router.post("/stamps/recalculate/me", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const result = await recalculateForUser(sc, user.id);
+  res.json(result);
+});
+
+// ── POST /stamps/recalculate/:userId (admin only) ────────────────────────────
+
+router.post("/stamps/recalculate/:userId", async (req, res) => {
+  const { userId } = req.params;
+  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
+
+  // Inline admin check — requireAdmin is in adminStamps.ts; stamp award is service-role-only
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data: profileData } = await client
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profileData || (profileData as any).role !== "admin") {
+    res.status(403).json({ error: "forbidden", message: "Admin role required" });
+    return;
+  }
+
+  const sc = getServiceClient() ?? client;
+  const result = await recalculateForUser(sc, userId);
+  res.json(result);
+});
+
+// ── Formatter ─────────────────────────────────────────────────────────────────
+// lat/lng are intentionally omitted from all responses.
+
+function formatStamp(row: any) {
+  return {
+    id:                row.id,
+    userId:            row.user_id,
+    stampDefinitionId: row.stamp_definition_id,
+    definition:        row.stamp_definitions ?? undefined,
+    sourceType:        row.source_type,
+    earnedAt:          row.earned_at,
+    city:              row.city,
+    country:           row.country,
+    titleOverride:     row.title_override,
+    metadata:          row.metadata,
+    visibility:        row.visibility,
+    displayOnPassport: row.display_on_passport,
+    isRevoked:         row.is_revoked,
+    createdAt:         row.created_at,
+  };
+}
+
+export default router;

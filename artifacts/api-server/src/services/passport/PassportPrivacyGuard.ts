@@ -157,3 +157,42 @@ export function filterMemories(
     .map((m) => guardMemory(m, callerCtx, opts))
     .filter((m): m is MemoryRow => m !== null);
 }
+
+// ── Stamp v2 filtering ────────────────────────────────────────────────────────
+// The v2 stamp system uses a different visibility tier set from the v1 passport
+// stamps: "public" | "friends_only" | "private" (no circle_only or trip_crew).
+// This helper applies CallerContext-based visibility using the v2 tiers.
+
+export type StampV2VisibilityTier = "public" | "friends_only" | "private";
+
+/**
+ * Returns true when a v2 stamp with the given visibility should be shown to a
+ * caller with the given context.
+ *
+ * - "owner" sees all visibility tiers.
+ * - "circle" and "trip_crew" contexts see "friends_only" (friendship is the circle proxy).
+ * - "public" context sees only "public" stamps.
+ */
+export function isVisibleV2(
+  visibility: StampV2VisibilityTier,
+  callerCtx: CallerContext,
+): boolean {
+  if (callerCtx === "owner") return true;
+  if (visibility === "public") return true;
+  if (visibility === "friends_only") return callerCtx === "circle" || callerCtx === "trip_crew";
+  return false; // private
+}
+
+/**
+ * Filter an array of v2 stamp rows by visibility using CallerContext.
+ * Metadata is intentionally NOT redacted here — callers must ensure they
+ * exclude metadata from non-owner responses at the query/format layer.
+ */
+export function filterStampsV2<T extends { visibility: string }>(
+  stamps: T[],
+  callerCtx: CallerContext,
+): T[] {
+  return stamps.filter((s) =>
+    isVisibleV2(s.visibility as StampV2VisibilityTier, callerCtx),
+  );
+}
