@@ -75,7 +75,9 @@ function computeCompatibility(answers: string[], buddy: BuddyProfile): { score: 
 
 export default function RentABuddySearch() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string }>();
+  const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string; bookingDate?: string }>();
+
+  const [bookingDate] = useState<string | undefined>(params.bookingDate);
 
   const [mode, setMode] = useState<ScreenMode>(
     params.mode === 'quiz' ? 'quiz'
@@ -105,6 +107,7 @@ export default function RentABuddySearch() {
     if (reset) { setLoading(true); setError(null); }
     const res = await searchBuddies({
       city, category: selectedCategory, page: nextPage, perPage: 10,
+      ...(bookingDate ? { date: bookingDate } : {}),
     });
     setLoading(false);
     setRefreshing(false);
@@ -114,7 +117,7 @@ export default function RentABuddySearch() {
     setTotal(res.data.total);
     setPage(nextPage);
     setHasMore(newBuddies.length === 10 && (nextPage * 10) < res.data.total);
-  }, [city, selectedCategory, page]);
+  }, [city, selectedCategory, page, bookingDate]);
 
   useEffect(() => {
     if (mode === 'results') doSearch(true);
