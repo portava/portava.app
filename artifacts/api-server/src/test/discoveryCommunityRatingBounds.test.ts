@@ -140,6 +140,20 @@ describe("POST /api/discovery/community — rating bounds validation", () => {
     assert.equal(r.body.error, "invalid_payload");
   });
 
+  it("returns 400 when rating is the smallest IEEE 754 float above 5", async () => {
+    // Number.EPSILON is 2^-52 (~2.22e-16) but the ULP of 5 in float64 is 4×Number.EPSILON
+    // (2^-50, ~8.88e-16) because 5 = 1.01×2^2 and each mantissa bit at that exponent
+    // is worth 2^(2−52) = 2^−50. Adding Number.EPSILON to 5 rounds back to exactly 5
+    // (i.e. 5 + Number.EPSILON === 5 is true in JS). The smallest representable value
+    // strictly above 5 is 5 + 4*Number.EPSILON, which this test uses to catch any future
+    // guard change from `> 5` to `>= 5`.
+    const rating = 5 + 4 * Number.EPSILON;
+    assert.notEqual(rating, 5, "sanity: 5 + 4*Number.EPSILON must differ from 5 in float64");
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating });
+    assert.equal(r.status, 400, `expected 400 for smallest float above 5 (${rating}), got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
   it("returns 400 when rating is less than 0", async () => {
     const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: -0.0001 });
     assert.equal(r.status, 400, `expected 400 for rating=-0.0001, got ${r.status}`);
