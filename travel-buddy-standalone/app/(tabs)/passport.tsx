@@ -423,7 +423,7 @@ function PassportContent({
               actions={actions}
             />
           )}
-          {tab === 'stamps' && <StampsTab stamps={stamps} />}
+          {tab === 'stamps' && <StampsTab stamps={stamps} isOwner />}
           {tab === 'memories' && <MemoriesTab memories={memories} onReload={reload} />}
           {tab === 'trips' && <TripsTab trips={trips} isOwner />}
           {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}

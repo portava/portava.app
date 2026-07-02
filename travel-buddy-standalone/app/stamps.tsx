@@ -1,44 +1,96 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator } from 'react-native';
 import { X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { Chip, Stamp } from '../src/components/ui';
+import { Chip } from '../src/components/ui';
 import { StampArtwork } from '../src/components/StampArtwork';
-import { StampDetailArtwork } from '../src/components/StampDetailArtwork';
-import { motifFor } from '../src/lib/stampMotif';
-import { usePassport } from '../src/hooks/usePassport';
-import type { PassportStamp, StampKind } from '../src/types/models';
+import { getMyPassportStamps, updateStampVisibility } from '../src/services/passportStamps';
+import type { PassportStampNew, StampVisibility } from '../src/services/passportStamps';
+import type { PassportStamp } from '../src/types/models';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
-const FILTERS: { label: string; kind?: StampKind }[] = [
+const FILTERS: { label: string; kind?: string }[] = [
   { label: 'All' },
-  { label: 'Cities', kind: 'city' },
-  { label: 'Plans', kind: 'plan' },
-  { label: 'Gems', kind: 'gem' },
-  { label: 'Trust', kind: 'safe' },
-  { label: 'Hosted', kind: 'host' },
-  { label: 'Perks', kind: 'perk' },
+  { label: 'Cities',       kind: 'city' },
+  { label: 'Areas',        kind: 'neighborhood' },
+  { label: 'Plans',        kind: 'plan' },
+  { label: 'Hosted',       kind: 'host' },
+  { label: 'Gems',         kind: 'hidden_gem' },
+  { label: 'Safe Return',  kind: 'safe_return' },
+  { label: 'Crew',         kind: 'trip_crew' },
 ];
 
-const REASON: Record<StampKind, string> = {
-  city: 'Visited and checked in to this city.',
-  plan: 'Joined a travel plan with other buddies.',
-  gem: 'Discovered and shared a hidden gem.',
-  safe: 'Completed a verified safe meetup.',
-  host: 'Hosted an experience for other travelers.',
-  perk: 'Unlocked a Travel Buddy perk.',
+const RARITY_COLORS: Record<string, string> = {
+  common:    '#6B7280',
+  uncommon:  '#16A34A',
+  rare:      '#2563EB',
+  epic:      '#7C3AED',
+  legendary: '#D97706',
 };
 
+const SOURCE_LABELS: Record<string, string> = {
+  trip:        'Completed a trip',
+  plan:        'Joined a travel plan',
+  host:        'Hosted an experience',
+  safe_return: 'Completed a verified safe meetup',
+  hidden_gem:  'Discovered a hidden gem',
+  check_in:    'GPS-verified check-in',
+  system:      'Awarded by Travel Buddy',
+  manual:      'Manually awarded',
+  event:       'Attended an event',
+};
+
+function toLegacy(s: PassportStampNew): PassportStamp {
+  const label = s.titleOverride ?? s.definition?.name ?? s.city ?? s.country ?? s.stampType;
+  const kind = (
+    s.stampType === 'city' ? 'city'
+    : s.stampType === 'plan' ? 'plan'
+    : s.stampType === 'hidden_gem' ? 'gem'
+    : s.stampType === 'safe_return' ? 'safe'
+    : s.stampType === 'host' ? 'host'
+    : 'city'
+  ) as any;
+  const sub: string[] = [];
+  if (s.country && s.city) sub.push(s.country);
+  if (s.earnedAt) sub.push(new Date(s.earnedAt).getFullYear().toString());
+  return { id: s.id, kind, label, sublabel: sub.join(' · ') || undefined, earnedAt: s.earnedAt, locked: s.isRevoked };
+}
+
 export default function StampsPage() {
-  const { stamps } = usePassport();
-  const [filter, setFilter] = useState('All');
-  const [selected, setSelected] = useState<PassportStamp | null>(null);
+  const [stamps, setStamps]       = useState<PassportStampNew[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [filter, setFilter]       = useState('All');
+  const [selected, setSelected]   = useState<PassportStampNew | null>(null);
+  const [visUpdating, setVisUpdating] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await getMyPassportStamps();
+    setLoading(false);
+    if (res.ok) setStamps(res.data);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
   const active = FILTERS.find((f) => f.label === filter);
-  const shown = active?.kind ? stamps.filter((s: PassportStamp) => s.kind === active.kind) : stamps;
+  const shown = active?.kind
+    ? stamps.filter((s) => s.stampType === active.kind)
+    : stamps;
+
+  async function handleVisChange(stampId: string, vis: StampVisibility) {
+    setVisUpdating(true);
+    const res = await updateStampVisibility(stampId, vis);
+    setVisUpdating(false);
+    if (res.ok) {
+      setStamps((prev) => prev.map((s) => s.id === stampId ? { ...s, visibility: vis } : s));
+      setSelected((prev) => prev?.id === stampId ? { ...prev, visibility: vis } : prev);
+    }
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Passport Stamps" back />
+
       <ScrollView
         horizontal showsHorizontalScrollIndicator={false}
         style={{ flexGrow: 0 }}
@@ -49,18 +101,26 @@ export default function StampsPage() {
         ))}
       </ScrollView>
 
-      <ScrollView contentContainerStyle={styles.grid}>
-        {shown.map((s, i) => (
-          <View key={s.id} style={styles.cell}>
-            <StampArtwork stamp={s} size={96} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
-            <Text style={styles.cellName} numberOfLines={1}>{s.label}</Text>
-            {s.locked ? <Text style={styles.cellLocked}>Locked</Text> : null}
-          </View>
-        ))}
-        {shown.length === 0 && (
-          <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
-        )}
-      </ScrollView>
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.grid}>
+          {shown.map((s, i) => {
+            const leg = toLegacy(s);
+            return (
+              <View key={s.id} style={styles.cell}>
+                <StampArtwork stamp={leg} size={96} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
+                <Text style={styles.cellName} numberOfLines={1}>{leg.label}</Text>
+                {leg.sublabel ? <Text style={styles.cellSub} numberOfLines={1}>{leg.sublabel}</Text> : null}
+                {s.isRevoked ? <Text style={styles.revokedTag}>revoked</Text> : null}
+              </View>
+            );
+          })}
+          {shown.length === 0 && (
+            <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
+          )}
+        </ScrollView>
+      )}
 
       <Modal visible={!!selected} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.backdrop} onPress={() => setSelected(null)}>
@@ -69,21 +129,76 @@ export default function StampsPage() {
               <X size={20} color={color.ink} />
             </Pressable>
             {selected && (
-              <View style={{ alignItems: 'center', gap: space.md }}>
-                <StampDetailArtwork stamp={selected} size={148} />
-                <View style={styles.detailStamps}>
-                  <Stamp label={selected.kind} tone="deep" />
-                  {selected.sublabel ? <Stamp label={selected.sublabel} rotate={2} /> : null}
-                  <Stamp label={selected.locked ? 'locked' : 'earned'} tone={selected.locked ? 'ink' : 'signal'} rotate={-2} />
+              <View style={{ gap: space.md }}>
+                {/* Name + rarity */}
+                <View style={{ alignItems: 'center', gap: space.xs }}>
+                  <Text style={styles.detailName}>
+                    {selected.titleOverride ?? selected.definition?.name ?? toLegacy(selected).label}
+                  </Text>
+                  {selected.definition?.rarity && (
+                    <View style={[styles.rarityBadge, { backgroundColor: (RARITY_COLORS[selected.definition.rarity] ?? '#6B7280') + '25' }]}>
+                      <Text style={[styles.rarityText, { color: RARITY_COLORS[selected.definition.rarity] ?? '#6B7280' }]}>
+                        {selected.definition.rarity.toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.detailReason}>{REASON[selected.kind]}</Text>
-                {motifFor(selected).provisional && (
-                  <Text style={styles.provisional}>ⓘ Starter city notes — provisional, not verified</Text>
+
+                {/* Location */}
+                {(selected.city || selected.country) && (
+                  <View style={styles.row}>
+                    <Text style={styles.rowKey}>Location</Text>
+                    <Text style={styles.rowVal}>{[selected.city, selected.country].filter(Boolean).join(', ')}</Text>
+                  </View>
                 )}
-                {!selected.locked && selected.earnedAt ? (
-                  <Text style={styles.detailDate}>Earned {new Date(selected.earnedAt).toLocaleDateString()}</Text>
-                ) : (
-                  <Text style={styles.detailDate}>Not earned yet</Text>
+
+                {/* How earned */}
+                <View style={styles.row}>
+                  <Text style={styles.rowKey}>How earned</Text>
+                  <Text style={styles.rowVal}>
+                    {SOURCE_LABELS[selected.sourceType] ?? selected.sourceType.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+
+                {/* Earned date */}
+                <View style={styles.row}>
+                  <Text style={styles.rowKey}>Earned</Text>
+                  <Text style={styles.rowVal}>
+                    {new Date(selected.earnedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </Text>
+                </View>
+
+                {/* Description */}
+                {selected.definition?.description ? (
+                  <Text style={styles.desc}>{selected.definition.description}</Text>
+                ) : null}
+
+                {/* Revoked notice */}
+                {selected.isRevoked && (
+                  <View style={styles.revokedBanner}>
+                    <Text style={styles.revokedBannerText}>This stamp has been revoked.</Text>
+                  </View>
+                )}
+
+                {/* Visibility */}
+                {!selected.isRevoked && (
+                  <>
+                    <Text style={styles.rowKey}>Visibility</Text>
+                    <View style={styles.visRow}>
+                      {(['public', 'circle_only', 'private'] as StampVisibility[]).map((v) => (
+                        <Pressable
+                          key={v}
+                          style={[styles.visBtn, selected.visibility === v && styles.visBtnActive]}
+                          onPress={() => handleVisChange(selected.id, v)}
+                          disabled={visUpdating}
+                        >
+                          <Text style={[styles.visBtnText, selected.visibility === v && styles.visBtnTextActive]}>
+                            {v === 'circle_only' ? 'Circle' : v.charAt(0).toUpperCase() + v.slice(1)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </>
                 )}
               </View>
             )}
@@ -95,19 +210,29 @@ export default function StampsPage() {
 }
 
 const styles = StyleSheet.create({
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: space.lg, paddingTop: 0, rowGap: space.xl },
-  cell: { width: '30%', alignItems: 'center', gap: 6 },
-  cellName: { ...t.small, color: color.ink, fontWeight: '600' },
-  cellLocked: { ...t.stamp, fontFamily: 'Courier', color: color.faint },
-  empty: { width: '100%', padding: space.xl, alignItems: 'center' },
-  emptyText: { ...t.body, color: color.mute },
-
-  backdrop: { flex: 1, backgroundColor: 'rgba(17,17,15,0.55)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
-  sheet: { width: '100%', maxWidth: 360, backgroundColor: color.paper, borderRadius: radius.lg, padding: space.xl },
-  close: { position: 'absolute', right: space.md, top: space.md, zIndex: 2 },
-  detailName: { ...t.title, color: color.ink },
-  detailStamps: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap', justifyContent: 'center' },
-  detailReason: { ...t.body, color: color.mute, textAlign: 'center' },
-  provisional: { ...t.small, color: color.faint, fontFamily: 'Courier', textAlign: 'center', fontSize: 11 },
-  detailDate: { ...t.small, color: color.faint, fontFamily: 'Courier' },
+  center:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  grid:        { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: space.lg, paddingTop: 0, rowGap: space.xl },
+  cell:        { width: '30%', alignItems: 'center', gap: 4 },
+  cellName:    { ...t.small, color: color.ink, fontWeight: '600', textAlign: 'center' },
+  cellSub:     { ...t.small, color: color.faint, fontSize: 10, textAlign: 'center' },
+  revokedTag:  { ...t.small, color: '#DC2626', fontFamily: 'Courier', fontSize: 10 },
+  empty:       { width: '100%', padding: space.xl, alignItems: 'center' },
+  emptyText:   { ...t.body, color: color.mute },
+  backdrop:    { flex: 1, backgroundColor: 'rgba(17,17,15,0.55)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
+  sheet:       { width: '100%', maxWidth: 360, backgroundColor: color.paperRaised, borderRadius: radius.lg, padding: space.xl },
+  close:       { position: 'absolute', right: space.md, top: space.md, zIndex: 2 },
+  detailName:  { ...t.title, color: color.ink, fontWeight: '800', textAlign: 'center' },
+  rarityBadge: { alignSelf: 'center', paddingHorizontal: 10, paddingVertical: 3, borderRadius: radius.pill },
+  rarityText:  { ...t.small, fontWeight: '700', letterSpacing: 0.5 },
+  row:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: space.sm },
+  rowKey:      { ...t.small, color: color.mute, fontWeight: '600', flex: 1 },
+  rowVal:      { ...t.small, color: color.ink, fontWeight: '500', flex: 2, textAlign: 'right' },
+  desc:        { ...t.body, color: color.mute, textAlign: 'center', fontStyle: 'italic' },
+  revokedBanner:     { backgroundColor: '#FEE2E2', borderRadius: radius.md, padding: space.sm, alignItems: 'center' },
+  revokedBannerText: { ...t.small, color: '#DC2626', fontWeight: '600' },
+  visRow:      { flexDirection: 'row', gap: space.sm },
+  visBtn:      { flex: 1, alignItems: 'center', paddingVertical: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
+  visBtnActive:     { borderColor: color.signal, backgroundColor: '#FFF0F3' },
+  visBtnText:       { ...t.small, color: color.mute, fontWeight: '600' },
+  visBtnTextActive: { color: color.signal },
 });
