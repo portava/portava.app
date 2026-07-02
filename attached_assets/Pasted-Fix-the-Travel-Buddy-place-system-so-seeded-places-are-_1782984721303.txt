@@ -1,0 +1,312 @@
+Fix the Travel Buddy place system so seeded places are correctly categorized, users can rate seeded places in-app, Discovery/Pulse stop defaulting to the wrong two cities, and GPS location reflects the user’s actual device location as accurately as the current platform permissions allow.
+
+IMPORTANT:
+Do not pass this task until the frontend behavior reflects the backend truth. Inspect first, then repair. Reuse existing systems where possible. Do not break existing Discovery, Pulse, map, trips, events, memories, or place detail flows.
+
+MAIN PROBLEMS TO FIX:
+1. Seeded places are not labeled/classified correctly, so filters pull the wrong information.
+2. Users cannot rate seeded places in-app.
+3. Discovery and Pulse still default to two separate cities instead of the user’s real/current location or a shared selected city.
+4. GPS location is still not accurately reflecting the user’s actual device location.
+
+FIRST STEP — FULL INSPECTION:
+Before changing anything, inspect all existing code paths related to places, location, city selection, Discovery, Pulse, maps, ratings, and filters.
+
+Inspect at minimum:
+- places/discovery_places schema
+- seeded place seed/import scripts
+- category fields
+- subcategory/type/source fields
+- lat/lng storage types
+- city/region/state/country/neighborhood fields
+- search indexes
+- existing place detail model
+- place filter/query builders
+- Discovery backend routes/services
+- Pulse backend routes/services
+- frontend Discovery screen/hooks
+- frontend Pulse screen/hooks
+- map components and marker logic
+- current location permission flow
+- device GPS request logic
+- selected city store/state
+- fallback city logic
+- profile city/trip city/home city fallback logic
+- existing rating/review tables and UI
+- existing save/place detail/event location/trip place integrations
+- RLS policies for public seeded places and user reviews
+
+Do not duplicate existing systems. Extend what already exists. If partial systems already exist, wire and complete them.
+
+PART 1 — FIX SEEDED PLACE LABELING / CATEGORY NORMALIZATION:
+Seeded places must be labeled correctly so filters pull the appropriate information.
+
+Audit every seeded place category mapping and normalize into a canonical internal taxonomy.
+
+At minimum support these canonical categories:
+- restaurant
+- cafe
+- bar
+- nightlife
+- beach
+- landmark
+- attraction
+- venue
+- hidden_gem
+- hotel_area if applicable
+- shopping if applicable
+- activity if applicable
+
+Requirements:
+- Inspect the actual seeded data values first.
+- Create a shared normalization/mapping layer instead of ad hoc frontend string checks.
+- Map inconsistent source labels into canonical categories/subcategories.
+- Preserve original provider/source category labels in raw fields where useful, but expose one canonical category system to Discovery/Pulse filters.
+- If a place belongs to multiple useful categories, support primary_category + secondary_categories instead of forcing bad single-category labeling.
+- Add or repair backend filtering so category chips query the normalized canonical categories.
+- Make sure Miami restaurants don’t get pulled under nightlife, cafes don’t disappear from food, beaches don’t show under landmarks, etc.
+- Do not invent categories without source evidence.
+- Do not silently discard records because the category is unfamiliar; instead route them to a sensible fallback bucket like attraction/venue/other only if needed.
+
+Needed outputs:
+- canonical category map
+- normalized query field(s)
+- repaired filter behavior in backend and frontend
+- tests proving correct category return behavior
+
+PART 2 — ALLOW USERS TO RATE SEEDED PLACES IN APP:
+Users must be able to rate seeded places inside Travel Buddy.
+
+Inspect whether any review/rating system already exists. Reuse it if possible.
+
+Implement or repair:
+- per-user rating for seeded places
+- optional short review text if a review UI already exists or can be safely added
+- aggregate place rating display
+- rating count
+- user’s own rating state on place details and cards where appropriate
+- update/edit/remove own rating
+- prevent duplicate active ratings from the same user for the same place
+- keep seeded places public, but ratings must belong to authenticated users
+
+Requirements:
+- Ratings must attach to the canonical place id, not duplicate provider rows.
+- Seeded places must remain canonical even if enriched later by provider data.
+- Do not create fake ratings or fake reviews.
+- Aggregate ratings must be computed honestly from user-submitted ratings only.
+- If review text exists, enforce moderation/visibility rules consistent with the app.
+- If ratings are shown on cards, do not imply “official/provider rating”; distinguish app/user rating if needed.
+- Ensure ratings work for seeded places surfaced from Discovery, Pulse, map, trip planning, event location, and place details.
+- Make place detail the minimum reliable rating entry point if card-level interaction becomes too cluttered.
+
+Suggested table behavior if needed:
+- place_ratings
+  - id
+  - place_id
+  - user_id
+  - rating_value
+  - review_text nullable
+  - created_at
+  - updated_at
+  - status/moderation fields only if review text needs moderation
+- unique active rating per (place_id, user_id)
+
+Add indexes and RLS safely:
+- authenticated users can create/update/delete their own ratings
+- public/authenticated users can read approved visible aggregates as intended
+- do not expose private moderation internals publicly
+
+PART 3 — DISCOVERY + PULSE MUST SHARE ONE LOCATION/CITY TRUTH:
+Discovery and Pulse must stop defaulting to two separate cities.
+
+There must be one shared location context system used across:
+- Discovery
+- Pulse
+- nearby places
+- nearby events
+- maps
+- trip place picker where relevant
+- event location suggestions where relevant
+- memory place suggestions where relevant
+
+Implement or repair a shared source-of-truth priority for location context:
+1. live device GPS coordinates, when permission granted and fresh
+2. explicitly selected city by user
+3. trip context city if user is inside a trip flow
+4. profile/home city if explicitly set
+5. sensible beta/default city only as honest fallback when no real context exists
+
+Requirements:
+- Discovery and Pulse must consume the same selected/current city state.
+- They must not diverge into different default cities unless the user explicitly changes one.
+- Remove hardcoded separate city defaults, duplicated stores, stale initializers, and disconnected query params.
+- If user is in Miami and permissions are granted, both Discovery and Pulse should resolve to Miami-area results.
+- If GPS is denied, both should fall back to the same selected city, not separate defaults.
+- If selected city changes, both surfaces should refetch consistently.
+- Map viewport, filter chips, and search should reflect the shared context.
+
+Inspect and repair:
+- selected city store
+- route params
+- query keys
+- initialization effects
+- stale closures
+- fallback constants
+- profile city hydration
+- location permission timing race conditions
+- server request param mismatches
+
+PART 4 — FIX GPS ACCURACY / DEVICE LOCATION TRUTH:
+GPS location must reflect the user’s actual device location as accurately as the app and permissions allow.
+
+Inspect the current mobile location flow end-to-end:
+- permission requests
+- foreground/background behavior if used
+- Expo/native location APIs currently used
+- accuracy mode requested
+- last-known vs fresh location usage
+- timeout behavior
+- reverse geocoding
+- coordinate precision
+- update frequency
+- cache/staleness handling
+- simulator/dev fallback leakage
+- map centering logic
+- location-to-city resolution logic
+
+Requirements:
+- Prefer fresh device coordinates when available.
+- Clearly distinguish fresh GPS vs last-known/cached location.
+- Do not silently rely on stale/mock/dev coordinates when a real device location should be used.
+- Improve requested accuracy mode where appropriate for Discovery/Pulse usage without creating unreasonable battery drain.
+- If only last-known location is available, label/use it honestly and refresh when possible.
+- Reverse geocode carefully, but use lat/lng radius matching as primary truth for place/event queries.
+- Avoid exact-city-string-only matching; query nearby by coordinates first.
+- Make sure user location from device drives Miami results when the device is actually in Miami.
+- Fix any bugs from string lat/lng parsing, stale async state, permission-denied fallbacks, or simulator defaults.
+- If app is running in a dev environment that cannot provide reliable GPS, expose that honestly in debug/dev behavior rather than pretending accuracy.
+
+Implement a shared location context object like:
+- coordinates
+- source (gps_fresh / gps_cached / selected_city / profile_city / beta_default)
+- accuracy meters if available
+- resolved city
+- resolved region/state
+- last_updated_at
+- permission status
+
+Use this object across Discovery and Pulse requests.
+
+PART 5 — BACKEND QUERY/TRUTH REPAIR:
+Repair backend discovery/pulse place queries so they use the corrected category and location truth.
+
+Requirements:
+- Query nearby by lat/lng radius first when coordinates exist
+- Use normalized city matching only as fallback
+- Category filters must use canonical categories
+- Pulse must be able to surface nearby seeded places as recommendation/discovery cards when social content is thin
+- Discovery must surface nearby seeded places, events, and relevant sections using shared location truth
+- No fake data
+- No duplicate places
+- Preserve privacy/block/moderation rules for user content
+- Seeded places remain public discovery content
+- Ratings should be joinable/aggregated without breaking query performance
+
+PART 6 — FRONTEND REPAIR:
+Wire frontend Discovery, Pulse, place cards, and place detail to the repaired backend truth.
+
+Discovery must:
+- render places from the corrected category/location queries
+- use shared location context
+- show correct category chip results
+- open correct place detail
+- reflect user rating aggregate where appropriate
+- show user’s own rating in detail page
+- never blank out if backend returns seeded places
+
+Pulse must:
+- use the same shared location context as Discovery
+- surface nearby seeded places and events when user content is thin
+- stop defaulting to a different city from Discovery
+- render accurate Miami-area cards when user is in Miami
+- keep place cards tappable and connected
+
+Place detail must:
+- show canonical category/subcategory
+- show map/address/location
+- allow save/add to trip/create event here if already supported
+- allow user rating submission/edit/removal
+- show aggregate rating/count from app users
+- not invent provider ratings if they do not exist
+
+PART 7 — TESTING:
+Add or update tests for:
+
+Category normalization:
+- seeded raw category maps to correct canonical category
+- filter chips return correct places by category
+- multi-category places still appear in expected filters
+
+Ratings:
+- authenticated user can rate a seeded place
+- user can update own rating
+- duplicate active ratings prevented
+- aggregates compute correctly
+- place detail shows aggregate/user rating
+- unauthenticated user cannot submit rating if auth is required
+
+Shared location truth:
+- Discovery and Pulse use same selected/current city state
+- city change updates both
+- GPS coordinates override default city when permission granted
+- denied GPS falls back consistently to selected city/profile city
+- no separate two-city default behavior remains
+
+GPS/location:
+- fresh location preferred over stale cache
+- last-known location used only when needed
+- coordinate queries return Miami places for Miami coordinates
+- string/number lat-lng parsing handled safely
+
+Rendering:
+- Discovery shows backend places with corrected categories
+- Pulse shows backend nearby place/event cards
+- place detail opens from card
+- rating flow works from place detail
+- empty state only appears when backend truly returns no results
+
+Run:
+- typecheck
+- lint if available
+- relevant backend tests
+- relevant frontend tests
+- any integration tests available for location/discovery/pulse flows
+
+MANDATORY MANUAL VERIFICATION:
+Do not pass this task until you manually verify all of the following in the running app:
+
+1. A seeded place with previously wrong labeling now appears under the correct filter/category.
+2. A user can open a seeded place and submit a rating in-app.
+3. The rating persists and aggregate/user state updates correctly.
+4. Discovery and Pulse resolve to the same city/context.
+5. When device location is Miami, both Discovery and Pulse show Miami-area places/events.
+6. GPS source shown in debug/dev logging matches the actual device/location context used.
+7. No separate hardcoded two-city defaults remain.
+8. No fake ratings/reviews/places/events/users were introduced.
+
+If tests pass but Discovery/Pulse still drift to different cities or GPS is still inaccurate, the task is not complete.
+
+DELIVERABLE:
+Return a concise report with:
+- root causes found
+- category labeling issues found
+- normalization approach implemented
+- rating system reused or added
+- backend endpoints/services changed
+- frontend screens/hooks/stores/components changed
+- location source-of-truth changes
+- GPS/device accuracy fixes
+- migrations/RLS changes if any
+- tests added/updated
+- exact test/typecheck results
+- manual verification proof that Discovery/Pulse now share one location truth and seeded places are filterable/rateable correctly
