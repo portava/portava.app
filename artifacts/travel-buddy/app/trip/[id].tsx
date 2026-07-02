@@ -16,6 +16,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
+import { TripInviteSheet } from '../../src/components/TripInviteSheet';
 import { mockTripDetail, mockNextUp, tripPlans, tripCircle, tripStamps, tripPosts } from '../../src/data/tripDetail';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
@@ -43,6 +44,7 @@ export default function TripDetail() {
   const commandBarRef    = useRef<ConciergeCommandBarHandle>(null);
   const commandBarY      = useRef<number>(0);
   const [chatLoading, setChatLoading] = useState(false);
+  const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [gapDays, setGapDays] = useState<string[]>([]);
@@ -116,6 +118,16 @@ export default function TripDetail() {
               )
             }
             <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
+          </Pressable>
+        )}
+        {isAuthed && realTrip?.ownerId === userId && (
+          <Pressable
+            style={styles.topBtn}
+            onPress={() => setInviteSheetOpen(true)}
+            hitSlop={6}
+          >
+            <Users size={15} color={color.signal} />
+            <Text style={[styles.topBtnText, { color: color.signal }]}>Invite</Text>
           </Pressable>
         )}
         {rentBuddyEnabled && (
@@ -266,6 +278,13 @@ export default function TripDetail() {
           onCreated={() => setMeetupDate(null)}
         />
       )}
+
+      {/* Invite sheet — opened from the Invite button in the top bar (owner only) */}
+      <TripInviteSheet
+        tripId={trip.id}
+        visible={inviteSheetOpen}
+        onDismiss={() => setInviteSheetOpen(false)}
+      />
     </View>
   );
 }
