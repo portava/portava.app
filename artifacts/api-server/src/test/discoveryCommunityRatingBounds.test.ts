@@ -160,6 +160,17 @@ describe("POST /api/discovery/community — rating bounds validation", () => {
     assert.equal(r.body.error, "invalid_payload");
   });
 
+  it("returns 400 when rating is the smallest IEEE 754 float below 0 (-Number.MIN_VALUE)", async () => {
+    // Number.MIN_VALUE is the tiniest positive subnormal float64 (~5e-324).
+    // Its negation is the closest representable value to 0 that is strictly less
+    // than 0. A guard written as `ratingNum < 0` must reject it; this test would
+    // catch any future weakening to `<= 0` (which would incorrectly accept it).
+    assert.notEqual(-Number.MIN_VALUE, 0, "sanity: -Number.MIN_VALUE must differ from 0 in float64");
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: -Number.MIN_VALUE });
+    assert.equal(r.status, 400, `expected 400 for rating=-Number.MIN_VALUE (${-Number.MIN_VALUE}), got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
   // ── non-numeric value ─────────────────────────────────────────────────────────
 
   it("returns 400 when rating is a non-numeric string", async () => {
