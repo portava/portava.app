@@ -87,6 +87,8 @@ export interface EventDetail extends EventSummary {
 
 export interface EventListItem extends EventSummary {
   myRsvp: EventRsvpStatus | null;
+  isSaved?: boolean;
+  distanceKm?: number;
 }
 
 export interface JoinRequest {
@@ -181,6 +183,11 @@ export interface ListEventsParams {
   category?: string;
   dateFrom?: string;
   dateTo?: string;
+  nearLat?: number;
+  nearLng?: number;
+  nearRadiusKm?: number;
+  free?: boolean;
+  verifiedHostOnly?: boolean;
   page?: number;
   limit?: number;
 }
@@ -189,13 +196,18 @@ export async function listEvents(
   params: ListEventsParams = {},
 ): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number }>> {
   const qs = new URLSearchParams();
-  if (params.state)    qs.set('state', params.state);
-  if (params.city)     qs.set('city', params.city);
-  if (params.category) qs.set('category', params.category);
-  if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
-  if (params.dateTo)   qs.set('dateTo', params.dateTo);
-  if (params.page)     qs.set('page', String(params.page));
-  if (params.limit)    qs.set('limit', String(params.limit));
+  if (params.state)           qs.set('state', params.state);
+  if (params.city)            qs.set('city', params.city);
+  if (params.category)        qs.set('category', params.category);
+  if (params.dateFrom)        qs.set('dateFrom', params.dateFrom);
+  if (params.dateTo)          qs.set('dateTo', params.dateTo);
+  if (params.nearLat != null) qs.set('nearLat', String(params.nearLat));
+  if (params.nearLng != null) qs.set('nearLng', String(params.nearLng));
+  if (params.nearRadiusKm)    qs.set('nearRadiusKm', String(params.nearRadiusKm));
+  if (params.free)            qs.set('free', '1');
+  if (params.verifiedHostOnly) qs.set('verifiedHostOnly', '1');
+  if (params.page)            qs.set('page', String(params.page));
+  if (params.limit)           qs.set('limit', String(params.limit));
   const q = qs.toString();
   return apiCall(`/api/events${q ? `?${q}` : ''}`);
 }
@@ -437,6 +449,167 @@ export async function deleteEventReview(
   eventId: string,
 ): Promise<ApiResult<{ ok: boolean }>> {
   return apiCall(`/api/events/${eventId}/reviews`, { method: 'DELETE' });
+}
+
+// ── Drafts ────────────────────────────────────────────────────────────────────
+
+export interface EventDraft {
+  id: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  startsAt?: string;
+  endsAt?: string;
+  locationName?: string;
+  locationLat?: number;
+  locationLng?: number;
+  city?: string;
+  country?: string;
+  maxAttendees?: number;
+  ageMin?: number;
+  ageMax?: number;
+  trustScoreMin?: number;
+  verifiedOnly?: boolean;
+  visibility?: EventVisibility;
+  circleId?: string;
+  tripId?: string;
+  chatEnabled: boolean;
+  waitlistEnabled: boolean;
+  priceType?: 'free' | 'external';
+  priceUrl?: string;
+  updatedAt: string;
+}
+
+export async function getDraft(draftId: string): Promise<ApiResult<EventDraft>> {
+  return apiCall(`/api/events/drafts/${draftId}`);
+}
+
+export async function getMyDrafts(): Promise<ApiResult<{ drafts: EventDraft[] }>> {
+  return apiCall('/api/events/drafts');
+}
+
+export async function createDraft(
+  input: Partial<EventDraft>,
+): Promise<ApiResult<{ id: string }>> {
+  return apiCall('/api/events/drafts', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function updateDraft(
+  draftId: string,
+  input: Partial<EventDraft>,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/drafts/${draftId}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+export async function deleteDraft(draftId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/drafts/${draftId}`, { method: 'DELETE' });
+}
+
+export async function publishDraft(
+  draftId: string,
+  overrides?: Partial<EventDraft & { publishNow?: boolean }>,
+): Promise<ApiResult<EventSummary>> {
+  return apiCall(`/api/events/drafts/${draftId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify(overrides ?? {}),
+  });
+}
+
+// ── Save / unsave ─────────────────────────────────────────────────────────────
+
+export async function saveEvent(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/save`, { method: 'POST' });
+}
+
+export async function unsaveEvent(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/save`, { method: 'DELETE' });
+}
+
+export async function getSavedEvents(
+  page = 1,
+): Promise<ApiResult<{ events: EventListItem[]; page: number }>> {
+  return apiCall(`/api/events/saved?page=${page}`);
+}
+
+// ── Share / report ────────────────────────────────────────────────────────────
+
+export async function shareEvent(
+  eventId: string,
+): Promise<ApiResult<{ shareUrl: string }>> {
+  return apiCall(`/api/events/${eventId}/share`, { method: 'POST' });
+}
+
+export async function reportEvent(
+  eventId: string,
+  reason: string,
+  details?: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, details }),
+  });
+}
+
+// ── Following / circle feed ───────────────────────────────────────────────────
+
+export async function listFollowingEvents(
+  params: { limit?: number; cursor?: string } = {},
+): Promise<ApiResult<{ events: EventListItem[]; cursor?: string }>> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set('limit', String(params.limit));
+  if (params.cursor) q.set('cursor', params.cursor);
+  return apiCall(`/api/events/following?${q.toString()}`);
+}
+
+// ── Invites ───────────────────────────────────────────────────────────────────
+
+export interface EventInvite {
+  id: string;
+  eventId: string;
+  status: 'pending' | 'accepted' | 'declined';
+  invitedAt: string;
+  inviter?: {
+    id: string;
+    handle?: string;
+    displayName?: string;
+    avatarUrl?: string;
+  };
+  event?: {
+    id: string;
+    title: string;
+    startsAt?: string;
+    locationName?: string;
+    city?: string;
+  };
+}
+
+export async function getMyEventInvites(): Promise<ApiResult<{ invites: EventInvite[] }>> {
+  return apiCall('/api/events/invites');
+}
+
+export async function acceptEventInvite(
+  eventId: string,
+  inviteId: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/invites/${inviteId}/accept`, { method: 'POST' });
+}
+
+export async function declineEventInvite(
+  eventId: string,
+  inviteId: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/invites/${inviteId}/decline`, { method: 'POST' });
+}
+
+export async function inviteUserToEvent(
+  eventId: string,
+  userId: string,
+  message?: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/invites`, {
+    method: 'POST',
+    body: JSON.stringify({ userId, message }),
+  });
 }
 
 // ── User events ───────────────────────────────────────────────────────────────
