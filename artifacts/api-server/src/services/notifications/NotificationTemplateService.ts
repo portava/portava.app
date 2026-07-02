@@ -356,7 +356,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: () => 'Passport Stamp Earned 🌍',
     body: ({ location }) => `You earned a stamp for ${location ?? 'a new destination'}`,
-    actionUrl: () => '/(tabs)/passport?tab=stamps',
+    actionUrl: ({ stampId }) => stampId ? `/stamp/${stampId}` : '/(tabs)/passport?tab=stamps',
   }),
   tpl({
     eventType: 'passport.milestone',

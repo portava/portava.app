@@ -193,3 +193,31 @@ export async function getProfileStamps(
   if (!res.ok) return { ok: false, message: res.message };
   return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
 }
+
+/**
+ * GET /stamps/:stampId — fetch a single stamp by its user_stamp ID.
+ * Returns full details for the owner; visibility-gated for others.
+ */
+export async function getStampById(
+  stampId: string,
+): Promise<ApiResult<{ stamp: PassportStampNew; isOwner: boolean }>> {
+  const token = await freshToken();
+  if (!token) return { ok: false, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/stamps/${encodeURIComponent(stampId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 404) return { ok: false, message: 'Stamp not found' };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    const json = await res.json();
+    const stamp = mapStamp((json as any).stamp);
+    const { data: { user } } = await supabase.auth.getUser();
+    const isOwner = user?.id != null && (json as any).stamp?.user_id === user.id;
+    return { ok: true, data: { stamp, isOwner } };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}

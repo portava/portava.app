@@ -609,7 +609,10 @@ router.post("/stamps/award", async (req, res) => {
           eventType:  "passport.stamp_earned",
           sourceType: "passport",
           sourceId:   result.userStampId,
-          params:     { location: parsed.data.city ?? parsed.data.country ?? parsed.data.definitionSlug },
+          params:     {
+            location: parsed.data.city ?? parsed.data.country ?? parsed.data.definitionSlug,
+            stampId:  result.userStampId ?? '',
+          },
         });
         if (row) await notifRouter.route(row);
       } catch {}

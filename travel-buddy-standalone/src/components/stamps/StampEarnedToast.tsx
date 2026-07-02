@@ -88,7 +88,11 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
 
   function handleView() {
     dismiss();
-    router.push('/(tabs)/passport?tab=stamps' as any);
+    if (current?.id) {
+      router.push(`/stamp/${current.id}` as any);
+    } else {
+      router.push('/(tabs)/passport?tab=stamps' as any);
+    }
   }
 
   const showStampToast = useCallback((stamp: PassportStampNew) => {

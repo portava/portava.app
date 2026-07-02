@@ -275,10 +275,16 @@ describe("passport.stamp_earned template", () => {
     assert.ok(t.defaultChannels.includes("push"), "push channel missing");
   });
 
-  it("actionUrl renders /(tabs)/passport?tab=stamps", () => {
+  it("actionUrl falls back to /(tabs)/passport?tab=stamps when no stampId", () => {
     const rendered = renderTemplate("passport.stamp_earned", { location: "Tokyo" });
     assert.ok(rendered, "renderTemplate returned null");
     assert.equal(rendered!.actionUrl, "/(tabs)/passport?tab=stamps");
+  });
+
+  it("actionUrl deep-links to /stamp/:stampId when stampId param is present", () => {
+    const rendered = renderTemplate("passport.stamp_earned", { location: "Tokyo", stampId: STAMP_ID });
+    assert.ok(rendered, "renderTemplate returned null");
+    assert.equal(rendered!.actionUrl, `/stamp/${STAMP_ID}`);
   });
 
   it("title contains 'Passport Stamp Earned'", () => {
@@ -349,10 +355,10 @@ describe("POST /api/stamps/award (internal) — notification dispatch", () => {
     assert.equal(row.user_id, USER_ID);
   });
 
-  it("notification actionUrl is /(tabs)/passport?tab=stamps", async () => {
+  it("notification actionUrl deep-links to the specific stamp", async () => {
     await waitForNotification(state);
     const row = (state.inserted["notifications"] ?? [])[0];
-    assert.equal(row.action_url, "/(tabs)/passport?tab=stamps");
+    assert.equal(row.action_url, `/stamp/${STAMP_ID}`);
   });
 });
 
@@ -444,10 +450,10 @@ describe("POST /api/admin/stamps/award — notification dispatch", () => {
     assert.equal(row.user_id, USER_ID);
   });
 
-  it("admin award notification actionUrl is /(tabs)/passport?tab=stamps", async () => {
+  it("admin award notification actionUrl deep-links to the specific stamp", async () => {
     await waitForNotification(state);
     const row = (state.inserted["notifications"] ?? [])[0];
-    assert.equal(row.action_url, "/(tabs)/passport?tab=stamps");
+    assert.equal(row.action_url, `/stamp/${STAMP_ID}`);
   });
 });
 
