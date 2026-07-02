@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  Search, MapPin, Zap, Users, Shield, ChevronRight,
+  Search, MapPin, Users, Shield, ChevronRight,
   ChevronDown, ChevronUp, Star, Plane, ShoppingBag,
   Globe, Camera, Music, BookOpen, HelpCircle, AlertCircle, Bell,
 } from 'lucide-react-native';
@@ -48,29 +48,6 @@ const SAFETY_ITEMS = [
   },
 ];
 
-const MOCK_NOW_BUDDIES: BuddyProfile[] = [
-  {
-    id: 'mock-1', userId: 'u1', displayName: 'Amara K.', tagline: 'City insider',
-    bio: null, languages: ['English', 'French'], city: 'Paris', country: 'France',
-    categories: ['city', 'culture'], hourlyRateUsd: 25, status: 'active', verified: true,
-    verifiedAt: null, averageRating: 4.9, reviewCount: 47, responseTimeH: 1,
-    coverPhotoUrl: null, galleryUrls: [], createdAt: '', updatedAt: '',
-  },
-  {
-    id: 'mock-2', userId: 'u2', displayName: 'Kenji T.', tagline: 'Night scene expert',
-    bio: null, languages: ['English', 'Japanese'], city: 'Tokyo', country: 'Japan',
-    categories: ['nightlife', 'city'], hourlyRateUsd: 30, status: 'active', verified: true,
-    verifiedAt: null, averageRating: 4.8, reviewCount: 62, responseTimeH: 2,
-    coverPhotoUrl: null, galleryUrls: [], createdAt: '', updatedAt: '',
-  },
-  {
-    id: 'mock-3', userId: 'u3', displayName: 'Sofia L.', tagline: 'Language & culture',
-    bio: null, languages: ['English', 'Spanish', 'Portuguese'], city: 'Barcelona', country: 'Spain',
-    categories: ['language', 'shopping'], hourlyRateUsd: 22, status: 'active', verified: true,
-    verifiedAt: null, averageRating: 5.0, reviewCount: 31, responseTimeH: 1,
-    coverPhotoUrl: null, galleryUrls: [], createdAt: '', updatedAt: '',
-  },
-];
 
 function SafetyAccordion() {
   const [open, setOpen] = useState<number | null>(null);
@@ -258,17 +235,11 @@ export default function RentABuddyLanding() {
         title="Available Now"
         onAction={() => router.push('/(rent-a-buddy)/search' as any)}
       />
-      <HorizontalScrollStrip gap={space.md}>
-        {MOCK_NOW_BUDDIES.map(b => (
-          <View key={b.id} style={{ width: 220 }}>
-            <View style={styles.nowBadge}>
-              <Zap size={10} color={color.success} fill={color.success} />
-              <Text style={styles.nowText}>Available Now</Text>
-            </View>
-            <BuddyCard buddy={b} compact />
-          </View>
-        ))}
-      </HorizontalScrollStrip>
+      <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
+        <Text style={{ color: color.mute, fontSize: 14, lineHeight: 20 }}>
+          No buddies available right now — check back soon or search by city.
+        </Text>
+      </View>
 
       {/* Match Me CTA */}
       <View style={styles.matchCard}>
@@ -400,8 +371,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.xs,
   },
   searchBtnText: { ...t.small, fontWeight: '800', color: color.onInk },
-  nowBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
-  nowText: { fontSize: 10, fontWeight: '700', color: color.success, fontFamily: 'Courier', letterSpacing: 0.5 },
   matchCard: {
     marginHorizontal: space.lg, marginTop: space.lg,
     backgroundColor: color.ink, borderRadius: radius.lg,

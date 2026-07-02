@@ -119,10 +119,10 @@
  * POST   /api/events/:id/chat/join                — join event chat (Going RSVPs)
  * POST   /api/events/:id/updates                  — post host update / pin
  *
- * ── Cross-system stubs (wired in Task 3) ────────────────────────────────────
- * POST   /api/events/:id/add-to-trip              — stub: 501 not implemented
- * POST   /api/events/:id/link-circle              — stub: 501 not implemented
- * POST   /api/events/:id/telegraph-thread         — stub: 501 not implemented
+ * ── Cross-system integrations ────────────────────────────────────────────────
+ * POST   /api/events/:id/add-to-trip              — add event as trip plan item (member only)
+ * POST   /api/events/:id/link-circle              — link event to a circle (host only)
+ * POST   /api/events/:id/telegraph-thread         — create/get event chat thread (host/cohost)
  *
  * ── Profile tab ─────────────────────────────────────────────────────────────
  * GET    /api/users/:userId/events                — events for a user profile tab
@@ -172,8 +172,8 @@
  * event_attendees table          | migrations/0080_events_extension.sql        | event_attendees                          | complete      | Added per-spec; upserted on RSVP/join
  * Spam / prohibited content      | checkProhibitedContent, checkTicketUrl,     | —                                        | complete      | Regex + allowlist + 3-hour window
  *                                | checkDuplicateEvent                         |                                          |               |   duplicate detection
- * Cross-system stubs             | events.ts /add-to-trip, /link-circle,       | —                                        | stub (501)    | Wired for Task 3
- *                                |   /telegraph-thread                         |                                          |               |
+ * Cross-system integrations      | events.ts /add-to-trip, /link-circle,       | trip_plan_items, events, messages         | complete      | add-to-trip inserts plan item; link-circle
+ *                                |   /telegraph-thread                         |                                          |               |   updates circle_id; telegraph-thread wires chat
  */
 
 import { randomUUID } from "node:crypto";

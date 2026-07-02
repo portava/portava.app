@@ -17,6 +17,11 @@ The service role client bypasses RLS entirely and uses the service key — this 
 - Pass `user.id` explicitly so the service function can set the `user_id` column.
 - Known affected tables: trips, passport_memories, passport_stamps — any new table with RLS based on `auth.uid()` will have the same issue.
 
+**Frontend mobile code must also use the API server for mutations:**
+- `supabase.from('trips').update(...)` and `.delete(...)` from the mobile client use the user JWT, which hits the same P-256/auth.uid() NULL issue — updates and deletes silently succeed (HTTP 200) but affect 0 rows.
+- Fix: route all trip mutations through the API server (PATCH/DELETE `/api/trips/:tripId`) using `freshToken()` + `fetch`.
+- `getTrip` (SELECT) is fine as Supabase direct if the RLS SELECT policy doesn't rely on `auth.uid()` or is permissive for reads.
+
 **Pattern (from trips route, confirmed working):**
 ```typescript
 const auth = await requireUser(req, res);

@@ -551,6 +551,7 @@ const PatchTripSchema = z.object({
   showDestinationCity:     z.boolean().optional(),
   delayedPostingDefault:   z.boolean().optional(),
   preciseLocationVisible:  z.boolean().optional(),
+  progress:                z.number().int().min(0).max(100).optional(),
 });
 
 router.patch("/trips/:tripId", async (req, res) => {
@@ -608,6 +609,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (b.delayedPostingDefault  !== undefined) patch.delayed_posting_default  = b.delayedPostingDefault;
   if (b.preciseLocationVisible !== undefined) patch.precise_location_visible = b.preciseLocationVisible;
   if (b.planEditPermission     !== undefined) patch.plan_edit_permission     = b.planEditPermission;
+  if (b.progress               !== undefined) patch.progress                 = b.progress;
 
   // Compute server-authoritative status from effective field values
   const effectiveTitle = (b.title ?? t.title) as string | null;
@@ -670,6 +672,35 @@ router.patch("/trips/:tripId", async (req, res) => {
   }
 
   res.json(updated);
+});
+
+/* ===========================================================================
+ * DELETE /trips/:tripId  — permanently delete a trip (owner only)
+ * ===========================================================================
+ * Removes the trip row. Related rows (plan items, members, invites, etc.) are
+ * cleaned up by ON DELETE CASCADE on the FK constraints in the DB schema.
+ */
+router.delete("/trips/:tripId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  if ((trip as any).owner_id !== user.id) {
+    sendError(res, "forbidden", "Only the trip owner can delete this trip"); return;
+  }
+
+  const { error } = await sc.from("trips").delete().eq("id", tripId);
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.json({ ok: true });
 });
 
 /* ===========================================================================

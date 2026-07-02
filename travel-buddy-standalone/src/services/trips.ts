@@ -158,22 +158,34 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
 }
 
 export async function updateTrip(id: string, patch: Partial<CreateTripInput & { progress: number }>): Promise<TripRow | null> {
-  if (!isSupabaseConfigured) return null;
-  const row: any = {};
-  if (patch.title !== undefined) row.title = patch.title;
-  if (patch.status !== undefined) row.status = patch.status;
-  if (patch.visibility !== undefined) row.visibility = patch.visibility;
-  if (patch.coverUrl !== undefined) row.cover_url = patch.coverUrl;
-  if (patch.progress !== undefined) row.progress = patch.progress;
-  const { data, error } = await supabase.from('trips').update(row).eq('id', id).select('*').single();
-  if (error || !data) return null;
-  return mapTrip(data);
+  const token = await freshToken();
+  if (!token) return null;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const body: Record<string, any> = {};
+  if (patch.title !== undefined) body.title = patch.title;
+  if (patch.status !== undefined) body.status = patch.status;
+  if (patch.visibility !== undefined) body.visibility = patch.visibility;
+  if (patch.coverUrl !== undefined) body.coverUrl = patch.coverUrl;
+  if (patch.progress !== undefined) body.progress = patch.progress;
+  const res = await fetch(`${apiBase}/api/trips/${id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data ? mapTrip(data) : null;
 }
 
 export async function deleteTrip(id: string): Promise<boolean> {
-  if (!isSupabaseConfigured) return false;
-  const { error } = await supabase.from('trips').delete().eq('id', id);
-  return !error;
+  const token = await freshToken();
+  if (!token) return false;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
 }
 
 /* ---------- Trip Invites ---------- */
