@@ -18,3 +18,9 @@ id = "4HVIf95Z2Him9gPXjTI6g"
 uri = "file://travel-buddy-src.zip"
 type = "unspecified"
 title = "travel-buddy-src.zip"
+
+[[outputs]]
+id = "I6Aiqk5llOpTmU8vFe4j_"
+uri = "file://travel-buddy-snapshot.tar.gz"
+type = "unspecified"
+title = "travel-buddy-snapshot.tar.gz"
