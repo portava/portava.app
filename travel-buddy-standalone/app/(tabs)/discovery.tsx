@@ -7,7 +7,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
   Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle,
-  SlidersHorizontal, ChevronDown,
+  SlidersHorizontal, ChevronDown, X,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -520,6 +520,22 @@ export default function DiscoveryHub() {
           {/* Expanded filter panel — always fully opaque */}
           {filtersExpanded && (
             <View style={styles.filtersPanel} pointerEvents="auto">
+              {activeFilters.sortBy != null && (
+                <View style={styles.activeSortRow}>
+                  <Text style={styles.activeSortLabel}>Sorted by</Text>
+                  <View style={styles.activeSortChip}>
+                    <Text style={styles.activeSortChipText}>
+                      {activeFilters.sortBy === 'rating' ? 'Top rated' : activeFilters.sortBy}
+                    </Text>
+                    <Pressable
+                      onPress={() => handleFiltersChange({ ...activeFilters, sortBy: null })}
+                      hitSlop={8}
+                    >
+                      <X size={10} color={color.signal} />
+                    </Pressable>
+                  </View>
+                </View>
+              )}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modeBar} contentContainerStyle={styles.modeBarContent}>
                 {CONTEXT_MODES.map((m) => {
                   const active = m.key === contextMode;
@@ -831,6 +847,36 @@ const styles = StyleSheet.create({
   },
   tabLabelDim: {
     color: color.faint,
+  },
+  activeSortRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  activeSortLabel: {
+    fontSize: 11,
+    fontWeight: '500' as const,
+    color: color.mute,
+  },
+  activeSortChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal + '14',
+    borderWidth: 1,
+    borderColor: color.signal + '50',
+  },
+  activeSortChipText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: color.signal,
   },
   tabLabelColumn: {
     flexDirection: 'column',
