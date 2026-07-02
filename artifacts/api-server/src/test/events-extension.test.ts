@@ -78,6 +78,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     collection_items:      tables.collection_items       ?? { rows: [] },
     circle_members:        tables.circle_members         ?? { rows: [] },
     trip_members:          tables.trip_members           ?? { rows: [] },
+    trip_plan_items:       tables.trip_plan_items        ?? { rows: [] },
   };
 
   function chain(tableName: string, filtered: Row[]) {
@@ -1480,31 +1481,131 @@ describe("Event reminders", () => {
   });
 });
 
-// ── Cross-system stubs ────────────────────────────────────────────────────────
+// ── POST /api/events/:id/add-to-trip — membership gates ──────────────────────
 
-describe("Cross-system stub routes", () => {
+describe("POST /api/events/:id/add-to-trip — membership gates", () => {
   let port: number;
   let close: () => Promise<void>;
+  const TRIP_ID = "00000000-0000-0000-000c-000000000001";
+
+  function makeAddToTripClient(opts: { tripMember?: boolean; alreadyAdded?: boolean } = {}) {
+    return makeFakeClient({
+      events: { rows: [makeEvent({
+        id:         ID.ev1,
+        host_id:    ID.host1,
+        state:      "open",
+        visibility: "public",
+      })] },
+      event_roles:      { rows: [] },
+      blocks:           { rows: [] },
+      user_friendships: { rows: [] },
+      event_rsvps:      { rows: [] },
+      trip_members:     { rows: opts.tripMember
+        ? [{ trip_id: TRIP_ID, user_id: ID.user1, role: "member" }]
+        : [] },
+      trip_plan_items:  { rows: opts.alreadyAdded
+        ? [{ id: "existing-plan-item", trip_id: TRIP_ID, source_type: "event", source_id: ID.ev1, removed_at: null }]
+        : [] },
+    });
+  }
 
   beforeEach(async () => {
-    _setTestClient(makeFakeClient(), true);
+    _setTestClient(makeAddToTripClient(), true);
     ({ port, close } = await startServer());
   });
   afterEach(async () => { await close(); });
 
-  it("POST /add-to-trip returns 501", async () => {
-    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/add-to-trip`, { tripId: ID.ev2 }, ID.host1);
-    assert.equal(status, 501);
+  it("non-trip-member gets 403", async () => {
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/add-to-trip`, { tripId: TRIP_ID }, ID.user1);
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
   });
 
-  it("POST /link-circle returns 501", async () => {
-    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/link-circle`, { circleId: ID.ev2 }, ID.host1);
-    assert.equal(status, 501);
+  it("accepted trip member gets 201 with itinerary item", async () => {
+    _setTestClient(makeAddToTripClient({ tripMember: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/add-to-trip`, { tripId: TRIP_ID }, ID.user1);
+    assert.equal(status, 201);
+    assert.ok(body.planItemId, "planItemId present");
+    assert.equal(body.tripId, TRIP_ID);
+    assert.equal(body.alreadyAdded, undefined);
   });
 
-  it("POST /telegraph-thread returns 501", async () => {
-    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/telegraph-thread`, {}, ID.host1);
-    assert.equal(status, 501);
+  it("duplicate add returns alreadyAdded:true without inserting twice", async () => {
+    _setTestClient(makeAddToTripClient({ tripMember: true, alreadyAdded: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/add-to-trip`, { tripId: TRIP_ID }, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.alreadyAdded, true);
+    assert.equal(body.tripId, TRIP_ID);
+    assert.ok(body.planItemId, "existing planItemId returned");
+  });
+
+  it("missing tripId gets 400", async () => {
+    _setTestClient(makeAddToTripClient({ tripMember: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/add-to-trip`, {}, ID.user1);
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
+  });
+});
+
+// ── POST /api/events/:id/link-circle — membership gates ───────────────────────
+
+describe("POST /api/events/:id/link-circle — membership gates", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  const CIRCLE_ID = "00000000-0000-0000-000d-000000000001";
+
+  function makeLinkCircleClient(opts: { isHost?: boolean; circleMember?: boolean } = {}) {
+    return makeFakeClient({
+      events: { rows: [makeEvent({
+        id:         ID.ev1,
+        host_id:    opts.isHost ? ID.user1 : ID.host1,
+        state:      "open",
+        visibility: "public",
+      })] },
+      event_roles:        { rows: [] },
+      blocks:             { rows: [] },
+      user_friendships:   { rows: [] },
+      event_rsvps:        { rows: [] },
+      circle_members:     { rows: opts.circleMember
+        ? [{ circle_id: CIRCLE_ID, user_id: ID.user1 }]
+        : [] },
+      event_activity_log: { rows: [] },
+    });
+  }
+
+  beforeEach(async () => {
+    _setTestClient(makeLinkCircleClient(), true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("non-host gets 403 even if they are a circle member", async () => {
+    _setTestClient(makeLinkCircleClient({ isHost: false, circleMember: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/link-circle`, { circleId: CIRCLE_ID }, ID.user1);
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+  });
+
+  it("host who is not a circle member gets 403", async () => {
+    _setTestClient(makeLinkCircleClient({ isHost: true, circleMember: false }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/link-circle`, { circleId: CIRCLE_ID }, ID.user1);
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+  });
+
+  it("host who is a circle member gets 200 with ok:true", async () => {
+    _setTestClient(makeLinkCircleClient({ isHost: true, circleMember: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/link-circle`, { circleId: CIRCLE_ID }, ID.user1);
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.circleId, CIRCLE_ID);
+  });
+
+  it("missing circleId gets 400", async () => {
+    _setTestClient(makeLinkCircleClient({ isHost: true, circleMember: true }), true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/link-circle`, {}, ID.user1);
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
   });
 });
 
