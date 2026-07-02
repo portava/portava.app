@@ -179,6 +179,7 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
         visible={selected !== null}
         onClose={() => setSelected(null)}
         onStampUpdated={handleStampUpdated}
+        username={viewingUsername ?? null}
       />
     </View>
   );

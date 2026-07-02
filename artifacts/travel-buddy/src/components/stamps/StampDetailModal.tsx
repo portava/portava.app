@@ -9,10 +9,12 @@ import {
 } from 'react-native';
 import { X, Share2 } from 'lucide-react-native';
 import { StampArtwork } from '../StampArtwork';
+import { StampShareCard } from '../StampShareCard';
+import { useStampShare } from '../../hooks/useStampShare';
 import { updateStampVisibility, toggleDisplayOnPassport } from '../../services/stamps';
+import { stampToLegacy } from '../../services/stampShareUtils';
 import type { NewStampVisibility } from '../../services/stamps';
 import type { PassportStampNew } from '../../services/passportStamps';
-import type { PassportStamp } from '../../types/models';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 
 const RARITY_COLORS: Record<string, string> = {
@@ -42,36 +44,24 @@ const VISIBILITY_OPTIONS: { value: NewStampVisibility; label: string }[] = [
   { value: 'private',      label: 'Private' },
 ];
 
-function toLegacy(s: PassportStampNew): PassportStamp {
-  const label =
-    s.titleOverride ?? s.definition?.name ?? s.city ?? s.country ?? s.stampType.replace(/_/g, ' ').toUpperCase();
-  const kind = (
-    s.stampType === 'city'         ? 'city'
-    : s.stampType === 'plan'       ? 'plan'
-    : s.stampType === 'hidden_gem' ? 'gem'
-    : s.stampType === 'safe_return'? 'safe'
-    : s.stampType === 'host'       ? 'host'
-    : 'city'
-  ) as any;
-  return { id: s.id, kind, label, earnedAt: s.earnedAt, locked: s.isRevoked };
-}
-
 interface Props {
   stamp: PassportStampNew | null;
   isOwner: boolean;
   visible: boolean;
   onClose: () => void;
   onStampUpdated?: (updated: PassportStampNew) => void;
-  onSharePress?: () => void;
+  /** Username of the stamp owner — shown on the share card footer. Optional. */
+  username?: string | null;
 }
 
-export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpdated, onSharePress }: Props) {
+export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpdated, username }: Props) {
   const [visUpdating, setVisUpdating] = useState(false);
   const [displayUpdating, setDisplayUpdating] = useState(false);
+  const { cardRef, share, sharing } = useStampShare(stamp, username ?? null);
 
   if (!stamp) return null;
 
-  const legacy = toLegacy(stamp);
+  const legacy = stampToLegacy(stamp);
   const rarity = stamp.definition?.rarity;
   const rarityColor = rarity ? (RARITY_COLORS[rarity] ?? RARITY_COLORS.common) : null;
 
@@ -217,18 +207,28 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
             {/* Share button (public stamps only) */}
             {stamp.visibility === 'public' && !stamp.isRevoked && (
               <Pressable
-                style={styles.shareBtn}
-                onPress={onSharePress ?? (() => {})}
+                style={[styles.shareBtn, sharing && styles.shareBtnDisabled]}
+                onPress={share}
+                disabled={sharing}
               >
-                <Share2 size={16} color={color.ink} />
+                {sharing ? (
+                  <ActivityIndicator size="small" color={color.ink} />
+                ) : (
+                  <Share2 size={16} color={color.ink} />
+                )}
                 <Text style={styles.shareBtnText}>
-                  {onSharePress ? 'Share stamp' : 'Share (coming soon)'}
+                  {sharing ? 'Sharing…' : 'Share stamp'}
                 </Text>
               </Pressable>
             )}
           </ScrollView>
         </Pressable>
       </Pressable>
+
+      {/* Off-screen StampShareCard — captured by useStampShare for the native share sheet */}
+      <View ref={cardRef} style={styles.offscreen} collapsable={false}>
+        <StampShareCard stamp={legacy} visibility="public" username={username ?? undefined} />
+      </View>
     </Modal>
   );
 }
@@ -333,5 +333,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paper,
     marginTop: space.sm,
   },
+  shareBtnDisabled: { opacity: 0.6 },
   shareBtnText: { ...t.bodyStrong, color: color.ink },
+  offscreen: { position: 'absolute', left: -2000, top: 0 },
 });
