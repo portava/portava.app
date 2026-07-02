@@ -9,7 +9,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, addExtraTime, type BuddyBooking } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, reportBooking, type BuddyBooking } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
@@ -235,7 +235,27 @@ export default function RentABuddyActive() {
             </View>
             <Pressable
               style={styles.reportBtn}
-              onPress={() => Alert.alert('Report Issue', 'Report flow will be implemented with the admin screens.')}
+              onPress={() => {
+                Alert.alert(
+                  'Report an issue',
+                  'Flag this session for a safety review?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const res = await reportBooking(bookingId, { reason: 'safety_concern' });
+                        if (res.ok) {
+                          Alert.alert('Report submitted', 'Our safety team will review this session.');
+                        } else {
+                          Alert.alert('Error', 'Could not submit report. Please try again.');
+                        }
+                      },
+                    },
+                  ],
+                );
+              }}
             >
               <Flag size={13} color={color.signal} />
               <Text style={styles.reportText}>Report an issue</Text>

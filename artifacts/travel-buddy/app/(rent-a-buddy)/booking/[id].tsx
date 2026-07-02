@@ -12,7 +12,7 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -103,7 +103,7 @@ function MeetupBlock({ city }: { city: string }) {
   );
 }
 
-function SafetyPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+function SafetyPanel({ open, onToggle, onReport }: { open: boolean; onToggle: () => void; onReport: () => void }) {
   return (
     <View style={safety.wrap}>
       <Pressable style={safety.header} onPress={onToggle}>
@@ -125,7 +125,7 @@ function SafetyPanel({ open, onToggle }: { open: boolean; onToggle: () => void }
             <AlertTriangle size={13} color={color.warn} />
             <Text style={safety.itemText}>Never pay cash before the meetup starts</Text>
           </View>
-          <Pressable style={safety.reportBtn} onPress={() => {}}>
+          <Pressable style={safety.reportBtn} onPress={onReport}>
             <Flag size={12} color={color.signal} />
             <Text style={safety.reportText}>Report an issue</Text>
           </Pressable>
@@ -326,7 +326,31 @@ export default function BookingDetail() {
         {/* Safety panel */}
         {(isActive || booking.status === 'confirmed') && (
           <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
-            <SafetyPanel open={safetyOpen || isActive} onToggle={() => setSafetyOpen(o => !o)} />
+            <SafetyPanel
+              open={safetyOpen || isActive}
+              onToggle={() => setSafetyOpen(o => !o)}
+              onReport={() => {
+                Alert.alert(
+                  'Report an issue',
+                  'Flag this booking for a safety review?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const res = await reportBooking(id as string, { reason: 'safety_concern' });
+                        if (res.ok) {
+                          Alert.alert('Report submitted', 'Our safety team will review this booking.');
+                        } else {
+                          Alert.alert('Error', 'Could not submit report. Please try again.');
+                        }
+                      },
+                    },
+                  ],
+                );
+              }}
+            />
           </View>
         )}
 

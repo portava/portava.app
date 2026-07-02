@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Image,
+  View, Text, ScrollView, Pressable, StyleSheet, Image, Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -15,6 +15,7 @@ import {
   type BuddyProfile as BuddyProfileType,
   type BuddyPackage, type BuddyAddon, type BuddyReview, type BuddyAvailability,
 } from '../../../src/services/rentABuddy';
+import { reportContent } from '../../../src/services/reports';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
 
@@ -387,7 +388,31 @@ export default function BuddyProfileScreen() {
         {/* Report */}
         <Pressable
           style={styles.reportRow}
-          onPress={() => {/* report flow handled later */}}
+          onPress={() => {
+            Alert.alert(
+              'Report profile',
+              'Flag this buddy profile for review?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Report',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const res = await reportContent({
+                      target_type: 'buddy_profile',
+                      target_id: buddy.userId,
+                      reason_code: 'inappropriate',
+                    });
+                    if (res.ok) {
+                      Alert.alert('Report submitted', 'Our team will review this profile.');
+                    } else {
+                      Alert.alert('Error', 'Could not submit report. Please try again.');
+                    }
+                  },
+                },
+              ],
+            );
+          }}
         >
           <Flag size={12} color={color.mute} />
           <Text style={styles.reportText}>Report this profile</Text>

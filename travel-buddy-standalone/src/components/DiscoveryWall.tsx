@@ -18,6 +18,7 @@ import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery';
+import { removeSaved } from '../services/discoveryBookmarks';
 import type { PlaceReportReason } from '../services/discovery';
 
 // Module-level set so saved state survives card unmount/remount during scroll recycling.
@@ -512,14 +513,16 @@ export function TravelerPicksSection({ picks, onAddToRoute }: { picks: TravelerP
 /* ── Saved Ideas ── */
 export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
   const planPicker = usePlanPicker();
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const visible = items.filter((it) => !removed.has(it.id));
   return (
     <View>
       <TravelSectionHeader title="Saved Ideas" onAction={() => router.push('/saved')} />
-      {items.length === 0 ? (
+      {visible.length === 0 ? (
         <TravelEmptyState title="Nothing saved yet" sub="Save places, gems, and experiences to build your trip." action="Explore the city" onAction={() => router.push('/(tabs)/discovery')} />
       ) : (
         <View style={sv.list}>
-          {items.map((it) => (
+          {visible.map((it) => (
             <View key={it.id} style={sv.row}>
               <View style={sv.thumb} />
               <View style={{ flex: 1 }}>
@@ -530,7 +533,17 @@ export function SavedIdeasSection({ items }: { items: SavedDiscoveryItem[] }) {
                 onPress={() => planPicker.open({ id: it.id, type: 'place', title: it.name, city: it.neighborhood, category: it.type })}>
                 <Plus size={13} color={color.signal} /><Text style={sv.addText}>Add to Plan</Text>
               </Pressable>
-              <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving places is coming in a future update.')}><Bookmark size={17} color={color.signal} fill={color.signal} /></Pressable>
+              <Pressable
+                hitSlop={layout.hitSlop}
+                onPress={() => {
+                  setRemoved((prev) => new Set([...prev, it.id]));
+                  removeSaved(it.id).catch(() => {
+                    setRemoved((prev) => { const s = new Set(prev); s.delete(it.id); return s; });
+                  });
+                }}
+              >
+                <Bookmark size={17} color={color.signal} fill={color.signal} />
+              </Pressable>
             </View>
           ))}
         </View>
