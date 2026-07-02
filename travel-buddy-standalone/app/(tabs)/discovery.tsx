@@ -395,7 +395,7 @@ export default function DiscoveryHub() {
           />
         ) : (
           <DiscoveryCategoryTab
-            key={`${activeTab}-${destination}-${contextMode}`}
+            key={`${activeTab}-${destination}-${contextMode}-${activeFilters.sortBy ?? ''}`}
             category={activeTab}
             destination={destination}
             onSelectPlace={handleSelectPlace}
