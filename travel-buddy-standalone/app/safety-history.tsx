@@ -186,17 +186,19 @@ export default function SafetyHistoryScreen() {
       ) : !featureEnabled ? (
         <View style={styles.center}>
           <Shield size={36} color={color.mute} />
-          <Text style={styles.emptyTitle}>Safe Return isn't enabled yet</Text>
+          <Text style={styles.emptyTitle}>Safe Return isn't available yet</Text>
           <Text style={styles.emptyBody}>
-            Safe Return will be available in a future update. Keep an eye on your notifications.
+            Safe Return lets you set a check-in timer when you head out solo — if you miss it, your Trusted Circle gets
+            alerted automatically. It will be available in a future update. Stay tuned!
           </Text>
         </View>
       ) : sessions.length === 0 ? (
         <View style={styles.center}>
           <Shield size={36} color={color.mute} />
-          <Text style={styles.emptyTitle}>No Safe Return history</Text>
+          <Text style={styles.emptyTitle}>No Safe Return history yet</Text>
           <Text style={styles.emptyBody}>
-            When you use Safe Return on a trip activity, your sessions will appear here — privately, only visible to you.
+            Safe Return lets you set a check-in timer when heading out on a solo activity during a trip. When you
+            use it, your sessions will appear here — privately, only visible to you.
           </Text>
         </View>
       ) : (
