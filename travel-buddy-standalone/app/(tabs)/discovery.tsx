@@ -164,14 +164,18 @@ export default function DiscoveryHub() {
     setRouteBuilderOpen(true);
   }, []);
 
-  // Keep destination in sync when location city changes (GPS capture / manual set).
+  // Keep destination in sync when location city or coordinates change.
+  // Deps use primitive values (not the coords object) to avoid object-reference
+  // churn and unnecessary re-runs. Without coords in deps, destinationLat/Lng
+  // would stay stale when GPS fires or improves after the city string was set.
   useEffect(() => {
     if (locationState.place.city) {
       setDestination(locationState.place.city);
       setDestinationLat(locationState.coords?.lat ?? null);
       setDestinationLng(locationState.coords?.lng ?? null);
     }
-  }, [locationState.place.city]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationState.place.city, locationState.coords?.lat, locationState.coords?.lng]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
