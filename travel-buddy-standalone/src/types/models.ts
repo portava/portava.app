@@ -610,7 +610,7 @@ export interface StampMotif {
  * Trip command center (Trip Page).
  * ─────────────────────────────────────────────────────────────────────── */
 
-export type TripStatus = 'planning' | 'upcoming' | 'active' | 'completed' | 'cancelled';
+export type TripStatus = 'draft' | 'planning' | 'upcoming' | 'active' | 'completed' | 'cancelled' | 'archived';
 export type TripVisibility = 'public' | 'buddies' | 'private' | 'invite';
 export type SafetyStatus = 'ok' | 'checkin_due' | 'safe_return_active' | 'unknown';
 
