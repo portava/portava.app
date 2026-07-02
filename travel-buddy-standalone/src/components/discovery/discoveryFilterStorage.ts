@@ -156,6 +156,11 @@ export async function loadSortPerCategory(
         return _sortPerCategoryCache;
       }
     }
-  } catch { /* ignore */ }
+    // No stored value or invalid shape — clear any stale in-memory cache.
+    _sortPerCategoryCache = {};
+  } catch {
+    // Read or parse error — clear stale cache so callers see a clean slate.
+    _sortPerCategoryCache = {};
+  }
   return {};
 }

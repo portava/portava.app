@@ -180,14 +180,16 @@ export default function DiscoveryHub() {
       loadDiscoveryFilters(AsyncStorage),
       loadSortPerCategory(AsyncStorage),
     ]).then(([filters]) => {
-      // Restore the initial tab's persisted sort.
-      // hasCachedSortForCategory distinguishes "saved null (no sort)" from
-      // "never saved" so persisted nulls aren't silently skipped.
-      if (hasCachedSortForCategory(initialCategory)) {
-        setActiveFilters({ ...filters, sortBy: getCachedSortForCategory(initialCategory) });
-      } else {
-        setActiveFilters(filters);
-      }
+      // Always derive sortBy from per-category cache so the global filter blob's
+      // sortBy (which may be from a different category's last session) never
+      // bleeds into the initial tab. hasCachedSortForCategory distinguishes
+      // "saved null (no sort)" from "never saved"; both resolve to null here.
+      setActiveFilters({
+        ...filters,
+        sortBy: hasCachedSortForCategory(initialCategory)
+          ? getCachedSortForCategory(initialCategory)
+          : null,
+      });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
