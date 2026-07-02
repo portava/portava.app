@@ -44,8 +44,13 @@ function CircleUserRow({
     invitingRef.current = true;
     setInviteState('loading');
     try {
-      await sendTripInvite(tripId, u.id);
-      setInviteState('done');
+      const res = await sendTripInvite(tripId, u.id);
+      if (res.ok) {
+        setInviteState('done');
+      } else {
+        setInviteState('idle');
+        Alert.alert('Could not send invite', res.message ?? 'Please try again.');
+      }
     } finally {
       invitingRef.current = false;
     }
