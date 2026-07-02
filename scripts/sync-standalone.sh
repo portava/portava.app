@@ -131,6 +131,7 @@ STANDALONE_OWNED_FILES=(
   "src/services/__tests__/location.gps.component.test.ts"
   "src/components/__tests__/ReviewComposer.prefill.component.test.tsx"
   "src/components/__tests__/ReviewsSection.place.component.test.tsx"
+  "src/components/__tests__/ReviewsSection.delete.component.test.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
