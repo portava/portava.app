@@ -138,7 +138,12 @@ export default function RentABuddyActive() {
           </View>
           <Text style={styles.headerTitle}>{booking?.category?.toUpperCase() ?? 'MEETUP'}</Text>
         </View>
-        <Pressable style={styles.emergencyBtn} onPress={() => Alert.alert('Emergency', 'Calling emergency services is not yet implemented. In a real emergency, call local emergency services.')}>
+        <Pressable style={styles.emergencyBtn} onPress={() => {
+          Alert.alert('Emergency Services', 'Open your phone dialer to call emergency services (112 / 911)?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Call emergency services', style: 'destructive', onPress: () => Linking.openURL('tel:112') },
+          ]);
+        }}>
           <Phone size={14} color={color.signal} />
           <Text style={styles.emergencyText}>SOS</Text>
         </Pressable>

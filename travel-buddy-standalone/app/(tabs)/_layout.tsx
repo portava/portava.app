@@ -10,6 +10,7 @@ import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessag
 import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
+import { useSession } from '../../src/context/SessionContext';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -85,6 +86,14 @@ export default function TabLayout() {
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
+  const { isAuthed, loading, configured } = useSession();
+
+  // Redirect to sign-in when the session expires while the app is open.
+  useEffect(() => {
+    if (configured && !loading && !isAuthed) {
+      router.replace('/(auth)/sign-in' as any);
+    }
+  }, [configured, loading, isAuthed]);
 
   // Monitor geofence exits for pending_location_exit posts.
   // Lives here so it runs across all tabs, not just passport.
