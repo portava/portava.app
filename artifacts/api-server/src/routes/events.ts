@@ -981,7 +981,7 @@ router.get("/events/circles", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const cursor = (req.query.cursor as string) ?? null;
 
-  // Fetch all circle IDs the user belongs to (as member or owner)
+  // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner)
   const { data: memberRows } = await sc
     .from("circle_members")
     .select("circle_id")
@@ -994,36 +994,64 @@ router.get("/events/circles", async (req, res) => {
     return;
   }
 
+  // Step 2 — Fetch candidate events linked to these circles
   let query = sc
     .from("events")
     .select("*")
     .in("circle_id", circleIds)
     .not("state", "in", '("cancelled","archived","draft")')
     .order("starts_at", { ascending: true, nullsFirst: false })
-    .limit(limit);
+    .limit(limit * 3); // over-fetch to allow for post-filter attrition
 
   if (cursor) query = query.gt("starts_at", cursor);
 
   const { data: events, error } = await query;
-
   if (error) { req.log.error({ err: error }, "circle events"); sendError(res, "db_error", error.message); return; }
 
-  const evList = (events as any[]) ?? [];
-
-  // Batch host profiles
-  const hostIds2 = [...new Set(evList.map((e: any) => e.host_id as string))];
-  const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
-  if (hostIds2.length > 0) {
-    const { data: hps2 } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIds2);
-    for (const p of (hps2 as any[]) ?? []) hpMap[p.id as string] = p;
+  // Step 3 — Apply the same access gates as other browse endpoints:
+  //   • block check (viewer blocked by or has blocked host)
+  //   • invite_only: viewer must be host, a circle member is allowed since
+  //     the event is explicitly scoped to the circle they belong to
+  //   • age / trust / verified-profile eligibility
+  const filtered: any[] = [];
+  for (const ev of (events as any[]) ?? []) {
+    if (filtered.length >= limit) break;
+    // Block check — skip events whose host the viewer has blocked or vice versa
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    // Eligibility gate (age / trust / verified)
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
+    filtered.push(ev);
   }
 
-  const nextCursor = evList.length === limit ? (evList[evList.length - 1].starts_at ?? null) : null;
+  // Step 4 — Batch-fetch host profiles for card display
+  const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
+  const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  if (hostIdSet.length > 0) {
+    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIdSet);
+    for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = p;
+  }
+
+  // Step 5 — Batch-fetch viewer RSVP state so card CTAs are accurate
+  const filteredIds = filtered.map((e: any) => e.id as string);
+  let rsvpMap: Record<string, string> = {};
+  if (filteredIds.length > 0) {
+    const { data: rsvps } = await sc
+      .from("event_rsvps")
+      .select("event_id, status")
+      .eq("user_id", user.id)
+      .in("event_id", filteredIds);
+    for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
+  }
+
+  const nextCursor = filtered.length === limit
+    ? (filtered[filtered.length - 1].starts_at ?? null)
+    : null;
 
   res.json({
-    events: evList.map((e: any) => ({
+    events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
-      myRsvp: null,
+      myRsvp: rsvpMap[e.id as string] ?? null,
     })),
     cursor: nextCursor,
   });
