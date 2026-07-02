@@ -176,10 +176,13 @@ export default function CreateEventScreen() {
       city: city.trim() || undefined,
       country: country.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
+      joinMode,
+      rsvpOptions,
       ageMin: ageMin ? parseInt(ageMin) : undefined,
       ageMax: ageMax ? parseInt(ageMax) : undefined,
       trustScoreMin: trustScoreMin ? parseFloat(trustScoreMin) : undefined,
       verifiedOnly: verifiedOnly || undefined,
+      safetyNotes: safetyNotes.trim() || undefined,
       visibility,
       circleId: circleId || undefined,
       tripId: tripId || undefined,
@@ -272,9 +275,18 @@ export default function CreateEventScreen() {
   }
 
   function handleDiscard() {
-    Alert.alert('Discard event?', 'Your unsaved changes will be lost.', [
+    const msg = draftId
+      ? 'Your unsaved changes will be lost. The saved draft will remain in your drafts.'
+      : 'Your unsaved changes will be lost. No draft will be created.';
+    Alert.alert('Discard changes?', msg, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => router.back() },
+      {
+        text: 'Discard', style: 'destructive',
+        onPress: async () => {
+          // If no draft exists yet (never autosaved), just leave without creating one
+          router.back();
+        },
+      },
     ]);
   }
 

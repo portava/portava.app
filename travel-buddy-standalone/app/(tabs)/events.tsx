@@ -73,6 +73,13 @@ function formatDraftDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+const STEP_LABELS_MAP: Record<DatePreset, string> = {
+  all:     'Upcoming',
+  today:   'Today',
+  weekend: 'This Weekend',
+  next7:   'Next 7 Days',
+};
+
 export default function EventsTabScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
@@ -115,10 +122,13 @@ export default function EventsTabScreen() {
 
     const cat = category !== 'All' ? category : undefined;
     const dateRange = datePresetToRange(datePreset);
+    // When a specific preset is active, use it for both sections; otherwise use today/weekend defaults
+    const todayParams  = datePreset !== 'all' ? dateRange : todayRange();
+    const weekendParams = datePreset !== 'all' ? dateRange : weekendRange();
 
     const [todayRes, weekendRes, followRes, savedRes, draftsRes, invitesRes] = await Promise.all([
-      listEvents({ ...todayRange(), category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
-      listEvents({ ...weekendRange(), category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
+      listEvents({ ...todayParams,   category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
+      listEvents({ ...weekendParams, category: cat, free: freeOnly || undefined, verifiedHostOnly: verifiedHostOnly || undefined, limit: 10 }),
       listFollowingEvents({ limit: 10 }),
       getSavedEvents(1),
       getMyDrafts(),
@@ -384,18 +394,16 @@ export default function EventsTabScreen() {
 
           {/* Today */}
           {renderSection(
-            'Today',
+            datePreset === 'all' ? 'Today' : STEP_LABELS_MAP[datePreset] ?? 'Today',
             <CalendarX size={15} color={color.mute} />,
             todayEvents,
-            () => router.push({ pathname: '/events/index', params: { preset: 'today' } } as any),
           )}
 
-          {/* This Weekend */}
-          {renderSection(
+          {/* This Weekend — only shown when preset is 'all' (not overriding) */}
+          {datePreset === 'all' && renderSection(
             'This Weekend',
             <CalendarX size={15} color={color.mute} />,
             weekendEvents,
-            () => router.push({ pathname: '/events/index', params: { preset: 'weekend' } } as any),
           )}
 
           {/* Near Me */}
@@ -441,7 +449,6 @@ export default function EventsTabScreen() {
             'From people you follow',
             <Users size={15} color={color.mute} />,
             followingEvents,
-            () => router.push('/events/following' as any),
           )}
 
           {/* Saved */}
@@ -449,7 +456,6 @@ export default function EventsTabScreen() {
             'Saved',
             <Bookmark size={15} color={color.mute} />,
             savedEvents,
-            () => router.push('/events/saved' as any),
           )}
 
           {/* Empty state when nothing loaded */}

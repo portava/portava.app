@@ -256,17 +256,27 @@ export default function EventDetailScreen() {
   const stateBadge = event ? (STATE_BADGE[event.state] ?? STATE_BADGE.open) : null;
 
   // ── Eligibility gate ───────────────────────────────────────────────────────
-  // Returns a gate explanation string if the viewer cannot join, null if they can
+  // Returns a gate explanation string if the viewer cannot join, null if they can.
+  // We check the explicit server flag first; if absent we fall back to showing
+  // the requirement labels so the user understands what the restrictions are
+  // and the action bar is still disabled for unqualified viewers.
   function getEligibilityBlock(): string | null {
     if (!event) return null;
-    const gates: string[] = [];
-    if (event.verifiedOnly) gates.push('verified identity required');
-    if (event.trustScoreMin) gates.push(`trust score ≥${event.trustScoreMin} required`);
-    if (event.ageMin) gates.push(`minimum age ${event.ageMin}`);
-    if (event.ageMax) gates.push(`maximum age ${event.ageMax}`);
-    // If event explicitly marks viewer as ineligible, surface it
-    const ineligible = (event as any).viewerEligibility?.eligible === false;
-    if (ineligible && gates.length > 0) return gates.join(' · ');
+    // Server has told us explicitly this viewer is ineligible
+    const viewerEligibility = (event as any).viewerEligibility;
+    if (viewerEligibility?.eligible === false) {
+      const reason = viewerEligibility.reason as string | undefined;
+      const parts: string[] = reason ? [reason] : [];
+      if (!parts.length) {
+        if (event.verifiedOnly)    parts.push('verified identity required');
+        if (event.trustScoreMin)   parts.push(`trust score ≥${event.trustScoreMin} required`);
+        if (event.ageMin)          parts.push(`minimum age ${event.ageMin}`);
+        if (event.ageMax)          parts.push(`maximum age ${event.ageMax}`);
+      }
+      return parts.length ? parts.join(' · ') : 'You do not meet this event\'s requirements';
+    }
+    // If the event has hard gates AND the server hasn't confirmed eligibility, show requirements
+    // but don't block — we surface the info in the requirements box only
     return null;
   }
   const eligibilityBlock = getEligibilityBlock();
@@ -573,10 +583,14 @@ export default function EventDetailScreen() {
             <Pressable style={styles.leaveWaitlistBtn} onPress={handleLeaveWaitlist} disabled={rsvpLoading}>
               <Text style={styles.leaveWaitlistText}>Leave waitlist</Text>
             </Pressable>
-          ) : ['full', 'waitlist'].includes(event.state) ? (
+          ) : ['full', 'waitlist'].includes(event.state) && event.waitlistEnabled ? (
             <Pressable style={styles.waitlistBtn} onPress={handleJoinWaitlist} disabled={rsvpLoading}>
               <Text style={styles.waitlistBtnText}>Join waitlist</Text>
             </Pressable>
+          ) : ['full', 'waitlist'].includes(event.state) && !event.waitlistEnabled ? (
+            <View style={styles.cancelledNote}>
+              <Text style={styles.cancelledText}>This event is full — no waitlist available</Text>
+            </View>
           ) : ['open', 'started', 'full', 'waitlist'].includes(event.state) ? (
             <Pressable
               style={styles.rsvpBtn}
