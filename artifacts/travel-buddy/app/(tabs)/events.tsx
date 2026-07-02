@@ -165,15 +165,14 @@ export default function EventsTabScreen() {
       capacityAvailable: capacityAvailable || undefined,
     };
 
-    // When a specific preset is active, collapse into a single results list
-    const todayParams   = datePreset !== 'all' ? dateRange : todayRange();
-    const tomorrowParams = datePreset !== 'all' ? dateRange : tomorrowRange();
-    const weekendParams = datePreset !== 'all' ? dateRange : weekendRange();
+    // When a specific preset is active, fetch only one range (avoid duplicate sections)
+    const isPresetActive = datePreset !== 'all';
+    const mainParams = isPresetActive ? dateRange : todayRange();
 
-    const [todayRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, draftsRes, invitesRes] = await Promise.all([
-      listEvents({ ...todayParams,   ...sharedFilters, limit: 10 }),
-      listEvents({ ...tomorrowParams, ...sharedFilters, limit: 10 }),
-      listEvents({ ...weekendParams, ...sharedFilters, limit: 10 }),
+    const [mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, draftsRes, invitesRes] = await Promise.all([
+      listEvents({ ...mainParams, ...sharedFilters, limit: 10 }),
+      isPresetActive ? Promise.resolve({ ok: true as const, data: { events: [] as EventListItem[] } }) : listEvents({ ...tomorrowRange(), ...sharedFilters, limit: 10 }),
+      isPresetActive ? Promise.resolve({ ok: true as const, data: { events: [] as EventListItem[] } }) : listEvents({ ...weekendRange(), ...sharedFilters, limit: 10 }),
       listFollowingEvents({ limit: 10 }),
       listCircleEvents({ limit: 10 }),
       getSavedEvents(1),
@@ -181,7 +180,7 @@ export default function EventsTabScreen() {
       getMyEventInvites(),
     ]);
 
-    if (todayRes.ok) setTodayEvents(todayRes.data?.events ?? []);
+    if (mainRes.ok) setTodayEvents(mainRes.data?.events ?? []);
     if (tomorrowRes.ok) setTomorrowEvents(tomorrowRes.data?.events ?? []);
     if (weekendRes.ok) setWeekendEvents(weekendRes.data?.events ?? []);
     if (followRes.ok) setFollowingEvents(followRes.data?.events ?? []);
@@ -208,7 +207,7 @@ export default function EventsTabScreen() {
       setCategoryRows({});
     }
 
-    if (!todayRes.ok && !weekendRes.ok) setError('Failed to load events');
+    if (!mainRes.ok && !weekendRes.ok) setError('Failed to load events');
     setLoading(false);
     setRefreshing(false);
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);

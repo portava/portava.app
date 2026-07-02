@@ -16,8 +16,10 @@ import { X, Check, X as XIcon, UserX, Crown, Shield, Clock } from 'lucide-react-
 import {
   getJoinRequests, reviewJoinRequest, assignEventRole, removeEventRole,
   postEventUpdate, updateEvent, getEventWaitlist,
+  postponeEvent, archiveEvent, closeRsvps, reopenRsvps, inviteUserToEvent,
   type EventDetail, type JoinRequest, type WaitlistEntry,
 } from '../services/events';
+import { searchUsers, type TravelerSearchResult } from '../services/follows';
 import { Avatar } from './ui';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -27,7 +29,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-type Tab = 'requests' | 'attendees' | 'waitlist' | 'controls';
+type Tab = 'requests' | 'attendees' | 'waitlist' | 'invite' | 'controls';
 
 export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   const [tab, setTab] = useState<Tab>('requests');
@@ -37,6 +39,12 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   const [waitlistLoading, setWaitlistLoading] = useState(false);
   const [updateBody, setUpdateBody] = useState('');
   const [posting, setPosting] = useState(false);
+  // Invite tab
+  const [inviteQuery, setInviteQuery]     = useState('');
+  const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
+  const [inviteSearching, setInviteSearching] = useState(false);
+  const [inviteSending, setInviteSending]   = useState<string | null>(null);
+  const [invitedIds, setInvitedIds]         = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadRequests();
@@ -123,10 +131,63 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
     ]);
   }
 
+  async function handlePostpone() {
+    Alert.alert('Postpone event', 'This will revert the event to draft so you can reschedule it.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Postpone',
+        onPress: async () => {
+          const res = await postponeEvent(event.id);
+          if (!res.ok) Alert.alert('Error', res.message ?? 'Failed');
+          else { Alert.alert('Postponed', 'Event moved to draft. Update the date and republish.'); onRefresh(); }
+        },
+      },
+    ]);
+  }
+
+  async function handleArchive() {
+    Alert.alert('Archive event', 'The event will be hidden from all browsing. This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Archive', style: 'destructive',
+        onPress: async () => {
+          const res = await archiveEvent(event.id);
+          if (!res.ok) Alert.alert('Error', res.message ?? 'Failed');
+          else onRefresh();
+        },
+      },
+    ]);
+  }
+
+  async function handleToggleRsvp() {
+    const isOpen = !event.rsvpClosed;
+    const res = isOpen ? await closeRsvps(event.id) : await reopenRsvps(event.id);
+    if (!res.ok) Alert.alert('Error', res.message ?? 'Failed');
+    else onRefresh();
+  }
+
+  async function handleInviteSearch(query: string) {
+    setInviteQuery(query);
+    if (query.trim().length < 2) { setInviteResults([]); return; }
+    setInviteSearching(true);
+    const res = await searchUsers(query.trim());
+    if (res.ok) setInviteResults(res.data ?? []);
+    setInviteSearching(false);
+  }
+
+  async function handleSendInvite(userId: string) {
+    setInviteSending(userId);
+    const res = await inviteUserToEvent(event.id, userId);
+    setInviteSending(null);
+    if (!res.ok) Alert.alert('Error', res.message ?? 'Could not send invite');
+    else setInvitedIds((prev) => new Set([...prev, userId]));
+  }
+
   const TABS: { key: Tab; label: string }[] = [
     { key: 'requests',  label: `Requests${requests.length ? ` (${requests.length})` : ''}` },
     { key: 'attendees', label: 'Attendees' },
     { key: 'waitlist',  label: 'Waitlist' },
+    { key: 'invite',    label: 'Invite' },
     { key: 'controls',  label: 'Controls' },
   ];
 
@@ -255,6 +316,44 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
               )
             )}
 
+            {/* ── Invite tab ── */}
+            {tab === 'invite' && (
+              <>
+                <TextInput
+                  style={s.updateInput}
+                  placeholder="Search by name or @handle…"
+                  placeholderTextColor={color.faint}
+                  value={inviteQuery}
+                  onChangeText={handleInviteSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {inviteSearching && <ActivityIndicator color={color.signal} style={{ marginTop: space.md }} />}
+                {!inviteSearching && inviteQuery.length >= 2 && inviteResults.length === 0 && (
+                  <View style={s.empty}><Text style={s.emptyText}>No users found</Text></View>
+                )}
+                {inviteResults.map((u) => (
+                  <View key={u.id} style={s.attendeeRow}>
+                    <Avatar uri={u.avatarUrl ?? ''} size={36} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.attendeeName} numberOfLines={1}>{u.displayName ?? u.username}</Text>
+                      {u.username ? <Text style={s.requestMsg}>@{u.username}</Text> : null}
+                    </View>
+                    <Pressable
+                      style={[s.inviteBtn, invitedIds.has(u.id) && s.inviteBtnSent]}
+                      onPress={() => !invitedIds.has(u.id) && handleSendInvite(u.id)}
+                      disabled={invitedIds.has(u.id) || inviteSending === u.id}
+                    >
+                      {inviteSending === u.id
+                        ? <ActivityIndicator size="small" color={color.onInk} />
+                        : <Text style={s.inviteBtnText}>{invitedIds.has(u.id) ? 'Sent ✓' : 'Invite'}</Text>
+                      }
+                    </Pressable>
+                  </View>
+                ))}
+              </>
+            )}
+
             {/* ── Controls tab ── */}
             {tab === 'controls' && (
               <>
@@ -282,7 +381,28 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                       <Text style={[s.stateBtnText, { color: '#DC2626' }]}>Cancel event</Text>
                     </Pressable>
                   )}
+                  {['open', 'started'].includes(event.state) && (
+                    <Pressable style={s.stateBtn} onPress={handlePostpone}>
+                      <Text style={s.stateBtnText}>Postpone (back to draft)</Text>
+                    </Pressable>
+                  )}
+                  {!['archived', 'draft'].includes(event.state) && (
+                    <Pressable style={[s.stateBtn, s.stateBtnDanger]} onPress={handleArchive}>
+                      <Text style={[s.stateBtnText, { color: '#DC2626' }]}>Archive event</Text>
+                    </Pressable>
+                  )}
                 </View>
+
+                {['open', 'started'].includes(event.state) && (
+                  <>
+                    <Text style={[s.controlsLabel, { marginTop: space.lg }]}>RSVPs</Text>
+                    <Pressable style={[s.stateBtn, event.rsvpClosed ? s.stateBtnActive : {}]} onPress={handleToggleRsvp}>
+                      <Text style={s.stateBtnText}>
+                        {event.rsvpClosed ? 'Reopen RSVPs' : 'Close RSVPs'}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
 
                 <Text style={[s.controlsLabel, { marginTop: space.lg }]}>Post update</Text>
                 <TextInput
@@ -352,6 +472,10 @@ const s = StyleSheet.create({
   stateBtnDanger:{ borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   stateBtnText:{ ...t.body, color: color.ink, fontWeight: '600' },
   updateInput:{ backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, ...t.body, color: color.ink, height: 90 },
-  postBtn:    { backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md, alignItems: 'center' },
-  postBtnText:{ ...t.body, color: color.onInk, fontWeight: '700' },
+  postBtn:        { backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md, alignItems: 'center' },
+  postBtnText:    { ...t.body, color: color.onInk, fontWeight: '700' },
+  stateBtnActive: { backgroundColor: '#DBEAFE', borderColor: '#93C5FD' },
+  inviteBtn:      { backgroundColor: color.signal, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm },
+  inviteBtnSent:  { backgroundColor: '#16A34A' },
+  inviteBtnText:  { ...t.small, color: color.onInk, fontWeight: '700' },
 });

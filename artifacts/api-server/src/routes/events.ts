@@ -1245,6 +1245,32 @@ router.post("/events/drafts", async (req, res) => {
   res.status(201).json(draft);
 });
 
+// ── GET /api/events/drafts/:draftId ──────────────────────────────────────────
+
+router.get("/events/drafts/:draftId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { draftId } = req.params;
+  if (!isUuid(draftId)) { sendError(res, "invalid_payload", "Invalid draft id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: draft, error } = await sc
+    .from("event_drafts")
+    .select("*")
+    .eq("id", draftId)
+    .eq("host_id", user.id)
+    .maybeSingle();
+
+  if (error) { req.log.error({ err: error }, "get draft"); sendError(res, "db_error", error.message); return; }
+  if (!draft) { sendError(res, "not_found", "Draft not found"); return; }
+
+  res.json(draft);
+});
+
 // ── PATCH /api/events/drafts/:draftId ─────────────────────────────────────────
 
 router.patch("/events/drafts/:draftId", async (req, res) => {

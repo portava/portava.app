@@ -622,10 +622,26 @@ export async function inviteUserToEvent(
   userId: string,
   message?: string,
 ): Promise<ApiResult<{ ok: boolean }>> {
-  return apiCall(`/api/events/${eventId}/invites`, {
+  return apiCall(`/api/events/${eventId}/invite`, {
     method: 'POST',
     body: JSON.stringify({ userId, message }),
   });
+}
+
+export async function postponeEvent(eventId: string): Promise<ApiResult<EventSummary>> {
+  return apiCall(`/api/events/${eventId}/postpone`, { method: 'POST' });
+}
+
+export async function archiveEvent(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/archive`, { method: 'POST' });
+}
+
+export async function closeRsvps(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/close-rsvps`, { method: 'POST' });
+}
+
+export async function reopenRsvps(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/reopen-rsvps`, { method: 'POST' });
 }
 
 // ── User events ───────────────────────────────────────────────────────────────
