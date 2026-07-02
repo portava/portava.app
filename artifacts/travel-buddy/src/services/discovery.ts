@@ -48,7 +48,7 @@ export interface DiscoveryFilters {
   radiusKm: number;
   openNow: boolean;
   minRating: number | null;
-  sortBy?: 'rating' | null;
+  sortBy?: string | null;
 }
 
 export interface DiscoveryResult {
@@ -92,7 +92,7 @@ export async function getCommunityPlaces(
   city: string,
   type: 'hidden_gem' | 'traveler_pick' | 'all' = 'all',
   limit = 20,
-  sortBy?: 'rating' | null,
+  sortBy?: string | null,
 ): Promise<{ ok: true; data: CommunityDiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };

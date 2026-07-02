@@ -41,7 +41,7 @@ interface ForYouTabProps {
   userLng?: number | null;
   fallbackZoom?: number;
   viewMode?: 'list' | 'map';
-  sortBy?: 'rating' | null;
+  sortBy?: string | null;
 }
 
 type ForYouItem =

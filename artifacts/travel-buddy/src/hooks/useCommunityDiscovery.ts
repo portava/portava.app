@@ -107,7 +107,7 @@ interface CommunityDiscoveryState {
 
 const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
 
-export function useCommunityDiscovery(city: string | null, sortBy?: 'rating' | null): CommunityDiscoveryState {
+export function useCommunityDiscovery(city: string | null, sortBy?: string | null): CommunityDiscoveryState {
   const [state, setState] = useState<CommunityDiscoveryState>(() =>
     city ? { gems: [], picks: [], places: [], loading: true } : EMPTY,
   );

@@ -15,7 +15,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
-import { DiscoveryCategoryTab, FilterStrip } from '../../src/components/discovery/DiscoveryCategoryTab';
+import { DiscoveryCategoryTab, FilterStrip, SORT_LABELS } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
 import { DestinationBar } from '../../src/components/discovery/DestinationBar';
@@ -476,7 +476,7 @@ export default function DiscoveryHub() {
                 hitSlop={6}
               >
                 <Text style={styles.activeSortChipText}>
-                  {activeFilters.sortBy === 'rating' ? '★ Top rated' : activeFilters.sortBy}
+                  {activeFilters.sortBy != null ? (SORT_LABELS[activeFilters.sortBy] ?? activeFilters.sortBy) : null}
                 </Text>
                 <Text style={styles.activeSortChipX}>✕</Text>
               </Pressable>
@@ -538,7 +538,7 @@ export default function DiscoveryHub() {
                   <Text style={styles.activeSortLabel}>Sorted by</Text>
                   <View style={styles.activeSortChip}>
                     <Text style={styles.activeSortChipText}>
-                      {activeFilters.sortBy === 'rating' ? 'Top rated' : activeFilters.sortBy}
+                      {SORT_LABELS[activeFilters.sortBy] ?? activeFilters.sortBy}
                     </Text>
                     <Pressable
                       onPress={() => handleFiltersChange({ ...activeFilters, sortBy: null })}

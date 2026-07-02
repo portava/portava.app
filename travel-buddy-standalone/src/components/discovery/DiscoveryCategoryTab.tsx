@@ -10,6 +10,14 @@ import PlaceCard from './PlaceCard';
 import { PlaceSkeletonList } from './PlaceSkeleton';
 import { DiscoveryMapView } from './DiscoveryMapView';
 
+// ── Sort labels ───────────────────────────────────────────────────────────────
+
+export const SORT_LABELS: Record<string, string> = {
+  rating: '★ Top rated',
+  nearest: '📍 Nearest',
+  popular: '🔥 Most popular',
+};
+
 // ── Radius chips ──────────────────────────────────────────────────────────────
 
 const RADIUS_OPTIONS: { label: string; km: number }[] = [
@@ -83,12 +91,15 @@ export function FilterStrip({ filters, onChange }: FilterStripProps) {
       {/* Sort order */}
       <View style={fs.row2}>
         <Text style={fs.ratingLabel}>Sort:</Text>
-        <Pressable
-          style={[fs.chip, filters.sortBy === 'rating' && fs.chipActive]}
-          onPress={() => onChange({ ...filters, sortBy: filters.sortBy === 'rating' ? null : 'rating' })}
-        >
-          <Text style={[fs.chipText, filters.sortBy === 'rating' && fs.chipTextActive]}>★ Top rated</Text>
-        </Pressable>
+        {Object.entries(SORT_LABELS).map(([key, label]) => (
+          <Pressable
+            key={key}
+            style={[fs.chip, filters.sortBy === key && fs.chipActive]}
+            onPress={() => onChange({ ...filters, sortBy: filters.sortBy === key ? null : key })}
+          >
+            <Text style={[fs.chipText, filters.sortBy === key && fs.chipTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );

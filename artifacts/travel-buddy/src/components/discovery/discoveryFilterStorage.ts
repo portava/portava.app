@@ -47,7 +47,7 @@ function isValidFilters(v: unknown): v is DiscoveryFilters {
     typeof f.radiusKm === 'number' &&
     typeof f.openNow === 'boolean' &&
     (f.minRating === null || typeof f.minRating === 'number') &&
-    (f.sortBy === undefined || f.sortBy === null || f.sortBy === 'rating')
+    (f.sortBy === undefined || f.sortBy === null || typeof f.sortBy === 'string')
   );
 }
 
