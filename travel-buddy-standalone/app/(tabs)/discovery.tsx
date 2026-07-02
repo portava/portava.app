@@ -469,6 +469,19 @@ export default function DiscoveryHub() {
               )}
             </Pressable>
 
+            {activeFilters.sortBy != null && (
+              <Pressable
+                style={styles.activeSortChip}
+                onPress={() => handleFiltersChange({ ...activeFilters, sortBy: null })}
+                hitSlop={6}
+              >
+                <Text style={styles.activeSortChipText}>
+                  {activeFilters.sortBy === 'rating' ? '★ Top rated' : activeFilters.sortBy}
+                </Text>
+                <Text style={styles.activeSortChipX}>✕</Text>
+              </Pressable>
+            )}
+
             <View style={styles.tabDivider} />
 
             <ScrollView
@@ -1044,5 +1057,29 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 11,
     textDecorationLine: 'underline' as const,
+  },
+  activeSortChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal + '14',
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    marginLeft: space.xs,
+    flexShrink: 0,
+  },
+  activeSortChipText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: color.signal,
+  },
+  activeSortChipX: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: color.signal,
+    opacity: 0.7,
   },
 });
