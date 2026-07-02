@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch,
+  View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch, Animated,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
@@ -167,6 +167,26 @@ const fs = StyleSheet.create({
   },
 });
 
+// ── Location distance helper ──────────────────────────────────────────────────
+
+/** Approximate great-circle distance in km between two lat/lng pairs. */
+function approxDistanceKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const NEAREST_REFRESH_THRESHOLD_KM = 0.1;
+
 // ── Popular destinations fallback ─────────────────────────────────────────────
 
 const POPULAR_CITIES = [
@@ -270,7 +290,21 @@ export function DiscoveryCategoryTab({
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);
+  const [locationNudge, setLocationNudge] = useState(false);
   const loadingMore                 = useRef(false);
+  const nudgeOpacity                = useRef(new Animated.Value(0)).current;
+  const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Stores the coords that were active when the last fetch fired. */
+  const lastFetchedCoords           = useRef<{ lat: number; lng: number } | null>(null);
+  /**
+   * Refs for the current user coords — kept in sync every render so `load`
+   * can read the latest value without closing over the prop, which would make
+   * it recreate on every GPS update and re-trigger the main fetch effect.
+   */
+  const userLatRef = useRef(userLat);
+  const userLngRef = useRef(userLng);
+  userLatRef.current = userLat;
+  userLngRef.current = userLng;
 
   const applyClientFilters = (raw: DiscoveryPlace[]): DiscoveryPlace[] => {
     let result = raw;
@@ -286,17 +320,35 @@ export function DiscoveryCategoryTab({
     return result;
   };
 
+  const showNudge = useCallback(() => {
+    setLocationNudge(true);
+    Animated.timing(nudgeOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+  }, [nudgeOpacity]);
+
+  const hideNudge = useCallback(() => {
+    Animated.timing(nudgeOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+      setLocationNudge(false);
+    });
+  }, [nudgeOpacity]);
+
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
     if (reset) setLoading(true);
     setError(null);
 
+    // Read user coords from refs so this callback stays stable across GPS updates.
+    // The location-change effect is the sole handler that re-fires when the user
+    // moves; `load` itself must not recreate on every coord update or the main
+    // filter/destination effect would bypass the distance gate.
+    const snapUserLat = userLatRef.current;
+    const snapUserLng = userLngRef.current;
+
     // Pass the user's actual coordinates as separate userLat/userLng params when
     // sortBy=nearest so the backend can recompute distances from the user's position.
     // The lat/lng params always remain the destination coordinates — the Overpass query
     // centre and cache key must never use user coords.
-    const nearestUserLat = currentFilters.sortBy === 'nearest' ? userLat : null;
-    const nearestUserLng = currentFilters.sortBy === 'nearest' ? userLng : null;
+    const nearestUserLat = currentFilters.sortBy === 'nearest' ? snapUserLat : null;
+    const nearestUserLng = currentFilters.sortBy === 'nearest' ? snapUserLng : null;
 
     const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
@@ -309,17 +361,69 @@ export function DiscoveryCategoryTab({
       return;
     }
 
+    // Record the coords at the time of this fetch so the location-change
+    // effect can compare against them (not just against the previous render).
+    if (nearestUserLat != null && nearestUserLng != null) {
+      lastFetchedCoords.current = { lat: nearestUserLat, lng: nearestUserLng };
+    }
+
     const filtered = applyClientFilters(res.data.places);
     setTotal(res.data.total);
     setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
-  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, userLat, userLng]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPlaces([]);
     setPage(1);
     load(1, filters, true);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, load]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detect meaningful location changes while 'nearest' sort is active and
+  // auto-refresh so the order stays accurate as the user moves around.
+  useEffect(() => {
+    if (filters.sortBy !== 'nearest') return;
+    if (userLat == null || userLng == null) return;
+
+    const prev = lastFetchedCoords.current;
+
+    if (prev == null) {
+      // Bootstrap case: Nearest was already active but the last fetch ran
+      // without valid user coords (e.g. permission was granted after the user
+      // tapped the Nearest chip). Re-fetch now that we have a real position.
+      // No nudge is needed — this is effectively the initial nearest load completing.
+      setPlaces([]);
+      setPage(1);
+      load(1, filters, true);
+      return;
+    }
+
+    const distKm = approxDistanceKm(prev.lat, prev.lng, userLat, userLng);
+    if (distKm < NEAREST_REFRESH_THRESHOLD_KM) return;
+
+    // Movement exceeds 0.1 km — auto-refresh and show a brief nudge.
+    if (nudgeTimer.current) clearTimeout(nudgeTimer.current);
+    showNudge();
+
+    setPlaces([]);
+    setPage(1);
+    load(1, filters, true);
+
+    nudgeTimer.current = setTimeout(() => {
+      hideNudge();
+      nudgeTimer.current = null;
+    }, 3000);
+
+    return () => {
+      // Always clear the timer and hide the nudge on cleanup so it never gets
+      // stuck visible if the next effect run exits early (e.g. distance < threshold).
+      if (nudgeTimer.current) {
+        clearTimeout(nudgeTimer.current);
+        nudgeTimer.current = null;
+      }
+      hideNudge();
+    };
+  }, [userLat, userLng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -341,6 +445,12 @@ export function DiscoveryCategoryTab({
 
   return (
     <View style={{ flex: 1 }}>
+
+      {locationNudge && (
+        <Animated.View style={[nudge.bar, { opacity: nudgeOpacity }]} pointerEvents="none">
+          <Text style={nudge.text}>📍 Location updated — re-sorting nearest places</Text>
+        </Animated.View>
+      )}
 
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
@@ -449,6 +559,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textAlign: 'center',
     marginVertical: space.xl,
+  },
+});
+
+const nudge = StyleSheet.create({
+  bar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: color.signal,
+    paddingVertical: space.xs + 2,
+    paddingHorizontal: space.md,
+    alignItems: 'center',
+  },
+  text: {
+    ...t.stamp,
+    color: color.onInk,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
 
