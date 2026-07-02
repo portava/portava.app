@@ -24,6 +24,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   getCrewMap,
   getCrewPreferences,
@@ -37,25 +38,6 @@ import {
 } from "../services/tripCrew/TripCrewLiveShareService.js";
 
 const router = Router();
-
-// ── Feature flag helpers ──────────────────────────────────────────────────────
-
-async function isFlagEnabled(
-  db: ReturnType<typeof getServiceClient>,
-  flag: string,
-): Promise<boolean> {
-  if (!db) return false;
-  try {
-    const { data } = await db
-      .from("feature_flags")
-      .select("enabled")
-      .eq("key", flag)
-      .maybeSingle();
-    return Boolean((data as any)?.enabled);
-  } catch {
-    return false;
-  }
-}
 
 // ── requireTripMember middleware ──────────────────────────────────────────────
 
