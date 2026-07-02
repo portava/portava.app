@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert, TextInput } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield, UserPlus } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
+import { sendTripInvite } from '../src/services/friends';
 import { getTrip } from '../src/services/trips';
 import { openCircleChat } from '../src/services/messaging';
 import {
@@ -24,15 +25,31 @@ import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
 import { useBlockedIds } from '../src/context/BlockedIdsContext';
 
-function CircleUserRow({ u, reason }: { u: FollowUser; reason?: string }) {
+function CircleUserRow({
+  u, reason, tripId,
+}: { u: FollowUser; reason?: string; tripId?: string }) {
   const ringState = useHighlightRingState(u.id);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
+  const [inviteState, setInviteState] = useState<'idle' | 'loading' | 'done'>('idle');
+  const invitingRef = useRef(false);
   const { blockedIds } = useBlockedIds();
 
   if (hidden || blockedIds.has(u.id)) return null;
 
   const displayName = u.name ?? u.handle ?? 'Traveler';
+
+  async function handleInvite() {
+    if (invitingRef.current || inviteState !== 'idle' || !tripId) return;
+    invitingRef.current = true;
+    setInviteState('loading');
+    try {
+      await sendTripInvite(tripId, u.id);
+      setInviteState('done');
+    } finally {
+      invitingRef.current = false;
+    }
+  }
 
   return (
     <>
@@ -52,11 +69,31 @@ function CircleUserRow({ u, reason }: { u: FollowUser; reason?: string }) {
           {u.handle ? <Text style={styles.handle}>@{u.handle}</Text> : null}
           {reason ? <Text style={styles.reason}>{reason}</Text> : null}
         </View>
-        <UserOverflowMenu
-          userId={u.id}
-          displayName={displayName}
-          onBlockSuccess={() => setHidden(true)}
-        />
+        {tripId ? (
+          <Pressable
+            style={[styles.inviteBtn, inviteState !== 'idle' && styles.inviteBtnDone]}
+            onPress={handleInvite}
+            disabled={inviteState !== 'idle'}
+            hitSlop={8}
+          >
+            {inviteState === 'loading' ? (
+              <ActivityIndicator size="small" color={color.onInk} />
+            ) : inviteState === 'done' ? (
+              <Text style={styles.inviteBtnText}>Invited ✓</Text>
+            ) : (
+              <>
+                <UserPlus size={13} color={color.onInk} />
+                <Text style={styles.inviteBtnText}>Invite</Text>
+              </>
+            )}
+          </Pressable>
+        ) : (
+          <UserOverflowMenu
+            userId={u.id}
+            displayName={displayName}
+            onBlockSuccess={() => setHidden(true)}
+          />
+        )}
       </View>
       <HighlightViewer
         visible={viewerOpen}
@@ -418,7 +455,7 @@ export default function Circle() {
 
           {/* ── Following / Followers list ── */}
           {list.map((u) => (
-            <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} />
+            <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} tripId={tripId} />
           ))}
           {list.length === 0 && (
             <View style={styles.emptyBox}>
@@ -520,4 +557,7 @@ const styles = StyleSheet.create({
   toggleThumbOn: { alignSelf: 'flex-end' },
   tripInviteBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginTop: 8, marginBottom: 2, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#BFDBFE' },
   tripInviteBannerText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8', flexShrink: 1 },
+  inviteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.signal, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 6 },
+  inviteBtnDone: { backgroundColor: color.mute },
+  inviteBtnText: { fontSize: 12, fontWeight: '700', color: color.onInk },
 });

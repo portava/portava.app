@@ -10,7 +10,7 @@
  * - Circle chats reuse the same member list but never show the invite action
  *   (circles have their own membership flow).
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Image, Modal,
   TextInput, ScrollView,
@@ -96,6 +96,7 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
   const [candidatesLoaded, setCandidatesLoaded] = useState(false);
   const [search, setSearch] = useState('');
   const [invitingId, setInvitingId] = useState<string | null>(null);
+  const invitingRef = useRef(false);
   const [invited, setInvited] = useState<FriendUser[]>([]);
   const [inviteError, setInviteError] = useState<string | null>(null);
 
@@ -156,18 +157,23 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
   }, [pickerOpen, loadCandidates]);
 
   async function handleInvite(user: FriendUser) {
-    if (invitingId) return;
+    if (invitingRef.current) return;
+    invitingRef.current = true;
     setInvitingId(user.id);
     setInviteError(null);
-    const res = await sendTripInvite(id, user.id);
-    setInvitingId(null);
-    if (!res.ok) {
-      setInviteError(res.message ?? 'Could not send invite. Try again.');
-      return;
+    try {
+      const res = await sendTripInvite(id, user.id);
+      if (!res.ok) {
+        setInviteError(res.message ?? 'Could not send invite. Try again.');
+        return;
+      }
+      // Move from picker into the Invited section
+      setCandidates((prev) => prev.filter((c) => c.id !== user.id));
+      setInvited((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
+    } finally {
+      invitingRef.current = false;
+      setInvitingId(null);
     }
-    // Move from picker into the Invited section
-    setCandidates((prev) => prev.filter((c) => c.id !== user.id));
-    setInvited((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
   }
 
   const q = search.trim().toLowerCase();
