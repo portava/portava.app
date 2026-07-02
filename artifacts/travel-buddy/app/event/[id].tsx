@@ -38,7 +38,7 @@ import {
   buildRentBuddyParamsFromEvent,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
-import { searchBuddies } from '../../src/services/rentABuddy';
+import { checkCityAvailable } from '../../src/services/rentABuddy';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
@@ -170,8 +170,8 @@ export default function EventDetailScreen() {
   useEffect(() => {
     if (!event?.city || !rentBuddyEnabled) { setBuddyCityAvailable(false); return; }
     let cancelled = false;
-    searchBuddies({ city: event.city, perPage: 1 }).then((res) => {
-      if (!cancelled) setBuddyCityAvailable(res.ok && (res.data?.total ?? 0) > 0);
+    checkCityAvailable(event.city).then((res) => {
+      if (!cancelled) setBuddyCityAvailable(res.available);
     }).catch(() => { if (!cancelled) setBuddyCityAvailable(false); });
     return () => { cancelled = true; };
   }, [event?.city, rentBuddyEnabled]);
@@ -612,8 +612,11 @@ export default function EventDetailScreen() {
               )}
             </View>
 
-            {/* Find a Travel Buddy CTA — shown when RAB is enabled, city has buddies, event is not draft/cancelled */}
-            {buddyCityAvailable === true && !['draft', 'cancelled', 'archived'].includes(event.state) && (
+            {/* Find a Travel Buddy CTA — shown for public/going events in RAB-available cities */}
+            {buddyCityAvailable === true
+              && !['draft', 'cancelled', 'archived'].includes(event.state)
+              && (event.visibility === 'public' || event.myRsvp === 'going')
+              && (
               <Pressable
                 style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
                 onPress={() => {

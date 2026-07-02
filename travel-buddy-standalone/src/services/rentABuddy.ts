@@ -1389,6 +1389,25 @@ export async function adminUpdateGlobalControls(patch: Partial<Omit<GlobalContro
   return apiFetch('/api/admin/rent-buddy/global-controls', { method: 'PATCH', body: JSON.stringify(patch) });
 }
 
+/**
+ * Checks whether Rent-a-Buddy is available in a given city using the server-side
+ * rollout table. Returns { available: boolean, code?: string }.
+ * Does NOT require authentication — safe to call from unauthenticated contexts.
+ */
+export async function checkCityAvailable(
+  city: string,
+): Promise<{ available: boolean; code?: string }> {
+  try {
+    const res = await apiFetch<{ available: boolean; code?: string; status?: string }>(
+      `/api/rent-a-buddy/cities/${encodeURIComponent(city)}/available`,
+    );
+    if (!res.ok || res.data == null) return { available: false, code: 'service_unavailable' };
+    return { available: res.data.available, code: res.data.code };
+  } catch {
+    return { available: false, code: 'service_unavailable' };
+  }
+}
+
 export async function adminGetAuditLog(filters?: {
   cityRolloutId?: string;
   adminId?: string;

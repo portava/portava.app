@@ -434,6 +434,35 @@ async function emitBookingMilestone(
   } catch { /* non-critical — never fail the main request */ }
 }
 
+// ── City availability (public, no auth) ──────────────────────────────────────
+// GET /api/rent-a-buddy/cities/:city/available
+// Returns { available: boolean, code?: string } based on the city rollout table.
+// Does NOT require authentication — used by Event Detail to gate the "Find a Buddy" CTA.
+router.get("/api/rent-a-buddy/cities/:city/available", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ available: false, code: "service_unavailable" });
+
+  const rentBuddyEnabled = await getFlag(serviceClient, "rent_buddy_enabled").catch(() => false);
+  if (!rentBuddyEnabled) return res.json({ available: false, code: "feature_disabled" });
+
+  const city = req.params.city?.trim();
+  if (!city) return res.json({ available: false, code: "invalid_city" });
+
+  const { data: rollout } = await serviceClient
+    .from("rent_buddy_city_rollouts")
+    .select("status")
+    .ilike("city", city)
+    .maybeSingle();
+
+  const cityStatus: string = rollout ? (rollout as any).status : "disabled";
+
+  if (cityStatus === "disabled" || cityStatus === "suspended") {
+    return res.json({ available: false, code: "city_not_available" });
+  }
+
+  return res.json({ available: true, status: cityStatus });
+});
+
 // ── Search ────────────────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/search", async (req, res) => {
