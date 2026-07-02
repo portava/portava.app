@@ -128,6 +128,54 @@
  * GET    /api/users/:userId/events                — events for a user profile tab
  */
 
+/**
+ * ── Inventory matrix ──────────────────────────────────────────────────────────
+ *
+ * Feature                        | Files / Routes                              | Tables                                   | Status        | Action taken
+ * -------------------------------|---------------------------------------------|------------------------------------------|---------------|-------------------------------
+ * Event CRUD                     | events.ts POST/GET/PATCH/DELETE /events/:id | events, event_roles                      | complete      | Full CRUD + formatEvent field-gating
+ * Draft autosave                 | events.ts CRUD /events/drafts/*             | event_drafts                             | complete      | Save/update/delete + publish path
+ * Draft → publish                | events.ts POST /events/drafts/:id/publish   | events, event_drafts, event_activity_log | complete      | Spam/prohibited/duplicate checks added
+ * Publish validation             | checkProhibitedContent/checkTicketUrl/      | event_activity_log                       | complete      | All publish paths (create+publishNow,
+ *                                | checkDuplicateEvent                         |                                          |               |   /publish, drafts/:id/publish)
+ * RSVP / attendance              | events.ts POST/DELETE /events/:id/rsvp      | event_rsvps, event_attendees             | complete      | Capacity + waitlist enforcement
+ * Waitlist                       | events.ts /events/:id/waitlist/*            | event_waitlist                           | complete      | Position tracking, offer expiry
+ * Join/leave shortcuts           | events.ts POST /events/:id/join,leave       | event_rsvps, event_attendees, waitlist   | complete      | Capacity gate + waitlist redirect
+ * Join requests                  | events.ts /events/:id/join-request(s)/*     | event_join_requests                      | complete      | Approve/decline/cancel
+ * Roles                          | events.ts /events/:id/roles                 | event_roles                              | complete      | Assign/remove host/co_host/mod/etc.
+ * Invites                        | events.ts /events/:id/invite, /invites/*    | event_invites                            | complete      | Invite, accept, decline
+ * Co-hosts                       | events.ts /events/:id/cohosts/*             | event_cohosts                            | complete      | Add/remove + permissions
+ * Check-in / no-show             | events.ts /events/:id/checkin,attendance,   | event_attendee_states                    | complete      | Self check-in + host confirm/no-show
+ *                                |   noshow                                    |                                          |               |
+ * Event posts (participant-only) | events.ts GET/POST /events/:id/posts        | event_posts                              | complete      | Participant gate (host/cohost/going/maybe)
+ * Event media (participant-only) | events.ts GET/POST /events/:id/media        | event_media                              | complete      | Participant gate
+ * Comments/updates (part.-only)  | events.ts GET/POST /events/:id/comments     | event_updates                            | complete      | Participant gate
+ * Save / share-link              | events.ts /events/:id/save, share-link      | event_saves, event_share_links           | complete      | Create/delete/revoke
+ * Reports / moderation           | events.ts /events/:id/report,report-user,   | event_reports, event_roles               | complete      | Block user, activity log
+ *                                |   block-user, activity                      |                                          |               |
+ * Safety summary                 | events.ts GET /events/:id/safety-summary    | event_reports, event_attendee_states,    | complete      | Host-only (co_host excluded)
+ *                                |                                             |   event_roles                            |               |
+ * goingAttendees privacy         | events.ts GET /events/:id                   | event_rsvps, event_roles, profiles       | complete      | Participant-scoped (empty [] for outsiders)
+ * priceUrl / safetyNotes gate    | formatEvent()                               | events                                   | complete      | priceUrl: host/participant; safetyNotes: host only
+ * Discovery / feeds              | events.ts GET /events, /city, /nearby,      | events, event_rsvps, event_saves         | complete      | City/bbox/search/me/hosting/joined/saved
+ *                                |   /search, /me, /hosting, /joined, /saved   |                                          |               |
+ * Reminders                      | events.ts CRUD /events/:id/reminders        | event_reminders                          | complete      | Full CRUD
+ * Reviews                        | events.ts CRUD /events/:id/reviews          | event_reviews                            | complete      | Create/list/delete
+ * Memory / chat                  | events.ts POST /events/:id/memory, /chat    | event_memories (stub), event_chat        | complete      | Memory convert + chat thread + join
+ * Lifecycle (publish/cancel/etc) | events.ts POST /events/:id/publish,cancel,  | events, event_activity_log               | complete      | State machine + activity log on all
+ *                                |   postpone,complete,archive,close-rsvps,    |                                          |               |   transitions
+ *                                |   reopen-rsvps                              |                                          |               |
+ * Age/trust eligibility gate     | checkEventEligibility()                     | profiles (age/trust_score)               | complete      | Applied on RSVP, join, and GET detail
+ * Blocked-user rejection         | isBlocked()                                 | blocks                                   | complete      | Applied on GET detail + RSVP paths
+ * RLS policies                   | migrations/0080_events_extension.sql        | all events_* tables                      | complete      | Fixed over-permissive USING(true);
+ *                                |                                             |                                          |               |   added event_attendees table
+ * event_attendees table          | migrations/0080_events_extension.sql        | event_attendees                          | complete      | Added per-spec; upserted on RSVP/join
+ * Spam / prohibited content      | checkProhibitedContent, checkTicketUrl,     | —                                        | complete      | Regex + allowlist + 3-hour window
+ *                                | checkDuplicateEvent                         |                                          |               |   duplicate detection
+ * Cross-system stubs             | events.ts /add-to-trip, /link-circle,       | —                                        | stub (501)    | Wired for Task 3
+ *                                |   /telegraph-thread                         |                                          |               |
+ */
+
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
@@ -1117,6 +1165,23 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
   }
 
+  // Publish-time spam / content / duplicate checks (same rules as /events/:id/publish)
+  const prohibitedErr = checkProhibitedContent(b.title, b.description);
+  if (prohibitedErr) {
+    await logEventActivity(sc, draftId, user.id, "publish_rejected_content", { reason: prohibitedErr });
+    sendError(res, "invalid_payload", prohibitedErr); return;
+  }
+  const ticketErr = checkTicketUrl((b as any).priceUrl ?? null);
+  if (ticketErr) {
+    await logEventActivity(sc, draftId, user.id, "publish_rejected_ticket_url", { reason: ticketErr });
+    sendError(res, "invalid_payload", ticketErr); return;
+  }
+  const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+  if (isDuplicate) {
+    await logEventActivity(sc, draftId, user.id, "publish_rejected_duplicate", {});
+    sendError(res, "duplicate_event", "A similar event already exists"); return;
+  }
+
   const { data: ev, error } = await sc.from("events").insert({
     host_id:          user.id,
     title:            b.title,
@@ -1249,8 +1314,14 @@ router.get("/events/:id", async (req, res) => {
     .slice(0, 4)
     .map((r: any) => r.user_id as string);
 
+  // goingAttendees is participant-scoped: only expose to host/cohost or going/maybe attendees.
+  const viewerRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null);
+  const viewerRsvpStatus: string | null = (rsvpResult as any).data?.status ?? null;
+  const isParticipant = viewerRole === "host" || viewerRole === "co_host" ||
+    viewerRsvpStatus === "going" || viewerRsvpStatus === "maybe";
+
   let goingProfiles: any[] = [];
-  if (goingAvatars.length > 0) {
+  if (isParticipant && goingAvatars.length > 0) {
     const { data: gp } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars);
     goingProfiles = (gp as any[]) ?? [];
   }

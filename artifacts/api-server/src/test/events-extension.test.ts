@@ -1892,3 +1892,227 @@ describe("Private-field leakage — priceUrl and safetyNotes", () => {
     assert.strictEqual(body.safetyNotes, "Meet near the main entrance");
   });
 });
+
+// ── goingAttendees privacy — outsider gets empty list ────────────────────────
+
+describe("goingAttendees privacy — public event outsider gets empty attendee list", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.user1, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user2, status: "going" },
+      ]},
+      profiles: { rows: [
+        { id: ID.user1, handle: "alice", name: "Alice", avatar_url: null },
+        { id: ID.user2, handle: "bob",   name: "Bob",   avatar_url: null },
+      ]},
+      event_waitlist: { rows: [] },
+      event_attendee_states: { rows: [] },
+      blocks: { rows: [] },
+      user_friendships: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("outsider (no RSVP) receives empty goingAttendees on a public event", async () => {
+    // ID.user3 has no RSVP and is not host/cohost
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user3);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.goingAttendees), "goingAttendees should be an array");
+    assert.equal(body.goingAttendees.length, 0,
+      `Non-participant should see 0 attendees, got: ${JSON.stringify(body.goingAttendees)}`);
+  });
+
+  it("going attendee can see goingAttendees", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 200);
+    assert.ok(body.goingAttendees.length > 0, "Going attendee should see goingAttendees");
+  });
+});
+
+// ── Age/trust/block gating on GET event detail and /join ─────────────────────
+
+describe("Age/trust/block gating", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { await close(); });
+
+  it("blocked user cannot view event detail (gets 404)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendee_states: { rows: [] },
+      blocks: { rows: [
+        { blocker_id: ID.host1, blocked_id: ID.user1 },
+      ]},
+      user_friendships: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 404);
+  });
+
+  it("blocked user cannot join event via /join (gets 403)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public" }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [
+        { blocker_id: ID.host1, blocked_id: ID.user1 },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403);
+  });
+
+  it("under-age user is rejected from age-restricted event join (403)", async () => {
+    const teenDob = new Date(Date.now() - 17 * 365.25 * 24 * 60 * 60 * 1000).toISOString();
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public", age_min: 21 }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+      profiles: { rows: [{ id: ID.user1, handle: "teen", name: "Teen", avatar_url: null, date_of_birth: teenDob, is_verified: false }] },
+      trust_profiles: { rows: [{ user_id: ID.user1, overall_score: 80 }] },
+      feature_flags: { rows: [
+        { flag: "events_enabled",              enabled: true },
+        { flag: "events_waitlist_enabled",     enabled: true },
+        { flag: "events_chat_enabled",         enabled: true },
+        { flag: "events_trust_gates_enabled",  enabled: true },
+        { flag: "events_invites_enabled",      enabled: true },
+        { flag: "events_cohosts_enabled",      enabled: true },
+        { flag: "events_reports_enabled",      enabled: true },
+        { flag: "events_reminders_enabled",    enabled: true },
+        { flag: "events_share_links_enabled",  enabled: true },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403);
+  });
+
+  it("low trust-score user is rejected from trust-gated event join (403)", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "public", trust_score_min: 70 }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [] },
+      event_waitlist: { rows: [] },
+      event_attendees: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+      profiles: { rows: [{ id: ID.user1, handle: "lowt", name: "LowTrust", avatar_url: null, date_of_birth: null, is_verified: false }] },
+      trust_profiles: { rows: [{ user_id: ID.user1, overall_score: 40 }] },
+      feature_flags: { rows: [
+        { flag: "events_enabled",              enabled: true },
+        { flag: "events_waitlist_enabled",     enabled: true },
+        { flag: "events_chat_enabled",         enabled: true },
+        { flag: "events_trust_gates_enabled",  enabled: true },
+        { flag: "events_invites_enabled",      enabled: true },
+        { flag: "events_cohosts_enabled",      enabled: true },
+        { flag: "events_reports_enabled",      enabled: true },
+        { flag: "events_reminders_enabled",    enabled: true },
+        { flag: "events_share_links_enabled",  enabled: true },
+      ]},
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
+    assert.equal(status, 403);
+  });
+});
+
+// ── Draft publish — spam/prohibited content rejection ─────────────────────────
+
+describe("POST /api/events/drafts/:draftId/publish — spam/content validation", () => {
+  let port: number;
+  let close: () => Promise<void>;
+  afterEach(async () => { await close(); });
+
+  it("rejects draft with prohibited title content (400)", async () => {
+    const client = makeFakeClient({
+      event_drafts: { rows: [
+        {
+          id: ID.ev1,
+          host_id: ID.host1,
+          data: {
+            title: "Buy drugs and illegal items here",
+            description: null,
+            locationName: "Some Place",
+            startsAt: new Date(Date.now() + 86400000).toISOString(),
+            endsAt:   new Date(Date.now() + 172800000).toISOString(),
+            visibility: "public",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]},
+      events: { rows: [] },
+      event_roles: { rows: [] },
+      event_activity_log: { rows: [] },
+      event_rsvps: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/drafts/${ID.ev1}/publish`, {}, ID.host1);
+    assert.equal(status, 400);
+  });
+
+  it("rejects draft with disallowed ticket URL (400)", async () => {
+    const client = makeFakeClient({
+      event_drafts: { rows: [
+        {
+          id: ID.ev1,
+          host_id: ID.host1,
+          data: {
+            title: "Fun festival",
+            description: null,
+            locationName: "City Park",
+            startsAt: new Date(Date.now() + 86400000).toISOString(),
+            endsAt:   new Date(Date.now() + 172800000).toISOString(),
+            visibility: "public",
+            priceUrl: "https://phishingsite.xyz/buy-ticket",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]},
+      events: { rows: [] },
+      event_roles: { rows: [] },
+      event_activity_log: { rows: [] },
+      event_rsvps: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+    const { status } = await req(port, "POST", `/api/events/drafts/${ID.ev1}/publish`, {}, ID.host1);
+    assert.equal(status, 400);
+  });
+});
