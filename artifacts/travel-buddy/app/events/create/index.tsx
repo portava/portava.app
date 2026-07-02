@@ -19,14 +19,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Switch, Alert, ActivityIndicator, Platform,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, ChevronRight, ChevronLeft,
   CalendarClock, MapPin, Settings2, Eye, FileEdit,
-  Users, Lock, Clock, Shield, Ticket, UserPlus,
+  Users, Lock, Clock, Shield, Ticket, UserPlus, Camera, X,
 } from 'lucide-react-native';
 import {
   createEvent, createDraft, updateDraft, publishDraft, getDraft, inviteUserToEvent,
@@ -35,6 +36,7 @@ import {
 import { getMyCircles, type CircleRow } from '../../../src/services/circles';
 import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
+import { uploadMedia, validateMedia } from '../../../src/services/media';
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { Avatar } from '../../../src/components/ui';
@@ -128,6 +130,11 @@ export default function CreateEventScreen() {
   const [priceType, setPriceType] = useState<'free' | 'external'>('free');
   const [priceUrl, setPriceUrl] = useState('');
 
+  // ── Cover photo ─────────────────────────────────────────────────────────────
+  const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+
   // ── Step 8: Invite ──────────────────────────────────────────────────────────
   const [inviteQuery, setInviteQuery] = useState('');
   const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
@@ -169,6 +176,7 @@ export default function CreateEventScreen() {
     setWaitlistEnabled(d.waitlistEnabled);
     if (d.priceType) setPriceType(d.priceType);
     if (d.priceUrl) setPriceUrl(d.priceUrl);
+    if (d.coverUrl) { setCoverUrl(d.coverUrl); setCoverUri(d.coverUrl); }
     // Restore the last incomplete step across all 9 steps.
     // Walk forward through the step sequence and stop at the first gap.
     // Step 1 — basics: title is required
@@ -210,6 +218,57 @@ export default function CreateEventScreen() {
       listMyTrips().then((t) => { setTrips(t); setTripsLoading(false); });
     }
   }, [step]);
+
+  // ── Cover photo picker ───────────────────────────────────────────────────────
+  async function handlePickCoverPhoto() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission required', 'Allow photo library access to pick a cover photo.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.85,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+    const asset = res.assets[0];
+    setCoverUri(asset.uri);
+    setCoverUrl(null);
+    setCoverUploading(true);
+    const media = {
+      uri: asset.uri,
+      mimeType: asset.mimeType ?? 'image/jpeg',
+      fileName: asset.fileName,
+      fileSize: asset.fileSize,
+      width: asset.width,
+      height: asset.height,
+      type: 'image' as const,
+    };
+    const validation = validateMedia(media);
+    if (!validation.ok) {
+      Alert.alert('Photo error', validation.message);
+      setCoverUri(null);
+      setCoverUploading(false);
+      return;
+    }
+    const up = await uploadMedia(media);
+    setCoverUploading(false);
+    if (!up.ok || !up.url) {
+      Alert.alert('Upload failed', up.message ?? 'Could not upload cover photo');
+      setCoverUri(null);
+      return;
+    }
+    setCoverUrl(up.url);
+    scheduleSave();
+  }
+
+  function handleRemoveCoverPhoto() {
+    setCoverUri(null);
+    setCoverUrl(null);
+    scheduleSave();
+  }
 
   // ── Visibility setter — clears orphaned circleId/tripId ─────────────────────
   function handleSetVisibility(v: EventVisibility) {
@@ -284,6 +343,7 @@ export default function CreateEventScreen() {
       waitlistEnabled,
       priceType,
       priceUrl: priceType === 'external' && priceUrl.trim() ? priceUrl.trim() : undefined,
+      coverUrl: coverUrl || undefined,
     };
   }
 
@@ -438,6 +498,42 @@ export default function CreateEventScreen() {
           {/* ── Step 1: Basics ── */}
           {step === 'basics' && (
             <>
+              {/* Cover photo picker */}
+              <Text style={styles.label}>Cover photo</Text>
+              <Pressable
+                style={[styles.coverPicker, coverUri && styles.coverPickerFilled]}
+                onPress={coverUploading ? undefined : handlePickCoverPhoto}
+                disabled={coverUploading}
+              >
+                {coverUri ? (
+                  <>
+                    <Image source={{ uri: coverUri }} style={styles.coverPickerImage} resizeMode="cover" />
+                    {coverUploading && (
+                      <View style={styles.coverPickerOverlay}>
+                        <ActivityIndicator color="#fff" />
+                        <Text style={styles.coverUploadingText}>Uploading…</Text>
+                      </View>
+                    )}
+                    {!coverUploading && (
+                      <Pressable style={styles.coverRemoveBtn} onPress={handleRemoveCoverPhoto} hitSlop={10}>
+                        <X size={14} color="#fff" />
+                      </Pressable>
+                    )}
+                  </>
+                ) : (
+                  <View style={styles.coverPickerEmpty}>
+                    <Camera size={28} color={color.mute} />
+                    <Text style={styles.coverPickerHint}>Tap to add a cover photo</Text>
+                    <Text style={styles.coverPickerSub}>16:9 ratio looks best</Text>
+                  </View>
+                )}
+              </Pressable>
+              {coverUrl && !coverUploading && (
+                <View style={styles.coverUploadedRow}>
+                  <Text style={styles.coverUploadedText}>✓ Cover photo uploaded</Text>
+                </View>
+              )}
+
               <Text style={styles.label}>Event title *</Text>
               <TextInput
                 style={styles.input}
@@ -896,6 +992,9 @@ export default function CreateEventScreen() {
           {step === 'preview' && (
             <>
               <View style={styles.reviewCard}>
+                {coverUri ? (
+                  <Image source={{ uri: coverUri }} style={styles.reviewCover} resizeMode="cover" />
+                ) : null}
                 <Text style={styles.reviewTitle}>{title || 'Untitled event'}</Text>
                 {description ? <Text style={styles.reviewDesc} numberOfLines={3}>{description}</Text> : null}
 
@@ -1082,7 +1181,19 @@ const styles = StyleSheet.create({
   inviteBtn:         { backgroundColor: color.signal, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill },
   inviteBtnSent:     { backgroundColor: color.haze },
   inviteBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
-  reviewCard:        { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.md },
+  coverPicker:          { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, borderStyle: 'dashed', overflow: 'hidden', backgroundColor: color.paperRaised },
+  coverPickerFilled:    { borderStyle: 'solid', borderColor: color.haze },
+  coverPickerImage:     { width: '100%', height: '100%' },
+  coverPickerOverlay:   { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  coverUploadingText:   { ...t.small, color: '#fff', fontWeight: '600' },
+  coverRemoveBtn:       { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 4 },
+  coverPickerEmpty:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  coverPickerHint:      { ...t.body, color: color.mute, fontWeight: '600' },
+  coverPickerSub:       { ...t.small, color: color.faint },
+  coverUploadedRow:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  coverUploadedText:    { ...t.small, color: color.success, fontWeight: '600' },
+  reviewCover:          { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.md, marginBottom: space.xs },
+  reviewCard:           { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.md, overflow: 'hidden' },
   reviewTitle:       { ...t.title, color: color.ink, fontWeight: '800', fontSize: 18 },
   reviewDesc:        { ...t.body, color: color.mute },
   reviewRow:         { flexDirection: 'row', alignItems: 'center', gap: 6 },

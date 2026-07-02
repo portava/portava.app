@@ -484,6 +484,7 @@ export interface EventDraft {
   waitlistEnabled: boolean;
   priceType?: 'free' | 'external';
   priceUrl?: string;
+  coverUrl?: string | null;
   updatedAt: string;
 }
 
