@@ -164,23 +164,28 @@ export async function requireTripMember(
 ): Promise<{ role: string } | null> {
   const { status = "accepted" } = options;
 
-  let query = client
+  const { data, error } = await client
     .from("trip_members")
-    .select("role")
+    .select("role, status")
     .eq("trip_id", tripId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const row = data as { role: string; status?: string | null };
 
   if (status === "accepted") {
-    // Role filter: exclude pending "invited" rows.
-    // Status filter: accepted rows OR NULL (pre-migration rows have no status column yet).
-    query = (query as any)
-      .in("role", ["owner", "co_host", "member", "viewer"])
-      .or("status.eq.accepted,status.is.null");
+    // Exclude pending "invited" rows by role.
+    const acceptedRoles = ["owner", "co_host", "member", "viewer"];
+    if (!acceptedRoles.includes(row.role)) return null;
+    // Also exclude rows with an explicit non-accepted status.
+    // Rows with no status column (null/undefined) are treated as accepted
+    // for backwards compatibility with pre-migration data.
+    if (row.status != null && row.status !== "accepted") return null;
   }
 
-  const { data, error } = await (query as any).maybeSingle();
-  if (error || !data) return null;
-  return { role: (data as { role: string }).role };
+  return { role: row.role };
 }
 
 /**
