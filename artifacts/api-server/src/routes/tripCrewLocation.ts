@@ -86,6 +86,38 @@ async function getMemberRole(
 }
 
 /**
+ * Like getMemberRole but also accepts 'invited' role.
+ * Used for read-only crew visibility endpoints where pending invitees should be
+ * able to see who else is on their trip before deciding to accept.
+ */
+async function getMemberRoleAny(
+  db: ReturnType<typeof getServiceClient>,
+  tripId: string,
+  userId: string,
+): Promise<string | null> {
+  if (!db) return null;
+  try {
+    const { data: trip } = await db
+      .from("trips")
+      .select("owner_id")
+      .eq("id", tripId)
+      .maybeSingle();
+    if ((trip as any)?.owner_id === userId) return "owner";
+
+    const { data: member } = await db
+      .from("trip_members")
+      .select("role")
+      .eq("trip_id", tripId)
+      .eq("user_id", userId)
+      .in("role", ["owner", "member", "invited"])
+      .maybeSingle();
+    return member ? ((member as any).role as string) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns all accepted member IDs for a trip (owner + role=member rows).
  * Used to validate allowedMemberIds in live-share start.
  */
@@ -147,9 +179,9 @@ router.get("/trips/:tripId/crew/map", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
+  const role = await getMemberRoleAny(sc, tripId, user.id);
   if (!role) {
-    sendError(res, "not_member", "Only accepted trip members can view crew location data");
+    sendError(res, "not_member", "Only trip members (including invited) can view crew location data");
     return;
   }
 

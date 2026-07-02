@@ -253,15 +253,15 @@ describe("Trip Crew Location — access control", () => {
     assert.equal(r.body.error, "not_member");
   });
 
-  it("2. Pending-invite user cannot access crew map (403)", async () => {
+  it("2. Pending-invite user CAN access crew map (200 — invited members may view who else is on the trip)", async () => {
     setClients(makeFakeClient({
       featureFlags: BASE_FLAGS,
       trips: [{ id: TRIP_ID, owner_id: USER_ID }],
-      tripMembers: PENDING_MEMBERS,
+      tripMembers: [...ACCEPTED_MEMBERS, ...PENDING_MEMBERS],
     }));
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, undefined, OTHER_TOKEN);
-    assert.equal(r.status, 403);
-    assert.equal(r.body.error, "not_member");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.featureEnabled, true);
   });
 
   it("3. Trip owner can access crew map (200)", async () => {

@@ -45,13 +45,13 @@ export async function getCrewMap(
     db.from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
-      .in("role", ["owner", "member"]),
+      .in("role", ["owner", "member", "invited"]),
   ]);
 
   const ownerId: string | null = (ownerRes.data as any)?.owner_id ?? null;
   const memberRows: any[] = (membersRes.data as any[]) ?? [];
 
-  // Collect all accepted user IDs (owner + members, excluding viewer — they see others)
+  // Collect all user IDs (owner + accepted members + invited), excluding viewer
   const allUserIds = Array.from(new Set([
     ...(ownerId ? [ownerId] : []),
     ...memberRows.map((r) => r.user_id),

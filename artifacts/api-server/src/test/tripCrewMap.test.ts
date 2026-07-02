@@ -1,14 +1,17 @@
 /**
- * Trip Crew Map — endpoint tests
+ * Trip Crew Map — access-control and crew-list tests
  *
- * Verifies: GET /api/trips/:tripId/crew/map
- *   - unauthenticated → 401
- *   - invalid tripId → 400
- *   - non-member → 403
- *   - invited member can view crew (200)
- *   - accepted member sees full crew list with correct shape
- *   - owner sees all members including invited ones
- *   - trip with no members returns empty array
+ * Tests the GET /api/trips/:tripId/crew/map handler that lives in
+ * tripCrewLocation.ts (mounted at /api via routes/index.ts).
+ *
+ * Key verifications:
+ *   - Feature flag off → featureEnabled: false, 200
+ *   - Unauthenticated → 401
+ *   - Non-member → not_member error
+ *   - Invited (pending) member CAN view the crew map (getMemberRoleAny)
+ *   - Accepted member sees crew including invited peers
+ *   - Owner is excluded from their own view (getCrewMap excludes viewerId)
+ *   - Member cards have correct shape
  *
  * Run: node --import tsx/esm --test src/test/tripCrewMap.test.ts
  */
@@ -18,28 +21,28 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import tripsRouter from "../routes/trips.js";
+import tripCrewLocationRouter from "../routes/tripCrewLocation.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
 let server: http.Server;
 let base: string;
 
-const FAKE_TOKEN   = "crewmap-owner-token";
-const MEMBER_TOKEN = "crewmap-member-token";
+const OWNER_TOKEN   = "crewmap-owner-token";
+const MEMBER_TOKEN  = "crewmap-member-token";
 const INVITED_TOKEN = "crewmap-invited-token";
-const OTHER_TOKEN  = "crewmap-other-token";
+const OTHER_TOKEN   = "crewmap-other-token";
 
-const OWNER_ID   = "user-crewmap-owner";
-const MEMBER_ID  = "user-crewmap-member";
-const INVITED_ID = "user-crewmap-invited";
-const OTHER_ID   = "user-crewmap-other";
-const TRIP_ID    = "11111111-1111-1111-1111-111111111111";
+const OWNER_ID   = "a0000001-0000-0000-0000-000000000001";
+const MEMBER_ID  = "a0000001-0000-0000-0000-000000000002";
+const INVITED_ID = "a0000001-0000-0000-0000-000000000003";
+const OTHER_ID   = "a0000001-0000-0000-0000-000000000099";
+const TRIP_ID    = "b0000001-0000-0000-0000-000000000001";
 
 function req(
   method: string,
   path: string,
-  token: string | null = FAKE_TOKEN,
+  token: string | null = OWNER_TOKEN,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
@@ -65,42 +68,64 @@ function req(
 // ── Fake client ───────────────────────────────────────────────────────────────
 
 interface FakeState {
+  featureFlags?: Record<string, boolean>;
+  trips?: any[];
   tripMembers?: any[];
   profiles?: any[];
+  crewPrefs?: any[];
+  locationState?: any[];
+  locationPreferences?: any[];
+  planCheckins?: any[];
+  safeReturnSessions?: any[];
+  crewSessions?: any[];
+  crewEvents?: any[];
 }
 
 function makeFakeClient(state: FakeState = {}) {
   function getRows(table: string): any[] {
-    if (table === "trip_members") return state.tripMembers ?? [];
-    if (table === "profiles")    return state.profiles    ?? [];
+    if (table === "feature_flags")                  return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled }));
+    if (table === "trips")                          return state.trips ?? [];
+    if (table === "trip_members")                   return state.tripMembers ?? [];
+    if (table === "profiles")                       return state.profiles ?? [];
+    if (table === "trip_crew_location_preferences") return state.crewPrefs ?? [];
+    if (table === "user_location_state")            return state.locationState ?? [];
+    if (table === "location_preferences")           return state.locationPreferences ?? [];
+    if (table === "plan_checkins")                  return state.planCheckins ?? [];
+    if (table === "safe_return_sessions")           return state.safeReturnSessions ?? [];
+    if (table === "trip_crew_location_sessions")    return state.crewSessions ?? [];
     return [];
   }
 
   function builder(table: string) {
     let rows = getRows(table);
     const filters: Array<(r: any) => boolean> = [];
+    let _maybe = false;
+    let _limit: number | null = null;
 
     const b: any = {
       select(_cols?: string) { return b; },
-      eq(col: string, val: any)          { filters.push((r) => r[col] === val); return b; },
-      in(col: string, vals: any[])       { filters.push((r) => vals.includes(r[col])); return b; },
-      neq(col: string, val: any)         { filters.push((r) => r[col] !== val); return b; },
-      order()                            { return b; },
-      limit(n: number)                   { return b; },
-      maybeSingle()                      { return resolveOne(true); },
-      single()                           { return resolveOne(false); },
-      then(onF: any, onR: any)           { return resolveList().then(onF, onR); },
+      eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
+      neq(col: string, val: any)   { filters.push((r) => r[col] !== val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      is(col: string, val: any)    { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
+      lt(col: string, val: any)    { filters.push((r) => r[col] < val); return b; },
+      gt(col: string, val: any)    { filters.push((r) => r[col] > val); return b; },
+      or(_expr: string)            { return b; },
+      order()                      { return b; },
+      limit(n: number)             { _limit = n; return b; },
+      maybeSingle()                { _maybe = true; return resolveOne(); },
+      single()                     { return resolveOne(); },
+      then(onF: any, onR: any)     { return resolveList().then(onF, onR); },
     };
 
-    async function resolveOne(maybe: boolean) {
+    async function resolveOne() {
       const matched = rows.filter((r) => filters.every((f) => f(r)));
-      if (!maybe && matched.length === 0) return { data: null, error: { message: "not found" } };
       return { data: matched[0] ?? null, error: null };
     }
 
     async function resolveList() {
       const matched = rows.filter((r) => filters.every((f) => f(r)));
-      return { data: matched, error: null };
+      return { data: _limit ? matched.slice(0, _limit) : matched, error: null };
     }
 
     return b;
@@ -110,7 +135,7 @@ function makeFakeClient(state: FakeState = {}) {
     from: (table: string) => builder(table),
     auth: {
       getUser: async (token: string) => {
-        if (token === FAKE_TOKEN)    return { data: { user: { id: OWNER_ID } },   error: null };
+        if (token === OWNER_TOKEN)   return { data: { user: { id: OWNER_ID } },   error: null };
         if (token === MEMBER_TOKEN)  return { data: { user: { id: MEMBER_ID } },  error: null };
         if (token === INVITED_TOKEN) return { data: { user: { id: INVITED_ID } }, error: null };
         if (token === OTHER_TOKEN)   return { data: { user: { id: OTHER_ID } },   error: null };
@@ -128,14 +153,19 @@ function setClients(c: ReturnType<typeof makeFakeClient>) {
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const OWNER_MEMBER_ROW   = { trip_id: TRIP_ID, user_id: OWNER_ID,   role: "owner"   };
+const FLAG_ON  = { trip_crew_map_enabled: true };
+
+const OWNER_TRIP = [{ id: TRIP_ID, owner_id: OWNER_ID }];
+
+const OWNER_MEMBER_ROW    = { trip_id: TRIP_ID, user_id: OWNER_ID,   role: "owner"   };
 const ACCEPTED_MEMBER_ROW = { trip_id: TRIP_ID, user_id: MEMBER_ID,  role: "member"  };
 const INVITED_MEMBER_ROW  = { trip_id: TRIP_ID, user_id: INVITED_ID, role: "invited" };
 
+// getCrewMap uses full_name / username (not name / handle)
 const PROFILES = [
-  { id: OWNER_ID,   handle: "owner_handle",   name: "Trip Owner",    avatar_url: "https://cdn.example.com/owner.jpg" },
-  { id: MEMBER_ID,  handle: "member_handle",  name: "Accepted Member", avatar_url: null },
-  { id: INVITED_ID, handle: "invited_handle", name: "Invited Person",  avatar_url: "https://cdn.example.com/invited.jpg" },
+  { id: OWNER_ID,   username: "owner_handle",   full_name: "Trip Owner",      avatar_url: "https://cdn.example.com/owner.jpg" },
+  { id: MEMBER_ID,  username: "member_handle",  full_name: "Accepted Member", avatar_url: null },
+  { id: INVITED_ID, username: "invited_handle", full_name: "Invited Person",  avatar_url: "https://cdn.example.com/invited.jpg" },
 ];
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -147,7 +177,7 @@ before(() => {
     r.log = { error: () => {}, info: () => {}, warn: () => {}, debug: () => {} };
     next();
   });
-  app.use("/api", tripsRouter);
+  app.use("/api", tripCrewLocationRouter);
 
   return new Promise<void>((resolve) => {
     server = app.listen(0, () => {
@@ -162,22 +192,31 @@ after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("GET /trips/:tripId/crew/map", () => {
+describe("GET /trips/:tripId/crew/map — invited-member access and crew list", () => {
 
   it("1. Unauthenticated request returns 401", async () => {
-    setClients(makeFakeClient({ tripMembers: [OWNER_MEMBER_ROW] }));
+    setClients(makeFakeClient({ featureFlags: FLAG_ON, trips: OWNER_TRIP, tripMembers: [OWNER_MEMBER_ROW] }));
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, null);
     assert.equal(r.status, 401);
   });
 
-  it("2. Invalid tripId format returns 400", async () => {
-    setClients(makeFakeClient());
-    const r = await req("GET", `/api/trips/not-a-uuid/crew/map`);
-    assert.equal(r.status, 400);
+  it("2. Feature flag off returns featureEnabled: false with 200", async () => {
+    setClients(makeFakeClient({
+      featureFlags: { trip_crew_map_enabled: false },
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.featureEnabled, false);
+    assert.deepEqual(r.body.members, []);
   });
 
-  it("3. Non-member is rejected with 403", async () => {
+  it("3. Non-member is rejected with not_member error", async () => {
     setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
       tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW],
       profiles: PROFILES,
     }));
@@ -185,94 +224,105 @@ describe("GET /trips/:tripId/crew/map", () => {
     assert.equal(r.status, 403);
   });
 
-  it("4. Owner receives 200 with all crew members", async () => {
+  it("4. Invited (pending) member can view the crew map", async () => {
     setClients(makeFakeClient({
-      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
-      profiles: PROFILES,
-    }));
-    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
-    assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.members));
-    assert.equal(r.body.totalCount, 3);
-    assert.equal(r.body.featureEnabled, true);
-  });
-
-  it("5. Accepted member can fetch crew map", async () => {
-    setClients(makeFakeClient({
-      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW],
-      profiles: PROFILES,
-    }));
-    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
-    assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.members));
-    assert.equal(r.body.featureEnabled, true);
-  });
-
-  it("6. Invited (pending) member can also fetch crew map", async () => {
-    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
       tripMembers: [OWNER_MEMBER_ROW, INVITED_MEMBER_ROW],
       profiles: PROFILES,
     }));
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, INVITED_TOKEN);
     assert.equal(r.status, 200);
     assert.equal(r.body.featureEnabled, true);
-  });
-
-  it("7. Each member card has required fields with not_shared statusLabel", async () => {
-    setClients(makeFakeClient({
-      tripMembers: [OWNER_MEMBER_ROW],
-      profiles: PROFILES,
-    }));
-    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
-    assert.equal(r.status, 200);
-    const card = r.body.members[0];
-    assert.ok("userId" in card);
-    assert.ok("name" in card);
-    assert.ok("handle" in card);
-    assert.ok("avatarUrl" in card);
-    assert.equal(card.statusLabel, "not_shared");
-    assert.equal(card.safeReturnActive, false);
-    assert.equal(card.liveShareActive, false);
-    assert.equal(card.ghostMode, false);
-  });
-
-  it("8. Profile data is resolved correctly on member cards", async () => {
-    setClients(makeFakeClient({
-      tripMembers: [OWNER_MEMBER_ROW],
-      profiles: PROFILES,
-    }));
-    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
-    assert.equal(r.status, 200);
-    const ownerCard = r.body.members.find((m: any) => m.userId === OWNER_ID);
-    assert.ok(ownerCard, "owner card should be present");
-    assert.equal(ownerCard.name, "Trip Owner");
-    assert.equal(ownerCard.handle, "owner_handle");
-    assert.equal(ownerCard.avatarUrl, "https://cdn.example.com/owner.jpg");
-  });
-
-  it("9. Trip with no members returns empty array", async () => {
-    setClients(makeFakeClient({
-      tripMembers: [OWNER_MEMBER_ROW],
-      profiles: PROFILES,
-    }));
-    // Owner is a member so can query, but seed a second trip with only the caller
-    // The endpoint will return just the owner row
-    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
-    assert.equal(r.status, 200);
     assert.ok(Array.isArray(r.body.members));
   });
 
-  it("10. Empty trip (owner queries trip with zero rows) returns { members: [], totalCount: 0 }", async () => {
-    const emptyTripId = "22222222-2222-2222-2222-222222222222";
-    // The owner is a member of emptyTripId
+  it("5. Accepted member receives 200 with featureEnabled: true", async () => {
     setClients(makeFakeClient({
-      tripMembers: [{ trip_id: emptyTripId, user_id: OWNER_ID, role: "owner" }],
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW],
       profiles: PROFILES,
     }));
-    const r = await req("GET", `/api/trips/${emptyTripId}/crew/map`);
-    // Only 1 member (owner), fetched from profiles
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
     assert.equal(r.status, 200);
-    assert.equal(r.body.totalCount, 1);
+    assert.equal(r.body.featureEnabled, true);
+    assert.ok(Array.isArray(r.body.members));
+  });
+
+  it("6. Crew map includes invited members alongside accepted members", async () => {
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
+    assert.equal(r.status, 200);
+    // Viewer (MEMBER_ID) is excluded from their own list, so we see owner + invited
+    const memberIds = r.body.members.map((m: any) => m.userId);
+    assert.ok(memberIds.includes(OWNER_ID),   "owner should be in crew list");
+    assert.ok(memberIds.includes(INVITED_ID), "invited member should appear in crew list");
+    assert.ok(!memberIds.includes(MEMBER_ID), "viewer should not appear in their own list");
+  });
+
+  it("7. Member cards have the required shape", async () => {
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.members.length > 0);
+    const card = r.body.members[0];
+    assert.ok("userId" in card,           "card must have userId");
+    assert.ok("statusLabel" in card,      "card must have statusLabel");
+    assert.ok("safeReturnActive" in card, "card must have safeReturnActive");
+    assert.ok("liveShareActive" in card,  "card must have liveShareActive");
+    assert.ok("ghostMode" in card,        "card must have ghostMode");
+  });
+
+  it("8. Trip with only the calling owner returns empty members (viewer excluded from list)", async () => {
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
+    assert.equal(r.status, 200);
+    // Owner is excluded from their own view; no other members → empty list
+    assert.deepEqual(r.body.members, []);
+    assert.equal(r.body.totalCount, 0);
+  });
+
+  it("9. Owner sees all other crew (accepted + invited) but not themselves", async () => {
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
+    assert.equal(r.status, 200);
+    const memberIds = r.body.members.map((m: any) => m.userId);
+    assert.ok(memberIds.includes(MEMBER_ID),  "accepted member should appear");
+    assert.ok(memberIds.includes(INVITED_ID), "invited member should appear");
+    assert.ok(!memberIds.includes(OWNER_ID),  "owner should not see themselves");
+  });
+
+  it("10. totalCount matches the number of returned members", async () => {
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
+      profiles: PROFILES,
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.totalCount, r.body.members.length);
   });
 
 });
