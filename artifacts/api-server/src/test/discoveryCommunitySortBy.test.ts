@@ -260,4 +260,39 @@ describe("GET /api/discovery/community — sortBy=rating", () => {
       "sortBy=rating must not add or remove places, only reorder them",
     );
   });
+
+  it("sortBy=rating produces a demonstrably different ordering than default (created_at DESC)", async () => {
+    // Seed two places where created_at-DESC and rating-DESC orderings are opposite:
+    // RECENT_LOW is newer (appears first without sortBy) but has a low rating.
+    // OLD_HIGH is older (appears second without sortBy) but has a high rating.
+    const RECENT_LOW = communityRow({ id: "rl", name: "Recent Low Rated", rating: 1.0, created_at: "2025-05-01T00:00:00.000Z" });
+    const OLD_HIGH   = communityRow({ id: "oh", name: "Old High Rated",   rating: 4.9, created_at: "2025-01-01T00:00:00.000Z" });
+
+    _setTestClient(makeFakeClient([RECENT_LOW, OLD_HIGH]), true);
+    const withSort = await get(url, "/api/discovery/community?city=Bangkok&sortBy=rating");
+    assert.equal(withSort.status, 200);
+
+    _setTestClient(makeFakeClient([RECENT_LOW, OLD_HIGH]), true);
+    const withoutSort = await get(url, "/api/discovery/community?city=Bangkok");
+    assert.equal(withoutSort.status, 200);
+
+    const sortedNames   = (withSort.body.items    as any[]).map((p: any) => p.name);
+    const unsortedNames = (withoutSort.body.items as any[]).map((p: any) => p.name);
+
+    // sortBy=rating: OLD_HIGH (4.9) must appear before RECENT_LOW (1.0).
+    const sortedHighIdx = sortedNames.indexOf(OLD_HIGH.name);
+    const sortedLowIdx  = sortedNames.indexOf(RECENT_LOW.name);
+    assert.ok(sortedHighIdx < sortedLowIdx,
+      `sortBy=rating: high-rated (idx ${sortedHighIdx}) must rank above low-rated (idx ${sortedLowIdx})`);
+
+    // Default (created_at DESC): RECENT_LOW (2025-05) must appear before OLD_HIGH (2025-01).
+    const unsortedRecentIdx = unsortedNames.indexOf(RECENT_LOW.name);
+    const unsortedOldIdx    = unsortedNames.indexOf(OLD_HIGH.name);
+    assert.ok(unsortedRecentIdx < unsortedOldIdx,
+      `default sort: more recent (idx ${unsortedRecentIdx}) must appear before older (idx ${unsortedOldIdx})`);
+
+    // The two orderings must differ — the chip changes the result order.
+    assert.notDeepEqual(sortedNames, unsortedNames,
+      "sortBy=rating must produce a different order than default (created_at) sort");
+  });
 });
