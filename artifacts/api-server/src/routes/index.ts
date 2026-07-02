@@ -63,6 +63,7 @@ import profileTabsRouter from "./profileTabs";
 import tripsExpansionRouter from "./trips-expansion";
 import stampsRouter from "./stamps";
 import adminStampsRouter from "./adminStamps";
+import emergencyContactsRouter from "./emergencyContacts";
 
 const router: IRouter = Router();
 
@@ -130,5 +131,6 @@ router.use(profileTabsRouter);
 router.use(tripsExpansionRouter);
 router.use(stampsRouter);
 router.use(adminStampsRouter);
+router.use(emergencyContactsRouter);
 
 export default router;
