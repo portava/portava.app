@@ -15,7 +15,8 @@
  *   // Full toggle:
  *   await toggle(place); // clears categoryStorageKey(tripId) when list empties
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   listSaved,
   toggleSave,
@@ -49,7 +50,7 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
       .catch(() => { setLoading(false); });
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const toggle = useCallback(
     async (place: BookmarkedPlace): Promise<boolean> => {
