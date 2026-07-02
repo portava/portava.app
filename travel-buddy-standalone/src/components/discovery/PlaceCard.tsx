@@ -8,6 +8,7 @@ import { usePlanPicker } from '../PlanPickerController';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 import { TripWishlistPicker } from './TripWishlistPicker';
+import { getPlaceReviews } from '../../services/reviews';
 
 interface PlaceCardProps {
   place: DiscoveryPlace;
@@ -20,6 +21,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
+  const [reviewAvgRating, setReviewAvgRating] = useState<number | null>(null);
   const accent = categoryColor(place.category);
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -27,6 +29,14 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
   useEffect(() => {
     checkSaved('place', place.id)
       .then(({ saved }) => setSaved(saved))
+      .catch(() => {});
+  }, [place.id]);
+
+  useEffect(() => {
+    getPlaceReviews(place.id, 1, 1)
+      .then((res) => {
+        if (res.avgRating != null) setReviewAvgRating(res.avgRating);
+      })
       .catch(() => {});
   }, [place.id]);
 
@@ -84,6 +94,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute }: PlaceCa
                   ? `${Math.round(place.distanceKm * 1000)}m`
                   : `${place.distanceKm}km`}
               </Text>
+            </View>
+          )}
+          {(reviewAvgRating ?? place.rating) != null && (
+            <View style={styles.ratingBadge}>
+              <Text style={styles.ratingStar}>★</Text>
+              <Text style={styles.ratingValue}>{(reviewAvgRating ?? place.rating)!.toFixed(1)}</Text>
             </View>
           )}
           {place.openingHours ? (
@@ -303,6 +319,22 @@ const styles = StyleSheet.create({
     ...t.stamp,
     color: color.mute,
     fontSize: 10,
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  ratingStar: {
+    fontSize: 10,
+    color: '#F59E0B',
+    lineHeight: 13,
+  },
+  ratingValue: {
+    ...t.stamp,
+    fontSize: 10,
+    color: color.ink,
+    fontWeight: '600',
   },
   desc: {
     ...t.small,
