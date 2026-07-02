@@ -47,8 +47,8 @@ export function useTripCrewMap(tripId: string | null): UseTripCrewMapResult {
   useEffect(() => {
     if (!tripId) return;
 
-    // Initial fetch
-    void fetchMap();
+    // Initial fetch — only when app is already in the foreground
+    if (AppState.currentState === 'active') void fetchMap();
 
     const startPoll = () => {
       if (intervalRef.current) return;
