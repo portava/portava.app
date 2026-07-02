@@ -36,6 +36,9 @@ import {
   saveDiscoveryFilters,
   removeDiscoveryFilters,
   getCachedFilters,
+  loadSortPerCategory,
+  saveSortForCategory,
+  getCachedSortForCategory,
 } from '../../src/components/discovery/discoveryFilterStorage';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
@@ -168,17 +171,29 @@ export default function DiscoveryHub() {
     () => getCachedFilters() ?? { radiusKm: 10, openNow: false, minRating: null },
   );
 
-  // Load persisted filters from AsyncStorage on first mount (covers cold app
-  // launches). getCachedFilters() above handles in-session remounts synchronously.
+  // Load persisted filters and per-category sorts from AsyncStorage on first
+  // mount (covers cold app launches). getCachedFilters() above handles
+  // in-session remounts synchronously.
   useEffect(() => {
-    loadDiscoveryFilters(AsyncStorage).then(setActiveFilters);
+    Promise.all([
+      loadDiscoveryFilters(AsyncStorage),
+      loadSortPerCategory(AsyncStorage),
+    ]).then(([filters]) => {
+      // Restore the initial tab's persisted sort; fall back to whatever was
+      // stored in the main filter blob (covers old format before this feature).
+      const perCatSort = getCachedSortForCategory(initialCategory);
+      setActiveFilters(
+        perCatSort !== null ? { ...filters, sortBy: perCatSort } : filters,
+      );
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFiltersChange = useCallback((f: DiscoveryFilters) => {
     setActiveFilters(f);
     saveDiscoveryFilters(AsyncStorage, f);
-  }, []);
+    saveSortForCategory(AsyncStorage, activeTab, f.sortBy ?? null);
+  }, [activeTab]);
 
   const handleResetFilters = useCallback(() => {
     const defaults: DiscoveryFilters = { radiusKm: 10, openNow: false, minRating: null };
@@ -268,12 +283,15 @@ export default function DiscoveryHub() {
     }
   }, [params.category]);
 
-  // Switching tabs resets view mode to list and clears sortBy so users don't
-  // silently carry a rating sort from one category into another.
+  // Switching tabs resets view mode to list. The FROM tab's sort is saved to
+  // per-category storage, then the TO tab's last-used sort is restored (null
+  // for a tab that's never been sorted).
   const handleTabChange = (key: DiscoveryCategory) => {
+    saveSortForCategory(AsyncStorage, activeTab, activeFilters.sortBy ?? null);
     setActiveTab(key);
     setViewMode('list');
-    setActiveFilters((prev) => ({ ...prev, sortBy: null }));
+    const savedSort = getCachedSortForCategory(key);
+    setActiveFilters((prev) => ({ ...prev, sortBy: savedSort }));
   };
 
 

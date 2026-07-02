@@ -92,3 +92,60 @@ export function removeDiscoveryFilters(storage: StorageLike): void {
   _memoryCache = null;
   storage.removeItem(FILTER_STORAGE_KEY).catch(() => {});
 }
+
+// ── Per-category sort storage ─────────────────────────────────────────────────
+// Stores the last-used sortBy value for each Discovery category independently
+// so switching tabs restores the user's sort preference for that category.
+
+export const SORT_PER_CATEGORY_KEY = 'discovery_sort_per_category';
+
+type SortByValue = DiscoveryFilters['sortBy'];
+
+let _sortPerCategoryCache: Record<string, SortByValue> = {};
+
+/**
+ * Return the cached sort preference for a category synchronously, or null if
+ * none has been saved yet.
+ */
+export function getCachedSortForCategory(category: string): SortByValue {
+  return Object.prototype.hasOwnProperty.call(_sortPerCategoryCache, category)
+    ? _sortPerCategoryCache[category]
+    : null;
+}
+
+/**
+ * Persist the sort preference for a specific category and update the cache.
+ * Errors are swallowed — fire-and-forget.
+ */
+export function saveSortForCategory(
+  storage: StorageLike,
+  category: string,
+  sortBy: SortByValue,
+): void {
+  _sortPerCategoryCache = { ..._sortPerCategoryCache, [category]: sortBy };
+  storage.setItem(SORT_PER_CATEGORY_KEY, JSON.stringify(_sortPerCategoryCache)).catch(() => {});
+}
+
+/**
+ * Load the per-category sort map from storage and populate the in-memory cache.
+ * Call once on app mount. Resolves even on error (returns empty map).
+ */
+export async function loadSortPerCategory(
+  storage: StorageLike,
+): Promise<Record<string, SortByValue>> {
+  try {
+    const stored = await storage.getItem(SORT_PER_CATEGORY_KEY);
+    if (stored) {
+      const parsed: unknown = JSON.parse(stored);
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        !Array.isArray(parsed)
+      ) {
+        _sortPerCategoryCache = parsed as Record<string, SortByValue>;
+        return _sortPerCategoryCache;
+      }
+    }
+  } catch { /* ignore */ }
+  return {};
+}
