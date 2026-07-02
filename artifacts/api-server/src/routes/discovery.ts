@@ -62,6 +62,8 @@ export interface DiscoveryPlace {
   openingHours: string | null;
   rating: number | null;
   isOpenNow: boolean | null;
+  /** Number of times this place has been saved; populated for DB-backed places. */
+  savedCount?: number;
 }
 
 /** Public shape returned in all API responses. */
@@ -362,7 +364,7 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, lat, lng, tag, verified, created_at")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, saved_count, lat, lng, tag, verified, created_at")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -411,6 +413,7 @@ async function queryDbPlaces(
           openingHours: null,
           rating: row.rating != null ? parseFloat(String(row.rating)) : null,
           isOpenNow: null,
+          savedCount: (row.saved_count as number) ?? 0,
         };
       });
   } catch {
@@ -607,7 +610,7 @@ router.get("/discovery", async (req, res) => {
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
-  const sortBy    = req.query.sortBy === "rating" ? "rating" : null;
+  const sortBy    = req.query.sortBy === "rating" ? "rating" : req.query.sortBy === "popular" ? "popular" : null;
 
   // ── Age filter params ──────────────────────────────────────────────────────
   const VALID_AGE_FILTERS = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
@@ -684,6 +687,9 @@ router.get("/discovery", async (req, res) => {
         const rb = b.rating ?? -1;
         return rb - ra;
       });
+    }
+    if (sortBy === "popular") {
+      list = [...list].sort((a, b) => (b.savedCount ?? 0) - (a.savedCount ?? 0));
     }
     return list;
   }
@@ -971,7 +977,9 @@ router.get("/discovery/community", async (req, res) => {
   const rawType  = (req.query.place_type ?? req.query.type) as string | undefined;
   const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
   const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
-  const sortBy   = (req.query.sortBy as string | undefined) === "rating" ? "rating" : null;
+  const sortBy   = (req.query.sortBy as string | undefined) === "rating" ? "rating"
+    : (req.query.sortBy as string | undefined) === "popular" ? "popular"
+    : null;
 
   // Age filter params for community discovery
   const VALID_AGE_FILTERS_COMM = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
@@ -1054,7 +1062,7 @@ router.get("/discovery/community", async (req, res) => {
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
-      .order(sortBy === "rating" ? "rating" : "created_at", { ascending: false, nullsFirst: false })
+      .order(sortBy === "rating" ? "rating" : sortBy === "popular" ? "saved_count" : "created_at", { ascending: false, nullsFirst: false })
       .limit(limit);
 
     if (typeFilter !== "all") {
