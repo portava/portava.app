@@ -38,7 +38,7 @@ import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
-import { deleteMessage, muteThread, leaveThread, reportThread } from '../../src/services/messaging';
+import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation } from '../../src/services/messaging';
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
@@ -661,6 +661,7 @@ function MessageBubble({
   onDismissAiCard,
   deliveryStatus,
   onRetry,
+  onRetryTranslation,
   currentUserId,
 }: {
   item: Message;
@@ -674,6 +675,7 @@ function MessageBubble({
   onDismissAiCard?: (msgId: string) => void;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
   onRetry?: () => void;
+  onRetryTranslation?: () => void;
   currentUserId?: string;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -831,7 +833,14 @@ function MessageBubble({
 
         {/* Translation unavailable — shown when translation was attempted but failed */}
         {!mine && item.translationStatus === 'failed' && autoTranslate && (
-          <Text style={styles.transUnavailable}>Translation unavailable.</Text>
+          <View style={styles.transRetryRow}>
+            <Text style={styles.transUnavailable}>Translation unavailable.</Text>
+            {onRetryTranslation && (
+              <Pressable onPress={onRetryTranslation} hitSlop={8}>
+                <Text style={styles.transRetry}>Retry</Text>
+              </Pressable>
+            )}
+          </View>
         )}
       </Pressable>
 
@@ -1459,6 +1468,7 @@ export default function TelegraphThread() {
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
               />
             </View>
@@ -1772,6 +1782,8 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   transToggleMine: { color: color.onInk + 'CC' },
+  transRetryRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  transRetry: { fontSize: 11, color: color.signal, textDecorationLine: 'underline' },
 
   transUnavailable: {
     fontSize: 10,

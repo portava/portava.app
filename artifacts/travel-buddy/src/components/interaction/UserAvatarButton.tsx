@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, Image, View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useBlockedIds } from '../../context/BlockedIdsContext';
@@ -16,6 +16,7 @@ interface Props {
 export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, children, disabled }: Props) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
+  const [imgFailed, setImgFailed] = useState(false);
 
   function handlePress() {
     if (disabled || isBlocked || isLoading || !handle) return;
@@ -33,10 +34,11 @@ export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, childre
   return (
     <Pressable onPress={handlePress} disabled={disabled || isLoading || !handle}>
       {children ?? (
-        avatarUrl ? (
+        avatarUrl && !imgFailed ? (
           <Image
             source={{ uri: avatarUrl }}
             style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
+            onError={() => setImgFailed(true)}
           />
         ) : (
           <View style={[styles.avatar, styles.avatarEmpty, { width: size, height: size, borderRadius: size / 2 }]}>

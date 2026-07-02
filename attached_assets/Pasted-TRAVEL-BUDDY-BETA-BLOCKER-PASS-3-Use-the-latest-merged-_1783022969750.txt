@@ -1,0 +1,295 @@
+TRAVEL BUDDY — BETA BLOCKER PASS 3
+
+Use the latest merged state as source of truth. Do not rebuild working systems. Check what exists first, then make the smallest safe fixes. Do not insert fake users, fake reviews, fake places, or fake production content. Do not modify Supabase env vars. Do not expose service-role keys. Do not sync artifacts/travel-buddy unless explicitly told.
+
+This pass focuses on the remaining beta-risk areas after fixture cleanup, onboarding, search, Discovery, Passport reflection, trip/event chat, message requests, and backend translation were confirmed.
+
+==================================================
+1. TELEGRAPH TRANSLATION UI PROOF
+==================================================
+
+Known:
+- message_translations table exists.
+- translateMessageForThread service exists.
+- retry endpoint exists.
+- translationStatus and translationLabel fields are in API response.
+- preferred_language / preferred_message_language exist.
+
+Required:
+- Verify the Telegraph message UI actually displays translation state.
+- Show translated label, for example “Translated from Spanish,” when available.
+- Allow user to view original text if translated text is shown.
+- Show retry/failure state if translation failed.
+- Verify language preference setting exists or add minimal setting entry if existing settings architecture supports it.
+- Do not fake translated text.
+- Do not expose translation API keys.
+
+Verify:
+- Spanish → English message can display translated state.
+- English → Spanish message can display translated state.
+- Original text is preserved and viewable.
+- Translation failure does not crash the chat.
+- Group chat translation behavior is documented: working, partial, or missing.
+
+==================================================
+2. MEDIA / UPLOADS AUDIT AND FIX
+==================================================
+
+Audit all upload surfaces:
+- Profile photo
+- Passport media
+- Post/postcard image
+- Postcard 10-second video if supported
+- Memory photo/video
+- Event photo
+- Trip photo
+- Telegraph attachment if supported
+- Rent a Buddy provider photos if supported
+
+Check:
+- media service
+- Supabase storage buckets
+- bucket policies
+- upload UI
+- delete UI
+- broken image fallback
+- file type/size checks
+- mobile camera/gallery permissions
+
+Required:
+- Profile photo upload should work or show honest not-yet-supported state.
+- Post media upload should work or show honest not-yet-supported state.
+- Uploaded media should persist after reload.
+- Private media should not be publicly exposed if privacy rules say it is private.
+- Broken images should not crash the app.
+- No placeholder media should masquerade as user uploads.
+
+Fix if safe:
+- Wire missing upload button to existing media service.
+- Add broken image fallback.
+- Add honest empty/error states.
+- Do not build a huge new media system if services are missing; report the gap.
+
+==================================================
+3. NOTIFICATIONS / DEEP LINKS
+==================================================
+
+Audit notification system.
+
+Notification types to check:
+- buddy/friend request
+- request accepted
+- message request
+- new Telegraph message
+- trip invite
+- trip join request
+- event invite
+- event join request
+- booking request
+- booking accepted/declined
+- Safe Return prompt
+- missed safety check-in
+- comment
+- like/reaction
+- tag/mention
+- report/moderation update
+- stamp earned
+- Compass recommendation
+
+Required:
+- Activity Center screen exists and loads real notifications.
+- Notification tap opens correct target screen.
+- Read/unread state persists.
+- Delete/archive action exists or honest missing state is reported.
+- Blocked users should not trigger unwanted notifications.
+- Deep link failure should show safe fallback, not crash.
+
+Fix if safe:
+- Add missing route mapping for notification types.
+- Add missing fallback behavior.
+- Add mark-read-on-open if existing service supports it.
+
+==================================================
+4. SAFE RETURN UI
+==================================================
+
+Audit Safe Return frontend and backend connection.
+
+Required:
+- User can start Safe Return from trip/event.
+- In-app check-in prompt exists or is clearly missing.
+- Push notification prompt exists if configured.
+- Missed check-in escalation state exists.
+- Emergency contacts UI exists.
+- Emergency help button is visible where intended.
+- User can complete/cancel Safe Return session.
+- Location sharing is privacy-safe.
+- Trip Crew/trusted contact visibility is controlled.
+
+Fix if safe:
+- Wire existing Safe Return service into trip/event screen.
+- Add missing in-app prompt entry point.
+- Add honest missing-state copy if backend exists but UI is incomplete.
+
+==================================================
+5. ADMIN / MODERATION
+==================================================
+
+Audit admin/moderation.
+
+Required:
+- General content reports queue
+- User reports queue
+- Event reports queue
+- Trip reports queue
+- Hidden Gem moderation queue
+- Rent a Buddy reports
+- Verification review
+- Ban/suspend user controls
+- Hide/delete content controls
+- Resolve report controls
+- Trust Score adjustment log
+- Admin audit log
+- Role protection so non-admin users cannot access admin tools
+
+Fix if safe:
+- Wire missing queue to existing report tables/services.
+- Add route guards where missing.
+- Add honest empty state.
+- Do not create dangerous admin actions without audit logging.
+
+==================================================
+6. RENT A BUDDY FINAL BETA CHECK
+==================================================
+
+Known:
+- Rent a Buddy is largely done.
+- No in-app payment is currently correct if payment was intentionally removed.
+
+Audit:
+- Provider onboarding
+- Provider verification
+- Service categories
+- Non-dating/non-adult-service boundaries
+- Booking request
+- Booking accept/decline
+- Booking chat
+- Reviews after completed booking
+- Provider dispute tools
+- Admin approval
+- Safety/reporting
+- Cancellation/refund copy if payment state exists
+
+Required:
+- Rent a Buddy must not feel like dating/adult services.
+- Reviews should require completed booking.
+- Provider cannot receive bookings before approval if approval is required.
+- Booking state should not fake payment success.
+- Admin can review/handle RAB reports or missing gap is reported.
+
+Fix if safe:
+- Add missing boundary copy.
+- Add review-after-completion guard if service exists.
+- Add missing admin route link if screen exists.
+
+==================================================
+7. MOBILE POLISH / ERROR STATES
+==================================================
+
+Audit high-traffic screens:
+- Pulse
+- Discovery
+- Map
+- Create
+- Trips
+- Passport
+- Telegraph
+- Search
+- Onboarding
+
+Required:
+- No giant headers wasting mobile space.
+- Buttons are consistent and tappable.
+- Loading states are clean.
+- Empty states are honest.
+- Error states include retry where useful.
+- Keyboard does not cover message input/forms.
+- No clipped text.
+- No overlapping cards.
+- Passport load failure handled.
+- Discovery load failure handled.
+- Map permission denied handled.
+
+Fix only small safe UI issues. Do not redesign the whole app.
+
+==================================================
+8. VALIDATION / REPORT
+==================================================
+
+Run:
+- typecheck
+- route guard if available
+- targeted tests if available
+- source drift check
+- fixture/hardcoded city search if useful
+
+Final report format:
+
+1. Summary
+- What was fixed
+- What was already working
+- What remains
+- Updated beta readiness estimate
+
+2. Files changed
+- File
+- Reason
+- Risk level
+
+3. Telegraph translation UI
+- Working/partial/missing
+- Original text view status
+- Retry/failure status
+- Language preference status
+
+4. Media/uploads
+- Surface-by-surface status
+- Storage/bucket status
+- Broken image fallback status
+
+5. Notifications/deep links
+- Type-by-type route status
+- Read/unread status
+- Failed/missing mappings
+
+6. Safe Return
+- Start/check-in/escalation/cancel status
+- UI gaps
+- Privacy status
+
+7. Admin/moderation
+- Queues found
+- Actions found
+- Missing admin blockers
+- Role protection status
+
+8. Rent a Buddy
+- Booking status
+- Reviews status
+- Boundary copy status
+- Admin/dispute status
+
+9. Mobile polish
+- Issues fixed
+- Remaining visual blockers
+
+10. Validation
+- Commands run
+- Exact pass/fail counts
+- Failed checks
+- Blocked checks
+
+11. Next recommended tasks
+- Immediate blockers
+- Beta blockers
+- Post-beta polish
