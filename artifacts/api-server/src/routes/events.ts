@@ -550,7 +550,8 @@ router.post("/events", async (req, res) => {
     await createEventChatThread(sc, (ev as any).id, b.title, user.id);
   }
 
-  res.status(201).json(formatEvent(ev as any, user.id));
+  // Creator is always the host → participant view
+  res.status(201).json(formatEvent(ev as any, user.id, { goingRsvp: true }));
 });
 
 // ── GET /api/events ───────────────────────────────────────────────────────────
@@ -845,7 +846,8 @@ router.get("/events/me", async (req, res) => {
   const hostedIds = new Set(hosted.map((e: any) => e.id as string));
   const combined = [...hosted, ...attending.filter((e: any) => !hostedIds.has(e.id as string))];
 
-  res.json({ events: combined.map((e: any) => formatEvent(e, user.id)) });
+  // All events here are ones the viewer hosts or attends → always participant view
+  res.json({ events: combined.map((e: any) => formatEvent(e, user.id, { goingRsvp: true })) });
 });
 
 // ── GET /api/events/hosting ───────────────────────────────────────────────────
@@ -872,7 +874,7 @@ router.get("/events/hosting", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "hosting events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
 });
 
 // ── GET /api/events/joined ────────────────────────────────────────────────────
@@ -903,7 +905,7 @@ router.get("/events/joined", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "joined events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
 });
 
 // ── GET /api/events/saved ─────────────────────────────────────────────────────
@@ -931,7 +933,22 @@ router.get("/events/saved", async (req, res) => {
   const { data: events, error } = await sc.from("events").select("*").in("id", ids);
   if (error) { req.log.error({ err: error }, "saved events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+  // For saved events, determine per-event whether viewer is a participant (going/maybe or host)
+  const { data: savedRsvps } = await sc.from("event_rsvps").select("event_id, status")
+    .eq("user_id", user.id).in("event_id", ids);
+  const savedRsvpSet = new Set<string>(
+    ((savedRsvps as any[]) ?? [])
+      .filter((r: any) => r.status === "going" || r.status === "maybe")
+      .map((r: any) => r.event_id as string),
+  );
+
+  res.json({
+    events: ((events as any[]) ?? []).map((e: any) =>
+      formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }),
+    ),
+    page,
+    limit,
+  });
 });
 
 // ── GET /api/events/invites ───────────────────────────────────────────────────
@@ -1214,7 +1231,8 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   // Delete the draft now that it's published
   await sc.from("event_drafts").delete().eq("id", draftId);
 
-  res.status(201).json(formatEvent(ev as any, user.id));
+  // Publisher is always the host → participant view
+  res.status(201).json(formatEvent(ev as any, user.id, { goingRsvp: true }));
 });
 
 // ── GET /api/events/share-link/:token/preview ─────────────────────────────────
@@ -1250,7 +1268,14 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
     .eq("id", (link as any).id)
     .then(undefined, () => {});
 
-  res.json({ event: formatEvent(ev as any, (ctx as any).user.id), shareToken: token });
+  // Share-link preview: check if the viewer is a participant (going/maybe RSVP or host)
+  const previewUser = (ctx as any).user;
+  const { data: previewRsvp } = await sc.from("event_rsvps").select("status")
+    .eq("event_id", (ev as any).id).eq("user_id", previewUser.id).maybeSingle();
+  const previewIsParticipant =
+    (ev as any).host_id === previewUser.id ||
+    (["going","maybe"].includes((previewRsvp as any)?.status ?? ""));
+  res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token });
 });
 
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
@@ -1343,7 +1368,7 @@ router.get("/events/:id", async (req, res) => {
   const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null);
 
   res.json({
-    ...formatEvent(ev as any, user.id),
+    ...formatEvent(ev as any, user.id, { goingRsvp: isParticipant }),
     host,
     counts,
     waitlistCount,
@@ -1492,7 +1517,8 @@ router.patch("/events/:id", async (req, res) => {
     })();
   }
 
-  res.json(formatEvent(updated as any, user.id));
+  // Caller is host/cohost (only they can PATCH) → participant view
+  res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
 });
 
 // ── DELETE /api/events/:id ────────────────────────────────────────────────────
@@ -2741,9 +2767,27 @@ router.get("/users/:userId/events", async (req, res) => {
     attendedEvents = (ev as any[]) ?? [];
   }
 
+  // Determine which events the viewer (not the profile owner) is an RSVP'd participant of
+  const allProfileEventIds = [
+    ...((hostedEvents as any[]) ?? []).map((e: any) => e.id as string),
+    ...attendedEvents.map((e: any) => e.id as string),
+  ];
+  const viewerRsvpSet = new Set<string>();
+  if (allProfileEventIds.length > 0) {
+    const { data: vRsvps } = await sc.from("event_rsvps").select("event_id, status")
+      .eq("user_id", user.id).in("event_id", allProfileEventIds);
+    for (const r of (vRsvps as any[]) ?? []) {
+      if (r.status === "going" || r.status === "maybe") viewerRsvpSet.add(r.event_id as string);
+    }
+  }
+
   res.json({
-    hosted: ((hostedEvents as any[]) ?? []).map((e: any) => formatEvent(e, user.id)),
-    attending: attendedEvents.map((e: any) => formatEvent(e, user.id)),
+    hosted: ((hostedEvents as any[]) ?? []).map((e: any) =>
+      formatEvent(e, user.id, { goingRsvp: viewerRsvpSet.has(e.id as string) }),
+    ),
+    attending: attendedEvents.map((e: any) =>
+      formatEvent(e, user.id, { goingRsvp: viewerRsvpSet.has(e.id as string) }),
+    ),
   });
 });
 
@@ -3159,7 +3203,8 @@ router.post("/events/:id/publish", async (req, res) => {
 
   await logEventActivity(sc, id, user.id, "published", {});
 
-  res.json(formatEvent(updated as any, user.id));
+  // Viewer is the host → always participant view
+  res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
 });
 
 // ── POST /api/events/:id/cancel ───────────────────────────────────────────────

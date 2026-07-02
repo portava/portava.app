@@ -1893,6 +1893,71 @@ describe("Private-field leakage — priceUrl and safetyNotes", () => {
   });
 });
 
+// ── formatEvent participant field gate — going attendee (non-host) ────────────
+
+describe("formatEvent participant field gate — going attendee vs outsider", () => {
+  let port: number;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({
+          id: ID.ev1,
+          host_id: ID.host1,
+          state: "open",
+          visibility: "public",
+          price_url: "https://eventbrite.com/e/999",
+          safety_notes: "Host-only note",
+          show_exact_location: false,
+          location_lat: 48.8566,
+          location_lng: 2.3522,
+        }),
+      ]},
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.user1, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_attendee_states: { rows: [] },
+      profiles: { rows: [{ id: ID.host1, handle: "host", name: "Host", avatar_url: null }] },
+      blocks: { rows: [] },
+      user_friendships: { rows: [] },
+    });
+    _setTestClient(client, true);
+    ({ port, close } = await startServer());
+  });
+  afterEach(async () => { await close(); });
+
+  it("going attendee (non-host) sees priceUrl in event detail", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 200);
+    assert.strictEqual(body.priceUrl, "https://eventbrite.com/e/999",
+      `Going attendee should see priceUrl, got: ${JSON.stringify(body.priceUrl)}`);
+  });
+
+  it("outsider cannot see priceUrl in event detail", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user2);
+    assert.equal(status, 200);
+    assert.strictEqual(body.priceUrl, null,
+      `Outsider should not see priceUrl, got: ${JSON.stringify(body.priceUrl)}`);
+  });
+
+  it("going attendee (non-host) sees exact coordinates when show_exact_location is false", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    assert.equal(status, 200);
+    assert.ok(body.locationLat !== null,
+      `Going attendee should see exact coords, got locationLat=${body.locationLat}`);
+  });
+
+  it("outsider cannot see exact coordinates when show_exact_location is false", async () => {
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user2);
+    assert.equal(status, 200);
+    assert.strictEqual(body.locationLat, null,
+      `Outsider should not see exact coords, got: ${body.locationLat}`);
+  });
+});
+
 // ── goingAttendees privacy — outsider gets empty list ────────────────────────
 
 describe("goingAttendees privacy — public event outsider gets empty attendee list", () => {
