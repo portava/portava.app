@@ -39,6 +39,7 @@ import {
   loadSortPerCategory,
   saveSortForCategory,
   getCachedSortForCategory,
+  hasCachedSortForCategory,
 } from '../../src/components/discovery/discoveryFilterStorage';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
@@ -179,12 +180,14 @@ export default function DiscoveryHub() {
       loadDiscoveryFilters(AsyncStorage),
       loadSortPerCategory(AsyncStorage),
     ]).then(([filters]) => {
-      // Restore the initial tab's persisted sort; fall back to whatever was
-      // stored in the main filter blob (covers old format before this feature).
-      const perCatSort = getCachedSortForCategory(initialCategory);
-      setActiveFilters(
-        perCatSort !== null ? { ...filters, sortBy: perCatSort } : filters,
-      );
+      // Restore the initial tab's persisted sort.
+      // hasCachedSortForCategory distinguishes "saved null (no sort)" from
+      // "never saved" so persisted nulls aren't silently skipped.
+      if (hasCachedSortForCategory(initialCategory)) {
+        setActiveFilters({ ...filters, sortBy: getCachedSortForCategory(initialCategory) });
+      } else {
+        setActiveFilters(filters);
+      }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -275,11 +278,15 @@ export default function DiscoveryHub() {
   }, [isAuthed, locationState.place.city]);
 
   // Re-apply deep-link category if params change (e.g. in-app navigation).
-  // Also clears sortBy so deep-link navigation doesn't silently carry a stale sort.
+  // Restores the destination category's persisted sort (or null for a fresh tab).
   useEffect(() => {
     if (params.category && VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)) {
-      setActiveTab(params.category as DiscoveryCategory);
-      setActiveFilters((prev) => ({ ...prev, sortBy: null }));
+      const cat = params.category as DiscoveryCategory;
+      setActiveTab(cat);
+      setActiveFilters((prev) => ({
+        ...prev,
+        sortBy: hasCachedSortForCategory(cat) ? getCachedSortForCategory(cat) : null,
+      }));
     }
   }, [params.category]);
 

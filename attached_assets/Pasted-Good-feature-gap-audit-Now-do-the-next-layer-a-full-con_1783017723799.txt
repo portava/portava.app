@@ -1,0 +1,70 @@
+Good feature-gap audit. Now do the next layer: a full connectivity audit.
+
+This pass must not focus on what features conceptually exist or are missing. It must focus on whether the currently shipped UI is fully wired.
+
+For every major screen and visible action in the app, prove:
+- the action exists in the UI
+- the handler is connected
+- the navigation target exists
+- the backend/service path exists
+- the response shape matches UI expectations
+- the mutation persists
+- the UI rerenders correctly afterward
+- loading/empty/error states are honest
+- no fixture/mock/local placeholder path is silently taking over
+
+Produce these deliverables:
+
+1. Broken Button Report
+- every visible button, menu item, card tap, chip, and CTA that is dead, partial, misleading, or no-op
+
+2. Broken Route / Detail Report
+- any tap that fails to open the intended profile/place/event/trip/chat/detail screen
+- any blank detail page
+- any missing route or bad id path
+
+3. Frontend → Backend Wiring Map
+For each major user action, show:
+- screen/component
+- action
+- frontend handler
+- hook/store/query/mutation used
+- backend route/service/table hit
+- current status: working / partial / broken
+
+4. Backend → Frontend Reachability Map
+For each major backend route/service:
+- what it powers
+- whether a real frontend path reaches it
+- whether it is orphaned, admin-only, unused, or partially consumed
+
+5. Mock / Fixture / Placeholder Dependency Report
+List every remaining UI surface still depending on:
+- fixture data
+- static placeholders
+- hardcoded arrays
+- local-only state masquerading as persistence
+- fallback mock cards when real backend data should exist
+
+6. Source-of-Truth Drift Report
+Identify duplicates or disagreement for:
+- selected city
+- GPS/device location
+- profile data
+- place identity
+- save state
+- rating state
+- event membership
+- trip membership
+- notification unread state
+- message unread state
+- privacy settings
+
+7. Repair Priority List
+- P0 dangerous/privacy/data-integrity issues
+- P1 broken core flows
+- P2 miswired/stale/inconsistent flows
+- P3 cosmetic honesty/polish
+
+Do not implement the full repair yet unless a very small obvious broken path can be safely fixed immediately.
+This pass is to prove what is actually hanging and what must be wired next.

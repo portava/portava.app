@@ -104,8 +104,18 @@ type SortByValue = DiscoveryFilters['sortBy'];
 let _sortPerCategoryCache: Record<string, SortByValue> = {};
 
 /**
- * Return the cached sort preference for a category synchronously, or null if
- * none has been saved yet.
+ * Return true if a sort preference has ever been saved for this category
+ * (including an explicit null/"no sort"). Use this to distinguish
+ * "persisted null" from "never saved" before calling getCachedSortForCategory.
+ */
+export function hasCachedSortForCategory(category: string): boolean {
+  return Object.prototype.hasOwnProperty.call(_sortPerCategoryCache, category);
+}
+
+/**
+ * Return the cached sort preference for a category synchronously.
+ * Returns null if none has been saved yet. Call hasCachedSortForCategory first
+ * when you need to distinguish "saved null" from "not yet saved".
  */
 export function getCachedSortForCategory(category: string): SortByValue {
   return Object.prototype.hasOwnProperty.call(_sortPerCategoryCache, category)
