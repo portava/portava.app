@@ -1,8 +1,14 @@
 /**
  * Trip Crew Location routes
  *
- * All endpoints require the caller to be an ACCEPTED trip member (owner or
- * accepted member). Pending invites and removed members receive 403.
+ * Most endpoints require the caller to be an ACCEPTED trip member (owner or
+ * accepted member). Pending invites and removed members receive 403 for
+ * mutation endpoints (ghost-mode, live-share, preferences).
+ *
+ * Exception — GET /trips/:tripId/crew/map:
+ *   Invited (pending) members are also permitted so they can see who else is
+ *   on the trip before deciding to accept the invitation.
+ *
  * Exact coordinates are never returned — all responses use blurred area labels.
  *
  * GET  /api/trips/:tripId/crew/map
