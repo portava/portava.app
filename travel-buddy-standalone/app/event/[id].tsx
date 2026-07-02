@@ -19,7 +19,7 @@
  *   event full + no waitlist → "Full — no waitlist"
  *   open/started → RSVP dropdown
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform, Linking,
@@ -35,8 +35,11 @@ import {
 import {
   getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
+  buildRentBuddyParamsFromEvent,
   type EventDetail, type EventRsvpStatus,
 } from '../../src/services/events';
+import { searchBuddies } from '../../src/services/rentABuddy';
+import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -102,6 +105,7 @@ export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id, tripId: tripIdParam } = useLocalSearchParams<{ id: string; tripId?: string }>();
   const { userId } = useSession();
+  const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,6 +116,8 @@ export default function EventDetailScreen() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [addingToTrip, setAddingToTrip] = useState(false);
   const [addedToTrip, setAddedToTrip] = useState(false);
+  // null = loading/unknown; true = buddies available in this city; false = none/unavailable
+  const [buddyCityAvailable, setBuddyCityAvailable] = useState<boolean | null>(null);
   // hasPendingRequest is seeded from backend on load; optimistically set true
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
@@ -159,6 +165,16 @@ export default function EventDetailScreen() {
     if (ok) setHasPendingRequest(true);
     // if !ok the hook already showed an Alert — do not set pending
   }
+
+  // ── City buddy availability check for "Find a Travel Buddy" CTA ────────────
+  useEffect(() => {
+    if (!event?.city || !rentBuddyEnabled) { setBuddyCityAvailable(false); return; }
+    let cancelled = false;
+    searchBuddies({ city: event.city, perPage: 1 }).then((res) => {
+      if (!cancelled) setBuddyCityAvailable(res.ok && (res.data?.total ?? 0) > 0);
+    }).catch(() => { if (!cancelled) setBuddyCityAvailable(false); });
+    return () => { cancelled = true; };
+  }, [event?.city, rentBuddyEnabled]);
 
   // ── Add to itinerary (when arriving from Trip Detail with tripId param) ────
   async function handleAddToItinerary() {
@@ -596,6 +612,29 @@ export default function EventDetailScreen() {
               )}
             </View>
 
+            {/* Find a Travel Buddy CTA — shown when RAB is enabled, city has buddies, event is not draft/cancelled */}
+            {buddyCityAvailable === true && !['draft', 'cancelled', 'archived'].includes(event.state) && (
+              <Pressable
+                style={({ pressed }) => [styles.findBuddyCta, pressed && { opacity: 0.8 }]}
+                onPress={() => {
+                  const p = buildRentBuddyParamsFromEvent(event);
+                  if (!p) return;
+                  const qs = new URLSearchParams({ city: p.city, category: p.category });
+                  if (p.bookingDate) qs.set('bookingDate', p.bookingDate);
+                  router.push(`/(rent-a-buddy)/search?${qs.toString()}` as any);
+                }}
+              >
+                <View style={styles.findBuddyIcon}>
+                  <Users size={18} color="#0369A1" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.findBuddyTitle}>Find a Travel Buddy</Text>
+                  <Text style={styles.findBuddySub}>Connect with a local buddy in {event.city}</Text>
+                </View>
+                <ChevronDown size={14} color="#0369A1" style={{ transform: [{ rotate: '-90deg' }] }} />
+              </Pressable>
+            )}
+
             {/* Comments / event updates — visible to attendees and host */}
             {event.chatEnabled && (event.myRsvp === 'going' || event.myRsvp === 'maybe' || isHost) && (
               <Pressable
@@ -824,6 +863,11 @@ const styles = StyleSheet.create({
 
   commentsRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, padding: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze },
   commentsText:       { ...t.body, color: color.mute, flex: 1 },
+
+  findBuddyCta:       { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F0F9FF', borderRadius: radius.md, borderWidth: 1, borderColor: '#BAE6FD', paddingHorizontal: space.md, paddingVertical: 12 },
+  findBuddyIcon:      { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  findBuddyTitle:     { ...t.bodyStrong, color: '#0C4A6E', fontSize: 14 },
+  findBuddySub:       { ...t.small, color: '#0369A1', marginTop: 1 },
 
   actionBar:          { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: color.paperRaised, borderTopWidth: 1, borderTopColor: color.haze, padding: space.lg, ...shadow.card },
   blockedRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF3C7', borderRadius: radius.md, padding: space.md },
