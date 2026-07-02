@@ -352,12 +352,15 @@ export default function CreateEventScreen() {
     const payload = buildPayload();
     try {
       if (draftId) {
-        await updateDraft(draftId, payload);
+        const res = await updateDraft(draftId, payload);
+        if (res.ok) setDraftSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       } else {
         const res = await createDraft(payload);
-        if (res.ok && res.data) setDraftId(res.data.id);
+        if (res.ok && res.data) {
+          setDraftId(res.data.id);
+          setDraftSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        }
       }
-      setDraftSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     } catch { }
   }
 
@@ -424,8 +427,14 @@ export default function CreateEventScreen() {
 
     if (draftId) {
       const res = await publishDraft(draftId, { ...payload, publishNow: true });
-      if (!res.ok || !res.data) { setError(res.message ?? 'Failed to publish'); setSaving(false); return; }
-      eventId = res.data.id;
+      if (res.ok && res.data) {
+        eventId = res.data.id;
+      } else {
+        // Draft unavailable (table missing or draft gone) — fall back to direct creation.
+        const fallback = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
+        if (!fallback.ok || !fallback.data) { setError(fallback.message ?? 'Failed to publish'); setSaving(false); return; }
+        eventId = fallback.data.id;
+      }
     } else {
       const res = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
       if (!res.ok || !res.data) { setError(res.message ?? 'Failed to publish'); setSaving(false); return; }
