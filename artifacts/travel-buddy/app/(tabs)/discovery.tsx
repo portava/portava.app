@@ -547,6 +547,7 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             viewMode={viewMode}
             fallbackZoom={destinationZoom}
+            sortBy={activeFilters.sortBy ?? null}
           />
         ) : (
           <DiscoveryCategoryTab
