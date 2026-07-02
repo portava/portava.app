@@ -621,7 +621,7 @@ describe("Stamp system v2 — smoke tests", async () => {
     });
   });
 
-  // ── K. recalculate/me with zero award events returns zero counts ──────────────
+  // ── K. recalculate/me with no award events returns zero counts ──────────────
 
   describe("K. recalculate/me with no award events returns zero counts", () => {
     before(() => {
@@ -630,20 +630,60 @@ describe("Stamp system v2 — smoke tests", async () => {
         profiles:         [{ id: ALICE_ID, role: "user" }],
         stampDefinitions: [],
         userStamps:       [],
-        stampAwardEvents: [],   // empty — nothing to recalculate
+        stampAwardEvents: [],   // empty — recalculateForUser returns early
       }), true);
     });
 
-    it("returns { awarded: 0, skipped: 0 } when no award events exist for user", async () => {
+    it("returns { checked: 0, awarded: 0, skipped: 0 } when no award events exist", async () => {
       const res = await fetch(`${base()}/stamps/recalculate/me`, {
         method: "POST",
         headers: authHeaders(),
       });
       assert.equal(res.status, 200);
       const body = await res.json();
+      assert.equal(body.checked, 0, `Expected checked=0, got ${body.checked}`);
       assert.equal(body.awarded, 0, `Expected awarded=0, got ${body.awarded}`);
       assert.equal(body.skipped, 0, `Expected skipped=0, got ${body.skipped}`);
-      assert.ok(typeof body.checked === "number", "checked should be a number");
+    });
+  });
+
+  // ── L. recalculate/me skips events whose definitions are missing/inactive ─────
+
+  describe("L. recalculate/me skips events with no matching definition", () => {
+    const MISSING_DEF_ID = "99999999-0000-4000-8000-000000000099";
+
+    before(() => {
+      _setTestClient(makeClient({
+        currentUserId: ALICE_ID,
+        profiles:         [{ id: ALICE_ID, role: "user" }],
+        stampDefinitions: [],   // intentionally empty — definition does not exist
+        userStamps:       [],
+        stampAwardEvents: [
+          {
+            id:                  "evtaaa01-0000-4000-8000-000000000001",
+            user_id:             ALICE_ID,
+            stamp_definition_id: MISSING_DEF_ID,
+            source_type:         "trips",
+            source_id:           null,
+            award_reason:        "test",
+            idempotency_key:     `${ALICE_ID}:${MISSING_DEF_ID}:trips:none`,
+            admin_id:            null,
+            status:              "awarded",
+          },
+        ],
+      }), true);
+    });
+
+    it("returns awarded:0, skipped:1 when the referenced definition does not exist", async () => {
+      const res = await fetch(`${base()}/stamps/recalculate/me`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.checked, 1,  `Expected checked=1, got ${body.checked}`);
+      assert.equal(body.awarded, 0,  `Expected awarded=0, got ${body.awarded}`);
+      assert.equal(body.skipped, 1,  `Expected skipped=1, got ${body.skipped}`);
     });
   });
 });
