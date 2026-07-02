@@ -102,6 +102,23 @@ export async function awardStamp(
   sc: SupabaseClient,
   input: AwardInput,
 ): Promise<AwardResult> {
+  // 0. Global kill-switch: passport_stamps_enabled
+  // Fail-open: if the feature_flags table is missing (dev / unmigrated) or the
+  // row doesn't exist, the award proceeds so stamps work out-of-box without any
+  // DB setup. Only an explicit `enabled = false` row suppresses all awards.
+  try {
+    const { data: flagRow } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "passport_stamps_enabled")
+      .maybeSingle();
+    if (flagRow !== null && (flagRow as any).enabled === false) {
+      return { awarded: false, reason: "feature_disabled" };
+    }
+  } catch {
+    // Fail-open: table might not exist in dev / before migrations are applied
+  }
+
   const {
     userId,
     definitionSlug,
