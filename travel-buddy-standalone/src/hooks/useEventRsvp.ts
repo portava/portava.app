@@ -17,7 +17,7 @@ interface UseEventRsvpReturn {
   handleJoinWaitlist: () => Promise<void>;
   handleLeaveWaitlist: () => Promise<void>;
   handleAcceptOffer: () => Promise<void>;
-  handleRequestJoin: (message?: string) => Promise<void>;
+  handleRequestJoin: (message?: string) => Promise<boolean>;
   handleJoinChat: (onThreadId: (threadId: string) => void) => Promise<void>;
 }
 
@@ -118,13 +118,14 @@ export function useEventRsvp(
     await onRefresh();
   }, [event, onRefresh]);
 
-  const handleRequestJoin = useCallback(async (message?: string) => {
-    if (!event) return;
+  const handleRequestJoin = useCallback(async (message?: string): Promise<boolean> => {
+    if (!event) return false;
     setBusy(true);
     const res = await requestToJoinEvent(event.id, message);
     setBusy(false);
-    if (!res.ok) Alert.alert('Error', res.message ?? 'Could not send request');
-    else Alert.alert('Request sent', 'The host will review your request.');
+    if (!res.ok) { Alert.alert('Error', res.message ?? 'Could not send request'); return false; }
+    Alert.alert('Request sent', 'The host will review your request.');
+    return true;
   }, [event]);
 
   const handleJoinChat = useCallback(async (onThreadId: (id: string) => void) => {

@@ -161,10 +161,27 @@ export default function CreateEventScreen() {
     setWaitlistEnabled(d.waitlistEnabled);
     if (d.priceType) setPriceType(d.priceType);
     if (d.priceUrl) setPriceUrl(d.priceUrl);
-    // Restore last incomplete step based on filled fields
+    // Restore the last incomplete step across all 9 steps.
+    // Walk forward through the step sequence and stop at the first gap.
+    // Step 1 — basics: title is required
+    if (!d.title) { setStep('basics'); return; }
+    // Step 2 — datetime: start date required
     if (!d.startsAt) { setStep('datetime'); return; }
+    // Step 3 — location: locationName required
     if (!d.locationName) { setStep('location'); return; }
-    if (!d.maxAttendees) { setStep('capacity'); return; }
+    // Step 4 — capacity: maxAttendees required (joinMode has a default so skip)
+    if (d.maxAttendees == null) { setStep('capacity'); return; }
+    // Step 5 — age/trust: considered done even if all blank (all optional)
+    //   However if the field was explicitly cleared (null vs undefined) we can't
+    //   tell, so we treat step 5 as always visited once capacity is set.
+    // Step 6 — privacy: visibility has a default ('public') so check if it
+    //   was explicitly saved to the draft (non-null).
+    if (!d.visibility) { setStep('privacy'); return; }
+    // Step 7 — tickets: priceType has a default ('free'); if missing, resume here.
+    if (!d.priceType) { setStep('tickets'); return; }
+    // Step 8 — invite: optional step; skip to preview if already reached tickets.
+    // Step 9 — preview: default landing if all prior steps are satisfied.
+    setStep('preview');
   }
 
   // ── Autosave ────────────────────────────────────────────────────────────────

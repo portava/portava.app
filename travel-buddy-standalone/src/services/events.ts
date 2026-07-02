@@ -42,6 +42,8 @@ export interface EventAttendeeState {
 export interface EventSummary {
   id: string;
   hostId: string;
+  hostName: string | null;
+  hostAvatarUrl: string | null;
   title: string;
   description: string | null;
   locationName: string | null;
@@ -556,6 +558,15 @@ export async function reportEvent(
 }
 
 // ── Following / circle feed ───────────────────────────────────────────────────
+
+export async function listCircleEvents(
+  params: { limit?: number; cursor?: string } = {},
+): Promise<ApiResult<{ events: EventListItem[]; cursor?: string }>> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set('limit', String(params.limit));
+  if (params.cursor) q.set('cursor', params.cursor);
+  return apiCall(`/api/events/circles?${q.toString()}`);
+}
 
 export async function listFollowingEvents(
   params: { limit?: number; cursor?: string } = {},

@@ -678,9 +678,17 @@ router.get("/events", async (req, res) => {
     }
   }
 
+  // Batch-fetch host profiles for display on cards
+  const hostIds = [...new Set(filtered.map((e: any) => e.host_id as string))];
+  const hostProfileMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  if (hostIds.length > 0) {
+    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIds);
+    for (const p of (hps as any[]) ?? []) hostProfileMap[p.id as string] = p;
+  }
+
   res.json({
     events: filtered.map((ev: any) => ({
-      ...formatEvent(ev, user.id),
+      ...formatEvent(ev, user.id, { hostProfile: hostProfileMap[ev.host_id as string] }),
       myRsvp:  rsvpMap[ev.id] ?? null,
       isSaved: savedEventIds.has(ev.id as string),
     })),
@@ -957,6 +965,68 @@ router.get("/events/joined", async (req, res) => {
   if (error) { req.log.error({ err: error }, "joined events"); sendError(res, "db_error", error.message); return; }
 
   res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
+});
+
+// ── GET /api/events/circles ───────────────────────────────────────────────────
+// Events from circles the viewer belongs to (visibility = 'circle').
+
+router.get("/events/circles", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const cursor = (req.query.cursor as string) ?? null;
+
+  // Fetch all circle IDs the user belongs to (as member or owner)
+  const { data: memberRows } = await sc
+    .from("circle_members")
+    .select("circle_id")
+    .eq("user_id", user.id);
+
+  const circleIds = ((memberRows as any[]) ?? []).map((r: any) => r.circle_id as string);
+
+  if (circleIds.length === 0) {
+    res.json({ events: [], cursor: null });
+    return;
+  }
+
+  let query = sc
+    .from("events")
+    .select("*")
+    .in("circle_id", circleIds)
+    .not("state", "in", '("cancelled","archived","draft")')
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .limit(limit);
+
+  if (cursor) query = query.gt("starts_at", cursor);
+
+  const { data: events, error } = await query;
+
+  if (error) { req.log.error({ err: error }, "circle events"); sendError(res, "db_error", error.message); return; }
+
+  const evList = (events as any[]) ?? [];
+
+  // Batch host profiles
+  const hostIds2 = [...new Set(evList.map((e: any) => e.host_id as string))];
+  const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  if (hostIds2.length > 0) {
+    const { data: hps2 } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIds2);
+    for (const p of (hps2 as any[]) ?? []) hpMap[p.id as string] = p;
+  }
+
+  const nextCursor = evList.length === limit ? (evList[evList.length - 1].starts_at ?? null) : null;
+
+  res.json({
+    events: evList.map((e: any) => ({
+      ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
+      myRsvp: null,
+    })),
+    cursor: nextCursor,
+  });
 });
 
 // ── GET /api/events/saved ─────────────────────────────────────────────────────
@@ -2895,7 +2965,7 @@ router.get("/users/:userId/events", async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) {
+function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; hostProfile?: { name?: string | null; avatar_url?: string | null } }) {
   const isHost = ev.host_id === viewerId;
   const isParticipant = isHost || (opts?.goingRsvp ?? false);
   // Exact coordinates are only visible to: the host, or any viewer who has a
@@ -2905,6 +2975,8 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) 
   return {
     id:                  ev.id,
     hostId:              ev.host_id,
+    hostName:            opts?.hostProfile?.name ?? null,
+    hostAvatarUrl:       opts?.hostProfile?.avatar_url ?? null,
     title:               ev.title,
     description:         ev.description ?? null,
     locationName:        ev.location_name ?? null,

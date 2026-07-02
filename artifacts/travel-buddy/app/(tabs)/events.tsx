@@ -18,7 +18,7 @@ import {
   Bookmark, Users, FileEdit, Bell, Filter, Check, X,
 } from 'lucide-react-native';
 import {
-  listEvents, listFollowingEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
+  listEvents, listFollowingEvents, listCircleEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
   saveEvent, unsaveEvent, deleteDraft,
   type EventListItem, type EventDraft, type EventInvite,
 } from '../../src/services/events';
@@ -114,6 +114,7 @@ export default function EventsTabScreen() {
   const [weekendEvents, setWeekendEvents]     = useState<EventListItem[]>([]);
   const [nearMeEvents, setNearMeEvents]       = useState<EventListItem[]>([]);
   const [followingEvents, setFollowingEvents] = useState<EventListItem[]>([]);
+  const [circleEvents, setCircleEvents]       = useState<EventListItem[]>([]);
   const [savedEvents, setSavedEvents]         = useState<EventListItem[]>([]);
   const [drafts, setDrafts]                   = useState<EventDraft[]>([]);
   const [pendingInvites, setPendingInvites]   = useState<EventInvite[]>([]);
@@ -169,11 +170,12 @@ export default function EventsTabScreen() {
     const tomorrowParams = datePreset !== 'all' ? dateRange : tomorrowRange();
     const weekendParams = datePreset !== 'all' ? dateRange : weekendRange();
 
-    const [todayRes, tomorrowRes, weekendRes, followRes, savedRes, draftsRes, invitesRes] = await Promise.all([
+    const [todayRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, draftsRes, invitesRes] = await Promise.all([
       listEvents({ ...todayParams,   ...sharedFilters, limit: 10 }),
       listEvents({ ...tomorrowParams, ...sharedFilters, limit: 10 }),
       listEvents({ ...weekendParams, ...sharedFilters, limit: 10 }),
       listFollowingEvents({ limit: 10 }),
+      listCircleEvents({ limit: 10 }),
       getSavedEvents(1),
       getMyDrafts(),
       getMyEventInvites(),
@@ -183,6 +185,7 @@ export default function EventsTabScreen() {
     if (tomorrowRes.ok) setTomorrowEvents(tomorrowRes.data?.events ?? []);
     if (weekendRes.ok) setWeekendEvents(weekendRes.data?.events ?? []);
     if (followRes.ok) setFollowingEvents(followRes.data?.events ?? []);
+    if (circleRes.ok) setCircleEvents(circleRes.data?.events ?? []);
     if (savedRes.ok) {
       const evs = savedRes.data?.events ?? [];
       setSavedEvents(evs);
@@ -316,7 +319,8 @@ export default function EventsTabScreen() {
   const hasContent =
     todayEvents.length > 0 || tomorrowEvents.length > 0 ||
     weekendEvents.length > 0 || nearMeEvents.length > 0 ||
-    followingEvents.length > 0 ||
+    followingEvents.length > 0 || circleEvents.length > 0 ||
+    savedEvents.length > 0 ||
     Object.values(categoryRows).some((r) => r.length > 0);
 
   return (
@@ -617,6 +621,13 @@ export default function EventsTabScreen() {
             'From people you follow',
             <Users size={15} color={color.mute} />,
             followingEvents,
+          )}
+
+          {/* Circle Events */}
+          {renderSection(
+            'Circle Events',
+            <Users size={15} color={color.signal} />,
+            circleEvents,
           )}
 
           {/* Category discovery rows — only when no category filter and no date preset */}

@@ -153,8 +153,9 @@ export default function EventDetailScreen() {
   }
 
   async function handleSendRequest() {
-    await handleRequestJoin();
-    setHasPendingRequest(true);
+    const ok = await handleRequestJoin();
+    if (ok) setHasPendingRequest(true);
+    // if !ok the hook already showed an Alert — do not set pending
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
