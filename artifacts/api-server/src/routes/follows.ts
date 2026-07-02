@@ -248,13 +248,28 @@ router.get("/users/search", async (req, res) => {
     return;
   }
 
-  // Fetch matching profiles (ILIKE on name or handle), excluding the caller.
-  const { data: profiles, error: profErr } = await sc
+  // Optional city/country/language/interest filters
+  const filterCity     = (req.query.city     as string | undefined)?.trim() ?? null;
+  const filterCountry  = (req.query.country  as string | undefined)?.trim() ?? null;
+  const filterLanguage = (req.query.language as string | undefined)?.trim() ?? null;
+  const filterInterest = (req.query.interest as string | undefined)?.trim() ?? null;
+
+  // Fetch matching profiles (ILIKE on name, handle, or username), excluding the caller.
+  // Exclude deactivated/suspended/banned/deleted accounts.
+  let profileQuery = sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private")
-    .or(`name.ilike.${pattern},handle.ilike.${pattern}`)
+    .select("id, handle, username, name, avatar_url, is_private, account_status, home_city, home_country, spoken_languages, interests")
+    .or(`name.ilike.${pattern},handle.ilike.${pattern},username.ilike.${pattern}`)
     .neq("id", user.id)
+    .in("account_status", ["active"])
     .limit(limit);
+
+  if (filterCity)     profileQuery = profileQuery.ilike("home_city", `%${filterCity}%`);
+  if (filterCountry)  profileQuery = profileQuery.ilike("home_country", `%${filterCountry}%`);
+  if (filterInterest) profileQuery = profileQuery.contains("interests", [filterInterest]);
+  if (filterLanguage) profileQuery = profileQuery.contains("spoken_languages", [filterLanguage]);
+
+  const { data: profiles, error: profErr } = await profileQuery;
 
   if (profErr) {
     req.log.error({ err: profErr }, "user search failed");
@@ -294,6 +309,30 @@ router.get("/users/search", async (req, res) => {
   }
 
   if (blockQueryFailed) { res.status(200).json({ users: [] }); return; }
+
+  // Exclude users who have opted out of profile discovery.
+  // Fail-closed: if the privacy query fails we cannot guarantee the opt-out is
+  // respected, so we return an empty result set rather than exposing opted-out users.
+  try {
+    const { data: noDiscovery, error: privErr } = await sc
+      .from("profile_privacy_settings")
+      .select("user_id")
+      .in("user_id", ids)
+      .eq("allow_profile_discovery", false);
+    if (privErr) {
+      req.log.error({ err: privErr }, "search: privacy settings query failed; returning empty results (fail-closed)");
+      res.status(200).json({ users: [] });
+      return;
+    }
+    if (noDiscovery && (noDiscovery as any[]).length > 0) {
+      const noDiscoverySet = new Set((noDiscovery as any[]).map((r) => r.user_id as string));
+      rows.splice(0, rows.length, ...rows.filter((p: any) => !noDiscoverySet.has(p.id as string)));
+    }
+  } catch (e) {
+    req.log.error({ err: e }, "search: privacy settings threw; returning empty results (fail-closed)");
+    res.status(200).json({ users: [] });
+    return;
+  }
 
   // Follower counts and isFollowing state in parallel (single query each).
   const [followerEdgesRes, myFollowsRes] = await Promise.all([
@@ -534,6 +573,7 @@ router.get("/users/suggestions", async (req, res) => {
       .from("profiles")
       .select("id")
       .neq("id", user.id)
+      .in("account_status", ["active"])
       .order("created_at", { ascending: false })
       .limit(100);
 
@@ -574,16 +614,46 @@ router.get("/users/suggestions", async (req, res) => {
   // 6. Fetch pool profiles (display fields + interest fields) for scoring and rendering.
   //    We fetch the full pool here and slice to 10 after scoring, so that higher-overlap
   //    candidates from deeper in the shuffle can still surface in the final list.
+  //    Only active accounts (deactivated/suspended/banned users may appear in the follower
+  //    list after status changes — filter them out here).
   const { data: poolProfiles, error: profErr } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style")
-    .in("id", safeIds);
+    .select("id, handle, name, avatar_url, is_private, account_status, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style")
+    .in("id", safeIds)
+    .in("account_status", ["active"]);
 
   if (profErr) {
     req.log.error({ err: profErr }, "suggestions profiles query failed");
     res.status(200).json({ users: [] });
     return;
   }
+
+  // Filter out users who opted out of discovery.
+  // Fail-closed: if the privacy query fails we cannot guarantee the opt-out is
+  // respected, so we return an empty result set rather than exposing opted-out users.
+  const fetchedIds = (poolProfiles ?? []).map((p: any) => p.id as string);
+  let discoveryOptedOutSet = new Set<string>();
+  if (fetchedIds.length > 0) {
+    const { data: privRows, error: privErr } = await sc
+      .from("profile_privacy_settings")
+      .select("user_id")
+      .in("user_id", fetchedIds)
+      .eq("allow_profile_discovery", false);
+    if (privErr) {
+      req.log.error({ err: privErr }, "suggestions: privacy settings query failed; returning empty results (fail-closed)");
+      res.status(200).json({ users: [] });
+      return;
+    }
+    for (const row of (privRows ?? [])) {
+      discoveryOptedOutSet.add((row as any).user_id as string);
+    }
+  }
+  const visiblePoolProfiles = (poolProfiles ?? []).filter(
+    (p: any) => !discoveryOptedOutSet.has(p.id as string)
+  );
+  // Rebuild safeIds to match the filtered pool (preserves original shuffle order).
+  const visibleIdSet = new Set(visiblePoolProfiles.map((p: any) => p.id as string));
+  const filteredSafeIds = safeIds.filter((id) => visibleIdSet.has(id));
 
   // Score each candidate by travel-interest overlap with the caller.
   // Returns 0 for all when the caller's profile is sparse — no change in ordering.
@@ -598,7 +668,7 @@ router.get("/users/suggestions", async (req, res) => {
     callerLookingForSet.size > 0 ||
     !!callerComfortLevel ||
     !!callerPlanningStyle;
-  const poolProfileMap = new Map((poolProfiles ?? []).map((p: any) => [p.id as string, p]));
+  const poolProfileMap = new Map(visiblePoolProfiles.map((p: any) => [p.id as string, p]));
 
   function interestScore(p: any): number {
     if (!hasCallerInterests) return 0;
@@ -623,7 +693,7 @@ router.get("/users/suggestions", async (req, res) => {
 
   // Map id → interest score before sorting (reused later for reason label).
   const interestScores = new Map<string, number>(
-    safeIds.map((id) => [id, interestScore(poolProfileMap.get(id) ?? {})])
+    filteredSafeIds.map((id) => [id, interestScore(poolProfileMap.get(id) ?? {})])
   );
 
   // 7. Mutual connections: people the caller follows who also follow each candidate.
@@ -633,7 +703,7 @@ router.get("/users/suggestions", async (req, res) => {
   const mutualCounts: Record<string, number> = {};
   const mutualsByCandidate = new Map<string, string[]>();
   const myFollowingList = Array.from(alreadyFollowingSet);
-  const validSafeIds = safeIds.filter((id) => poolProfileMap.has(id));
+  const validSafeIds = filteredSafeIds.filter((id) => poolProfileMap.has(id));
   if (myFollowingList.length > 0) {
     try {
       const { data: mutualRows } = await sc

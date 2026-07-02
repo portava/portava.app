@@ -27,7 +27,7 @@ import { reportRateLimit } from "../lib/rateLimit";
 const router = Router();
 
 const TARGET_TYPES = [
-  "user", "message", "thread", "trip", "post", "place", "event",
+  "user", "profile", "message", "thread", "trip", "post", "place", "event",
 ] as const;
 
 const REASON_CODES = [
@@ -44,6 +44,16 @@ const CreateReportSchema = z.object({
   reason_detail: z.string().max(500).optional().nullable(),
   context_type:  z.string().optional().nullable(),
   context_id:    z.string().uuid().optional().nullable(),
+}).superRefine((val, ctx) => {
+  if (val.target_type === "profile") {
+    if (!val.reason_detail || val.reason_detail.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason_detail"],
+        message: "reason_detail is required for profile reports",
+      });
+    }
+  }
 });
 
 /* ===========================================================================

@@ -693,88 +693,6 @@ router.patch("/admin/safe-return/config", async (req, res) => {
   res.json({ ok: true, updated: results });
 });
 
-// ── Admin moderation summary ──────────────────────────────────────────────────
-//
-// GET /admin/users/:userId/moderation-summary
-//
-// Returns a full moderation profile for a user: account state, reports received
-// and filed, block/mute/restrict counts, active moderation actions, and audit log.
-
-router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
-  const admin = await requireAdmin(req, res);
-  if (!admin) return;
-  const { sc } = admin;
-
-  const { userId } = req.params;
-
-  const [
-    profileRes,
-    accountStateRes,
-    modActionsRes,
-    reportsReceivedRes,
-    reportsFiledRes,
-    blocksRes,
-    mutesRes,
-    restrictsRes,
-    trustRes,
-  ] = await Promise.all([
-    sc.from("profiles")
-      .select("id, handle, name, avatar_url, role, verification_status, created_at")
-      .eq("id", userId)
-      .maybeSingle(),
-    sc.from("user_account_states")
-      .select("state, reason, expires_at, set_by, created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(5),
-    sc.from("moderation_actions")
-      .select("id, action_type, reason, performed_by, created_at")
-      .eq("target_user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(50),
-    sc.from("reports")
-      .select("id, target_type, reason_code, severity, status, created_at")
-      .eq("target_id",  userId)
-      .eq("target_type", "user")
-      .order("created_at", { ascending: false })
-      .limit(50),
-    sc.from("reports")
-      .select("id, target_type, target_id, reason_code, severity, status, created_at")
-      .eq("reporter_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(20),
-    sc.from("blocks")
-      .select("id", { count: "exact", head: true })
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
-    sc.from("user_mutes")
-      .select("id", { count: "exact", head: true })
-      .eq("muter_id", userId),
-    sc.from("user_restrictions")
-      .select("id", { count: "exact", head: true })
-      .eq("restrictor_id", userId),
-    sc.from("trust_restrictions")
-      .select("id, restriction_type, reason, lifted_at, created_at")
-      .eq("user_id", userId)
-      .is("lifted_at", null),
-  ]);
-
-  if (!profileRes.data) {
-    sendError(res, "not_found", "User not found");
-    return;
-  }
-
-  res.json({
-    profile:          profileRes.data,
-    accountStates:    accountStateRes.data  ?? [],
-    moderationActions: modActionsRes.data   ?? [],
-    reportsReceived:  reportsReceivedRes.data ?? [],
-    reportsFiled:     reportsFiledRes.data  ?? [],
-    blockCount:       blocksRes.count        ?? 0,
-    muteCount:        mutesRes.count         ?? 0,
-    restrictCount:    restrictsRes.count     ?? 0,
-    trustRestrictions: (trustRes as any).data ?? [],
-  });
-});
 
 // ── Admin moderation action ───────────────────────────────────────────────────
 //
@@ -895,6 +813,609 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
   }
 
   res.json({ action: auditRow, sideEffects });
+});
+
+// ── Admin profile moderation — individual action routes ───────────────────────
+//
+// Convenience endpoints that wrap the existing PATCH /admin/users/:userId/moderation-action
+// with a structured audit log + targeted account_status mutation.
+// All actions require admin role and write to the moderation_actions audit table.
+
+const PROFILE_MEDIA_BUCKET = "profile-media";
+
+async function logModerationAction(
+  sc: any,
+  targetUserId: string,
+  adminUserId: string,
+  actionType: string,
+  reason: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await sc.from("moderation_actions").insert({
+    target_user_id: targetUserId,
+    action_type: actionType,
+    reason: reason ?? null,
+    performed_by: adminUserId,
+    created_at: new Date().toISOString(),
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** GET /admin/users/:userId/summary — full profile + trust/safety context for admin */
+router.get("/admin/users/:userId/summary", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+  const { userId } = req.params;
+
+  const [
+    profileRes,
+    accountStateRes,
+    modActionsRes,
+    reportsReceivedRes,
+    reportsFiledRes,
+    trustRes,
+    blocksRes,
+    mutesRes,
+    restrictsRes,
+  ] = await Promise.all([
+    sc.from("profiles")
+      .select("id, handle, username, name, display_name, bio, avatar_url, cover_photo_url, home_city, home_country, role, verified, verification_status, account_status, created_at, spoken_languages, interests")
+      .eq("id", userId)
+      .maybeSingle(),
+    sc.from("user_account_states")
+      .select("state, reason, expires_at, set_by, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    sc.from("moderation_actions")
+      .select("id, action_type, reason, performed_by, created_at")
+      .eq("target_user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, reason_code, severity, status, created_at")
+      .eq("target_id", userId)
+      .in("target_type", ["user", "profile"])
+      .order("created_at", { ascending: false })
+      .limit(50),
+    sc.from("reports")
+      .select("id, target_type, target_id, reason_code, severity, status, created_at")
+      .eq("reporter_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    sc.from("trust_restrictions")
+      .select("id, restriction_type, reason, lifted_at, created_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null),
+    sc.from("blocks")
+      .select("id", { count: "exact", head: true })
+      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
+    sc.from("user_mutes")
+      .select("id", { count: "exact", head: true })
+      .eq("muter_id", userId),
+    sc.from("user_restrictions")
+      .select("id", { count: "exact", head: true })
+      .eq("restrictor_id", userId),
+  ]);
+
+  if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+
+  res.json({
+    profile:           profileRes.data,
+    accountStates:     accountStateRes.data    ?? [],
+    moderationActions: modActionsRes.data      ?? [],
+    reportsReceived:   reportsReceivedRes.data ?? [],
+    reportsFiled:      reportsFiledRes.data    ?? [],
+    trustRestrictions: (trustRes as any).data  ?? [],
+    blockCount:        blocksRes.count          ?? 0,
+    muteCount:         mutesRes.count           ?? 0,
+    restrictCount:     restrictsRes.count       ?? 0,
+  });
+});
+
+/** POST /admin/users/:userId/verify */
+router.post("/admin/users/:userId/verify", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+
+  // Audit first (fail-closed): if audit insert fails, do not apply the action
+  const auditR = await logModerationAction(sc, userId, adminUserId, "verify", (req.body as any)?.reason ?? null);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc.from("profiles")
+    .update({ verified: true, verification_status: "verified", verified_at: now })
+    .eq("id", userId);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, verified: true });
+});
+
+/** POST /admin/users/:userId/unverify */
+router.post("/admin/users/:userId/unverify", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "unverify", (req.body as any)?.reason ?? null);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error } = await sc.from("profiles")
+    .update({ verified: false, verification_status: "unverified", verified_at: null })
+    .eq("id", userId);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, verified: false });
+});
+
+/** POST /admin/users/:userId/warn — record a warning (does not change account status) */
+router.post("/admin/users/:userId/warn", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  const { data, error } = await sc.from("moderation_actions").insert({
+    target_user_id: userId,
+    action_type: "warn",
+    reason,
+    performed_by: adminUserId,
+    created_at: new Date().toISOString(),
+  }).select("id, action_type, reason, performed_by, created_at").single();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.status(201).json({ action: data });
+});
+
+/** POST /admin/users/:userId/restrict — restrict user interactions */
+router.post("/admin/users/:userId/restrict", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error: stateErr } = await sc.from("user_account_states")
+    .upsert({ user_id: userId, state: "restricted", reason, set_by: adminUserId, created_at: new Date().toISOString() }, { onConflict: "user_id,state" });
+  if (stateErr) { sendError(res, "db_error", stateErr.message); return; }
+
+  res.json({ ok: true, restricted: true });
+});
+
+/** POST /admin/users/:userId/suspend */
+router.post("/admin/users/:userId/suspend", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+  const expiresAt: string | null = (req.body as any)?.expires_at ?? null;
+  const now = new Date().toISOString();
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error: profileErr } = await sc
+    .from("profiles")
+    .update({ account_status: "suspended" })
+    .eq("id", userId);
+
+  if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+
+  await sc.from("user_account_states")
+    .upsert({ user_id: userId, state: "suspended", reason, expires_at: expiresAt, set_by: adminUserId, created_at: now }, { onConflict: "user_id,state" })
+    .then(undefined, () => {});
+
+  res.json({ ok: true, suspended: true });
+});
+
+/** POST /admin/users/:userId/ban */
+router.post("/admin/users/:userId/ban", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+  const now = new Date().toISOString();
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error: profileErr } = await sc
+    .from("profiles")
+    .update({ account_status: "banned" })
+    .eq("id", userId);
+
+  if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+
+  await sc.from("user_account_states")
+    .upsert({ user_id: userId, state: "banned", reason, expires_at: null, set_by: adminUserId, created_at: now }, { onConflict: "user_id,state" })
+    .then(undefined, () => {});
+
+  res.json({ ok: true, banned: true });
+});
+
+/** POST /admin/users/:userId/restore — lift suspension or ban */
+router.post("/admin/users/:userId/restore", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+  const now = new Date().toISOString();
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "account_restored", reason);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error: profileErr } = await sc
+    .from("profiles")
+    .update({ account_status: "active" })
+    .eq("id", userId);
+
+  if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+
+  await sc.from("user_account_states")
+    .upsert({ user_id: userId, state: "active", reason, set_by: adminUserId, updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  res.json({ ok: true, restored: true });
+});
+
+/** POST /admin/users/:userId/restrict-bio — clear and lock the user's bio */
+router.post("/admin/users/:userId/restrict-bio", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "bio_restricted", reason ?? "Bio removed by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const { error } = await sc.from("profiles").update({ bio: null }).eq("id", userId);
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, bioRestricted: true });
+});
+
+/** POST /admin/users/:userId/restrict-messaging — prevent user from initiating messages */
+router.post("/admin/users/:userId/restrict-messaging", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "messaging_restricted", reason ?? "Messaging restricted by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc.from("profile_privacy_settings")
+    .upsert({ user_id: userId, allow_messages_from: "nobody", updated_at: now }, { onConflict: "user_id" });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, messagingRestricted: true });
+});
+
+/** POST /admin/users/:userId/restrict-visibility — force profile to private */
+router.post("/admin/users/:userId/restrict-visibility", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "visibility_restricted", reason ?? "Profile visibility restricted by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc.from("profile_privacy_settings")
+    .upsert({ user_id: userId, profile_visibility: "private", allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, visibilityRestricted: true });
+});
+
+/** POST /admin/users/:userId/hide-posts — hide all posts from public discovery */
+router.post("/admin/users/:userId/hide-posts", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "posts_hidden", reason ?? "Posts hidden by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { error } = await sc.from("profile_privacy_settings")
+    .upsert({ user_id: userId, show_posts: false, updated_at: now }, { onConflict: "user_id" });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true, postsHidden: true });
+});
+
+/** DELETE /admin/users/:userId/avatar — remove a user's avatar (admin action) */
+router.delete("/admin/users/:userId/avatar", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Avatar removed by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  // Fetch existing avatar URL and delete from storage (fail-open)
+  try {
+    const { data: profileRow } = await sc.from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
+    const oldUrl: string | null = (profileRow as any)?.avatar_url ?? null;
+    if (oldUrl) {
+      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
+      const idx = oldUrl.indexOf(marker);
+      if (idx !== -1) {
+        const oldPath = oldUrl.slice(idx + marker.length);
+        await sc.storage.from(PROFILE_MEDIA_BUCKET).remove([oldPath]);
+      }
+    }
+  } catch { /* storage delete is best-effort */ }
+
+  const { error } = await sc.from("profiles").update({ avatar_url: null }).eq("id", userId);
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true });
+});
+
+/** DELETE /admin/users/:userId/cover — remove a user's cover photo (admin action) */
+router.delete("/admin/users/:userId/cover", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const { userId } = req.params;
+  const reason: string | null = (req.body as any)?.reason ?? null;
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Cover photo removed by admin");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  try {
+    const { data: profileRow } = await sc.from("profiles").select("cover_photo_url").eq("id", userId).maybeSingle();
+    const oldUrl: string | null = (profileRow as any)?.cover_photo_url ?? null;
+    if (oldUrl) {
+      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
+      const idx = oldUrl.indexOf(marker);
+      if (idx !== -1) {
+        const oldPath = oldUrl.slice(idx + marker.length);
+        await sc.storage.from(PROFILE_MEDIA_BUCKET).remove([oldPath]);
+      }
+    }
+  } catch { /* storage delete is best-effort */ }
+
+  const { error } = await sc.from("profiles").update({ cover_photo_url: null }).eq("id", userId);
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ ok: true });
+});
+
+// ── Admin report moderation routes ────────────────────────────────────────────
+//
+// GET  /admin/reports              — paginated list (filterable by type, status)
+// POST /admin/reports/:id/resolve  — mark resolved with action + notes
+// POST /admin/reports/:id/dismiss  — dismiss with notes
+
+/** GET /admin/reports — paginated report list with optional type/status filters */
+router.get("/admin/reports", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const page   = Math.max(1, Number(req.query.page)  || 1);
+  const limit  = Math.min(100, Number(req.query.limit) || 50);
+  const type   = (req.query.type   as string | undefined) || null;
+  const status = (req.query.status as string | undefined) || "open";
+
+  let query = sc
+    .from("reports")
+    .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, severity, status, created_at, reviewed_at, reviewed_by, moderation_notes", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (type)   query = query.eq("target_type", type);
+  if (status) query = query.eq("status", status);
+
+  const { data, error, count } = await query;
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ reports: data ?? [], total: count ?? 0, page });
+});
+
+const resolveReportSchema = z.object({
+  action: z.string().max(100),
+  notes:  z.string().max(1000).optional().nullable(),
+});
+
+/** POST /admin/reports/:id/resolve */
+router.post("/admin/reports/:id/resolve", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  const parsed = resolveReportSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+
+  // Fetch report to get target_id before writing audit (fail-closed)
+  const { data: reportRow, error: fetchErr } = await sc
+    .from("reports")
+    .select("id, target_id, status")
+    .eq("id", req.params.id)
+    .neq("status", "resolved")
+    .maybeSingle();
+
+  if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or already resolved"); return; }
+
+  // Audit first (fail-closed)
+  const targetId: string = (reportRow as any).target_id as string;
+  const auditR = await logModerationAction(sc, targetId, adminUserId, parsed.data.action, parsed.data.notes ?? null);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { data, error } = await sc
+    .from("reports")
+    .update({ status: "resolved", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: parsed.data.notes ?? null, updated_at: now })
+    .eq("id", req.params.id)
+    .select("id, status, reviewed_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ report: { id: (data as any).id, status: (data as any).status, reviewedAt: (data as any).reviewed_at } });
+});
+
+/** POST /admin/reports/:id/dismiss */
+router.post("/admin/reports/:id/dismiss", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+  const notes: string | null = (req.body as any)?.notes ?? null;
+
+  // Fetch report to get target_id before writing audit (fail-closed)
+  const { data: reportRow, error: fetchErr } = await sc
+    .from("reports")
+    .select("id, target_id, status")
+    .eq("id", req.params.id)
+    .eq("status", "open")
+    .maybeSingle();
+
+  if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or not in open status"); return; }
+
+  // Audit first (fail-closed)
+  const targetId: string = (reportRow as any).target_id as string;
+  const auditR = await logModerationAction(sc, targetId, adminUserId, "report_dismissed", notes);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  const now = new Date().toISOString();
+  const { data, error } = await sc
+    .from("reports")
+    .update({ status: "dismissed", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: notes, updated_at: now })
+    .eq("id", req.params.id)
+    .select("id, status, reviewed_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ report: data });
+});
+
+// ── Admin deletion request queue ──────────────────────────────────────────────
+//
+// GET  /admin/deletion-requests           — pending deletion requests
+// POST /admin/deletion-requests/:id/execute — anonymize + delete
+
+/** GET /admin/deletion-requests — pending account deletion requests */
+router.get("/admin/deletion-requests", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(100, Number(req.query.limit) || 50);
+
+  const { data, error } = await sc
+    .from("user_deletion_requests")
+    .select("id, user_id, requested_at, scheduled_at, status")
+    .eq("status", "pending")
+    .order("scheduled_at", { ascending: true })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ requests: data ?? [], total: (data ?? []).length });
+});
+
+/** POST /admin/deletion-requests/:id/execute — anonymize user data and mark completed */
+router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  const { data: reqRow, error: reqErr } = await sc
+    .from("user_deletion_requests")
+    .select("id, user_id, status")
+    .eq("id", req.params.id)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (reqErr) { sendError(res, "db_error", reqErr.message); return; }
+  if (!reqRow) { sendError(res, "not_found", "Deletion request not found or already executed"); return; }
+
+  const userId = (reqRow as any).user_id as string;
+  const now = new Date().toISOString();
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, userId, adminUserId, "account_deleted", "Account deletion executed");
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  // Delete existing profile media from Storage before nulling the DB fields
+  try {
+    const { data: profileRow } = await sc
+      .from("profiles")
+      .select("avatar_url, cover_photo_url")
+      .eq("id", userId)
+      .maybeSingle();
+    const avatarUrl: string | null = (profileRow as any)?.avatar_url ?? null;
+    const coverUrl:  string | null = (profileRow as any)?.cover_photo_url ?? null;
+    const pathsToDelete: string[] = [];
+    for (const url of [avatarUrl, coverUrl]) {
+      if (!url) continue;
+      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
+      const idx = url.indexOf(marker);
+      if (idx !== -1) pathsToDelete.push(url.slice(idx + marker.length));
+    }
+    if (pathsToDelete.length > 0) {
+      await sc.storage.from(PROFILE_MEDIA_BUCKET).remove(pathsToDelete);
+    }
+  } catch { /* fail-open: storage deletion is best-effort during account deletion */ }
+
+  // Anonymise profile: null out PII fields, set status to deleted
+  const { error: profileErr } = await sc.from("profiles").update({
+    handle:          null,
+    username:        null,
+    display_name:    "Deleted User",
+    name:            "Deleted User",
+    bio:             null,
+    avatar_url:      null,
+    cover_photo_url: null,
+    home_city:       null,
+    home_country:    null,
+    current_city:    null,
+    account_status:  "deleted",
+  }).eq("id", userId);
+
+  if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+
+  // Mark state as deleted
+  await sc.from("user_account_states")
+    .upsert({ user_id: userId, state: "deleted", reason: "Account deletion executed", set_by: adminUserId, created_at: now }, { onConflict: "user_id,state" })
+    .then(undefined, () => {});
+
+  // Mark deletion request completed
+  const { error: updateErr } = await sc
+    .from("user_deletion_requests")
+    .update({ status: "completed", executed_at: now, executed_by: adminUserId })
+    .eq("id", req.params.id);
+
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  res.json({ ok: true, userId, executedAt: now });
 });
 
 // ── Dev interaction tester ────────────────────────────────────────────────────

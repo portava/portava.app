@@ -198,6 +198,15 @@ router.get("/users/:username/passport", async (req, res) => {
     return;
   }
 
+  // Fire-and-forget: track authenticated non-owner profile views for private analytics.
+  // Only fires when the viewer can actually see the full profile (not blocked / limited_preview).
+  // Errors are suppressed so view tracking never blocks the response.
+  if (viewerId && !isMe) {
+    sc.from("profile_views")
+      .insert({ target_id: targetId, viewer_id: viewerId, viewed_at: new Date().toISOString() })
+      .then(undefined, () => {});
+  }
+
   // ── Viewer relationship state ──────────────────────────────────────────────
   let viewer: Record<string, any> = buildDefaultViewer(isMe, privacySettings);
 

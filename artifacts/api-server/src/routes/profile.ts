@@ -57,6 +57,24 @@ const PROFILE_COLUMNS =
 /** Fallback: select everything that exists; mapProfile handles every field with ?? null. */
 const PROFILE_COLUMNS_FALLBACK = "*";
 
+/** Compute profile completeness score (0–100) from profile row + stamp/trip presence. */
+function computeCompleteness(profile: any, hasStamp: boolean, hasTrip: boolean): { score: number; missing: string[] } {
+  const checks: Array<{ key: string; ok: boolean }> = [
+    { key: "avatar",      ok: !!profile.avatar_url },
+    { key: "displayName", ok: !!(profile.display_name || profile.name) },
+    { key: "bio",         ok: !!(profile.bio && (profile.bio as string).trim().length > 0) },
+    { key: "homeCountry", ok: !!profile.home_country },
+    { key: "languages",   ok: Array.isArray(profile.spoken_languages) && (profile.spoken_languages as unknown[]).length > 0 },
+    { key: "interests",   ok: Array.isArray(profile.interests) && (profile.interests as unknown[]).length > 0 },
+    { key: "stamp",       ok: hasStamp },
+    { key: "trip",        ok: hasTrip },
+    { key: "verified",    ok: profile.verified === true },
+  ];
+  const missing = checks.filter((c) => !c.ok).map((c) => c.key);
+  const score   = Math.round((checks.filter((c) => c.ok).length / checks.length) * 100);
+  return { score, missing };
+}
+
 function mapProfile(r: any) {
   return {
     id: r.id,
@@ -98,13 +116,77 @@ function mapProfile(r: any) {
 }
 
 /* ===========================================================================
- * GET /me/profile — full own profile
+ * GET /me/profile/analytics — private owner analytics (7d / 30d views, follower growth)
+ * ===========================================================================
+ * Only the profile owner can call this. Never exposes viewer identity.
+ */
+router.get("/me/profile/analytics", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = Date.now();
+  const d7  = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
+  const d30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [views7Res, views30Res, followers7Res, followers30Res] = await Promise.allSettled([
+    sc.from("profile_views")
+      .select("id", { count: "exact", head: true })
+      .eq("target_id", user.id)
+      .neq("viewer_id", user.id)
+      .gte("viewed_at", d7),
+    sc.from("profile_views")
+      .select("id", { count: "exact", head: true })
+      .eq("target_id", user.id)
+      .neq("viewer_id", user.id)
+      .gte("viewed_at", d30),
+    sc.from("user_follows")
+      .select("id", { count: "exact", head: true })
+      .eq("following_id", user.id)
+      .gte("created_at", d7),
+    sc.from("user_follows")
+      .select("id", { count: "exact", head: true })
+      .eq("following_id", user.id)
+      .gte("created_at", d30),
+  ]);
+
+  // post_impressions_7d: count of impression events logged in post_impressions table.
+  // Fails open — returns 0 if the table doesn't exist yet (pre-migration 0070 environments).
+  const postImpressionsRes = await sc
+    .from("post_impressions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .gte("viewed_at", d7)
+    .then(
+      (r: any) => (r.count as number | null) ?? 0,
+      () => 0,
+    );
+
+  const profileViews7d   = views7Res.status    === "fulfilled" ? (views7Res.value.count    ?? 0) : 0;
+  const profileViews30d  = views30Res.status   === "fulfilled" ? (views30Res.value.count   ?? 0) : 0;
+  const followerDelta7d  = followers7Res.status === "fulfilled" ? (followers7Res.value.count ?? 0) : 0;
+  const followerDelta30d = followers30Res.status === "fulfilled" ? (followers30Res.value.count ?? 0) : 0;
+
+  res.status(200).json({
+    profileViews: { sevenDay: profileViews7d, thirtyDay: profileViews30d },
+    followerGrowth: { sevenDay: followerDelta7d, thirtyDay: followerDelta30d },
+    postImpressions7d: postImpressionsRes,
+  });
+});
+
+/* ===========================================================================
+ * GET /me/profile — full own profile (with completeness score)
  * ===========================================================================
  */
 router.get("/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
+
+  const sc = getServiceClient();
 
   let { data, error } = await client
     .from("profiles")
@@ -129,7 +211,18 @@ router.get("/me/profile", async (req, res) => {
     sendError(res, "not_found", "Profile not found");
     return;
   }
-  res.status(200).json(mapProfile(data));
+
+  // Completeness score: parallel stamp + trip existence checks (fail-open)
+  const [stampRes, tripRes] = await Promise.allSettled([
+    sc ? sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
+    sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
+  ]);
+  const hasStamp = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
+  const hasTrip  = tripRes.status  === "fulfilled" && ((tripRes.value  as any).count ?? 0) > 0;
+
+  const completeness = computeCompleteness(data, hasStamp, hasTrip);
+
+  res.status(200).json({ ...mapProfile(data), completeness });
 });
 
 /* ===========================================================================
@@ -410,6 +503,21 @@ router.post(
 
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
+    // Delete existing avatar file(s) before uploading new one to avoid orphaned files
+    try {
+      const { data: existingProfile } = await sc
+        .from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+      const oldUrl: string | null = (existingProfile as any)?.avatar_url ?? null;
+      if (oldUrl) {
+        const marker = `/object/public/${AVATAR_BUCKET}/`;
+        const idx = oldUrl.indexOf(marker);
+        if (idx !== -1) {
+          const oldPath = oldUrl.slice(idx + marker.length);
+          await sc.storage.from(AVATAR_BUCKET).remove([oldPath]);
+        }
+      }
+    } catch { /* fail-open: old file deletion is best-effort */ }
+
     const { randomUUID } = await import("crypto");
     const uuid = randomUUID();
     const path = `avatars/${user.id}/${uuid}.${ext}`;
@@ -480,6 +588,21 @@ router.post(
 
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
+    // Delete existing cover file (any extension) before uploading new one
+    try {
+      const { data: existingProfile } = await sc
+        .from("profiles").select("cover_photo_url").eq("id", user.id).maybeSingle();
+      const oldUrl: string | null = (existingProfile as any)?.cover_photo_url ?? null;
+      if (oldUrl) {
+        const marker = `/object/public/${AVATAR_BUCKET}/`;
+        const idx = oldUrl.indexOf(marker);
+        if (idx !== -1) {
+          const oldPath = oldUrl.slice(idx + marker.length);
+          await sc.storage.from(AVATAR_BUCKET).remove([oldPath]);
+        }
+      }
+    } catch { /* fail-open: old file deletion is best-effort */ }
+
     const path = `covers/${user.id}/cover.${ext}`;
 
     const { error } = await sc.storage
@@ -523,6 +646,70 @@ router.put("/me/push-token", async (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+/* ===========================================================================
+ * POST /me/reactivate — re-activate a self-deactivated account
+ * ===========================================================================
+ * Only works when account was self-deactivated (state = 'deactivated').
+ * Admin-suspended or admin-banned accounts cannot self-reactivate.
+ */
+router.post("/me/reactivate", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Fail closed: check profiles.account_status directly — this is the authoritative field
+  const { data: profileRow, error: profileCheckErr } = await sc
+    .from("profiles")
+    .select("account_status")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileCheckErr) {
+    req.log.error({ err: profileCheckErr }, "reactivate: failed to check account status");
+    sendError(res, "db_error", "Could not verify account status");
+    return;
+  }
+  if (!profileRow) {
+    sendError(res, "not_found", "Profile not found");
+    return;
+  }
+
+  const currentStatus = (profileRow as any).account_status as string;
+  if (currentStatus !== "deactivated") {
+    // suspended/banned/deleted accounts cannot self-reactivate
+    sendError(res, "forbidden", "Account cannot be self-reactivated. Please contact support.");
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  // Fail closed: if the profile update fails, return an error (don't swallow it)
+  const { error: profileUpdateErr } = await sc
+    .from("profiles")
+    .update({ account_status: "active" })
+    .eq("id", user.id);
+
+  if (profileUpdateErr) {
+    req.log.error({ err: profileUpdateErr }, "reactivate: profile update failed");
+    sendError(res, "db_error", "Failed to reactivate account");
+    return;
+  }
+
+  // Secondary writes are best-effort after the primary write succeeds
+  sc.from("user_account_states")
+    .upsert({ user_id: user.id, state: "active", updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  sc.from("profile_privacy_settings")
+    .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  res.status(200).json({ reactivated: true });
 });
 
 /* ===========================================================================
