@@ -542,6 +542,16 @@ router.get("/discovery", async (req, res) => {
       ? { lat: latParam, lng: lngParam }
       : null;
 
+  // User's actual GPS position — used ONLY to recompute distanceKm for nearest sort.
+  // Never used as the Overpass query centre or for geocoding; that always uses the
+  // destination coordinates so cache keys and result sets stay destination-scoped.
+  const userLatParam = req.query.userLat ? parseFloat(req.query.userLat as string) : null;
+  const userLngParam = req.query.userLng ? parseFloat(req.query.userLng as string) : null;
+  const userCoords =
+    userLatParam != null && !isNaN(userLatParam) && userLngParam != null && !isNaN(userLngParam)
+      ? { lat: userLatParam, lng: userLngParam }
+      : null;
+
   // Optional auth — enrich with DiscoveryLocationContext when present.
   // When authenticated + no destination param, we use discoveryCtx.targetCity as
   // the effective destination so context-driven modes (near_me/going_soon) work
@@ -610,7 +620,10 @@ router.get("/discovery", async (req, res) => {
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
-  const sortBy    = req.query.sortBy === "rating" ? "rating" : req.query.sortBy === "popular" ? "popular" : null;
+  const sortBy    = req.query.sortBy === "rating" ? "rating"
+    : req.query.sortBy === "popular" ? "popular"
+    : req.query.sortBy === "nearest" ? "nearest"
+    : null;
 
   // ── Age filter params ──────────────────────────────────────────────────────
   const VALID_AGE_FILTERS = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
@@ -691,6 +704,9 @@ router.get("/discovery", async (req, res) => {
     if (sortBy === "popular") {
       list = [...list].sort((a, b) => (b.savedCount ?? 0) - (a.savedCount ?? 0));
     }
+    if (sortBy === "nearest") {
+      list = [...list].sort((a, b) => (a.distanceKm ?? 99999) - (b.distanceKm ?? 99999));
+    }
     return list;
   }
 
@@ -705,9 +721,21 @@ router.get("/discovery", async (req, res) => {
   };
 
   if (cached && isFresh(cached)) {
-    // OSM results are cached; DB places are always re-queried (they change more often)
-    const dbPlaces = await queryDbPlaces(destination, category, clientCoords?.lat ?? null, clientCoords?.lng ?? null);
-    const merged   = mergeAndDedup(cached.places, dbPlaces);
+    // OSM results are cached; DB places are always re-queried (they change more often).
+    // Use userCoords for distance computation so DB places are measured from the user's
+    // actual position when userCoords are present; fall back to clientCoords otherwise.
+    const distRef = userCoords ?? clientCoords;
+    const dbPlaces = await queryDbPlaces(destination, category, distRef?.lat ?? null, distRef?.lng ?? null);
+    // When sortBy=nearest and user coords are available, recompute distanceKm from
+    // the user's actual position — cached OSM places store distance from destination centre.
+    const osmWithDist = sortBy === "nearest" && distRef
+      ? cached.places.map((p) =>
+          p.lat != null && p.lng != null
+            ? { ...p, distanceKm: Math.round(haversineKm(distRef.lat, distRef.lng, p.lat, p.lng) * 10) / 10 }
+            : p,
+        )
+      : cached.places;
+    const merged   = mergeAndDedup(osmWithDist, dbPlaces);
     const filtered = applyFilters(merged);
     const slice    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     res.json({
@@ -725,13 +753,27 @@ router.get("/discovery", async (req, res) => {
       return;
     }
 
-    // Query OSM and DB in parallel for speed
+    // Query OSM and DB in parallel for speed.
+    // DB distance computation uses userCoords when available so that nearest
+    // sort measures from the user's actual position. OSM always queries from
+    // the destination centre — this is what gets cached and must not use user coords.
+    const distRef = userCoords ?? coords;
     const [osmPlaces, dbPlaces] = await Promise.all([
       queryOverpass(coords.lat, coords.lng, radiusM, category),
-      queryDbPlaces(destination, category, coords.lat, coords.lng),
+      queryDbPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
 
-    const places = mergeAndDedup(osmPlaces, dbPlaces);
+    // When sortBy=nearest, recompute OSM place distances from the user's position
+    // (OSM query ran from destination centre; cached entry will too on next request).
+    const osmForMerge = sortBy === "nearest" && userCoords
+      ? osmPlaces.map((p) =>
+          p.lat != null && p.lng != null
+            ? { ...p, distanceKm: Math.round(haversineKm(userCoords.lat, userCoords.lng, p.lat, p.lng) * 10) / 10 }
+            : p,
+        )
+      : osmPlaces;
+
+    const places = mergeAndDedup(osmForMerge, dbPlaces);
 
     // Only cache when we have results — avoids locking out a destination for
     // 2 hours if Overpass timed out or returned nothing transiently.

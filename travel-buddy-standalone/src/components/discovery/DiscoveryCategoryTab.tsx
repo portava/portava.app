@@ -291,7 +291,14 @@ export function DiscoveryCategoryTab({
     if (reset) setLoading(true);
     setError(null);
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng);
+    // Pass the user's actual coordinates as separate userLat/userLng params when
+    // sortBy=nearest so the backend can recompute distances from the user's position.
+    // The lat/lng params always remain the destination coordinates — the Overpass query
+    // centre and cache key must never use user coords.
+    const nearestUserLat = currentFilters.sortBy === 'nearest' ? userLat : null;
+    const nearestUserLng = currentFilters.sortBy === 'nearest' ? userLng : null;
+
+    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
     setLoading(false);
     setRefreshing(false);
@@ -306,7 +313,7 @@ export function DiscoveryCategoryTab({
     setTotal(res.data.total);
     setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
-  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, userLat, userLng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPlaces([]);

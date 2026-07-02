@@ -262,6 +262,10 @@ export async function getDiscoveryPlaces(
   customMaxAge?: number | null,
   lat?: number | null,
   lng?: number | null,
+  /** User's actual GPS position — used by the backend only to recompute distances
+   *  for nearest sort. Never used as the Overpass query centre or for geocoding. */
+  userLat?: number | null,
+  userLng?: number | null,
 ): Promise<{ ok: true; data: DiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -280,6 +284,8 @@ export async function getDiscoveryPlaces(
     ...(ageFilter === 'custom' && customMaxAge != null ? { customMaxAge: String(customMaxAge) } : {}),
     ...(lat != null ? { lat: String(lat) } : {}),
     ...(lng != null ? { lng: String(lng) } : {}),
+    ...(userLat != null ? { userLat: String(userLat) } : {}),
+    ...(userLng != null ? { userLng: String(userLng) } : {}),
   });
 
   try {

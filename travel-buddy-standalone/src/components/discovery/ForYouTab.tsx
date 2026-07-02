@@ -155,8 +155,17 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
     if (!isRefresh) setLoading(true);
 
+    // Pass user's actual coords as separate userLat/userLng params when sortBy=nearest.
+    // lat/lng always remain the destination coords — Overpass query centre must not use user position.
+    const nearestUserLat = sortBy === 'nearest' ? userLat : null;
+    const nearestUserLng = sortBy === 'nearest' ? userLng : null;
+
     // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
-    const osmPromise = getDiscoveryPlaces(destination, 'for_you', { radiusKm: 25, openNow: false, minRating: null }, 1, contextMode, null, null, null, lat, lng);
+    const osmPromise = getDiscoveryPlaces(
+      destination, 'for_you',
+      { radiusKm: 25, openNow: false, minRating: null, sortBy: sortBy ?? null },
+      1, contextMode, null, null, null, lat, lng, nearestUserLat, nearestUserLng,
+    );
 
     // Show OSM content the instant it resolves — clears skeleton immediately.
     osmPromise.then((osm) => {
@@ -177,16 +186,16 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
-  }, [destination, isAuthed]);
+  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode]);
 
-  // Reset state and start loading when destination or auth changes.
-  // load() identity only changes with destination/isAuthed, so this effect
-  // fires exactly when the user switches city or logs in/out.
+  // Reset state and start loading when destination, auth, or sort/coord changes.
+  // load() identity changes when any dependency changes, so this effect fires
+  // when the user switches city, logs in/out, or changes the sort filter.
   useEffect(() => {
     setItems([]);
     setSource('none');
     load(false);
-  }, [destination, isAuthed, load]);
+  }, [load]);
 
   const handleRefresh = () => {
     setRefreshing(true);
