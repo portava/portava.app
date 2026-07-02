@@ -1,18 +1,23 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, Share, StyleSheet } from 'react-native';
+import {
+  View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
+  Image, ActivityIndicator,
+} from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as Linking from 'expo-linking';
-import { MoreVertical, Share2, Flag, Flag as FlagFill } from 'lucide-react-native';
+import {
+  MoreVertical, Share2, Flag, Flag as FlagFill,
+  MapPin, Heart, MessageCircle, UserCircle,
+} from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
-import { PostCard } from '../../src/components/PostCard';
 import { ReportPostSheet } from '../../src/components/ReportPostSheet';
-import { postById } from '../../src/data/cebu';
+import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 const UNDO_WINDOW_MS = 5000;
 
-// ── Small overflow action sheet ────────────────────────────────────────────────
+// ── Small overflow action sheet ─────────────────────────────────────────────
 
 function PostOverflowSheet({
   visible,
@@ -46,7 +51,7 @@ function PostOverflowSheet({
   );
 }
 
-// ── Reported placeholder ───────────────────────────────────────────────────────
+// ── Reported placeholder ─────────────────────────────────────────────────────
 
 function ReportedBanner({
   undoAvailable,
@@ -70,6 +75,224 @@ function ReportedBanner({
     </View>
   );
 }
+
+// ── Minimal post detail card (renders a live PostRow) ────────────────────────
+
+function PostDetailCard({ post }: { post: PostRow }) {
+  const firstMedia = post.mediaUrls[0] ?? null;
+  const loc = post.locationName ?? post.locationCity ?? null;
+  const authorName = post.author?.name ?? 'Traveler';
+  const authorAvatar = post.author?.avatarUrl ?? null;
+  const ts = new Date(post.createdAt).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+  });
+
+  return (
+    <View style={card.wrap}>
+      <View style={card.authorRow}>
+        {authorAvatar ? (
+          <Image source={{ uri: authorAvatar }} style={card.avatar} />
+        ) : (
+          <View style={[card.avatar, card.avatarPlaceholder]}>
+            <UserCircle size={20} color={color.mute} />
+          </View>
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={card.authorName}>{authorName}</Text>
+          <Text style={card.ts}>{ts}</Text>
+        </View>
+      </View>
+
+      {firstMedia ? (
+        <Image source={{ uri: firstMedia }} style={card.media} resizeMode="cover" />
+      ) : null}
+
+      {post.content ? (
+        <Text style={card.content}>{post.content}</Text>
+      ) : null}
+
+      {loc ? (
+        <View style={card.locRow}>
+          <MapPin size={12} color={color.mute} />
+          <Text style={card.locText}>{loc}</Text>
+        </View>
+      ) : null}
+
+      <View style={card.engRow}>
+        <View style={card.engItem}>
+          <Heart size={14} color={color.mute} />
+          <Text style={card.engText}>{post.likeCount}</Text>
+        </View>
+        <View style={card.engItem}>
+          <MessageCircle size={14} color={color.mute} />
+          <Text style={card.engText}>{post.commentCount}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Screen ───────────────────────────────────────────────────────────────────
+
+export default function PostDetail() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { userId } = useSession();
+
+  const [post, setPost]             = useState<PostRow | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const [overflowOpen, setOverflowOpen]   = useState(false);
+  const [reportOpen, setReportOpen]       = useState(false);
+  const [reported, setReported]           = useState(false);
+  const [undoAvailable, setUndoAvailable] = useState(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!id) { setLoading(false); return; }
+    setLoading(true);
+    setFetchError(null);
+    getPostById(id)
+      .then((result) => {
+        if (result.ok && result.data) {
+          setPost(result.data);
+        } else {
+          setFetchError(
+            result.errorKind === 'not_found'
+              ? 'Post not found.'
+              : 'Could not load this post.',
+          );
+        }
+      })
+      .catch(() => setFetchError('Could not load this post.'))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  useEffect(() => () => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+  }, []);
+
+  const isOwnPost = !!(userId && post?.author?.id === userId);
+
+  const handleReported = useCallback(() => {
+    setReported(true);
+    setUndoAvailable(true);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => setUndoAvailable(false), UNDO_WINDOW_MS);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setReported(false);
+    setUndoAvailable(false);
+  }, []);
+
+  async function handleShare() {
+    if (!post) return;
+    const deepLink = Linking.createURL(`post/${post.id}`);
+    const preview = post.content ? `${post.content.slice(0, 120)}…\n\n` : '';
+    await Share.share({ message: `${preview}${deepLink}`, url: deepLink });
+  }
+
+  const headerRight = post && !isOwnPost ? (
+    <Pressable
+      onPress={() => setOverflowOpen(true)}
+      hitSlop={8}
+      accessibilityLabel="More options"
+    >
+      <MoreVertical size={22} color={color.ink} />
+    </Pressable>
+  ) : undefined;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: color.paper }}>
+      <ScreenHeader title="Post" back right={headerRight} />
+      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
+        {loading ? (
+          <View style={{ paddingVertical: space.xxl, alignItems: 'center' }}>
+            <ActivityIndicator color={color.signal} />
+          </View>
+        ) : fetchError ? (
+          <Text style={{ ...t.body, color: color.mute }}>{fetchError}</Text>
+        ) : post ? (
+          reported
+            ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
+            : <PostDetailCard post={post} />
+        ) : null}
+
+        <Text style={{ ...t.heading, color: color.ink }}>Comments</Text>
+        <Text style={{ ...t.body, color: color.mute }}>Comments coming soon.</Text>
+      </ScrollView>
+
+      {post && !isOwnPost && (
+        <>
+          <PostOverflowSheet
+            visible={overflowOpen}
+            onClose={() => setOverflowOpen(false)}
+            onShare={handleShare}
+            onReport={() => setReportOpen(true)}
+          />
+          <ReportPostSheet
+            postId={post.id}
+            visible={reportOpen}
+            onClose={() => setReportOpen(false)}
+            onReported={handleReported}
+          />
+        </>
+      )}
+    </View>
+  );
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────────
+
+const card = StyleSheet.create({
+  wrap: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    padding: space.md,
+  },
+  avatar: { width: 38, height: 38, borderRadius: 19 },
+  avatarPlaceholder: {
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  authorName: { ...t.bodyStrong, color: color.ink },
+  ts:         { ...t.small,     color: color.mute },
+  media:      { width: '100%',  height: 280 },
+  content: {
+    ...t.body,
+    color: color.ink,
+    padding: space.md,
+    lineHeight: 22,
+  },
+  locRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
+  },
+  locText: { ...t.small, color: color.mute },
+  engRow: {
+    flexDirection: 'row',
+    gap: space.lg,
+    padding: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  engItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  engText: { ...t.small, color: color.mute },
+});
 
 const rb = StyleSheet.create({
   wrap: {
@@ -119,93 +342,15 @@ const rb = StyleSheet.create({
   },
 });
 
-// ── Screen ─────────────────────────────────────────────────────────────────────
-
-export default function PostDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const post = postById(id);
-  const { userId } = useSession();
-
-  const [overflowOpen, setOverflowOpen] = useState(false);
-  const [reportOpen, setReportOpen]     = useState(false);
-  const [reported, setReported]         = useState(false);
-  const [undoAvailable, setUndoAvailable] = useState(false);
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const isOwnPost = !!(userId && post?.author.id === userId);
-
-  // Clear undo timer on unmount
-  useEffect(() => () => {
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-  }, []);
-
-  const handleReported = useCallback(() => {
-    setReported(true);
-    setUndoAvailable(true);
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = setTimeout(() => setUndoAvailable(false), UNDO_WINDOW_MS);
-  }, []);
-
-  const handleUndo = useCallback(() => {
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    setReported(false);
-    setUndoAvailable(false);
-  }, []);
-
-  async function handleShare() {
-    if (!post) return;
-    const deepLink = Linking.createURL(`post/${post.id}`);
-    const caption = post.caption ? `${post.caption.slice(0, 120)}…\n\n` : '';
-    await Share.share({ message: `${caption}${deepLink}`, url: deepLink });
-  }
-
-  const headerRight = post && !isOwnPost ? (
-    <Pressable
-      onPress={() => setOverflowOpen(true)}
-      hitSlop={8}
-      accessibilityLabel="More options"
-    >
-      <MoreVertical size={22} color={color.ink} />
-    </Pressable>
-  ) : undefined;
-
-  return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Post" back right={headerRight} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
-        {post
-          ? reported
-            ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
-            : <PostCard post={post} />
-          : <Text style={{ ...t.body, color: color.mute }}>Post not found.</Text>}
-        <Text style={{ ...t.heading, color: color.ink }}>Comments</Text>
-        <Text style={{ ...t.body, color: color.mute }}>Comments thread shell — wire to backend later.</Text>
-      </ScrollView>
-      {post && !isOwnPost && (
-        <>
-          <PostOverflowSheet
-            visible={overflowOpen}
-            onClose={() => setOverflowOpen(false)}
-            onShare={handleShare}
-            onReport={() => setReportOpen(true)}
-          />
-          <ReportPostSheet
-            postId={post.id}
-            visible={reportOpen}
-            onClose={() => setReportOpen(false)}
-            onReported={handleReported}
-          />
-        </>
-      )}
-    </View>
-  );
-}
-
 const ov = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingHorizontal: space.lg, paddingBottom: 34, paddingTop: space.sm,
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingBottom: 34,
+    paddingTop: space.sm,
   },
   handle: {
     width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze,

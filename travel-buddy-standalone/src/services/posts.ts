@@ -373,6 +373,27 @@ export async function listTripPosts(tripId: string): Promise<PostResult<PostRow[
   }
 }
 
+/** Fetch a single post by ID. Returns not_found when the post does not exist or is hidden from the caller. */
+export async function getPostById(postId: string): Promise<PostResult<PostRow>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(postId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return mapApiError<PostRow>(res.status, body);
+    }
+    return { ok: true, data: mapPost(await res.json()) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 interface UpdatePostInput {
   content?: string;
   mediaUrls?: string[];
