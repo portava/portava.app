@@ -82,6 +82,19 @@ SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
 FROM pg_policies \
 WHERE tablename = 'profile_emergency_contacts' AND schemaname = 'public'"
 
+# ── safe-return schema SQL (migration 0040) ───────────────────────────────────
+# Checks that safe_return_sessions exists, has RLS enabled, and carries the
+# srs_own policy.  If this table is absent the Safe Return history and setup
+# screens will 500 or silently return empty on every request.
+SAFE_RETURN_SQL="SELECT 'table' AS check_type, relname AS name, relrowsecurity::text AS detail \
+FROM pg_class \
+WHERE relname = 'safe_return_sessions' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+UNION ALL \
+SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
+FROM pg_policies \
+WHERE tablename = 'safe_return_sessions' AND schemaname = 'public'"
+
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   PSQL_URL="${TRIGGER_PSQL_URL:-}"
@@ -120,7 +133,20 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   SCHEMA_RESPONSE="$SCHEMA_JSON" node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
   SCHEMA_EXIT=$?
 
-  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 ]] && exit 0 || exit 1
+  # ── Safe Return schema check (psql) ─────────────────────────────────────────
+  printf "  ℹ  Checking safe_return_sessions schema (psql)\n"
+  SR_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${SAFE_RETURN_SQL}) q"
+  SR_JSON=$(psql "$PSQL_URL" -t -A -c "$SR_JSON_SQL" 2>&1)
+  SR_PSQL_EXIT=$?
+  if [[ $SR_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql safe_return schema query failed (exit %d):\n" "$SR_PSQL_EXIT"
+    printf "     %s\n" "$SR_JSON"
+    exit 1
+  fi
+  SAFE_RETURN_SCHEMA_RESPONSE="$SR_JSON" node "${SCRIPT_DIR}/src/verify-db-safe-return.mjs"
+  SR_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -218,4 +244,24 @@ fi
 SCHEMA_RESPONSE="$SCHEMA_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
 SCHEMA_EXIT=$?
 
-[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 ]] && exit 0 || exit 1
+# ── Safe Return schema check — safe_return_sessions (migration 0040) ──────────
+printf "  ℹ  Checking safe_return_sessions schema\n"
+SR_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${SAFE_RETURN_SQL}\"}")
+
+SR_HTTP_BODY=$(printf "%s" "$SR_CURL_RESPONSE" | head -n -1)
+SR_HTTP_CODE=$(printf "%s" "$SR_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$SR_HTTP_CODE" != "200" && "$SR_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for safe_return schema check\n" "$SR_HTTP_CODE"
+  printf "     Response: %s\n" "$SR_HTTP_BODY"
+  exit 1
+fi
+
+SAFE_RETURN_SCHEMA_RESPONSE="$SR_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-safe-return.mjs"
+SR_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 ]] && exit 0 || exit 1
