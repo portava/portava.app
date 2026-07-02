@@ -12,6 +12,7 @@ import { Shield, CheckCircle, AlertCircle, Clock, X, ChevronLeft } from 'lucide-
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
+import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { useSession } from '../src/context/SessionContext';
 
 // ── Status display map ────────────────────────────────────────────────────────
@@ -157,6 +158,7 @@ export default function SafetyHistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [featureEnabled, setFeatureEnabled] = useState(true);
+  const [setupVisible, setSetupVisible] = useState(false);
 
   const load = useCallback(async () => {
     const result = await getHistory(50);
@@ -200,6 +202,9 @@ export default function SafetyHistoryScreen() {
             Safe Return lets you set a check-in timer when heading out on a solo activity during a trip. When you
             use it, your sessions will appear here — privately, only visible to you.
           </Text>
+          <Pressable style={styles.startBtn} onPress={() => setSetupVisible(true)}>
+            <Text style={styles.startBtnText}>Start Safe Return</Text>
+          </Pressable>
         </View>
       ) : (
         <ScrollView
@@ -228,6 +233,12 @@ export default function SafetyHistoryScreen() {
           {sessions.map((s) => <SessionRow key={s.id} session={s} />)}
         </ScrollView>
       )}
+
+      <SafeReturnSetupSheet
+        visible={setupVisible}
+        onClose={() => setSetupVisible(false)}
+        onStarted={() => { setSetupVisible(false); load(); }}
+      />
     </View>
   );
 }
@@ -274,4 +285,12 @@ const styles = StyleSheet.create({
   },
   eventBadgeCount: { ...t.bodyStrong, fontSize: 12 },
   eventBadgeLabel: { ...t.small, color: color.mute, fontSize: 11 },
+  startBtn: {
+    marginTop: space.lg,
+    backgroundColor: color.deep,
+    borderRadius: radius.md,
+    paddingHorizontal: space.xl,
+    paddingVertical: 12,
+  },
+  startBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 15 },
 });
