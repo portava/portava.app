@@ -206,10 +206,18 @@ export default function DiscoveryHub() {
     removeDiscoveryFilters(AsyncStorage);
   }, []);
 
+  /**
+   * Set to true when the user taps the Nearest chip while location is
+   * unavailable. When coords subsequently arrive, the sort is applied
+   * automatically so the user doesn't need to tap again.
+   */
+  const nearestIntentPending = useRef(false);
+
   const handleNearestUnavailable = useCallback(() => {
     if (locationState.permissionStatus === 'denied') {
       return;
     }
+    nearestIntentPending.current = true;
     requestLocation();
   }, [locationState.permissionStatus, requestLocation]);
 
@@ -221,6 +229,18 @@ export default function DiscoveryHub() {
     if (!hasUserLocation && activeFilters.sortBy === 'nearest') {
       handleFiltersChange({ ...activeFilters, sortBy: null });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUserLocation]);
+
+  // Auto-apply Nearest sort once location permission is granted.
+  // When the user tapped the Nearest chip without coords, nearestIntentPending
+  // is set. As soon as real coords arrive, apply the sort immediately without
+  // requiring a second tap.
+  useEffect(() => {
+    if (!hasUserLocation) return;
+    if (!nearestIntentPending.current) return;
+    nearestIntentPending.current = false;
+    handleFiltersChange({ ...activeFilters, sortBy: 'nearest' });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasUserLocation]);
 
