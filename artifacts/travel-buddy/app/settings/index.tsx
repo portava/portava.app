@@ -218,14 +218,22 @@ export default function Settings() {
       router.push('/settings/notifications' as any);
     } else if (label === 'Location settings') {
       router.push('/settings/location' as any);
-    } else if (
-      label === 'Hide current location' ||
-      label === 'Hide upcoming trips' ||
-      label === 'Private account' ||
-      label === 'Nearby visibility' ||
-      label === 'Message permissions'
-    ) {
-      Alert.alert('Privacy Settings', `${label} preferences are coming soon.`, [{ text: 'OK' }]);
+    } else if (label === 'Hide current location') {
+      router.push('/settings/location' as any);
+    } else if (label === 'Nearby visibility') {
+      router.push('/settings/location' as any);
+    } else if (label === 'Private account') {
+      await handlePrivacyChange(
+        'profile_visibility',
+        privacy?.profile_visibility === 'private' ? 'public' : 'private',
+      );
+    } else if (label === 'Hide upcoming trips') {
+      await handlePrivacyChange('show_upcoming_trips', !(privacy?.show_upcoming_trips ?? true));
+    } else if (label === 'Message permissions') {
+      const order = ['everyone', 'friends', 'followers', 'nobody'] as const;
+      const current = privacy?.allow_messages_from ?? 'everyone';
+      const next = order[(order.indexOf(current) + 1) % order.length];
+      await handlePrivacyChange('allow_messages_from', next);
     } else if (label === 'Safe Return history') {
       router.push('/safety-history' as any);
     } else if (label === 'Emergency Contacts') {
