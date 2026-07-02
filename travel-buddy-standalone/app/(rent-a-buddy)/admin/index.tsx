@@ -55,7 +55,10 @@ const SECTIONS = [
   },
 ] as const;
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function RentABuddyAdminHub() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const { enabled, loading: flagLoading } = useRentABuddyFlag();
   if (!flagLoading && !enabled) {

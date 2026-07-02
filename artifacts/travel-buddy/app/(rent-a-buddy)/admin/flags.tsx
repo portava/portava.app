@@ -88,7 +88,10 @@ function FlagRow({
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminFlagsScreen() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');

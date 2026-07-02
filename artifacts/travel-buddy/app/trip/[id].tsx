@@ -76,14 +76,17 @@ export default function TripDetail() {
       try {
         const r = await getActiveSession();
         if (cancelled) return;
-        setActiveSafeReturnSession(r.session ?? null);
-        if (r.session?.status === 'missed') setShowMissedPrompt(true);
+        const sess = r.session ?? null;
+        // Only surface sessions tied to this trip (or sessions with no trip context)
+        const relevant = sess && (sess.tripId === id || sess.tripId === null) ? sess : null;
+        setActiveSafeReturnSession(relevant);
+        if (relevant?.status === 'missed') setShowMissedPrompt(true);
       } catch { }
     }
     pollSafeReturn();
     const iv = setInterval(pollSafeReturn, 60_000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [live]);
+  }, [live, id]);
 
   const trip: TripDetail = (live && realTrip)
     ? {
@@ -500,6 +503,7 @@ function TripMemorySection({
   const [memory, setMemory] = useState<Memory | null>(null);
   const [memLoading, setMemLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [memoryCoverFailed, setMemoryCoverFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -533,8 +537,8 @@ function TripMemorySection({
       <Text style={tm.title}>Trip Memory</Text>
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
-          {memory.cover?.mediaUrl ? (
-            <Image source={{ uri: memory.cover.mediaUrl }} style={tm.cover} />
+          {memory.cover?.mediaUrl && !memoryCoverFailed ? (
+            <Image source={{ uri: memory.cover.mediaUrl }} style={tm.cover} onError={() => setMemoryCoverFailed(true)} />
           ) : (
             <View style={[tm.cover, tm.coverEmpty]}>
               <BookImage size={28} color={color.onInk} />
@@ -646,6 +650,18 @@ function formatEventDate(iso: string): string {
     + ' · ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function EventCoverImage({ uri, style, emptyStyle }: { uri: string; style: any; emptyStyle: any }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <View style={[style, emptyStyle]}>
+        <CalendarClock size={18} color={color.faint} />
+      </View>
+    );
+  }
+  return <Image source={{ uri }} style={style} onError={() => setFailed(true)} />;
+}
+
 function EventsNearTripSection({ tripId }: { tripId: string }) {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -682,7 +698,7 @@ function EventsNearTripSection({ tripId }: { tripId: string }) {
             onPress={() => router.push(`/event/${e.id}?tripId=${tripId}` as any)}
           >
             {e.coverUrl ? (
-              <Image source={{ uri: e.coverUrl }} style={ev.cover} />
+              <EventCoverImage uri={e.coverUrl} style={ev.cover} emptyStyle={ev.coverEmpty} />
             ) : (
               <View style={[ev.cover, ev.coverEmpty]}>
                 <CalendarClock size={18} color={color.faint} />

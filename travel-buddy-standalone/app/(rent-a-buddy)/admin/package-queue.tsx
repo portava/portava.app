@@ -124,7 +124,10 @@ function PackageItem({ pkg, onApprove, onDisable, actioning }: {
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function PackageQueue() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const [packages, setPackages] = useState<PendingPackage[]>([]);
   const [loading, setLoading] = useState(true);

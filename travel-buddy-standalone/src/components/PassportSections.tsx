@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
@@ -82,6 +82,12 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
   );
 }
 
+function PostcardMediaImage({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return <Image source={{ uri: url }} style={styles.pcMedia} onError={() => setFailed(true)} />;
+}
+
 /* Postcards/Posts tab — user's posted content with media, caption, location, date. */
 export function PostcardList({ posts }: { posts: import('../types/models').Post[] }) {
   if (posts.length === 0) {
@@ -97,7 +103,7 @@ export function PostcardList({ posts }: { posts: import('../types/models').Post[
       {posts.map((p) => (
         <Pressable key={p.id} style={styles.pc} onPress={() => router.push(`/post/${p.id}`)}>
           {p.media[0] ? (
-            <Image source={{ uri: p.media[0].url }} style={styles.pcMedia} />
+            <PostcardMediaImage url={p.media[0].url} />
           ) : null}
           <View style={styles.pcBody}>
             <View style={styles.pcMetaRow}>

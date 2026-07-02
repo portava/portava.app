@@ -104,7 +104,10 @@ function FeatureDisabled() {
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminBuddiesScreen() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [search, setSearch] = useState('');

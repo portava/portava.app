@@ -6,7 +6,7 @@
  * privacy badge, age requirement chip, attendee count + capacity/waitlist,
  * price/free chip, join/request/save/add-to-trip CTA matrix.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import {
   CalendarClock, MapPin, Users, ChevronRight,
@@ -67,6 +67,7 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
   const stateColor = STATE_COLOR[event.state] ?? color.mute;
   const stateLabel = STATE_LABEL[event.state] ?? event.state;
   const catColor = event.category ? (CATEGORY_COLORS[event.category] ?? color.signal) : color.signal;
+  const [imgFailed, setImgFailed] = useState(false);
 
   const isOpen = ['open', 'started'].includes(event.state);
   const isFull = event.state === 'full';
@@ -83,8 +84,8 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
 
       {/* Cover thumbnail */}
-      {event.coverUrl ? (
-        <Image source={{ uri: event.coverUrl }} style={styles.thumb} resizeMode="cover" />
+      {event.coverUrl && !imgFailed ? (
+        <Image source={{ uri: event.coverUrl }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder, { backgroundColor: catColor + '22' }]}>
           <CalendarClock size={20} color={catColor} />

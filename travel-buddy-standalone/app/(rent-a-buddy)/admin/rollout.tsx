@@ -661,7 +661,10 @@ const TABS: { key: Tab; label: string; icon: any }[] = [
   { key: 'audit',    label: 'Audit',     icon: FileText },
 ];
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminRolloutDashboard() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('cities');
   const [refreshing, setRefreshing] = useState(false);

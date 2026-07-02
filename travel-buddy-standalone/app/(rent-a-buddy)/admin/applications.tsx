@@ -84,7 +84,10 @@ function ApplicationRow({
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminApplicationsScreen() {
+  useRequireAdmin();
   // ── ALL hooks before any conditional return ─────────────────────────────────
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();

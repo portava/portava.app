@@ -67,7 +67,10 @@ function BookingRow({ item, onPress }: { item: AdminBooking; onPress: () => void
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminBookingsScreen() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');

@@ -154,7 +154,7 @@ export default function ContentReportsScreen() {
                 {r.reason_detail ? (
                   <Text style={s.detail} numberOfLines={2}>{r.reason_detail}</Text>
                 ) : null}
-                <Text style={s.meta}>{new Date(r.created_at).toLocaleDateString()} · {r.status}</Text>
+                <Text style={s.meta}>{new Date(r.created_at).toLocaleDateString()} · {r.status} · reporter: {r.reporter_id.slice(0, 8)}…</Text>
               </View>
             </View>
           )}

@@ -99,7 +99,10 @@ function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) 
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function FeeRulesEditor() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const [rules, setRules] = useState<FeeRule[]>([]);
   const [loading, setLoading] = useState(true);

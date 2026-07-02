@@ -47,7 +47,10 @@ function CityRow({ city, stats }: { city: string; stats: { bookings: number; rev
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminMarketplace() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);

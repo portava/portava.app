@@ -41,7 +41,10 @@ function BarRow({ label, count, max }: { label: string; count: number; max: numb
   );
 }
 
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+
 export default function AdminAnalyticsScreen() {
+  useRequireAdmin();
   const insets = useSafeAreaInsets();
   const { enabled: featureEnabled, loading: flagLoading } = useRentABuddyFlag();
   const [days, setDays] = useState<DateRange>(30);
