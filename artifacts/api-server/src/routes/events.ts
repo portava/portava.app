@@ -1,33 +1,125 @@
 /**
  * Events routes
  *
+ * ── Discovery / personal feeds ─────────────────────────────────────────────
+ * GET    /api/events                              — list/discover events (city-filtered)
+ * GET    /api/events/city/:city                   — events for a specific city
+ * GET    /api/events/nearby                       — bounding-box proximity events
+ * GET    /api/events/search                       — text search across title/description/city
+ * GET    /api/events/me                           — my upcoming (hosting + joined)
+ * GET    /api/events/hosting                      — events I'm hosting
+ * GET    /api/events/joined                       — events I'm attending (Going RSVP)
+ * GET    /api/events/saved                        — events I've saved
+ * GET    /api/events/invites                      — pending invites for me
+ * GET    /api/events/requests                     — my outgoing join requests
+ *
+ * ── Drafts ──────────────────────────────────────────────────────────────────
+ * GET    /api/events/drafts                       — list my draft events
+ * POST   /api/events/drafts                       — autosave draft (incomplete data OK)
+ * PATCH  /api/events/drafts/:draftId              — update autosave draft
+ * DELETE /api/events/drafts/:draftId              — delete draft
+ * POST   /api/events/drafts/:draftId/publish      — validate + publish draft as event
+ *
+ * ── Share-link preview (static path, before /:id) ──────────────────────────
+ * GET    /api/events/share-link/:token/preview    — preview event from share token
+ *
+ * ── Core CRUD ───────────────────────────────────────────────────────────────
  * POST   /api/events                              — create event
- * GET    /api/events                              — list/discover events (paginated)
  * GET    /api/events/:id                          — get event detail
  * PATCH  /api/events/:id                          — update event (host/co_host only)
  * DELETE /api/events/:id                          — cancel / soft-delete
  *
+ * ── Lifecycle ───────────────────────────────────────────────────────────────
+ * POST   /api/events/:id/publish                  — publish draft → open
+ * POST   /api/events/:id/cancel                   — cancel (explicit)
+ * POST   /api/events/:id/postpone                 — postpone (back to draft)
+ * POST   /api/events/:id/complete                 — mark completed
+ * POST   /api/events/:id/archive                  — archive
+ *
+ * ── RSVP / Attendance ───────────────────────────────────────────────────────
  * POST   /api/events/:id/rsvp                     — upsert RSVP status
  * DELETE /api/events/:id/rsvp                     — leave event / cancel RSVP
+ * POST   /api/events/:id/close-rsvps              — host closes RSVPs
+ * POST   /api/events/:id/reopen-rsvps             — host reopens RSVPs
+ * GET    /api/events/:id/attendees                — full attendee list (host/mod)
+ * PATCH  /api/events/:id/attendees/:userId/status — host updates attendee status
+ * DELETE /api/events/:id/attendees/:userId        — host removes attendee
  *
+ * ── Waitlist ────────────────────────────────────────────────────────────────
  * POST   /api/events/:id/waitlist                 — join waitlist
  * DELETE /api/events/:id/waitlist                 — leave waitlist
+ * POST   /api/events/:id/waitlist/accept          — accept waitlist offer
+ * GET    /api/events/:id/waitlist                 — view waitlist (host/mod)
  *
- * POST   /api/events/:id/requests                 — request to join invite-only event
+ * ── Join requests ───────────────────────────────────────────────────────────
+ * POST   /api/events/:id/requests                 — request to join invite-only event (legacy)
  * GET    /api/events/:id/requests                 — list join requests (host only)
- * PATCH  /api/events/:id/requests/:userId         — approve / deny join request
+ * PATCH  /api/events/:id/requests/:userId         — approve / deny join request (legacy)
+ * POST   /api/events/:id/join-request             — request to join (new path)
+ * POST   /api/events/:id/join-requests/:requestId/approve  — approve request
+ * POST   /api/events/:id/join-requests/:requestId/decline  — decline request
+ * POST   /api/events/:id/join-requests/:requestId/cancel   — requester cancels
  *
+ * ── Roles ───────────────────────────────────────────────────────────────────
  * POST   /api/events/:id/roles                    — assign role (host only)
  * DELETE /api/events/:id/roles/:userId            — remove role (host only)
  *
+ * ── Invites & Co-hosts ──────────────────────────────────────────────────────
+ * POST   /api/events/:id/invite                   — invite a user
+ * POST   /api/events/:id/invites/:inviteId/accept  — accept invite
+ * POST   /api/events/:id/invites/:inviteId/decline — decline invite
+ * POST   /api/events/:id/cohosts                  — add co-host
+ * DELETE /api/events/:id/cohosts/:userId          — remove co-host
+ * PATCH  /api/events/:id/cohosts/:userId/permissions — update co-host permissions
+ *
+ * ── Check-in & Attendance ───────────────────────────────────────────────────
  * POST   /api/events/:id/checkin                  — attendee self check-in
  * POST   /api/events/:id/attendance/:userId       — host confirms attendance
  * POST   /api/events/:id/noshow/:userId           — host marks no-show
  *
- * POST   /api/events/:id/memory                   — convert completed event to shared memory
- * POST   /api/events/:id/chat/join                — join event Telegraph group chat
+ * ── Save / Share ────────────────────────────────────────────────────────────
+ * POST   /api/events/:id/save                     — save event
+ * DELETE /api/events/:id/save                     — unsave event
+ * POST   /api/events/:id/share-link               — create share link
+ * DELETE /api/events/:id/share-link/:linkId       — revoke share link
+ *
+ * ── Content ─────────────────────────────────────────────────────────────────
+ * GET    /api/events/:id/posts                    — list event posts
+ * POST   /api/events/:id/posts                    — create event post (host/cohost/attendee)
+ * GET    /api/events/:id/media                    — list event media
+ * POST   /api/events/:id/media                    — upload event media
+ * GET    /api/events/:id/comments                 — alias: event updates for public
+ *
+ * ── Safety / Moderation ─────────────────────────────────────────────────────
+ * POST   /api/events/:id/report                   — report event
+ * POST   /api/events/:id/report-user/:userId      — report user in event context
+ * POST   /api/events/:id/block-user/:userId       — host blocks user from event
+ * GET    /api/events/:id/activity                 — activity log (host/mod)
+ * GET    /api/events/:id/safety-summary           — safety summary (host/admin)
+ *
+ * ── Reminders ───────────────────────────────────────────────────────────────
+ * GET    /api/events/:id/reminders                — list my reminders for this event
+ * POST   /api/events/:id/reminders                — create reminder
+ * PATCH  /api/events/:id/reminders/:reminderId    — update reminder
+ * DELETE /api/events/:id/reminders/:reminderId    — delete reminder
+ *
+ * ── Reviews ─────────────────────────────────────────────────────────────────
+ * POST   /api/events/:id/reviews                  — submit review
+ * GET    /api/events/:id/reviews                  — list reviews
+ * DELETE /api/events/:id/reviews                  — delete own review
+ *
+ * ── Memory / Chat / Updates ─────────────────────────────────────────────────
+ * POST   /api/events/:id/memory                   — convert completed event to memory
+ * POST   /api/events/:id/chat                     — create/get chat thread (host/cohost)
+ * POST   /api/events/:id/chat/join                — join event chat (Going RSVPs)
  * POST   /api/events/:id/updates                  — post host update / pin
  *
+ * ── Cross-system stubs (wired in Task 3) ────────────────────────────────────
+ * POST   /api/events/:id/add-to-trip              — stub: 501 not implemented
+ * POST   /api/events/:id/link-circle              — stub: 501 not implemented
+ * POST   /api/events/:id/telegraph-thread         — stub: 501 not implemented
+ *
+ * ── Profile tab ─────────────────────────────────────────────────────────────
  * GET    /api/users/:userId/events                — events for a user profile tab
  */
 
@@ -501,6 +593,580 @@ router.get("/events", async (req, res) => {
   });
 });
 
+// ── GET /api/events/city/:city ───────────────────────────────────────────────
+// Convenience alias for the main list endpoint filtered to a specific city.
+
+router.get("/events/city/:city", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const city     = req.params.city;
+  const page     = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit    = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset   = (page - 1) * limit;
+  const category = (req.query.category as string) ?? null;
+
+  let query = sc
+    .from("events")
+    .select("*")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .in("visibility", ["public","friends_only"])
+    .ilike("city", `%${city}%`)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  if (category) query = query.eq("category", category);
+
+  const { data: events, error } = await query;
+  if (error) { req.log.error({ err: error }, "city events"); sendError(res, "db_error", error.message); return; }
+
+  const filtered: any[] = [];
+  for (const ev of (events as any[]) ?? []) {
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
+    filtered.push(ev);
+  }
+
+  res.json({ events: filtered.map((e: any) => formatEvent(e, user.id)), page, limit });
+});
+
+// ── GET /api/events/nearby ────────────────────────────────────────────────────
+// Returns events within an approximate bounding box (degrees ≈ km at equator).
+
+router.get("/events/nearby", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const lat = parseFloat((req.query.lat as string) ?? "");
+  const lng = parseFloat((req.query.lng as string) ?? "");
+  const radiusKm = Math.min(200, Math.max(1, parseFloat((req.query.radiusKm as string) ?? "50")));
+
+  if (isNaN(lat) || isNaN(lng)) {
+    sendError(res, "invalid_payload", "lat and lng query params are required"); return;
+  }
+
+  // ~1 degree latitude ≈ 111 km; longitude offset varies by lat
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: events, error } = await sc
+    .from("events")
+    .select("*")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .in("visibility", ["public","friends_only"])
+    .gte("location_lat", lat - latDelta)
+    .lte("location_lat", lat + latDelta)
+    .gte("location_lng", lng - lngDelta)
+    .lte("location_lng", lng + lngDelta)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "nearby events"); sendError(res, "db_error", error.message); return; }
+
+  const filtered: any[] = [];
+  for (const ev of (events as any[]) ?? []) {
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
+    filtered.push(ev);
+  }
+
+  res.json({ events: filtered.map((e: any) => formatEvent(e, user.id)), page, limit });
+});
+
+// ── GET /api/events/search ────────────────────────────────────────────────────
+
+router.get("/events/search", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const q = ((req.query.q as string) ?? "").trim();
+  if (q.length < 2) { sendError(res, "invalid_payload", "q must be at least 2 characters"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: byTitle } = await sc
+    .from("events")
+    .select("*")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .in("visibility", ["public","friends_only"])
+    .ilike("title", `%${q}%`)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  const { data: byCity } = await sc
+    .from("events")
+    .select("*")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .in("visibility", ["public","friends_only"])
+    .ilike("city", `%${q}%`)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  // Merge deduped results
+  const seen = new Set<string>();
+  const merged: any[] = [];
+  for (const ev of [...((byTitle as any[]) ?? []), ...((byCity as any[]) ?? [])]) {
+    if (seen.has((ev as any).id)) continue;
+    seen.add((ev as any).id);
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
+    merged.push(ev);
+  }
+
+  res.json({ events: merged.slice(offset, offset + limit).map((e: any) => formatEvent(e, user.id)), page, limit, q });
+});
+
+// ── GET /api/events/me ────────────────────────────────────────────────────────
+
+router.get("/events/me", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+
+  const [hostedResult, rsvpResult] = await Promise.all([
+    sc.from("events").select("*")
+      .eq("host_id", user.id)
+      .not("state", "in", '("cancelled","archived")')
+      .order("starts_at", { ascending: true, nullsFirst: false })
+      .limit(limit),
+    sc.from("event_rsvps").select("event_id")
+      .eq("user_id", user.id)
+      .eq("status", "going"),
+  ]);
+
+  const hosted = ((hostedResult as any).data ?? []) as any[];
+  const rsvpIds = (((rsvpResult as any).data ?? []) as any[]).map((r: any) => r.event_id as string);
+
+  let attending: any[] = [];
+  if (rsvpIds.length > 0) {
+    const { data: ev } = await sc.from("events").select("*")
+      .in("id", rsvpIds)
+      .not("state", "in", '("cancelled","archived")')
+      .order("starts_at", { ascending: true, nullsFirst: false })
+      .limit(limit);
+    attending = (ev as any[]) ?? [];
+  }
+
+  const hostedIds = new Set(hosted.map((e: any) => e.id as string));
+  const combined = [...hosted, ...attending.filter((e: any) => !hostedIds.has(e.id as string))];
+
+  res.json({ events: combined.map((e: any) => formatEvent(e, user.id)) });
+});
+
+// ── GET /api/events/hosting ───────────────────────────────────────────────────
+
+router.get("/events/hosting", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+  const state  = (req.query.state as string) ?? null;
+
+  let query = sc.from("events").select("*").eq("host_id", user.id)
+    .order("starts_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (state) query = query.eq("state", state);
+
+  const { data: events, error } = await query;
+  if (error) { req.log.error({ err: error }, "hosting events"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+});
+
+// ── GET /api/events/joined ────────────────────────────────────────────────────
+
+router.get("/events/joined", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: rsvps } = await sc.from("event_rsvps").select("event_id")
+    .eq("user_id", user.id).eq("status", "going");
+
+  const ids = ((rsvps as any[]) ?? []).map((r: any) => r.event_id as string);
+  if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
+
+  const { data: events, error } = await sc.from("events").select("*")
+    .in("id", ids)
+    .not("state", "in", '("cancelled","archived")')
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "joined events"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+});
+
+// ── GET /api/events/saved ─────────────────────────────────────────────────────
+
+router.get("/events/saved", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: saves } = await sc.from("event_saves").select("event_id")
+    .eq("user_id", user.id)
+    .order("saved_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  const ids = ((saves as any[]) ?? []).map((r: any) => r.event_id as string);
+  if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
+
+  const { data: events, error } = await sc.from("events").select("*").in("id", ids);
+  if (error) { req.log.error({ err: error }, "saved events"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id)), page, limit });
+});
+
+// ── GET /api/events/invites ───────────────────────────────────────────────────
+
+router.get("/events/invites", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: invites, error } = await sc.from("event_invites").select("*")
+    .eq("invitee_id", user.id).eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "list invites"); sendError(res, "db_error", error.message); return; }
+
+  const inviteRows = (invites as any[]) ?? [];
+  const eventIds = [...new Set(inviteRows.map((i: any) => i.event_id as string))];
+  const inviterIds = [...new Set(inviteRows.map((i: any) => i.inviter_id as string))];
+
+  let eventMap: Record<string, any> = {};
+  let inviterMap: Record<string, any> = {};
+
+  if (eventIds.length > 0) {
+    const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
+    for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
+  }
+  if (inviterIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds);
+    for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = p;
+  }
+
+  res.json({
+    invites: inviteRows.map((inv: any) => ({
+      id:        inv.id,
+      eventId:   inv.event_id,
+      status:    inv.status,
+      createdAt: inv.created_at,
+      inviter: inviterMap[inv.inviter_id]
+        ? { id: inv.inviter_id, handle: inviterMap[inv.inviter_id].handle, displayName: inviterMap[inv.inviter_id].name, avatarUrl: inviterMap[inv.inviter_id].avatar_url }
+        : null,
+      event: eventMap[inv.event_id] ? formatEvent(eventMap[inv.event_id], user.id) : null,
+    })),
+    page,
+    limit,
+  });
+});
+
+// ── GET /api/events/requests ──────────────────────────────────────────────────
+// My outgoing join requests.
+
+router.get("/events/requests", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: requests, error } = await sc.from("event_join_requests").select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "my requests"); sendError(res, "db_error", error.message); return; }
+
+  const reqRows = (requests as any[]) ?? [];
+  const eventIds = [...new Set(reqRows.map((r: any) => r.event_id as string))];
+
+  let eventMap: Record<string, any> = {};
+  if (eventIds.length > 0) {
+    const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
+    for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
+  }
+
+  res.json({
+    requests: reqRows.map((r: any) => ({
+      id:       r.id,
+      eventId:  r.event_id,
+      status:   r.status,
+      message:  r.message ?? null,
+      createdAt: r.created_at,
+      event:    eventMap[r.event_id] ? formatEvent(eventMap[r.event_id], user.id) : null,
+    })),
+    page,
+    limit,
+  });
+});
+
+// ── GET /api/events/drafts ────────────────────────────────────────────────────
+
+router.get("/events/drafts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: drafts, error } = await sc.from("event_drafts").select("*")
+    .eq("host_id", user.id)
+    .order("last_saved_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "list drafts"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ drafts: drafts ?? [], page, limit });
+});
+
+// ── POST /api/events/drafts ───────────────────────────────────────────────────
+
+router.post("/events/drafts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const data = req.body ?? {};
+
+  const { data: draft, error } = await sc.from("event_drafts").insert({
+    host_id:       user.id,
+    data,
+    last_saved_at: new Date().toISOString(),
+  }).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "create draft"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(draft);
+});
+
+// ── PATCH /api/events/drafts/:draftId ─────────────────────────────────────────
+
+router.patch("/events/drafts/:draftId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { draftId } = req.params;
+  if (!isUuid(draftId)) { sendError(res, "invalid_payload", "Invalid draft id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Draft not found"); return; }
+  if ((existing as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
+
+  const { data: updated, error } = await sc.from("event_drafts")
+    .update({ data: req.body ?? {}, last_saved_at: new Date().toISOString() })
+    .eq("id", draftId)
+    .select("*")
+    .single();
+
+  if (error) { req.log.error({ err: error }, "update draft"); sendError(res, "db_error", error.message); return; }
+
+  res.json(updated);
+});
+
+// ── DELETE /api/events/drafts/:draftId ────────────────────────────────────────
+
+router.delete("/events/drafts/:draftId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { draftId } = req.params;
+  if (!isUuid(draftId)) { sendError(res, "invalid_payload", "Invalid draft id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Draft not found"); return; }
+  if ((existing as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
+
+  await sc.from("event_drafts").delete().eq("id", draftId);
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/drafts/:draftId/publish ──────────────────────────────────
+
+const PublishDraftSchema = CreateEventSchema.extend({
+  title:     z.string().min(1).max(200),
+  startsAt:  z.string(),
+  endsAt:    z.string(),
+  locationName: z.string().min(1).max(300),
+});
+
+router.post("/events/drafts/:draftId/publish", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { draftId } = req.params;
+  if (!isUuid(draftId)) { sendError(res, "invalid_payload", "Invalid draft id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const flagEnabled = await isFlagEnabled(sc, "events_enabled");
+  if (!flagEnabled) { sendError(res, "feature_disabled", "Events are not enabled"); return; }
+
+  const { data: draft } = await sc.from("event_drafts").select("*").eq("id", draftId).maybeSingle();
+  if (!draft) { sendError(res, "not_found", "Draft not found"); return; }
+  if ((draft as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
+
+  // Merge draft data with any body overrides
+  const body = { ...(draft as any).data, ...req.body };
+  const parsed = PublishDraftSchema.safeParse(body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid event data"); return; }
+
+  const b = parsed.data;
+  if (b.endsAt && b.startsAt && new Date(b.endsAt) <= new Date(b.startsAt)) {
+    sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
+  }
+
+  const { data: ev, error } = await sc.from("events").insert({
+    host_id:          user.id,
+    title:            b.title,
+    description:      b.description ?? null,
+    location_name:    b.locationName,
+    location_lat:     b.locationLat ?? null,
+    location_lng:     b.locationLng ?? null,
+    starts_at:        b.startsAt,
+    ends_at:          b.endsAt ?? null,
+    cover_url:        b.coverUrl ?? null,
+    max_attendees:    b.maxAttendees ?? null,
+    age_min:          b.ageMin ?? null,
+    age_max:          b.ageMax ?? null,
+    trust_score_min:  b.trustScoreMin ?? null,
+    verified_only:    b.verifiedOnly ?? false,
+    visibility:       b.visibility,
+    state:            "open",
+    chat_enabled:     b.chatEnabled ?? true,
+    waitlist_enabled: b.waitlistEnabled ?? true,
+    price_type:       b.priceType ?? null,
+    price_url:        b.priceUrl ?? null,
+    rsvp_options:     b.rsvpOptions ?? ["going","maybe","interested","cant_go"],
+    category:         b.category ?? null,
+    city:             b.city ?? null,
+    country:          b.country ?? null,
+  }).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "publish draft"); sendError(res, "db_error", error.message); return; }
+
+  // Delete the draft now that it's published
+  await sc.from("event_drafts").delete().eq("id", draftId);
+
+  res.status(201).json(formatEvent(ev as any, user.id));
+});
+
+// ── GET /api/events/share-link/:token/preview ─────────────────────────────────
+
+router.get("/events/share-link/:token/preview", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+
+  const { token } = req.params;
+  if (!token || token.length < 8) { sendError(res, "invalid_payload", "Invalid share token"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: link } = await sc.from("event_share_links").select("*").eq("token", token).maybeSingle();
+  if (!link) { sendError(res, "not_found", "Share link not found or expired"); return; }
+
+  if ((link as any).expires_at && new Date((link as any).expires_at) < new Date()) {
+    sendError(res, "not_found", "Share link has expired"); return;
+  }
+  if ((link as any).max_uses != null && (link as any).use_count >= (link as any).max_uses) {
+    sendError(res, "not_found", "Share link usage limit reached"); return;
+  }
+
+  const { data: ev } = await sc.from("events").select("*").eq("id", (link as any).event_id).maybeSingle();
+  if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
+    sendError(res, "not_found", "Event not found"); return;
+  }
+
+  // Increment use count (non-fatal)
+  await sc.from("event_share_links")
+    .update({ use_count: ((link as any).use_count ?? 0) + 1 })
+    .eq("id", (link as any).id)
+    .then(undefined, () => {});
+
+  res.json({ event: formatEvent(ev as any, (ctx as any).user.id), shareToken: token });
+});
+
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
 
 router.get("/events/:id", async (req, res) => {
@@ -796,6 +1462,10 @@ router.post("/events/:id/rsvp", async (req, res) => {
 
   if (!["open", "full", "waitlist"].includes((ev as any).state)) {
     sendError(res, "forbidden", "Event is not accepting RSVPs"); return;
+  }
+
+  if ((ev as any).rsvp_closed) {
+    sendError(res, "forbidden", "RSVPs are closed for this event"); return;
   }
 
   // Central eligibility check (block / ban / trust / age / verified)
@@ -1861,39 +2531,47 @@ router.get("/users/:userId/events", async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatEvent(ev: any, viewerId: string) {
+function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean }) {
+  const isHost = ev.host_id === viewerId;
+  // Exact coordinates are only visible to: the host, or any viewer who has a
+  // going RSVP (opts.goingRsvp). When show_exact_location is false and the
+  // viewer is neither host nor confirmed attendee, redact lat/lng.
+  const showCoords = isHost || opts?.goingRsvp || (ev.show_exact_location !== false);
   return {
-    id:               ev.id,
-    hostId:           ev.host_id,
-    title:            ev.title,
-    description:      ev.description ?? null,
-    locationName:     ev.location_name ?? null,
-    locationLat:      ev.location_lat ?? null,
-    locationLng:      ev.location_lng ?? null,
-    startsAt:         ev.starts_at ?? null,
-    endsAt:           ev.ends_at ?? null,
-    coverUrl:         ev.cover_url ?? null,
-    maxAttendees:     ev.max_attendees ?? null,
-    ageMin:           ev.age_min ?? null,
-    ageMax:           ev.age_max ?? null,
-    trustScoreMin:    ev.trust_score_min ?? null,
-    verifiedOnly:     ev.verified_only ?? false,
-    visibility:       ev.visibility,
-    state:            ev.state,
-    chatEnabled:      ev.chat_enabled ?? true,
-    chatThreadId:     ev.chat_thread_id ?? null,
-    waitlistEnabled:  ev.waitlist_enabled ?? true,
-    priceType:        ev.price_type ?? null,
-    priceUrl:         ev.price_url ?? null,
-    rsvpOptions:      ev.rsvp_options ?? ["going","maybe","interested","cant_go"],
-    goingCount:       ev.going_count ?? 0,
-    waitlistCount:    ev.waitlist_count ?? 0,
-    category:         ev.category ?? null,
-    city:             ev.city ?? null,
-    country:          ev.country ?? null,
-    isHost:           ev.host_id === viewerId,
-    createdAt:        ev.created_at,
-    updatedAt:        ev.updated_at,
+    id:                  ev.id,
+    hostId:              ev.host_id,
+    title:               ev.title,
+    description:         ev.description ?? null,
+    locationName:        ev.location_name ?? null,
+    locationLat:         showCoords ? (ev.location_lat ?? null) : null,
+    locationLng:         showCoords ? (ev.location_lng ?? null) : null,
+    startsAt:            ev.starts_at ?? null,
+    endsAt:              ev.ends_at ?? null,
+    coverUrl:            ev.cover_url ?? null,
+    maxAttendees:        ev.max_attendees ?? null,
+    ageMin:              ev.age_min ?? null,
+    ageMax:              ev.age_max ?? null,
+    trustScoreMin:       ev.trust_score_min ?? null,
+    verifiedOnly:        ev.verified_only ?? false,
+    visibility:          ev.visibility,
+    state:               ev.state,
+    chatEnabled:         ev.chat_enabled ?? true,
+    chatThreadId:        ev.chat_thread_id ?? null,
+    waitlistEnabled:     ev.waitlist_enabled ?? true,
+    priceType:           ev.price_type ?? null,
+    priceUrl:            ev.price_url ?? null,
+    rsvpOptions:         ev.rsvp_options ?? ["going","maybe","interested","cant_go"],
+    goingCount:          ev.going_count ?? 0,
+    waitlistCount:       ev.waitlist_count ?? 0,
+    category:            ev.category ?? null,
+    city:                ev.city ?? null,
+    country:             ev.country ?? null,
+    showExactLocation:   ev.show_exact_location ?? false,
+    rsvpClosed:          ev.rsvp_closed ?? false,
+    tags:                ev.tags ?? [],
+    isHost,
+    createdAt:           ev.created_at,
+    updatedAt:           ev.updated_at,
   };
 }
 
@@ -2113,6 +2791,1334 @@ router.delete("/events/:id/reviews", async (req, res) => {
 
   await sc.from("event_reviews").delete().eq("event_id", id).eq("reviewer_id", user.id);
   res.json({ ok: true });
+});
+
+// ── Activity log helper ───────────────────────────────────────────────────────
+
+async function logEventActivity(
+  sc: any,
+  eventId: string,
+  actorId: string | null,
+  action: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await sc.from("event_activity_log").insert({
+      event_id: eventId,
+      actor_id: actorId,
+      action,
+      metadata,
+    });
+  } catch {
+    // non-fatal — activity log failures never block the main operation
+  }
+}
+
+// ── POST /api/events/:id/publish ──────────────────────────────────────────────
+
+router.post("/events/:id/publish", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can publish this event"); return; }
+
+  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  if ((ev as any).state !== "draft") {
+    sendError(res, "invalid_payload", "Only draft events can be published"); return;
+  }
+
+  // Validate required fields for publication
+  const e = ev as any;
+  if (!e.title?.trim()) { sendError(res, "invalid_payload", "title is required to publish"); return; }
+  if (!e.starts_at)      { sendError(res, "invalid_payload", "startsAt is required to publish"); return; }
+  if (!e.location_name?.trim()) { sendError(res, "invalid_payload", "locationName is required to publish"); return; }
+  if (e.ends_at && new Date(e.ends_at) <= new Date(e.starts_at)) {
+    sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
+  }
+
+  const { data: updated, error } = await sc.from("events")
+    .update({ state: "open", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select("*").single();
+
+  if (error) { req.log.error({ err: error }, "publish event"); sendError(res, "db_error", error.message); return; }
+
+  if (e.chat_enabled) {
+    await createEventChatThread(sc, id, e.title, user.id);
+  }
+
+  await logEventActivity(sc, id, user.id, "published", {});
+
+  res.json(formatEvent(updated as any, user.id));
+});
+
+// ── POST /api/events/:id/cancel ───────────────────────────────────────────────
+
+router.post("/events/:id/cancel", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel this event"); return; }
+
+  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  if ((ev as any).state === "cancelled") { res.json({ ok: true }); return; }
+
+  const reason = z.string().max(500).optional().parse(req.body.reason);
+
+  await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+
+  await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
+
+  void (async () => {
+    try {
+      const tokens = await getAttendeeTokens(sc, id);
+      if (tokens.length > 0) {
+        await sendPushNotification(tokens, {
+          title: "Event cancelled",
+          body: `"${(ev as any).title}" has been cancelled.`,
+          data: { eventId: id, type: "event_cancelled" },
+        });
+      }
+    } catch {}
+  })();
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/postpone ─────────────────────────────────────────────
+
+router.post("/events/:id/postpone", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can postpone this event"); return; }
+
+  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if (["cancelled","archived","completed"].includes((ev as any).state)) {
+    sendError(res, "invalid_payload", "Cannot postpone an event in this state"); return;
+  }
+
+  const reason = z.string().max(500).optional().parse(req.body.reason);
+
+  await sc.from("events").update({ state: "draft", updated_at: new Date().toISOString() }).eq("id", id);
+  await logEventActivity(sc, id, user.id, "postponed", { reason: reason ?? null });
+
+  void (async () => {
+    try {
+      const tokens = await getAttendeeTokens(sc, id);
+      if (tokens.length > 0) {
+        await sendPushNotification(tokens, {
+          title: "Event postponed",
+          body: `"${(ev as any).title}" has been postponed. Stay tuned for updates.`,
+          data: { eventId: id, type: "event_postponed" },
+        });
+      }
+    } catch {}
+  })();
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/complete ─────────────────────────────────────────────
+
+router.post("/events/:id/complete", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can mark event as complete"); return;
+  }
+
+  const { data: ev } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
+  await logEventActivity(sc, id, user.id, "completed", {});
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/archive ──────────────────────────────────────────────
+
+router.post("/events/:id/archive", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can archive this event"); return; }
+
+  await sc.from("events").update({ state: "archived", updated_at: new Date().toISOString() }).eq("id", id);
+  await logEventActivity(sc, id, user.id, "archived", {});
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/close-rsvps ─────────────────────────────────────────
+
+router.post("/events/:id/close-rsvps", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can close RSVPs"); return;
+  }
+
+  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  await sc.from("events").update({ rsvp_closed: true, updated_at: new Date().toISOString() }).eq("id", id);
+  await logEventActivity(sc, id, user.id, "rsvps_closed", {});
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/reopen-rsvps ────────────────────────────────────────
+
+router.post("/events/:id/reopen-rsvps", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can reopen RSVPs"); return;
+  }
+
+  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  await sc.from("events").update({ rsvp_closed: false, updated_at: new Date().toISOString() }).eq("id", id);
+  await logEventActivity(sc, id, user.id, "rsvps_reopened", {});
+
+  res.json({ ok: true });
+});
+
+// ── PATCH /api/events/:id/attendees/:userId/status ────────────────────────────
+
+router.patch("/events/:id/attendees/:userId/status", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can update attendee status"); return;
+  }
+
+  const status = z.enum(["going","maybe","interested","cant_go"]).parse(req.body.status);
+
+  const { error } = await sc.from("event_rsvps")
+    .upsert({ event_id: id, user_id: userId, status, updated_at: new Date().toISOString() }, { onConflict: "event_id,user_id" });
+
+  if (error) { req.log.error({ err: error }, "patch attendee status"); sendError(res, "db_error", error.message); return; }
+
+  await syncEventState(sc, id);
+  const going = await getGoingCount(sc, id);
+  await sc.from("events").update({ going_count: going }).eq("id", id);
+
+  await logEventActivity(sc, id, user.id, "attendee_status_updated", { targetUserId: userId, newStatus: status });
+
+  res.json({ ok: true, userId, status });
+});
+
+// ── DELETE /api/events/:id/attendees/:userId ──────────────────────────────────
+
+router.delete("/events/:id/attendees/:userId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can remove attendees"); return;
+  }
+
+  await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
+
+  await syncEventState(sc, id);
+  const going = await getGoingCount(sc, id);
+  await sc.from("events").update({ going_count: going }).eq("id", id);
+
+  const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
+  if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+
+  const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
+  if ((ev as any)?.chat_thread_id) {
+    await removeUserFromChatThread(sc, (ev as any).chat_thread_id, userId);
+  }
+
+  await logEventActivity(sc, id, user.id, "attendee_removed", { targetUserId: userId });
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/join-request ─────────────────────────────────────────
+// New canonical path (mirrors /requests which is kept for backwards compat)
+
+router.post("/events/:id/join-request", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("visibility, state, host_id, title").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if ((ev as any).visibility !== "invite_only") { sendError(res, "forbidden", "This event does not require a join request"); return; }
+  if (!["open","full","waitlist"].includes((ev as any).state)) { sendError(res, "forbidden", "Event is not accepting requests"); return; }
+
+  const message = z.string().max(500).optional().parse(req.body.message);
+
+  const { error } = await sc.from("event_join_requests").upsert(
+    { event_id: id, user_id: user.id, status: "pending", message: message ?? null },
+    { onConflict: "event_id,user_id", ignoreDuplicates: true },
+  );
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  void (async () => {
+    try {
+      const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
+      if ((hp as any)?.expo_push_token) {
+        await sendPushNotification([(hp as any).expo_push_token], {
+          title: "New join request",
+          body: `Someone wants to join "${(ev as any).title}"`,
+          data: { eventId: id, type: "event_join_request" },
+        });
+      }
+    } catch {}
+  })();
+
+  res.status(201).json({ ok: true, status: "pending" });
+});
+
+// ── POST /api/events/:id/join-requests/:requestId/approve ────────────────────
+
+router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, requestId } = req.params;
+  if (!isUuid(id) || !isUuid(requestId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can approve join requests"); return;
+  }
+
+  const { data: jr } = await sc.from("event_join_requests").select("*").eq("id", requestId).eq("event_id", id).maybeSingle();
+  if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
+  if ((jr as any).status !== "pending") { sendError(res, "invalid_payload", "Request is no longer pending"); return; }
+
+  const targetId = (jr as any).user_id;
+
+  const { data: evFull } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (!evFull) { sendError(res, "not_found", "Event not found"); return; }
+
+  const approveElig = await checkEventEligibility(sc, evFull as any, targetId);
+  if (!approveElig.ok) { sendError(res, approveElig.errorCode as any, `Cannot approve: ${approveElig.message}`); return; }
+
+  await sc.from("event_join_requests").update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
+    .eq("id", requestId);
+
+  const maxAtt = (evFull as any).max_attendees ?? null;
+  const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0;
+  if (maxAtt != null && currentGoing >= maxAtt && (evFull as any).waitlist_enabled) {
+    const { data: existingWl } = await sc.from("event_waitlist").select("position").eq("event_id", id).eq("user_id", targetId).maybeSingle();
+    if (!existingWl) {
+      const { data: maxPos } = await sc.from("event_waitlist").select("position").eq("event_id", id)
+        .order("position", { ascending: false }).limit(1).maybeSingle();
+      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+      await sc.from("event_waitlist").insert({ event_id: id, user_id: targetId, position: nextPos });
+    }
+    res.json({ ok: true, status: "waitlisted" }); return;
+  }
+
+  await sc.from("event_rsvps").upsert(
+    { event_id: id, user_id: targetId, status: "going", updated_at: new Date().toISOString() },
+    { onConflict: "event_id,user_id" },
+  );
+  await syncEventState(sc, id);
+  const going = await getGoingCount(sc, id);
+  await sc.from("events").update({ going_count: going }).eq("id", id);
+
+  await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId });
+
+  res.json({ ok: true, status: "approved" });
+});
+
+// ── POST /api/events/:id/join-requests/:requestId/decline ─────────────────────
+
+router.post("/events/:id/join-requests/:requestId/decline", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, requestId } = req.params;
+  if (!isUuid(id) || !isUuid(requestId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can decline join requests"); return;
+  }
+
+  const { data: jr } = await sc.from("event_join_requests").select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle();
+  if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
+
+  await sc.from("event_join_requests").update({ status: "denied", reviewed_by: user.id, reviewed_at: new Date().toISOString() }).eq("id", requestId);
+
+  await logEventActivity(sc, id, user.id, "join_request_declined", { targetUserId: (jr as any).user_id });
+
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/join-requests/:requestId/cancel ─────────────────────
+
+router.post("/events/:id/join-requests/:requestId/cancel", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, requestId } = req.params;
+  if (!isUuid(id) || !isUuid(requestId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: jr } = await sc.from("event_join_requests")
+    .select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle();
+  if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
+  if ((jr as any).user_id !== user.id) { sendError(res, "forbidden", "Can only cancel your own request"); return; }
+  if ((jr as any).status !== "pending") { sendError(res, "invalid_payload", "Only pending requests can be cancelled"); return; }
+
+  await sc.from("event_join_requests").delete().eq("id", requestId);
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/invite ───────────────────────────────────────────────
+
+router.post("/events/:id/invite", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can invite users"); return;
+  }
+
+  const inviteeId = z.string().uuid().parse(req.body.userId);
+
+  if (inviteeId === user.id) { sendError(res, "invalid_payload", "Cannot invite yourself"); return; }
+
+  if (await isBlocked(sc, user.id, inviteeId)) {
+    sendError(res, "forbidden", "Cannot invite this user"); return;
+  }
+
+  const { data: invite, error } = await sc.from("event_invites")
+    .upsert({ event_id: id, inviter_id: user.id, invitee_id: inviteeId, status: "pending", updated_at: new Date().toISOString() },
+             { onConflict: "event_id,invitee_id" })
+    .select("id, status").single();
+
+  if (error) { req.log.error({ err: error }, "invite user"); sendError(res, "db_error", error.message); return; }
+
+  void (async () => {
+    try {
+      const [evData, inviteeProfile] = await Promise.all([
+        sc.from("events").select("title").eq("id", id).maybeSingle(),
+        sc.from("profiles").select("expo_push_token").eq("id", inviteeId).maybeSingle(),
+      ]);
+      if ((inviteeProfile as any).data?.expo_push_token) {
+        await sendPushNotification([(inviteeProfile as any).data.expo_push_token], {
+          title: "You're invited!",
+          body: `You've been invited to "${(evData as any).data?.title ?? "an event"}"`,
+          data: { eventId: id, type: "event_invite", inviteId: (invite as any).id },
+        });
+      }
+    } catch {}
+  })();
+
+  await logEventActivity(sc, id, user.id, "user_invited", { inviteeId });
+
+  res.status(201).json({ inviteId: (invite as any).id, status: "pending" });
+});
+
+// ── POST /api/events/:id/invites/:inviteId/accept ─────────────────────────────
+
+router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, inviteId } = req.params;
+  if (!isUuid(id) || !isUuid(inviteId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: invite } = await sc.from("event_invites").select("*").eq("id", inviteId).eq("event_id", id).maybeSingle();
+  if (!invite) { sendError(res, "not_found", "Invite not found"); return; }
+  if ((invite as any).invitee_id !== user.id) { sendError(res, "forbidden", "This invite is not for you"); return; }
+  if ((invite as any).status !== "pending") { sendError(res, "invalid_payload", "Invite is no longer pending"); return; }
+
+  await sc.from("event_invites").update({ status: "accepted", updated_at: new Date().toISOString() }).eq("id", inviteId);
+
+  // Auto-RSVP as going
+  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (elig.ok) {
+      await sc.from("event_rsvps").upsert(
+        { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
+        { onConflict: "event_id,user_id" },
+      );
+      await syncEventState(sc, id);
+      const going = await getGoingCount(sc, id);
+      await sc.from("events").update({ going_count: going }).eq("id", id);
+    }
+  }
+
+  res.json({ ok: true, status: "accepted" });
+});
+
+// ── POST /api/events/:id/invites/:inviteId/decline ────────────────────────────
+
+router.post("/events/:id/invites/:inviteId/decline", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, inviteId } = req.params;
+  if (!isUuid(id) || !isUuid(inviteId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: invite } = await sc.from("event_invites").select("invitee_id, status").eq("id", inviteId).eq("event_id", id).maybeSingle();
+  if (!invite) { sendError(res, "not_found", "Invite not found"); return; }
+  if ((invite as any).invitee_id !== user.id) { sendError(res, "forbidden", "This invite is not for you"); return; }
+
+  await sc.from("event_invites").update({ status: "declined", updated_at: new Date().toISOString() }).eq("id", inviteId);
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/cohosts ──────────────────────────────────────────────
+
+router.post("/events/:id/cohosts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can add co-hosts"); return; }
+
+  const parsed = z.object({
+    userId:      z.string().uuid(),
+    permissions: z.object({
+      manage_rsvps:  z.boolean().default(true),
+      manage_chat:   z.boolean().default(true),
+      post_updates:  z.boolean().default(true),
+    }).default({}),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { userId: targetId, permissions } = parsed.data;
+  if (targetId === user.id) { sendError(res, "invalid_payload", "Host cannot add themselves as co-host"); return; }
+
+  // Upsert into event_cohosts and event_roles
+  await sc.from("event_cohosts").upsert(
+    { event_id: id, user_id: targetId, permissions, added_by: user.id, added_at: new Date().toISOString() },
+    { onConflict: "event_id,user_id" },
+  );
+  await sc.from("event_roles").upsert(
+    { event_id: id, user_id: targetId, role: "co_host" },
+    { onConflict: "event_id,user_id" },
+  );
+
+  await logEventActivity(sc, id, user.id, "cohost_added", { targetUserId: targetId });
+
+  res.status(201).json({ ok: true, userId: targetId, permissions });
+});
+
+// ── DELETE /api/events/:id/cohosts/:userId ────────────────────────────────────
+
+router.delete("/events/:id/cohosts/:userId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can remove co-hosts"); return; }
+
+  await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId);
+  await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId);
+
+  await logEventActivity(sc, id, user.id, "cohost_removed", { targetUserId: userId });
+
+  res.json({ ok: true });
+});
+
+// ── PATCH /api/events/:id/cohosts/:userId/permissions ─────────────────────────
+
+router.patch("/events/:id/cohosts/:userId/permissions", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") { sendError(res, "forbidden", "Only the host can update co-host permissions"); return; }
+
+  const permissions = z.object({
+    manage_rsvps:  z.boolean().optional(),
+    manage_chat:   z.boolean().optional(),
+    post_updates:  z.boolean().optional(),
+  }).parse(req.body.permissions ?? req.body);
+
+  const { data: existing } = await sc.from("event_cohosts").select("permissions").eq("event_id", id).eq("user_id", userId).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Co-host not found"); return; }
+
+  const merged = { ...((existing as any).permissions ?? {}), ...permissions };
+
+  const { error } = await sc.from("event_cohosts")
+    .update({ permissions: merged })
+    .eq("event_id", id).eq("user_id", userId);
+
+  if (error) { req.log.error({ err: error }, "update cohost permissions"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ ok: true, userId, permissions: merged });
+});
+
+// ── POST /api/events/:id/save ─────────────────────────────────────────────────
+
+router.post("/events/:id/save", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("id, state").eq("id", id).maybeSingle();
+  if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
+    sendError(res, "not_found", "Event not found"); return;
+  }
+
+  const { error } = await sc.from("event_saves")
+    .upsert({ event_id: id, user_id: user.id, saved_at: new Date().toISOString() }, { onConflict: "event_id,user_id", ignoreDuplicates: true });
+
+  if (error) { req.log.error({ err: error }, "save event"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json({ ok: true, saved: true });
+});
+
+// ── DELETE /api/events/:id/save ───────────────────────────────────────────────
+
+router.delete("/events/:id/save", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  await sc.from("event_saves").delete().eq("event_id", id).eq("user_id", user.id);
+  res.json({ ok: true, saved: false });
+});
+
+// ── POST /api/events/:id/share-link ───────────────────────────────────────────
+
+router.post("/events/:id/share-link", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can create share links"); return;
+  }
+
+  const parsed = z.object({
+    maxUses:   z.number().int().positive().optional().nullable(),
+    expiresAt: z.string().datetime().optional().nullable(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { data: link, error } = await sc.from("event_share_links").insert({
+    event_id:   id,
+    creator_id: user.id,
+    max_uses:   parsed.data.maxUses ?? null,
+    expires_at: parsed.data.expiresAt ?? null,
+  }).select("id, token, max_uses, expires_at, use_count, created_at").single();
+
+  if (error) { req.log.error({ err: error }, "create share link"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(link);
+});
+
+// ── DELETE /api/events/:id/share-link/:linkId ─────────────────────────────────
+
+router.delete("/events/:id/share-link/:linkId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, linkId } = req.params;
+  if (!isUuid(id) || !isUuid(linkId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can revoke share links"); return;
+  }
+
+  await sc.from("event_share_links").delete().eq("id", linkId).eq("event_id", id);
+  res.json({ ok: true });
+});
+
+// ── GET /api/events/:id/posts ─────────────────────────────────────────────────
+
+router.get("/events/:id/posts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if (!await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: posts, error } = await sc.from("event_posts").select("*")
+    .eq("event_id", id)
+    .order("pinned", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "get event posts"); sendError(res, "db_error", error.message); return; }
+
+  const authorIds = [...new Set(((posts as any[]) ?? []).map((p: any) => p.author_id as string))];
+  let authorMap: Record<string, any> = {};
+  if (authorIds.length > 0) {
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = p;
+  }
+
+  res.json({
+    posts: ((posts as any[]) ?? []).map((p: any) => ({
+      id:        p.id,
+      body:      p.body,
+      mediaUrls: p.media_urls ?? [],
+      pinned:    p.pinned,
+      createdAt: p.created_at,
+      author: authorMap[p.author_id] ? {
+        id:          p.author_id,
+        handle:      authorMap[p.author_id].handle ?? null,
+        displayName: authorMap[p.author_id].name ?? null,
+        avatarUrl:   authorMap[p.author_id].avatar_url ?? null,
+      } : null,
+    })),
+    page,
+    limit,
+  });
+});
+
+// ── POST /api/events/:id/posts ────────────────────────────────────────────────
+
+router.post("/events/:id/posts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("state, host_id, attendee_comments_enabled").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  const isStaff = await isHostOrCoHost(sc, id, user.id);
+  if (!isStaff) {
+    // Attendees can only post if attendee_comments_enabled and they have a Going RSVP
+    if (!(ev as any).attendee_comments_enabled) { sendError(res, "forbidden", "Posting is restricted to host/co-host"); return; }
+    const { data: rsvp } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if ((rsvp as any)?.status !== "going") { sendError(res, "forbidden", "Only Going attendees can post"); return; }
+  }
+
+  const parsed = z.object({
+    body:      z.string().min(1).max(2000),
+    mediaUrls: z.array(z.string().url()).max(10).default([]),
+    pinned:    z.boolean().default(false),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { data: post, error } = await sc.from("event_posts").insert({
+    event_id:   id,
+    author_id:  user.id,
+    body:       parsed.data.body,
+    media_urls: parsed.data.mediaUrls,
+    pinned:     parsed.data.pinned && isStaff,
+  }).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "create event post"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(post);
+});
+
+// ── GET /api/events/:id/media ─────────────────────────────────────────────────
+
+router.get("/events/:id/media", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
+  if (!ev || !await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: media, error } = await sc.from("event_media").select("*")
+    .eq("event_id", id)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "get event media"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ media: media ?? [], page, limit });
+});
+
+// ── POST /api/events/:id/media ────────────────────────────────────────────────
+
+router.post("/events/:id/media", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Must be going or staff to upload media
+  const isStaff = await isHostOrCoHost(sc, id, user.id);
+  if (!isStaff) {
+    const { data: rsvp } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    if ((rsvp as any)?.status !== "going") { sendError(res, "forbidden", "Only Going attendees can upload media"); return; }
+  }
+
+  const parsed = z.object({
+    mediaUrl:  z.string().url(),
+    mediaType: z.enum(["image","video"]).default("image"),
+    caption:   z.string().max(500).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { data: item, error } = await sc.from("event_media").insert({
+    event_id:    id,
+    uploader_id: user.id,
+    media_url:   parsed.data.mediaUrl,
+    media_type:  parsed.data.mediaType,
+    caption:     parsed.data.caption ?? null,
+  }).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "upload event media"); sendError(res, "db_error", error.message); return; }
+
+  res.status(201).json(item);
+});
+
+// ── GET /api/events/:id/comments ──────────────────────────────────────────────
+// Alias: returns event_updates (public host/mod updates) for attendees/public
+
+router.get("/events/:id/comments", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("visibility, host_id, state").eq("id", id).maybeSingle();
+  if (!ev || !await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found"); return; }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const offset = (page - 1) * limit;
+
+  const { data: updates, error } = await sc.from("event_updates").select("*")
+    .eq("event_id", id)
+    .order("pinned", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "get event comments"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ updates: updates ?? [], page, limit });
+});
+
+// ── POST /api/events/:id/report ───────────────────────────────────────────────
+
+router.post("/events/:id/report", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  const parsed = z.object({
+    reason: z.string().min(5).max(500),
+    notes:  z.string().max(1000).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { error } = await sc.from("event_reports").insert({
+    event_id:    id,
+    reporter_id: user.id,
+    report_type: "event",
+    reason:      parsed.data.reason,
+    notes:       parsed.data.notes ?? null,
+  });
+
+  if (error) {
+    if (error.message.includes("unique") || error.code === "23505") {
+      sendError(res, "duplicate_report", "You have already reported this event"); return;
+    }
+    req.log.error({ err: error }, "report event"); sendError(res, "db_error", error.message); return;
+  }
+
+  res.status(201).json({ ok: true, message: "Report submitted" });
+});
+
+// ── POST /api/events/:id/report-user/:userId ──────────────────────────────────
+
+router.post("/events/:id/report-user/:userId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (userId === user.id) { sendError(res, "invalid_payload", "Cannot report yourself"); return; }
+
+  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  const parsed = z.object({
+    reason: z.string().min(5).max(500),
+    notes:  z.string().max(1000).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { error } = await sc.from("event_reports").insert({
+    event_id:       id,
+    reporter_id:    user.id,
+    report_type:    "user",
+    target_user_id: userId,
+    reason:         parsed.data.reason,
+    notes:          parsed.data.notes ?? null,
+  });
+
+  if (error) {
+    if (error.message.includes("unique") || error.code === "23505") {
+      sendError(res, "duplicate_report", "You have already reported this user in this event"); return;
+    }
+    req.log.error({ err: error }, "report user in event"); sendError(res, "db_error", error.message); return;
+  }
+
+  res.status(201).json({ ok: true, message: "Report submitted" });
+});
+
+// ── POST /api/events/:id/block-user/:userId ───────────────────────────────────
+
+router.post("/events/:id/block-user/:userId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, userId } = req.params;
+  if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can block users from events"); return;
+  }
+
+  // Ban from event (set role to banned)
+  await sc.from("event_roles").upsert(
+    { event_id: id, user_id: userId, role: "banned" },
+    { onConflict: "event_id,user_id" },
+  );
+  // Remove RSVP and waitlist
+  await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
+  await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", userId);
+
+  await syncEventState(sc, id);
+  const going = await getGoingCount(sc, id);
+  const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  await sc.from("events").update({ going_count: going, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+
+  await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
+
+  res.json({ ok: true });
+});
+
+// ── GET /api/events/:id/activity ──────────────────────────────────────────────
+
+router.get("/events/:id/activity", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await canManageAttendance(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host/moderator can view activity log"); return;
+  }
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "50")));
+  const offset = (page - 1) * limit;
+
+  const { data: activity, error } = await sc.from("event_activity_log").select("*")
+    .eq("event_id", id)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "get event activity"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ activity: activity ?? [], page, limit });
+});
+
+// ── GET /api/events/:id/safety-summary ────────────────────────────────────────
+
+router.get("/events/:id/safety-summary", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host" && role !== "co_host") {
+    sendError(res, "forbidden", "Only host or co-host can view safety summary"); return;
+  }
+
+  const [reportRes, noShowRes, blockedRes] = await Promise.all([
+    sc.from("event_reports").select("id, report_type, reason, status, created_at").eq("event_id", id),
+    sc.from("event_attendee_states").select("user_id, no_show_at").eq("event_id", id).not("no_show_at", "is", null),
+    sc.from("event_roles").select("user_id").eq("event_id", id).eq("role", "banned"),
+  ]);
+
+  res.json({
+    eventId:      id,
+    reports:      (reportRes as any).data ?? [],
+    noShows:      (noShowRes as any).data ?? [],
+    blockedUsers: ((blockedRes as any).data ?? []).map((r: any) => r.user_id),
+    generatedAt:  new Date().toISOString(),
+  });
+});
+
+// ── GET /api/events/:id/reminders ─────────────────────────────────────────────
+
+router.get("/events/:id/reminders", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: reminders, error } = await sc.from("event_reminders").select("*")
+    .eq("event_id", id).eq("user_id", user.id)
+    .order("remind_at", { ascending: true });
+
+  if (error) { req.log.error({ err: error }, "get reminders"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ reminders: reminders ?? [] });
+});
+
+// ── POST /api/events/:id/reminders ────────────────────────────────────────────
+
+router.post("/events/:id/reminders", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("id, state").eq("id", id).maybeSingle();
+  if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
+    sendError(res, "not_found", "Event not found"); return;
+  }
+
+  const parsed = z.object({
+    remindAt: z.string().datetime(),
+    note:     z.string().max(200).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  if (new Date(parsed.data.remindAt) <= new Date()) {
+    sendError(res, "invalid_payload", "remindAt must be in the future"); return;
+  }
+
+  const { data: reminder, error } = await sc.from("event_reminders").insert({
+    event_id:  id,
+    user_id:   user.id,
+    remind_at: parsed.data.remindAt,
+    note:      parsed.data.note ?? null,
+  }).select("*").single();
+
+  if (error) {
+    if (error.message.includes("unique") || error.code === "23505") {
+      sendError(res, "invalid_payload", "A reminder already exists at this time for this event"); return;
+    }
+    req.log.error({ err: error }, "create reminder"); sendError(res, "db_error", error.message); return;
+  }
+
+  res.status(201).json(reminder);
+});
+
+// ── PATCH /api/events/:id/reminders/:reminderId ───────────────────────────────
+
+router.patch("/events/:id/reminders/:reminderId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, reminderId } = req.params;
+  if (!isUuid(id) || !isUuid(reminderId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc.from("event_reminders").select("user_id")
+    .eq("id", reminderId).eq("event_id", id).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Reminder not found"); return; }
+  if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Not your reminder"); return; }
+
+  const parsed = z.object({
+    remindAt: z.string().datetime().optional(),
+    note:     z.string().max(200).nullable().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const patch: Record<string, any> = {};
+  if (parsed.data.remindAt !== undefined) {
+    if (new Date(parsed.data.remindAt) <= new Date()) {
+      sendError(res, "invalid_payload", "remindAt must be in the future"); return;
+    }
+    patch.remind_at = parsed.data.remindAt;
+  }
+  if (parsed.data.note !== undefined) patch.note = parsed.data.note;
+
+  const { data: updated, error } = await sc.from("event_reminders")
+    .update(patch).eq("id", reminderId).select("*").single();
+
+  if (error) { req.log.error({ err: error }, "update reminder"); sendError(res, "db_error", error.message); return; }
+
+  res.json(updated);
+});
+
+// ── DELETE /api/events/:id/reminders/:reminderId ──────────────────────────────
+
+router.delete("/events/:id/reminders/:reminderId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id, reminderId } = req.params;
+  if (!isUuid(id) || !isUuid(reminderId)) { sendError(res, "invalid_payload", "Invalid ids"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: existing } = await sc.from("event_reminders").select("user_id")
+    .eq("id", reminderId).eq("event_id", id).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Reminder not found"); return; }
+  if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Not your reminder"); return; }
+
+  await sc.from("event_reminders").delete().eq("id", reminderId);
+  res.json({ ok: true });
+});
+
+// ── POST /api/events/:id/add-to-trip ─────────────────────────────────────────
+// Stub: cross-system wiring handled in Task 3
+
+router.post("/events/:id/add-to-trip", async (req, res) => {
+  res.status(501).json({ error: "not_implemented", message: "add-to-trip cross-system wiring is pending Task 3" });
+});
+
+// ── POST /api/events/:id/link-circle ──────────────────────────────────────────
+// Stub: cross-system wiring handled in Task 3
+
+router.post("/events/:id/link-circle", async (req, res) => {
+  res.status(501).json({ error: "not_implemented", message: "link-circle cross-system wiring is pending Task 3" });
+});
+
+// ── POST /api/events/:id/telegraph-thread ─────────────────────────────────────
+// Stub: cross-system wiring handled in Task 3
+
+router.post("/events/:id/telegraph-thread", async (req, res) => {
+  res.status(501).json({ error: "not_implemented", message: "telegraph-thread cross-system wiring is pending Task 3" });
 });
 
 // ── private helpers ───────────────────────────────────────────────────────────
