@@ -69,6 +69,19 @@ WHERE t.tgname IN (\
 'block_saved_places_truncate'\
 )"
 
+# ── schema-presence SQL (migration 0076) ─────────────────────────────────────
+# Checks that profile_emergency_contacts exists, has RLS enabled, and carries
+# the two expected policies (pec_own, pec_svc).  Uses UNION ALL so a single
+# query returns both the table row and any policy rows.
+SCHEMA_SQL="SELECT 'table' AS check_type, relname AS name, relrowsecurity::text AS detail \
+FROM pg_class \
+WHERE relname = 'profile_emergency_contacts' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+UNION ALL \
+SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
+FROM pg_policies \
+WHERE tablename = 'profile_emergency_contacts' AND schemaname = 'public'"
+
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   PSQL_URL="${TRIGGER_PSQL_URL:-}"
@@ -92,7 +105,22 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   fi
 
   TRIGGER_RESPONSE="$TRIGGER_JSON" node "${SCRIPT_DIR}/src/verify-db-triggers.mjs"
-  exit $?
+  TRIGGER_EXIT=$?
+
+  # ── Schema-presence check (psql) ───────────────────────────────────────────
+  printf "  ℹ  Checking profile_emergency_contacts schema (psql)\n"
+  SCHEMA_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${SCHEMA_SQL}) q"
+  SCHEMA_JSON=$(psql "$PSQL_URL" -t -A -c "$SCHEMA_JSON_SQL" 2>&1)
+  SCHEMA_PSQL_EXIT=$?
+  if [[ $SCHEMA_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql schema query failed (exit %d):\n" "$SCHEMA_PSQL_EXIT"
+    printf "     %s\n" "$SCHEMA_JSON"
+    exit 1
+  fi
+  SCHEMA_RESPONSE="$SCHEMA_JSON" node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
+  SCHEMA_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -168,3 +196,26 @@ fi
 
 # ── parse response and verify all triggers are present ───────────────────────
 TRIGGER_RESPONSE="$HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-triggers.mjs"
+TRIGGER_EXIT=$?
+
+# ── Schema-presence check — profile_emergency_contacts (migration 0076) ──────
+printf "  ℹ  Checking profile_emergency_contacts schema\n"
+SCHEMA_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${SCHEMA_SQL}\"}")
+
+SCHEMA_HTTP_BODY=$(printf "%s" "$SCHEMA_CURL_RESPONSE" | head -n -1)
+SCHEMA_HTTP_CODE=$(printf "%s" "$SCHEMA_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$SCHEMA_HTTP_CODE" != "200" && "$SCHEMA_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for schema check\n" "$SCHEMA_HTTP_CODE"
+  printf "     Response: %s\n" "$SCHEMA_HTTP_BODY"
+  exit 1
+fi
+
+SCHEMA_RESPONSE="$SCHEMA_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
+SCHEMA_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 ]] && exit 0 || exit 1

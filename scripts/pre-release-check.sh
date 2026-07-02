@@ -159,10 +159,11 @@ run_check "bundle-id-placeholder" \
     exit $ok
   '
 
-# ── 8. DB protection triggers ────────────────────────────────────────────────
-# Confirms the three BEFORE DELETE / BEFORE TRUNCATE triggers that protect the
-# collections and collection_items tables (migrations 0071–0073) are present in
-# the Supabase production database.
+# ── 8. DB protection triggers + schema presence ──────────────────────────────
+# Confirms the BEFORE DELETE / BEFORE TRUNCATE triggers that protect the
+# collections and collection_items tables (migrations 0071–0074) are present in
+# the Supabase production database, and that the profile_emergency_contacts
+# table (migration 0076) exists with RLS enabled and the expected policies.
 #
 # Requires:
 #   SUPABASE_ACCESS_TOKEN  — Supabase personal access token (Management API)
@@ -174,7 +175,7 @@ run_check "bundle-id-placeholder" \
 # If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
 # release never ships without confirming the guards are live.
 run_check "db-triggers" \
-  "DB protection triggers (collections & collection_items — migrations 0071–0073)" \
+  "DB protection triggers + schema presence (migrations 0071–0074, 0076)" \
   bash scripts/check-db-triggers.sh
 
 # ── 9. Version / build-number floor guard ────────────────────────────────────
@@ -263,6 +264,9 @@ for entry in "${results[@]}"; do
         printf '            artifacts/api-server/src/migrations/0071_protect_default_collection.sql\n'
         printf '            artifacts/api-server/src/migrations/0072_block_collections_truncate.sql\n'
         printf '            artifacts/api-server/src/migrations/0073_block_collection_items_truncate.sql\n'
+        printf '            artifacts/api-server/src/migrations/0074_protect_saved_places.sql\n'
+        printf '            artifacts/api-server/migrations/0076_profile_emergency_contacts.sql\n'
+        printf '          (0076 creates the profile_emergency_contacts table + RLS policies)\n'
         printf '          Token required to query the Supabase Management API:\n'
         printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
         printf '                             See docs/eas-runbook.md → "DB triggers check in CI"\n'
