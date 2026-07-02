@@ -71,20 +71,22 @@ describe('toggleSave — add/remove behaviour', () => {
     _setTestStorage(storage);
   });
 
-  it('adds a place and returns true', async () => {
+  it('adds a place and returns { added: true, synced: true } (unauthenticated — local is canonical)', async () => {
     const result = await toggleSave(makePlace('place-1'));
-    assert.equal(result, true);
+    assert.equal(result.added, true);
+    assert.equal(result.synced, true, 'unauthenticated path treats local as canonical → synced: true');
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.equal(stored.length, 1);
     assert.equal(stored[0].id, 'place-1');
   });
 
-  it('removes an existing place and returns false', async () => {
+  it('removes an existing place and returns { added: false, synced: true }', async () => {
     storage.store.set(BOOKMARKS_KEY, serialise('place-1'));
 
     const result = await toggleSave(makePlace('place-1'));
-    assert.equal(result, false);
+    assert.equal(result.added, false);
+    assert.equal(result.synced, true);
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.equal(stored.length, 0);
@@ -95,7 +97,7 @@ describe('toggleSave — add/remove behaviour', () => {
 
     const result = await toggleSave(makePlace('place-1'));
     // Existing → removed
-    assert.equal(result, false);
+    assert.equal(result.added, false);
   });
 });
 
@@ -257,7 +259,8 @@ describe('toggleSave — local state persists when Supabase sync fetch fails', (
 
     const result = await toggleSave(makePlace('net-add'));
 
-    assert.equal(result, true, 'toggleSave must return true (added)');
+    assert.equal(result.added, true, 'toggleSave must return added: true');
+    assert.equal(result.synced, false, 'network error → synced: false');
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.equal(stored.length, 1);
     assert.equal(stored[0].id, 'net-add');
@@ -269,7 +272,8 @@ describe('toggleSave — local state persists when Supabase sync fetch fails', (
 
     const result = await toggleSave(makePlace('net-del'));
 
-    assert.equal(result, false, 'toggleSave must return false (removed)');
+    assert.equal(result.added, false, 'toggleSave must return added: false (removed)');
+    assert.equal(result.synced, false, 'network error → synced: false');
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as unknown[];
     assert.equal(stored.length, 0);
   });
@@ -280,7 +284,8 @@ describe('toggleSave — local state persists when Supabase sync fetch fails', (
 
     const result = await toggleSave(makePlace('srv-err'));
 
-    assert.equal(result, true);
+    assert.equal(result.added, true);
+    assert.equal(result.synced, false, '500 response → synced: false');
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.equal(stored[0].id, 'srv-err');
   });
@@ -391,7 +396,8 @@ describe('toggleSave — trip-scoped sync-failure: unrelated places survive', ()
 
     const result = await toggleSave(makePlace('trip-a-new'), TRIP_A);
 
-    assert.equal(result, true, 'must return true (added)');
+    assert.equal(result.added, true, 'must return added: true');
+    assert.equal(result.synced, false, 'network error → synced: false');
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{
       id: string;
@@ -411,7 +417,8 @@ describe('toggleSave — trip-scoped sync-failure: unrelated places survive', ()
 
     const result = await toggleSave(makePlace('trip-a-1'), TRIP_A);
 
-    assert.equal(result, false, 'must return false (removed)');
+    assert.equal(result.added, false, 'must return added: false (removed)');
+    assert.equal(result.synced, false, 'network error → synced: false');
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{
       id: string;
@@ -434,7 +441,8 @@ describe('toggleSave — trip-scoped sync-failure: unrelated places survive', ()
 
     const result = await toggleSave(makePlace('trip-a-only'), TRIP_A);
 
-    assert.equal(result, false, 'must return false (removed)');
+    assert.equal(result.added, false, 'must return added: false (removed)');
+    assert.equal(result.synced, false, 'network error → synced: false');
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.equal(stored.length, 0, 'storage must be empty — item must not be re-added by a failed sync');
@@ -454,7 +462,8 @@ describe('toggleSave — trip-scoped sync-failure: unrelated places survive', ()
 
     const result = await toggleSave(makePlace('trip-a-del'), TRIP_A);
 
-    assert.equal(result, false, 'must return false (removed)');
+    assert.equal(result.added, false, 'must return added: false (removed)');
+    assert.equal(result.synced, false, '500 response → synced: false');
 
     const stored = JSON.parse(storage.store.get(BOOKMARKS_KEY) ?? '[]') as Array<{ id: string }>;
     assert.ok(!stored.some((p) => p.id === 'trip-a-del'), 'removed place must stay gone despite 500 response');
