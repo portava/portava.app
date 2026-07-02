@@ -9,6 +9,7 @@
  *  - lat < -90 returns 400 invalid_payload
  *  - lng > 180 returns 400 invalid_payload
  *  - lng < -180 returns 400 invalid_payload
+ *  - non-numeric strings (lat="north", lng="east") return 400 invalid_payload
  *  - valid coordinates (lat=13.75, lng=100.5) are accepted, return 201, and are
  *    forwarded to the DB insert unchanged
  *  - boundary values (lat=90, lat=-90, lng=180, lng=-180) are accepted and return 201
@@ -185,6 +186,20 @@ describe("POST /api/discovery/community — lat/lng coordinate range validation"
   it("returns 400 when lng is well below -180", async () => {
     const r = await post(url, "/api/discovery/community", { ...VALID_BODY, lng: -360 });
     assert.equal(r.status, 400, `expected 400 for lng=-360, got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  // ── Non-numeric string coordinates ──────────────────────────────────────────
+
+  it('returns 400 when lat is a non-numeric string ("north")', async () => {
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, lat: "north" });
+    assert.equal(r.status, 400, `expected 400 for lat="north", got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it('returns 400 when lng is a non-numeric string ("east")', async () => {
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, lng: "east" });
+    assert.equal(r.status, 400, `expected 400 for lng="east", got ${r.status}`);
     assert.equal(r.body.error, "invalid_payload");
   });
 
