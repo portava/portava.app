@@ -331,6 +331,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         )}
 
         {/* ── Community sections: traveler-submitted from Supabase ── */}
+        {community.loading && community.gems.length === 0 && community.picks.length === 0 && (
+          <View style={styles.communitySection}>
+            <PlaceSkeletonList count={2} />
+          </View>
+        )}
         {community.gems.length > 0 && (
           <View style={styles.communitySection}>
             <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />

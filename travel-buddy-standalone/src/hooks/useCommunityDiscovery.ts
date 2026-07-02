@@ -108,7 +108,9 @@ interface CommunityDiscoveryState {
 const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
 
 export function useCommunityDiscovery(city: string | null, sortBy?: 'rating' | null): CommunityDiscoveryState {
-  const [state, setState] = useState<CommunityDiscoveryState>(EMPTY);
+  const [state, setState] = useState<CommunityDiscoveryState>(() =>
+    city ? { gems: [], picks: [], places: [], loading: true } : EMPTY,
+  );
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (c: string) => {
