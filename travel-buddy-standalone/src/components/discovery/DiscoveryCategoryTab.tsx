@@ -37,9 +37,33 @@ const MIN_RATING_OPTIONS: { label: string; value: number | null }[] = [
 interface FilterStripProps {
   filters: DiscoveryFilters;
   onChange: (f: DiscoveryFilters) => void;
+  /**
+   * True when real user GPS coordinates are available.
+   * When false, tapping Nearest calls onNearestUnavailable instead of applying
+   * the sort, and the chip is visually marked as requiring location.
+   */
+  hasUserLocation?: boolean;
+  /**
+   * Called when the user taps Nearest but no user location is available.
+   * Callers should either trigger a permission request (if not denied) or
+   * explain why (if permanently denied).
+   */
+  onNearestUnavailable?: () => void;
+  /**
+   * True when the OS location permission is permanently denied.
+   * When set, an inline hint is shown below the Sort row explaining that the
+   * user must re-enable location in device Settings.
+   */
+  locationPermissionDenied?: boolean;
 }
 
-export function FilterStrip({ filters, onChange }: FilterStripProps) {
+export function FilterStrip({
+  filters,
+  onChange,
+  hasUserLocation = true,
+  onNearestUnavailable,
+  locationPermissionDenied = false,
+}: FilterStripProps) {
   return (
     <View style={fs.wrap}>
       {/* Radius chips */}
@@ -91,16 +115,47 @@ export function FilterStrip({ filters, onChange }: FilterStripProps) {
       {/* Sort order */}
       <View style={fs.row2}>
         <Text style={fs.ratingLabel}>Sort:</Text>
-        {Object.entries(SORT_LABELS).map(([key, label]) => (
-          <Pressable
-            key={key}
-            style={[fs.chip, filters.sortBy === key && fs.chipActive]}
-            onPress={() => onChange({ ...filters, sortBy: filters.sortBy === key ? null : key })}
-          >
-            <Text style={[fs.chipText, filters.sortBy === key && fs.chipTextActive]}>{label}</Text>
-          </Pressable>
-        ))}
+        {Object.entries(SORT_LABELS).map(([key, label]) => {
+          const isActive = filters.sortBy === key;
+          const isNearest = key === 'nearest';
+          const nearestLocked = isNearest && !hasUserLocation;
+          return (
+            <Pressable
+              key={key}
+              style={[
+                fs.chip,
+                isActive && fs.chipActive,
+                nearestLocked && fs.chipLocked,
+              ]}
+              onPress={() => {
+                if (nearestLocked) {
+                  onNearestUnavailable?.();
+                  return;
+                }
+                onChange({ ...filters, sortBy: isActive ? null : key });
+              }}
+            >
+              <Text style={[
+                fs.chipText,
+                isActive && fs.chipTextActive,
+                nearestLocked && fs.chipTextLocked,
+              ]}>
+                {label}
+              </Text>
+              {nearestLocked && (
+                <Text style={fs.chipLockIcon}> 🔒</Text>
+              )}
+            </Pressable>
+          );
+        })}
       </View>
+
+      {/* Inline hint shown when location permission is permanently denied */}
+      {locationPermissionDenied && (
+        <Text style={fs.locationDeniedHint}>
+          📍 Location is off — enable it in your device Settings to sort by nearest
+        </Text>
+      )}
     </View>
   );
 }
@@ -164,6 +219,24 @@ const fs = StyleSheet.create({
   chipTextActive: {
     color: color.signal,
     fontWeight: '700',
+  },
+  chipLocked: {
+    borderColor: color.faint,
+    opacity: 0.6,
+  },
+  chipTextLocked: {
+    color: color.faint,
+  },
+  chipLockIcon: {
+    fontSize: 9,
+    color: color.faint,
+  },
+  locationDeniedHint: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 11,
+    lineHeight: 15,
+    paddingTop: 2,
   },
 });
 

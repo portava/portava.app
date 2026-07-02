@@ -85,7 +85,7 @@ export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
-  const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
+  const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
   const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
@@ -205,6 +205,24 @@ export default function DiscoveryHub() {
     setActiveFilters(defaults);
     removeDiscoveryFilters(AsyncStorage);
   }, []);
+
+  const handleNearestUnavailable = useCallback(() => {
+    if (locationState.permissionStatus === 'denied') {
+      return;
+    }
+    requestLocation();
+  }, [locationState.permissionStatus, requestLocation]);
+
+  // If the Nearest sort is active but user location disappears (permission
+  // revoked, location cleared), remove the sort so results aren't misleadingly
+  // ordered by destination-centre coordinates.
+  const hasUserLocation = locationState.coords != null;
+  useEffect(() => {
+    if (!hasUserLocation && activeFilters.sortBy === 'nearest') {
+      handleFiltersChange({ ...activeFilters, sortBy: null });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUserLocation]);
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -597,7 +615,13 @@ export default function DiscoveryHub() {
                 </View>
               )}
 
-              <FilterStrip filters={activeFilters} onChange={handleFiltersChange} />
+              <FilterStrip
+                filters={activeFilters}
+                onChange={handleFiltersChange}
+                hasUserLocation={hasUserLocation}
+                onNearestUnavailable={handleNearestUnavailable}
+                locationPermissionDenied={locationState.permissionStatus === 'denied'}
+              />
               {(activeFilters.radiusKm !== 10 || activeFilters.openNow || activeFilters.minRating !== null || activeFilters.sortBy != null) && (
                 <Pressable style={styles.resetFiltersBtn} onPress={handleResetFilters}>
                   <Text style={styles.resetFiltersText}>Reset filters</Text>
