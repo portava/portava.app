@@ -647,7 +647,7 @@ export function TripSafety({ tripId }: { tripId?: string }) {
         <View style={sf.btns}>
           <Pressable
             style={sf.btn}
-            onPress={() => tripId ? router.push(`/safety-history` as any) : router.push('/settings' as any)}
+            onPress={() => router.push('/safety-history' as any)}
           >
             <Text style={sf.btnText}>Safe Return</Text>
           </Pressable>
