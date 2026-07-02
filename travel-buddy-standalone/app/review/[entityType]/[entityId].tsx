@@ -120,7 +120,16 @@ export default function ReviewComposerScreen() {
         }
       })
       .catch(() => {
-        // Fail open — let the user try; server will catch any actual duplicate
+        // getMyReview failed (e.g. offline) — still try to restore a saved draft
+        // so the user can retry from where they left off.
+        return loadReviewDraft(AsyncStorage, entityType!, entityId!).then((draft) => {
+          if (!draft) return;
+          setRating(draft.rating);
+          setBody(draft.body);
+          setTags(draft.tags);
+          setAnonymous(draft.anonymous);
+          setHasDraft(true);
+        });
       })
       .finally(() => setLoading(false));
   }, [isAuthed, entityType, entityId]);
