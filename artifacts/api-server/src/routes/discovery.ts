@@ -607,6 +607,7 @@ router.get("/discovery", async (req, res) => {
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
+  const sortBy    = req.query.sortBy === "rating" ? "rating" : null;
 
   // ── Age filter params ──────────────────────────────────────────────────────
   const VALID_AGE_FILTERS = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
@@ -676,6 +677,13 @@ router.get("/discovery", async (req, res) => {
       if (effectiveMin !== null && effectiveMin < 18) {
         list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
       }
+    }
+    if (sortBy === "rating") {
+      list = [...list].sort((a, b) => {
+        const ra = a.rating ?? -1;
+        const rb = b.rating ?? -1;
+        return rb - ra;
+      });
     }
     return list;
   }

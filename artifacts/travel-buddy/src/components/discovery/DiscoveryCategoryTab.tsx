@@ -79,6 +79,17 @@ function FilterStrip({ filters, onChange }: FilterStripProps) {
           })}
         </View>
       </View>
+
+      {/* Sort order */}
+      <View style={fs.row2}>
+        <Text style={fs.ratingLabel}>Sort:</Text>
+        <Pressable
+          style={[fs.chip, filters.sortBy === 'rating' && fs.chipActive]}
+          onPress={() => onChange({ ...filters, sortBy: filters.sortBy === 'rating' ? null : 'rating' })}
+        >
+          <Text style={[fs.chipText, filters.sortBy === 'rating' && fs.chipTextActive]}>★ Top rated</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

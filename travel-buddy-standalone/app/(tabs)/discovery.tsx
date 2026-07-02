@@ -319,13 +319,14 @@ export default function DiscoveryHub() {
   // ── Map vs list mode ─────────────────────────────────────────────────────
   const isMapMode = viewMode === 'map' || activeTab === 'for_you';
 
-  // ── Filter badge count (all 5 dimensions) ─────────────────────────────────
+  // ── Filter badge count (all 6 dimensions) ─────────────────────────────────
   const totalActiveFilters = [
     contextMode !== 'in_city',
     ageFilter !== 'any',
     activeFilters.radiusKm !== 10,
     activeFilters.openNow,
     activeFilters.minRating !== null,
+    activeFilters.sortBy != null,
   ].filter(Boolean).length;
   const hasNonDefaultFilters = totalActiveFilters > 0;
 

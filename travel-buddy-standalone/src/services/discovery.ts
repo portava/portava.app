@@ -48,6 +48,7 @@ export interface DiscoveryFilters {
   radiusKm: number;
   openNow: boolean;
   minRating: number | null;
+  sortBy?: 'rating' | null;
 }
 
 export interface DiscoveryResult {
@@ -270,6 +271,7 @@ export async function getDiscoveryPlaces(
     page: String(page),
     ...(filters.openNow ? { openNow: '1' } : {}),
     ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
+    ...(filters.sortBy ? { sortBy: filters.sortBy } : {}),
     ...(contextMode ? { context: contextMode } : {}),
     ...(ageFilter && ageFilter !== 'any' ? { ageFilter } : {}),
     ...(ageFilter === 'custom' && customMinAge != null ? { customMinAge: String(customMinAge) } : {}),
