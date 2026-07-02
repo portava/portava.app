@@ -8,6 +8,8 @@
  *  - rating > 5 returns 400 invalid_payload
  *  - rating < 0 returns 400 invalid_payload
  *  - non-numeric rating string returns 400 invalid_payload
+ *  - rating=0 (lower boundary) is accepted and returns 201
+ *  - rating=5 (upper boundary) is accepted and returns 201
  *
  * Run: node --import tsx/esm --test src/test/discoveryCommunityRatingBounds.test.ts
  */
@@ -150,5 +152,19 @@ describe("POST /api/discovery/community — rating bounds validation", () => {
     const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: "not-a-number" });
     assert.equal(r.status, 400, `expected 400 for rating="not-a-number", got ${r.status}`);
     assert.equal(r.body.error, "invalid_payload");
+  });
+
+  // ── valid boundary values ─────────────────────────────────────────────────────
+
+  it("accepts rating=0 (lower boundary) and returns 201", async () => {
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: 0 });
+    assert.equal(r.status, 201, `expected 201 for rating=0, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
+  });
+
+  it("accepts rating=5 (upper boundary) and returns 201", async () => {
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: 5 });
+    assert.equal(r.status, 201, `expected 201 for rating=5, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
   });
 });
