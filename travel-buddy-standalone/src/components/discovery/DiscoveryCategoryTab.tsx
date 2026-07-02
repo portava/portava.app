@@ -10,6 +10,13 @@ import PlaceCard from './PlaceCard';
 import { PlaceSkeletonList } from './PlaceSkeleton';
 import { DiscoveryMapView } from './DiscoveryMapView';
 
+// ── Nearest chip press handler ────────────────────────────────────────────────
+//
+// Pure logic lives in filterStripNearest.ts (zero RN imports) so it can be
+// covered by node:test without pulling in the full React Native module graph.
+import { handleNearestChipPress } from './filterStripNearest';
+export { handleNearestChipPress };
+
 // ── Sort labels ───────────────────────────────────────────────────────────────
 
 export const SORT_LABELS: Record<string, string> = {
@@ -128,8 +135,8 @@ export function FilterStrip({
                 nearestLocked && fs.chipLocked,
               ]}
               onPress={() => {
-                if (nearestLocked) {
-                  onNearestUnavailable?.();
+                if (isNearest) {
+                  handleNearestChipPress(hasUserLocation, isActive, filters, onChange, onNearestUnavailable);
                   return;
                 }
                 onChange({ ...filters, sortBy: isActive ? null : key });
