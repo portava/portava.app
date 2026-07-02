@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx/esm --test src/utils/planUtils.test.ts src/components/savedPlacesMapHelpers.test.ts src/components/__tests__/ReportPostSheet.test.ts src/hooks/__tests__/useCityPulse.test.ts src/components/discovery/__tests__/DiscoveryMapView.filter.test.ts src/components/discovery/__tests__/SavedPlacesMapView.filter.test.ts src/services/__tests__/discoveryBookmarks.removeSaved.test.ts src/services/__tests__/discoveryBookmarks.toggleSave.test.ts src/services/__tests__/discoveryBookmarks.getSavedListIds.test.ts src/services/__tests__/savedScreen.handleRemove.test.ts src/services/__tests__/event.rabCta.test.ts",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
+    "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
     "test:component": "jest --forceExit"
   },
   "dependencies": {
