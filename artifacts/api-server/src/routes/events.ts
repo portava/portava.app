@@ -1474,6 +1474,71 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token });
 });
 
+// ── GET /api/events/near-trip/:tripId ────────────────────────────────────────
+// Returns public events in the trip's destination city, optionally filtered by
+// the trip's date range.  Useful for "Events near this destination" on Trip detail.
+
+router.get("/events/near-trip/:tripId", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { tripId } = req.params;
+  if (!isUuid(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Caller must be an accepted trip member
+  const { data: mem } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  if (!mem || !["owner", "member"].includes((mem as any).role)) {
+    sendError(res, "forbidden", "Must be a trip member to see nearby events"); return;
+  }
+
+  const { data: trip } = await sc.from("trips")
+    .select("destination_city, start_date, end_date")
+    .eq("id", tripId).maybeSingle();
+  if (!trip || !(trip as any).destination_city) {
+    res.json({ events: [] }); return;
+  }
+
+  const city      = (trip as any).destination_city as string;
+  const startDate = (trip as any).start_date as string | null;
+  const endDate   = (trip as any).end_date as string | null;
+  const limit     = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+
+  let query = sc.from("events").select("*")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .in("visibility", ["public", "friends_only"])
+    .ilike("city", `%${city}%`)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .limit(limit);
+
+  if (startDate) query = query.gte("starts_at", startDate);
+  if (endDate)   query = query.lte("starts_at", endDate + "T23:59:59Z");
+
+  const { data: events, error } = await query;
+  if (error) { req.log.error({ err: error }, "near-trip events"); sendError(res, "db_error", error.message); return; }
+
+  const filtered: any[] = [];
+  for (const ev of (events as any[]) ?? []) {
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    // Enforce friends_only: viewer must be friends with the host
+    if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
+      const { data: friendship } = await sc
+        .from("user_friendships")
+        .select("user_a")
+        .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
+        .maybeSingle();
+      if (!friendship) continue;
+    }
+    filtered.push(ev);
+  }
+
+  res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city });
+});
+
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
 
 router.get("/events/:id", async (req, res) => {
@@ -1862,6 +1927,35 @@ router.post("/events/:id/rsvp", async (req, res) => {
   // Add to event chat thread if going and chat enabled
   if (status === "going" && (ev as any).chat_thread_id && (ev as any).chat_enabled) {
     await addUserToChatThread(sc, (ev as any).chat_thread_id, user.id);
+  }
+
+  // Fire-and-forget: award first_event_joined stamp on a user's very first Going RSVP
+  if (status === "going") {
+    void (async () => {
+      try {
+        const { data: prior } = await sc
+          .from("event_rsvps")
+          .select("event_id")
+          .eq("user_id", user.id)
+          .eq("status", "going")
+          .neq("event_id", id)
+          .limit(1)
+          .maybeSingle();
+        if (!prior) {
+          await recordTrustEvent(sc, {
+            userId: user.id,
+            eventType: "first_event_joined",
+            category: "plan_attendance",
+            delta: 10,
+            severity: "minor",
+            sourceType: "event",
+            sourceId: user.id,
+            dedupWindowHours: 99999,
+            metadata: { event_id: id },
+          }).catch(() => {});
+        }
+      } catch {}
+    })();
   }
 
   res.json({ status, eventId: id });
@@ -3482,6 +3576,33 @@ router.post("/events/:id/publish", async (req, res) => {
 
   await logEventActivity(sc, id, user.id, "published", {});
 
+  // Fire-and-forget: award first_event_hosted stamp on a user's very first published event
+  void (async () => {
+    try {
+      const { data: prior } = await sc
+        .from("events")
+        .select("id")
+        .eq("host_id", user.id)
+        .eq("state", "open")
+        .neq("id", id)
+        .limit(1)
+        .maybeSingle();
+      if (!prior) {
+        await recordTrustEvent(sc, {
+          userId: user.id,
+          eventType: "first_event_hosted",
+          category: "host_quality",
+          delta: 10,
+          severity: "minor",
+          sourceType: "event",
+          sourceId: user.id,
+          dedupWindowHours: 99999,
+          metadata: { event_id: id },
+        }).catch(() => {});
+      }
+    } catch {}
+  })();
+
   // Viewer is the host → always participant view
   res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
 });
@@ -3589,11 +3710,73 @@ router.post("/events/:id/complete", async (req, res) => {
     sendError(res, "forbidden", "Only host or co-host can mark event as complete"); return;
   }
 
-  const { data: ev } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  const { data: ev } = await sc.from("events").select("state, title, host_id").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Only active ("started") events can be marked completed
+  if ((ev as any).state !== "started") {
+    sendError(res, "invalid_payload", `Event cannot be completed from state '${(ev as any).state}' — it must be active (started) first`); return;
+  }
 
   await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
   await logEventActivity(sc, id, user.id, "completed", {});
+
+  // Fire-and-forget: award trust signals + send review-prompt push notifications
+  void (async () => {
+    try {
+      const evData = ev as any;
+      // Award host plan_attendance signal for completing an event
+      await recordTrustEvent(sc, {
+        userId: evData.host_id,
+        eventType: "event_hosted",
+        category: "host_quality",
+        delta: 5,
+        severity: "minor",
+        sourceType: "event",
+        sourceId: id,
+        metadata: { title: evData.title },
+      }).catch(() => {});
+
+      // Find all checked-in attendees via event_attendee_states (the canonical check-in table)
+      const { data: checkins } = await sc
+        .from("event_attendee_states")
+        .select("user_id")
+        .eq("event_id", id)
+        .not("checked_in_at", "is", null);
+      const checkinUserIds = ((checkins as any[]) ?? []).map((c: any) => c.user_id as string);
+
+      if (checkinUserIds.length > 0) {
+        // Award trust signal to each checked-in attendee
+        await Promise.all(checkinUserIds.map((uid) =>
+          recordTrustEvent(sc, {
+            userId: uid,
+            eventType: "event_attended",
+            category: "plan_attendance",
+            delta: 5,
+            severity: "minor",
+            sourceType: "event",
+            sourceId: id,
+            metadata: { title: evData.title },
+          }).catch(() => {}),
+        ));
+
+        // Send review-prompt push notifications to checked-in attendees (excluding host)
+        const attendeeIds = checkinUserIds.filter((uid) => uid !== evData.host_id);
+        if (attendeeIds.length > 0) {
+          const { data: profiles } = await sc.from("profiles").select("expo_push_token")
+            .in("id", attendeeIds).not("expo_push_token", "is", null);
+          const tokens = ((profiles as any[]) ?? []).map((p: any) => p.expo_push_token as string).filter(Boolean);
+          if (tokens.length > 0) {
+            await sendPushNotification(tokens, {
+              title: "How was the event?",
+              body: `Leave a review for "${evData.title ?? "the event"}"`,
+              data: { eventId: id, type: "event_review_prompt" },
+            });
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+  })();
 
   res.json({ ok: true });
 });
@@ -4854,27 +5037,249 @@ router.delete("/events/:id/reminders/:reminderId", async (req, res) => {
 });
 
 // ── POST /api/events/:id/add-to-trip ─────────────────────────────────────────
-// Stub: cross-system wiring handled in Task 3
+// Adds the event to the caller's trip itinerary as a plan item.
+// Body: { tripId }
 
 router.post("/events/:id/add-to-trip", async (req, res) => {
-  res.status(501).json({ error: "not_implemented", message: "add-to-trip cross-system wiring is pending Task 3" });
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const parsed = z.object({ tripId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "tripId is required"); return; }
+  const { tripId } = parsed.data;
+
+  // Fetch the full event row so canViewEvent has all visibility/circle/trip fields
+  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Enforce event visibility — caller must be permitted to see this event
+  const canView = await canViewEvent(sc, ev as any, user.id);
+  if (!canView) { sendError(res, "not_found", "Event not found"); return; }
+
+  if (["cancelled", "archived"].includes((ev as any).state)) {
+    sendError(res, "forbidden", "Cannot add a cancelled or archived event to a trip"); return;
+  }
+
+  // Verify user is an accepted trip member (owner or member)
+  const { data: membership } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  if (!membership || !["owner", "member"].includes((membership as any).role)) {
+    sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
+  }
+
+  // Guard against duplicate: same source already in this trip
+  const { data: existingItem } = await sc.from("trip_plan_items").select("id")
+    .eq("trip_id", tripId).eq("source_type", "event").eq("source_id", id)
+    .is("removed_at", null).maybeSingle();
+  if (existingItem) {
+    res.json({ planItemId: (existingItem as any).id, tripId, alreadyAdded: true }); return;
+  }
+
+  const e = ev as any;
+  const { data: item, error: itemErr } = await sc.from("trip_plan_items").insert({
+    trip_id:       tripId,
+    title:         e.title ?? "Event",
+    category:      "activity",
+    status:        "tentative",
+    source_type:   "event",
+    source_id:     id,
+    starts_at:     e.starts_at ?? null,
+    ends_at:       e.ends_at ?? null,
+    location_name: e.location_name ?? null,
+    lat:           e.location_lat ?? null,
+    lng:           e.location_lng ?? null,
+    sort_order:    0,
+  }).select("id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng").single();
+
+  if (itemErr) { sendError(res, "db_error", itemErr.message); return; }
+
+  const it = item as any;
+  res.status(201).json({
+    planItemId: it.id,
+    tripId,
+    itineraryItem: {
+      id:           it.id,
+      title:        it.title,
+      category:     it.category,
+      status:       it.status,
+      sourceType:   it.source_type,
+      sourceId:     it.source_id,
+      startsAt:     it.starts_at,
+      endsAt:       it.ends_at,
+      locationName: it.location_name,
+      lat:          it.lat,
+      lng:          it.lng,
+    },
+  });
 });
 
 // ── POST /api/events/:id/link-circle ──────────────────────────────────────────
-// Stub: cross-system wiring handled in Task 3
+// Links the event to a travel circle.
+// Body: { circleId, setCircleVisibility?: boolean }
 
 router.post("/events/:id/link-circle", async (req, res) => {
-  res.status(501).json({ error: "not_implemented", message: "link-circle cross-system wiring is pending Task 3" });
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const parsed = z.object({
+    circleId:            z.string().uuid(),
+    setCircleVisibility: z.boolean().optional().default(false),
+  }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "circleId is required"); return; }
+  const { circleId, setCircleVisibility } = parsed.data;
+
+  // Only the event host can link to a circle
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host") {
+    sendError(res, "forbidden", "Only the event host can link to a circle"); return;
+  }
+
+  // Caller must be a circle member
+  const inCircle = await isCircleMember(sc, circleId, user.id);
+  if (!inCircle) {
+    sendError(res, "forbidden", "You must be a circle member to link this event"); return;
+  }
+
+  const patch: Record<string, any> = { circle_id: circleId, updated_at: new Date().toISOString() };
+  if (setCircleVisibility) patch.visibility = "circle";
+
+  const { error: patchErr } = await sc.from("events").update(patch).eq("id", id);
+  if (patchErr) { sendError(res, "db_error", patchErr.message); return; }
+
+  await logEventActivity(sc, id, user.id, "circle_linked", { circleId });
+
+  res.json({ ok: true, circleId });
 });
 
 // ── POST /api/events/:id/telegraph-thread ─────────────────────────────────────
-// Stub: cross-system wiring handled in Task 3
+// Ensures an event group-chat thread exists, syncs Going attendees into it, and
+// posts a pinned context card (title, date, city, visibility badge).
+// Idempotent — safe to call multiple times.
 
 router.post("/events/:id/telegraph-thread", async (req, res) => {
-  res.status(501).json({ error: "not_implemented", message: "telegraph-thread cross-system wiring is pending Task 3" });
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await isHostOrCoHost(sc, id, user.id)) {
+    sendError(res, "forbidden", "Only host or co-host can manage the event chat"); return;
+  }
+
+  const { data: ev } = await sc.from("events")
+    .select("title, state, host_id, chat_enabled, chat_thread_id, starts_at, city, visibility")
+    .eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  if (!(ev as any).chat_enabled) {
+    sendError(res, "forbidden", "Chat is not enabled for this event"); return;
+  }
+
+  // Ensure thread exists (idempotent)
+  const threadId = await createEventChatThread(sc, id, (ev as any).title ?? "Event Chat", user.id);
+  if (!threadId) { sendError(res, "db_error", "Failed to create event chat thread"); return; }
+
+  // Sync all current Going attendees into the thread, skipping blocked users (fire-and-forget)
+  void (async () => {
+    try {
+      const { data: goingRsvps } = await sc.from("event_rsvps").select("user_id")
+        .eq("event_id", id).eq("status", "going");
+      for (const r of (goingRsvps as any[]) ?? []) {
+        const uid = (r as any).user_id as string;
+        // Skip attendees who are blocking or blocked by the host
+        if (await isBlocked(sc, (ev as any).host_id ?? user.id, uid)) continue;
+        await addUserToChatThread(sc, threadId, uid);
+      }
+    } catch {}
+  })();
+
+  // Post a pinned context card if this thread was freshly created
+  void (async () => {
+    try {
+      const { data: existing } = await sc.from("messages").select("id")
+        .eq("thread_id", threadId).eq("msg_type", "system").eq("subtype", "event_context_card").limit(1).maybeSingle();
+      if (!existing) {
+        const e = ev as any;
+        const lines = [
+          `📍 **${e.title ?? "Event"}**`,
+          e.starts_at ? `🗓 ${new Date(e.starts_at).toUTCString()}` : null,
+          e.city ? `🏙 ${e.city}` : null,
+          `🔒 ${e.visibility ?? "public"}`,
+        ].filter(Boolean).join("\n");
+        await sc.from("messages").insert({
+          thread_id: threadId,
+          sender_id: null,
+          body: lines,
+          msg_type: "system",
+          subtype: "event_context_card",
+          metadata: { event_id: id, pinned: true },
+        });
+      }
+    } catch {}
+  })();
+
+  await logEventActivity(sc, id, user.id, "telegraph_thread_ensured", { threadId });
+
+  res.json({ threadId });
 });
 
 // ── private helpers ───────────────────────────────────────────────────────────
+
+/**
+ * sendEventNotification — centralized push-notification helper for all 19 event
+ * notification types. Fetches expo_push_tokens for the given recipient user IDs
+ * and delivers the notification using the existing push infrastructure.
+ *
+ * Notification types: event_invite_received, event_join_request_received,
+ * event_join_request_approved, event_join_request_declined, event_rsvp_accepted,
+ * event_waitlist_change, event_updated, event_cancelled, event_postponed,
+ * event_announcement, event_friend_joined, event_starting_soon, event_reminder,
+ * event_attendee_removed, event_review_prompt, event_host_no_show,
+ * event_attendee_no_show, event_completed, event_featured.
+ */
+async function sendEventNotification(
+  sc: any,
+  eventId: string,
+  recipientUserIds: string[],
+  notificationType: string,
+  payload: { title: string; body: string; data?: Record<string, unknown> },
+): Promise<void> {
+  if (!recipientUserIds.length) return;
+  try {
+    const { data: profiles } = await sc
+      .from("profiles")
+      .select("expo_push_token")
+      .in("id", recipientUserIds)
+      .not("expo_push_token", "is", null);
+    const tokens = ((profiles as any[]) ?? [])
+      .map((p: any) => p.expo_push_token as string)
+      .filter(Boolean);
+    if (!tokens.length) return;
+    await sendPushNotification(tokens, {
+      ...payload,
+      data: { eventId, type: notificationType, ...payload.data },
+    });
+  } catch { /* non-fatal */ }
+}
 
 async function addUserToChatThread(sc: any, threadId: string, userId: string): Promise<void> {
   try {

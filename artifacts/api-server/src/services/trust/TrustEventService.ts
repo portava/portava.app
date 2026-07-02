@@ -287,4 +287,12 @@ export const TRUST_EVENT_TYPES = {
   // Reviews & Appeals
   REVIEW_SUBMITTED:         { category: "community_value" as TrustCategory,  delta: 2,  severity: "minor" as TrustSeverity },
   APPEAL_APPROVED_REVERSAL: { category: "community_value" as TrustCategory,  delta: 2,  severity: "minor" as TrustSeverity },
+  // Events
+  EVENT_HOSTED:             { category: "host_quality" as TrustCategory,     delta: 5,  severity: "minor" as TrustSeverity },
+  EVENT_ATTENDED:           { category: "plan_attendance" as TrustCategory,  delta: 5,  severity: "minor" as TrustSeverity },
+  EVENT_HOST_CANCELLED:     { category: "host_quality" as TrustCategory,     delta: -8, severity: "moderate" as TrustSeverity },
+  EVENT_HOST_NO_SHOW:       { category: "host_quality" as TrustCategory,     delta: -15, severity: "serious" as TrustSeverity },
+  EVENT_ATTENDEE_NO_SHOW:   { category: "plan_attendance" as TrustCategory,  delta: -5, severity: "minor" as TrustSeverity },
+  EVENT_POSITIVE_REVIEW:    { category: "host_quality" as TrustCategory,     delta: 3,  severity: "minor" as TrustSeverity },
+  EVENT_NEGATIVE_REVIEW:    { category: "host_quality" as TrustCategory,     delta: -6, severity: "moderate" as TrustSeverity },
 } as const;

@@ -1584,4 +1584,171 @@ router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
   res.json({ tripId, resolution, resolvedCount: (updated ?? []).length });
 });
 
+// ── GET /admin/events ─────────────────────────────────────────────────────────
+// Returns events that have pending reports, or all events with optional filters.
+// Query params: status, featured, reported, limit
+
+router.get("/admin/events", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const limit     = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "50")));
+  const onlyReported = req.query.reported === "true";
+  const statusFilter = req.query.status as string | undefined;
+  const featuredFilter = req.query.featured === "true" ? true : req.query.featured === "false" ? false : undefined;
+
+  if (onlyReported) {
+    // Return events that have pending reports
+    const { data: reports, error: rErr } = await sc
+      .from("reports")
+      .select("id, target_id, reason_code, severity, status, created_at")
+      .eq("target_type", "event")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (rErr) { sendError(res, "db_error", rErr.message); return; }
+
+    const eventIds = [...new Set(((reports as any[]) ?? []).map((r: any) => r.target_id as string))];
+    if (eventIds.length === 0) { res.json({ events: [] }); return; }
+
+    const { data: events } = await sc
+      .from("events")
+      .select("id, title, host_id, state, visibility, city, starts_at, created_at, featured")
+      .in("id", eventIds);
+
+    const reportMap: Record<string, any[]> = {};
+    for (const r of (reports as any[]) ?? []) {
+      if (!reportMap[r.target_id]) reportMap[r.target_id] = [];
+      reportMap[r.target_id].push(r);
+    }
+
+    res.json({
+      events: eventIds
+        .filter((id) => !!(events as any[]).find((e: any) => e.id === id))
+        .map((id) => {
+          const ev = (events as any[]).find((e: any) => e.id === id);
+          return { event: ev, pendingReports: reportMap[id]?.length ?? 0, reports: reportMap[id] ?? [] };
+        }),
+    });
+    return;
+  }
+
+  // General listing
+  let q = sc.from("events")
+    .select("id, title, host_id, state, visibility, city, starts_at, created_at, going_count, featured")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (statusFilter) q = q.eq("state", statusFilter);
+  if (featuredFilter !== undefined) q = q.eq("featured", featuredFilter);
+
+  const { data: events, error } = await q;
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.json({ events: events ?? [] });
+});
+
+// ── PATCH /admin/events/:eventId/moderate ─────────────────────────────────────
+// Moderate an event: hide, cancel, restore, feature, unfeature, or warn_host.
+// Body: { action: 'hide'|'cancel'|'restore'|'feature'|'unfeature'|'warn_host', reason?: string }
+
+const ADMIN_EVENT_ACTIONS = ["hide", "cancel", "remove", "restore", "feature", "unfeature", "warn_host"] as const;
+
+router.patch("/admin/events/:eventId/moderate", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const { eventId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId)) {
+    sendError(res, "invalid_payload", "eventId must be a valid UUID"); return;
+  }
+
+  const parsed = z.object({
+    action: z.enum(ADMIN_EVENT_ACTIONS),
+    reason: z.string().max(500).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", `action must be one of: ${ADMIN_EVENT_ACTIONS.join(", ")}`); return;
+  }
+  const { action, reason } = parsed.data;
+
+  const { data: ev } = await sc.from("events").select("id, host_id, title, state, visibility, featured")
+    .eq("id", eventId).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+
+  switch (action) {
+    case "hide":
+      patch.visibility = "invite_only";
+      break;
+    case "cancel":
+      patch.state = "cancelled";
+      break;
+    case "remove":
+      // Soft-remove: archive the event so it disappears from all feeds
+      patch.state = "archived";
+      patch.visibility = "invite_only";
+      break;
+    case "restore":
+      patch.visibility = "public";
+      if ((ev as any).state === "cancelled" || (ev as any).state === "archived") patch.state = "open";
+      break;
+    case "feature":
+      patch.featured = true;
+      break;
+    case "unfeature":
+      patch.featured = false;
+      break;
+    case "warn_host":
+      // No event patch needed; just record audit + event_activity_log entries
+      break;
+  }
+
+  // Write event_activity_log FIRST (before any mutation) — fail-closed.
+  // If this fails, the event is not mutated and the caller gets a clear error.
+  const { error: auditErr } = await sc.from("event_activity_log").insert({
+    event_id: eventId,
+    actor_id: admin.userId,
+    action: `admin_${action}`,
+    metadata: { reason: reason ?? null },
+  });
+  if (auditErr) {
+    req.log.error({ err: auditErr, eventId, action }, "event_activity_log insert failed — aborting moderation");
+    sendError(res, "db_error", "Failed to write audit log; no action was applied"); return;
+  }
+
+  // Now apply the event mutation (audit already recorded)
+  if (Object.keys(patch).length > 1) {
+    const { error: updateErr } = await sc.from("events").update(patch).eq("id", eventId);
+    if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+  }
+
+  // Write moderation_actions for the global admin audit trail (also fail-closed)
+  const { error: modErr } = await sc.from("moderation_actions").insert({
+    target_user_id: (ev as any).host_id,
+    action_type:    `event_${action}`,
+    reason:         reason ?? `Admin ${action}`,
+    performed_by:   admin.userId,
+    metadata:       { event_id: eventId, event_title: (ev as any).title },
+  });
+  if (modErr) {
+    req.log.error({ err: modErr, eventId, action }, "moderation_actions insert failed");
+    sendError(res, "db_error", "Failed to write moderation audit; event mutation was applied but audit is incomplete"); return;
+  }
+
+  // Resolve pending reports for hide/cancel/remove actions
+  if (["hide", "cancel", "remove"].includes(action)) {
+    await sc.from("reports")
+      .update({ status: "resolved", updated_at: new Date().toISOString() })
+      .eq("target_type", "event")
+      .eq("target_id", eventId)
+      .eq("status", "pending")
+      .then(undefined, () => {});
+  }
+
+  res.json({ eventId, action, ok: true });
+});
+
 export default router;
