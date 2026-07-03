@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { X, MapPin, Clock, Users, Eye, Shield } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { GpsLocationCapture } from '../location/GpsLocationCapture';
 import {
   setGeofence, revealExactLocation,
   type PublicPreviewLevel, type ExactVisibility, type GeofenceData,
@@ -158,24 +159,16 @@ export function GeofenceSettingsSheet({
                   </View>
                   <Text style={s.sectionDesc}>These stay server-side only. Guests never see raw GPS coordinates.</Text>
 
-                  <Text style={s.fieldLabel}>Latitude</Text>
-                  <TextInput
-                    style={s.input}
-                    value={lat}
-                    onChangeText={setLat}
-                    keyboardType="decimal-pad"
-                    placeholder="e.g. 48.8566"
-                    placeholderTextColor={color.faint}
-                  />
-
-                  <Text style={s.fieldLabel}>Longitude</Text>
-                  <TextInput
-                    style={s.input}
-                    value={lng}
-                    onChangeText={setLng}
-                    keyboardType="decimal-pad"
-                    placeholder="e.g. 2.3522"
-                    placeholderTextColor={color.faint}
+                  <GpsLocationCapture
+                    onCapture={(result) => {
+                      if (result) {
+                        setLat(String(result.lat));
+                        setLng(String(result.lng));
+                      } else {
+                        setLat('');
+                        setLng('');
+                      }
+                    }}
                   />
 
                   <Text style={s.fieldLabel}>Venue / location name <Text style={s.opt}>(shown to accepted members)</Text></Text>

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Users, Clock } from 'lucide-react-native';
@@ -292,6 +292,17 @@ function PassportContent({
         contentContainerStyle={{ paddingTop: insets.top, paddingBottom: space.xxxl }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Cover photo band — full-width above the hero card; fallback prevents blank area */}
+        {profile.coverPhotoUrl ? (
+          <Image
+            source={{ uri: profile.coverPhotoUrl }}
+            style={{ width: '100%', height: 140 }}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={{ width: '100%', height: 140, backgroundColor: color.haze }} />
+        )}
+
         {/* Profile header */}
         <PassportHero
           profile={profile}

@@ -284,7 +284,7 @@ export default function EditProfileScreen() {
       if (!gps.granted) {
         Alert.alert(
           'Location permission is off',
-          'Enable it in Settings or choose a city from the list.',
+          'Enable it in settings or choose a city/place from search.',
           [
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
             { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
@@ -314,7 +314,7 @@ export default function EditProfileScreen() {
       if (!gps.granted) {
         Alert.alert(
           'Location permission is off',
-          'Enable it in Settings or choose a city from the list.',
+          'Enable it in settings or choose a city/place from search.',
           [
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
             { text: 'Choose from list', onPress: () => setShowCurrentPicker(true) },

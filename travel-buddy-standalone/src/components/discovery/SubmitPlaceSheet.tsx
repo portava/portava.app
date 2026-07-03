@@ -16,6 +16,7 @@ import {
 import { X, MapPin, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import { submitCommunityPlace } from '../../services/discovery';
+import { GpsLocationCapture } from '../location/GpsLocationCapture';
 
 const CATEGORIES = [
   'hidden_gem', 'food', 'nightlife', 'activities',
@@ -302,36 +303,17 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
 
               {showExactLoc && (
                 <View style={styles.exactLocSection}>
-                  <Text style={styles.exactLocHint}>
-                    Paste coordinates from Google Maps or any map app.
-                    Long-press a location on Google Maps → copy the numbers shown (e.g. 48.8566, 2.3522).
-                  </Text>
-                  <View style={styles.coordRow}>
-                    <View style={styles.coordField}>
-                      <Text style={styles.coordLabel}>Latitude</Text>
-                      <TextInput
-                        style={styles.coordInput}
-                        value={latText}
-                        onChangeText={setLatText}
-                        placeholder="e.g. 10.3157"
-                        placeholderTextColor={color.faint}
-                        keyboardType="numeric"
-                        maxLength={12}
-                      />
-                    </View>
-                    <View style={styles.coordField}>
-                      <Text style={styles.coordLabel}>Longitude</Text>
-                      <TextInput
-                        style={styles.coordInput}
-                        value={lngText}
-                        onChangeText={setLngText}
-                        placeholder="e.g. 123.8854"
-                        placeholderTextColor={color.faint}
-                        keyboardType="numeric"
-                        maxLength={13}
-                      />
-                    </View>
-                  </View>
+                  <GpsLocationCapture
+                    onCapture={(result) => {
+                      if (result) {
+                        setLatText(String(result.lat));
+                        setLngText(String(result.lng));
+                      } else {
+                        setLatText('');
+                        setLngText('');
+                      }
+                    }}
+                  />
                 </View>
               )}
 
