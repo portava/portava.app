@@ -14,7 +14,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import rentABuddyRolloutRouter, { invalidateGcCache } from "../routes/rentABuddyRollout.js";
+import rentABuddyRolloutRouter, { invalidateGcCache, checkRentBuddyAccess } from "../routes/rentABuddyRollout.js";
 import rentABuddyRouter, { POLICY_TEXT } from "../routes/rentABuddy.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
@@ -1340,5 +1340,254 @@ describe("QA Gate: Buddy dashboard mutations blocked when feature disabled", () 
     const r = await req("PATCH", "/api/rent-a-buddy/dashboard/offer", { tagline: "test" }, USER_TOKEN);
     assert.equal(r.status, 403);
     assert.equal(r.body.error, "admin_only");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exhaustive city status coverage for checkRentBuddyAccess
+//
+// Tests every CityRolloutStatus value directly against the exported function.
+// If a new status is added to the DB enum without updating checkRentBuddyAccess,
+// the "unknown status" test will fail (expected — the gap is now visible).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("checkRentBuddyAccess: exhaustive city status coverage", () => {
+  /**
+   * Minimal fake service client for direct checkRentBuddyAccess calls.
+   * Handles only the tables the function queries; returns stable values
+   * for everything except the city status, which is parameterised.
+   */
+  function makeScForStatus(cityStatus: string, opts: { betaActive?: boolean } = {}): any {
+    return {
+      from(table: string) {
+        const t = table;
+        const filters: Record<string, any> = {};
+        const self: any = {
+          select() { return self; },
+          eq(col: string, val: any)    { filters[col] = val; return self; },
+          ilike(col: string, val: any) { filters[col] = val; return self; },
+          maybeSingle() { return self; },
+          in() { return self; },
+          async then(resolve: (v: any) => void) {
+            if (t === "feature_flags") {
+              const flag = filters["flag"] as string;
+              // Only rent_buddy_enabled is on; all mode/gate flags are off
+              resolve({ data: { flag, enabled: flag === "rent_buddy_enabled" }, error: null });
+              return;
+            }
+            if (t === "rent_buddy_global_controls") {
+              resolve({
+                data: {
+                  id: 1, all_bookings_paused: false, applications_paused: false,
+                  cash_balance_paused: false, nightlife_paused: false,
+                  force_full_in_app: false, force_public_meetup: false, force_delayed_posting: false,
+                },
+                error: null,
+              });
+              return;
+            }
+            if (t === "rent_buddy_city_rollouts") {
+              resolve({ data: { id: "c1", city: "TestCity", status: cityStatus }, error: null });
+              return;
+            }
+            if (t === "rent_buddy_beta_access") {
+              const d = opts.betaActive
+                ? { id: "b1", user_id: USER_ID, city: "TestCity", status: "active" }
+                : null;
+              resolve({ data: d, error: null });
+              return;
+            }
+            if (t === "profiles") {
+              resolve({ data: { id: USER_ID, role: "user" }, error: null });
+              return;
+            }
+            if (t === "rent_buddy_profiles") {
+              // id_verified=true so MVP-mode book check doesn't block
+              resolve({ data: { id: "rp1", user_id: USER_ID, id_verified: true }, error: null });
+              return;
+            }
+            resolve({ data: null, error: null });
+          },
+        };
+        return self;
+      },
+    };
+  }
+
+  const CITY = "TestCity";
+
+  beforeEach(() => {
+    invalidateGcCache();
+  });
+
+  // ── disabled ────────────────────────────────────────────────────────────────
+
+  it("disabled — blocks book action (city_not_available)", async () => {
+    const sc = makeScForStatus("disabled");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
+  });
+
+  it("disabled — blocks read action (city_not_available)", async () => {
+    const sc = makeScForStatus("disabled");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
+  });
+
+  // ── suspended ───────────────────────────────────────────────────────────────
+
+  it("suspended — blocks book action (city_not_available)", async () => {
+    const sc = makeScForStatus("suspended");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
+  });
+
+  it("suspended — blocks read action (city_not_available)", async () => {
+    const sc = makeScForStatus("suspended");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
+  });
+
+  // ── waitlist_only ───────────────────────────────────────────────────────────
+
+  it("waitlist_only — allows waitlist action", async () => {
+    const sc = makeScForStatus("waitlist_only");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "waitlist" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("waitlist_only — allows read action", async () => {
+    const sc = makeScForStatus("waitlist_only");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("waitlist_only — blocks book action (waitlist_only)", async () => {
+    const sc = makeScForStatus("waitlist_only");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "waitlist_only");
+  });
+
+  // ── buddy_applications_open ─────────────────────────────────────────────────
+
+  it("buddy_applications_open — allows apply action", async () => {
+    const sc = makeScForStatus("buddy_applications_open");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "apply" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("buddy_applications_open — allows read action", async () => {
+    const sc = makeScForStatus("buddy_applications_open");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("buddy_applications_open — blocks book action (not_open_for_bookings)", async () => {
+    const sc = makeScForStatus("buddy_applications_open");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "not_open_for_bookings");
+  });
+
+  // ── internal_testing ────────────────────────────────────────────────────────
+
+  it("internal_testing — blocks non-test user for any action (internal_testing)", async () => {
+    const sc = makeScForStatus("internal_testing");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read", isTestUser: false });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "internal_testing");
+  });
+
+  it("internal_testing — allows isTestUser=true for book action", async () => {
+    const sc = makeScForStatus("internal_testing");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book", isTestUser: true });
+    assert.equal(r.allowed, true);
+  });
+
+  // ── beta_testing ────────────────────────────────────────────────────────────
+
+  it("beta_testing — blocks non-beta user for book action (city_beta_access_required)", async () => {
+    const sc = makeScForStatus("beta_testing", { betaActive: false });
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_beta_access_required");
+  });
+
+  it("beta_testing — blocks non-beta user for apply action (city_beta_access_required)", async () => {
+    const sc = makeScForStatus("beta_testing", { betaActive: false });
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "apply" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_beta_access_required");
+  });
+
+  it("beta_testing — allows read action without beta access", async () => {
+    const sc = makeScForStatus("beta_testing", { betaActive: false });
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("beta_testing — allows book action with active beta access", async () => {
+    const sc = makeScForStatus("beta_testing", { betaActive: true });
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, true);
+  });
+
+  // ── public_mvp ──────────────────────────────────────────────────────────────
+
+  it("public_mvp — allows book action", async () => {
+    const sc = makeScForStatus("public_mvp");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("public_mvp — allows read action", async () => {
+    const sc = makeScForStatus("public_mvp");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, true);
+  });
+
+  // ── paused ──────────────────────────────────────────────────────────────────
+
+  it("paused — blocks book action (city_paused)", async () => {
+    const sc = makeScForStatus("paused");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_paused");
+  });
+
+  it("paused — allows read action", async () => {
+    const sc = makeScForStatus("paused");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, true);
+  });
+
+  it("paused — allows waitlist action", async () => {
+    const sc = makeScForStatus("paused");
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "waitlist" });
+    assert.equal(r.allowed, true);
+  });
+
+  // ── unknown / future status ─────────────────────────────────────────────────
+  // This test is the regression guard: if a new DB enum value is added without
+  // updating checkRentBuddyAccess, a test like this must be added too.
+  // The fail-closed guard in the function ensures it returns city_not_available
+  // rather than silently allowing access.
+
+  it("unknown status — blocked by fail-closed guard (city_not_available)", async () => {
+    const sc = makeScForStatus("future_unhandled_status" as any);
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "read" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
+  });
+
+  it("unknown status — blocked even for book action", async () => {
+    const sc = makeScForStatus("vip_only" as any);
+    const r = await checkRentBuddyAccess({ sc, userId: USER_ID, city: CITY, action: "book" });
+    assert.equal(r.allowed, false);
+    assert.equal((r as any).code, "city_not_available");
   });
 });

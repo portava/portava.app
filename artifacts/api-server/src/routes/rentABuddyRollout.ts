@@ -36,6 +36,14 @@ export type AccessDecision =
 
 const MVP_ALLOWED_CATEGORIES = new Set(["city", "language", "arrival", "shopping", "content"]);
 
+// All city rollout statuses handled by checkRentBuddyAccess.
+// Used for a fail-closed guard: any DB enum value added in the future but
+// not yet reflected here is denied rather than silently allowed.
+const KNOWN_CITY_STATUSES = new Set<string>([
+  "disabled", "waitlist_only", "buddy_applications_open", "internal_testing",
+  "beta_testing", "public_mvp", "paused", "suspended",
+]);
+
 // ── Global controls cache (30s TTL) ───────────────────────────────────────────
 
 let _gcCache: any = null;
@@ -361,6 +369,18 @@ export async function checkRentBuddyAccess(opts: {
         code: "city_paused",
         message: `Rent a Buddy in ${city} is temporarily paused. Existing confirmed bookings remain accessible.`,
         httpStatus: 503,
+      };
+    }
+
+    // Fail closed: deny any status not in the known set above. This catches
+    // cases where the DB enum gains a new value before this code is updated,
+    // preventing a silent allow-through.
+    if (!KNOWN_CITY_STATUSES.has(cityStatus as string)) {
+      return {
+        allowed: false,
+        code: "city_not_available",
+        message: `Rent a Buddy is not available in ${city}.`,
+        httpStatus: 403,
       };
     }
   }

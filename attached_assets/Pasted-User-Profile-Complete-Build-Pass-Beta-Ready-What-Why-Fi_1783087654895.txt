@@ -1,0 +1,76 @@
+User Profile — Complete Build Pass (Beta-Ready)
+What & Why
+Finish the Travel Buddy user profile system end-to-end so it is beta-ready. This is a top-to-bottom audit-and-fix pass — schema → backend → services → screens — covering every aspect of the profile: data integrity, edit flow, own profile display, public profile states, blocking/privacy, profile actions, avatar navigation, stats/badge truthfulness, and tests. Nothing should be faked, dead-buttoned, or data-leaking by the end of this pass.
+
+Done looks like
+profiles.cover_photo_url confirmed present in production (migration 0087 applied or verified applied); exact SQL and verification query output recorded.
+profiles.role / admin source audited — either confirmed column exists in production, or confirmed that admin guards use a different source (auth metadata / separate table); runbook updated accordingly.
+All backend profile routes (/me/profile, /me/avatar/upload, /me/cover/upload, /users/:userId, username check, privacy, deactivation) are guarded with requireUser, return correct shapes, and handle blocked/private/deleted states with safe stubs — no data leaks.
+PATCH /me/profile accepts every field the edit screen sends; no field is silently dropped.
+Edit Profile screen loads real values, validates username (uniqueness, character rules, reserved words), saves through the API, shows honest loading/error/success states, and refreshes own profile after save.
+Own Passport/profile displays real backend data for all listed fields; verified/trust badges only show when backend confirms; stats are real; profile-completion prompt appears when key fields are missing.
+Public profile correctly handles all 7 states: normal, private, I-blocked-them, they-blocked-me, deleted/deactivated, missing user, network error. No avatar/bio/posts/trip data leaks from blocked or private profiles.
+Privacy toggle controls are either wired to existing backend/schema or honestly hidden/disabled — none are visible-but-silent.
+Every visible profile action (edit, change avatar, change cover, message, block, unblock, report, share, view stamps/memories, settings) is wired, honestly disabled, or hidden — no silent no-ops, no fake success toasts.
+supabase.from('profiles').upsert(...) in auth.ts is confirmed safe or routed through the API server to avoid the P-256/RLS issue.
+All avatar taps throughout the app (posts, comments, messages, notifications, search, TripCircle, event attendees) route to the correct public profile, and missing/broken images fall back gracefully.
+Search/profile cards show only safe public fields; blocked/private users are filtered or show a safe placeholder; taps route correctly.
+All stat values come from backend real data; fake zero-padding or client-side computation is removed.
+Tests cover: PATCH allowed fields, reserved username rejection, cover/avatar URL update, blocked profile safe stub, private profile field hiding, report writing, deleted profile unavailable state, and upload type/size rejection.
+pnpm --filter @workspace/api-server run typecheck, cd travel-buddy-standalone && pnpm typecheck, and bash scripts/sync-standalone.sh --check-source all pass.
+Out of scope
+Cosmetic redesign of any profile screen.
+Public web Passport share pages (web share links, rich share images, OG tags).
+Full social graph rebuild (friend/follow system changes beyond profile display).
+New external verification provider integration.
+Trip, event, RAB, admin dashboard, or notification features unless they are directly blocking a named profile system requirement above.
+Payment or identity vendor setup.
+Steps
+Phase 1 — Schema & production audit. Confirm 0087_profiles_cover_photo_url.sql exists locally. Query information_schema.columns in production to verify whether cover_photo_url and role columns exist on profiles. If cover_photo_url is missing, apply ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS cover_photo_url TEXT; and re-verify. Audit all requireAdmin and profiles.role usages across artifacts/api-server/src/; trace the actual admin role source (auth app_metadata, admin_users table, user_roles, or profiles.role). Apply the minimal safe migration for role only if backend code genuinely requires it and no column exists. Record all SQL applied and verification query results; update docs/migrations.md as needed.
+
+Phase 2 — Backend profile route audit & completion. Read artifacts/api-server/src/routes/profile.ts in full. Verify every write route uses requireUser. Confirm the public-profile route (GET /users/:userId) returns a safe stub (no avatar/cover/bio/posts data) when the viewer has blocked the subject or the subject has blocked the viewer. Confirm deleted/deactivated profile returns an "unavailable" sentinel rather than leaking data. Confirm PATCH /me/profile accepts all fields the edit screen sends (display name, username/handle, bio, avatar URL, cover URL, home city, home country, default language, spoken languages, interests, travel style, privacy fields) and that none are silently dropped. Enforce username uniqueness, allowed characters, min/max length, and reserved-word list (admin, support, travelbuddy, api, root, system, moderator, official). Fix any gaps found; document the final route map, accepted PATCH fields, own-profile shape, and public-profile shape.
+
+Phase 3 — Frontend service layer audit. Read travel-buddy-standalone/src/services/profile.ts. Identify every place that performs a live profile mutation via direct Supabase client (e.g., supabase.from('profiles').upsert(...) in auth.ts). Decide for each: route through the API server or confirm it is safe (e.g., read-only). Fix risky direct mutations — profile updates, avatar URL writes, cover URL writes, block/unblock, and report must all go through the API server to avoid the P-256/RLS failure. Document unused legacy direct-Supabase code as non-blocking if it is not called from UI.
+
+Phase 4 — Edit Profile screen completion. Read travel-buddy-standalone/app/profile/edit.tsx. Verify it loads all supported fields from the own-profile endpoint. Ensure avatar and cover show a fallback when no URL is set. Confirm avatar-pick and cover-pick flows upload via /me/avatar/upload and /me/cover/upload, then PATCH the resulting URL. Wire username validation: character check, reserved-word block, uniqueness check via /users/check-username. Ensure loading state, backend error display, and success-only-after-confirmation are all honest. Ensure SessionContext profile is refreshed after a successful save so the passport tab reflects the new data immediately. Fix any fields that are visually present but silently dropped on save.
+
+Phase 5 — Own Passport/profile screen. Read travel-buddy-standalone/app/(tabs)/passport.tsx (or equivalent own-profile screen). Verify every displayed field (cover, avatar, display name, username, bio, home city/country, language, interests, travel style, trust score, verified badge, stamps, memories, stats) comes from the backend own-profile response and is not a hardcoded value or fixture. Show verified badge only when verified === true from backend. Show trust score only when backend returns a real value. Add a gentle profile-completion prompt when avatar, display name, username, home city/country, or default language is missing. Fix blank states, stale-after-edit states, and broken image fallbacks. Ensure the edit profile button routes correctly and settings/privacy action works.
+
+Phase 6 — Public profile screen & state matrix. Read travel-buddy-standalone/app/u/[username].tsx. Implement all 7 profile states: (1) normal visible, (2) private profile, (3) I blocked them, (4) they blocked me, (5) deleted/deactivated, (6) missing user, (7) network/API error. For blocked states, show "Profile unavailable" with unblock action only if viewer initiated the block; hide all avatar/cover/bio/posts/trip data. For private profiles, show only public-safe fields. For deleted/missing, show "This profile is no longer available" without crash. Confirm message, block, unblock, and report actions are all wired and honest. Confirm view stamps/memories/posts only shows public-visibility content for other users.
+
+Phase 7 — Privacy controls audit. Review existing privacy toggle fields in the DB schema and in PATCH /me/privacy. For each toggle visible in the UI (public/private profile, show/hide home city, home country, languages, interests, stamps, posts/memories), verify it is wired to the backend. Any toggle that is visible but not wired must be either wired to an existing field or hidden/disabled honestly — no visible-but-silent toggles.
+
+Phase 8 — Profile action honesty audit. Walk every visible action button on own profile and public profile: edit profile, change avatar, change cover, message, follow/friend (if present), block, unblock, report, share profile (if present), view stamps, view memories, open settings, external links. For each: confirm it has a handler, confirm the handler produces a real outcome or an honest error, confirm there is no silent no-op or misleading success toast. After block: hide or blur the blocked user's content where expected. After report: show confirmation without claiming moderation outcome.
+
+Phase 9 — Avatar navigation & image fallback audit. Grep all UserAvatarButton usages and other avatar-tap points (posts, comments, memories, Telegraph messages, trip members, event attendees, notifications, profile cards, search results, TripCircle). For each: confirm tapping routes to the correct public profile (or own profile for self). Confirm missing/null/broken avatar URL shows the initials or default-avatar fallback and does not crash. Confirm missing/broken cover URL shows the cover fallback. Confirm blocked users cannot have profile data accessed via avatar navigation.
+
+Phase 10 — Search card & profile card consistency. Audit search results and profile card components (user search screen, TravelerRow, saved-profiles, etc.). Confirm cards show only safe public fields (avatar fallback, display name, username, home city/country only if public, trust/verified badge only if real, mutual/circle info only if real). Confirm blocked/private users are filtered or show a safe placeholder as appropriate. Confirm card taps route to the correct public profile screen.
+
+Phase 11 — Stats & badge truth. For every stat shown on profile (trips count, posts count, memories count, stamps count, circles/followers/following, reviews/trust score): confirm it comes from a backend endpoint or real DB aggregate — not a fixture, not a client-side guess, not a hardcoded value. Hide or show 0 honestly for any stat that has no backend source yet. Confirm verified badge logic: show only when verified === true returned from backend. Confirm trust score: show only when backend returns a real numeric value, never compute fake trust client-side.
+
+Phase 12 — Tests & validation. Add or update backend tests in artifacts/api-server/src/test/ using the existing fake-client pattern for: PATCH profile allowed fields, reserved username rejection, cover/avatar URL save, blocked profile safe stub, private profile field hiding, report profile writes a report row, deleted profile unavailable state, avatar/cover upload rejects invalid type/size. Run pnpm --filter @workspace/api-server run typecheck, cd travel-buddy-standalone && pnpm typecheck, bash scripts/sync-standalone.sh --fix-source, and bash scripts/sync-standalone.sh --check-source. Fix all type errors before marking complete.
+
+Relevant files
+artifacts/api-server/src/routes/profile.ts
+artifacts/api-server/src/routes/blocks.ts
+artifacts/api-server/src/routes/reports.ts
+artifacts/api-server/src/routes/passport.ts
+artifacts/api-server/src/test/adminProfileActions.test.ts
+artifacts/api-server/src/lib/http.ts
+travel-buddy-standalone/src/services/profile.ts
+travel-buddy-standalone/src/services/auth.ts
+travel-buddy-standalone/src/services/blocks.ts
+travel-buddy-standalone/src/services/reports.ts
+travel-buddy-standalone/src/services/media.ts
+travel-buddy-standalone/app/profile/edit.tsx
+travel-buddy-standalone/app/profile/[handle].tsx
+travel-buddy-standalone/app/u/[username].tsx
+travel-buddy-standalone/app/(tabs)/passport.tsx
+travel-buddy-standalone/app/settings/privacy.tsx
+travel-buddy-standalone/src/components/interaction/UserAvatarButton.tsx
+travel-buddy-standalone/src/components/interaction/UserMiniProfileCard.tsx
+travel-buddy-standalone/src/components/TravelerRow.tsx
+travel-buddy-standalone/src/context/SessionContext.tsx
+supabase/migrations/0087_profiles_cover_photo_url.sql
+docs/migrations.md
+scripts/sync-standalone.sh
