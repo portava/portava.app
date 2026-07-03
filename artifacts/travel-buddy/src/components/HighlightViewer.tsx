@@ -15,6 +15,7 @@ import {
   View, Text, Image, Pressable, Modal, StyleSheet,
   Alert, Dimensions, ActivityIndicator, TextInput, Platform,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
@@ -358,6 +359,13 @@ export function HighlightViewer({
           />
         </View>
 
+        {/* Cinematic scrim — bottom 50 % gradient keeps author / controls readable */}
+        <LinearGradient
+          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.75)']}
+          style={s.scrim}
+          pointerEvents="none"
+        />
+
         {/* Bottom: caption + actions */}
         <View style={[s.bottom, { paddingBottom: Math.max(insets.bottom, 24) }]}>
           {current.caption ? (
@@ -506,6 +514,7 @@ const s = StyleSheet.create({
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },
+  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', zIndex: 8 },
   bottom: {
     position: 'absolute',
     left: 0,
@@ -514,7 +523,6 @@ const s = StyleSheet.create({
     padding: space.lg,
     gap: space.md,
     zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.0)',
   },
   caption: {
     color: '#fff',
