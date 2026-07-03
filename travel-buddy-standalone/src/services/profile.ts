@@ -221,6 +221,15 @@ export interface PublicProfileCard {
   stampCount: number;
   visibility: string;
   private?: boolean;
+  homeCity?: string | null;
+  homeCountry?: string | null;
+  travelStyle?: string | null;
+  interests?: string[];
+  verified?: boolean;
+  verificationStatus?: string;
+  verifiedAt?: string | null;
+  passportVisibility?: string;
+  createdAt?: string | null;
 }
 
 export async function getPublicProfile(username: string): Promise<ProfileResult<PublicProfileCard>> {

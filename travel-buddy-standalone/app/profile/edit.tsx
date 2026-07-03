@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, Image,
   ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
-  Platform, SafeAreaView, Modal, FlatList,
+  Platform, SafeAreaView, Modal, FlatList, Linking,
 } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,8 @@ import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from
 import * as ImagePicker from 'expo-image-picker';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../src/lib/imageRender';
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
+import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
+import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import type { OwnProfile } from '../../src/types/models';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -128,6 +130,10 @@ export default function EditProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [langPickerVisible, setLangPickerVisible] = useState(false);
+  const [showHomePicker, setShowHomePicker] = useState(false);
+  const [showCurrentPicker, setShowCurrentPicker] = useState(false);
+  const [gpsLoadingHome, setGpsLoadingHome] = useState(false);
+  const [gpsLoadingCurrent, setGpsLoadingCurrent] = useState(false);
 
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle');
   const [usernameMessage, setUsernameMessage] = useState<string | null>(null);
@@ -270,6 +276,65 @@ export default function EditProfileScreen() {
       }
     }, 500);
   }, [profile?.username]);
+
+  const fillHomeFromGps = useCallback(async () => {
+    setGpsLoadingHome(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps.granted) {
+        Alert.alert(
+          'Location permission is off',
+          'Enable it in Settings or choose a city from the list.',
+          [
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+      if (gps.lat == null || gps.lng == null) return;
+      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      setForm((f) => ({
+        ...f,
+        homeCity: place.city ?? f.homeCity,
+        homeCountry: place.country ?? f.homeCountry,
+      }));
+    } catch {
+      // silent — user can still type manually
+    } finally {
+      setGpsLoadingHome(false);
+    }
+  }, []);
+
+  const fillCurrentFromGps = useCallback(async () => {
+    setGpsLoadingCurrent(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps.granted) {
+        Alert.alert(
+          'Location permission is off',
+          'Enable it in Settings or choose a city from the list.',
+          [
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            { text: 'Choose from list', onPress: () => setShowCurrentPicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+      if (gps.lat == null || gps.lng == null) return;
+      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      setForm((f) => ({
+        ...f,
+        currentCity: place.city ?? f.currentCity,
+      }));
+    } catch {
+      // silent — user can still type manually
+    } finally {
+      setGpsLoadingCurrent(false);
+    }
+  }, []);
 
   const pickAvatar = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -622,6 +687,22 @@ export default function EditProfileScreen() {
                   autoCapitalize="words"
                   returnKeyType="next"
                 />
+                <View style={styles.locationActions}>
+                  <Pressable
+                    style={styles.locationBtn}
+                    onPress={fillHomeFromGps}
+                    disabled={gpsLoadingHome}
+                  >
+                    {gpsLoadingHome
+                      ? <ActivityIndicator size="small" color={color.signal} />
+                      : <Text style={styles.locationBtnText}>⊕ Use my current location</Text>
+                    }
+                  </Pressable>
+                  <Pressable style={styles.locationBtn} onPress={() => setShowHomePicker(true)}>
+                    <Text style={styles.locationBtnText}>≡ Choose from list</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.fieldHint}>We'll use GPS to detect your city. Your precise location is never shown publicly.</Text>
               </View>
 
               {/* Home Country */}
@@ -637,6 +718,7 @@ export default function EditProfileScreen() {
                   autoCapitalize="words"
                   returnKeyType="next"
                 />
+                <Text style={styles.fieldHint}>Auto-filled when using location detection above.</Text>
               </View>
 
               {/* Current City */}
@@ -652,6 +734,21 @@ export default function EditProfileScreen() {
                   autoCapitalize="words"
                   returnKeyType="next"
                 />
+                <View style={styles.locationActions}>
+                  <Pressable
+                    style={styles.locationBtn}
+                    onPress={fillCurrentFromGps}
+                    disabled={gpsLoadingCurrent}
+                  >
+                    {gpsLoadingCurrent
+                      ? <ActivityIndicator size="small" color={color.signal} />
+                      : <Text style={styles.locationBtnText}>⊕ Use my current location</Text>
+                    }
+                  </Pressable>
+                  <Pressable style={styles.locationBtn} onPress={() => setShowCurrentPicker(true)}>
+                    <Text style={styles.locationBtnText}>≡ Choose from list</Text>
+                  </Pressable>
+                </View>
                 <Text style={styles.fieldHint}>Shown on your profile when enabled in privacy settings.</Text>
               </View>
 
@@ -852,6 +949,26 @@ export default function EditProfileScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Home city/country picker */}
+      <ManualCityPicker
+        visible={showHomePicker}
+        onClose={() => setShowHomePicker(false)}
+        onSelect={(city, country) => {
+          setForm((f) => ({ ...f, homeCity: city, homeCountry: country }));
+          setShowHomePicker(false);
+        }}
+      />
+
+      {/* Current city picker */}
+      <ManualCityPicker
+        visible={showCurrentPicker}
+        onClose={() => setShowCurrentPicker(false)}
+        onSelect={(city) => {
+          setForm((f) => ({ ...f, currentCity: city }));
+          setShowCurrentPicker(false);
+        }}
+      />
     </View>
   );
 }
@@ -1106,4 +1223,28 @@ const styles = StyleSheet.create({
   langItemSelected: {},
   langItemText: { ...t.body, color: color.ink },
   langItemTextSelected: { fontWeight: '700' },
+
+  locationActions: {
+    flexDirection: 'row',
+    gap: space.sm,
+    marginTop: space.xs,
+    flexWrap: 'wrap',
+  },
+  locationBtn: {
+    paddingHorizontal: space.md,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    backgroundColor: color.signal + '08',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  locationBtnText: {
+    ...t.small,
+    color: color.signal,
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });

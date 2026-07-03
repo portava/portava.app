@@ -45,6 +45,10 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
   const ringState = useHighlightRingState(item.author?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
+  const handleAuthorPress = item.author?.username
+    ? () => router.push(`/u/${item.author!.username}` as any)
+    : undefined;
+
   return (
     <View style={s.authorRow}>
       {item.author ? (
@@ -54,14 +58,18 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
           size={36}
           ringWidth={2}
           gap={2}
-          onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
+          onPress={ringState?.hasActive ? () => setViewerOpen(true) : handleAuthorPress}
         >
           <Image source={{ uri: item.author.avatarUrl }} style={s.avatar} />
         </HighlightRing>
       ) : null}
       <View style={{ flex: 1 }}>
         {badge ? <View style={[s.kindBadge, { backgroundColor: badge.bg }]}><Text style={[s.kindText, { color: badge.fg }]}>{badge.label}</Text></View> : null}
-        {item.author ? <Text style={s.author}>{item.author.name}</Text> : null}
+        {item.author ? (
+          <Pressable onPress={handleAuthorPress}>
+            <Text style={s.author}>{item.author.name}</Text>
+          </Pressable>
+        ) : null}
         <Text style={s.meta}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
       </View>
       <Pressable

@@ -1,0 +1,351 @@
+Travel Buddy — Profile UI Completion + GPS Input Replacement Build Pass
+
+Now that the profile/GPS database and backend layer has been verified, complete the visible profile UI and replace manual GPS/coordinate/location inputs.
+
+Work only on:
+1. User profile / Passport UI completion
+2. Profile edit flow
+3. Avatar and cover photo display/upload
+4. Profile privacy/block/report/message actions
+5. GPS permission flow where users were asked for coordinates
+6. Assisted city/location input where profile/location fields require city/country
+
+Do not rebuild unrelated systems.
+Do not touch trips/events/RAB/discovery unless a visible profile or GPS/location field directly needs this pass.
+Do not add new features outside profile/location input.
+Do not do cosmetic-only redesign.
+Do not fake GPS success.
+Do not ask users to manually enter coordinates.
+
+Context:
+The profile/GPS database/backend pass is complete:
+- hiddenGems admin guard now uses profiles.role
+- hiddenGems tests pass 38/38
+- no remaining is_admin route/mobile usage
+- no direct Supabase mutations in mobile profile/location code
+- account_status, cover_photo_url, role, display_name have been handled in production
+- admin role was set for profile id 92602b6c-0eca-433d-9ee2-a82696b3837f
+- profile_privacy_settings and user_deletion_requests are expected to exist from 0094
+- GPS privacy protections were verified in code
+
+Goal:
+Finish the profile user experience end to end and replace raw coordinate input with GPS permission/capture flow.
+
+Part 1 — Survey first
+
+Before editing, inspect:
+- Passport / own profile screen
+- public profile screen
+- edit profile screen/sheet
+- profile settings/privacy screen
+- avatar upload code
+- cover upload code
+- UserAvatarButton and avatar tap usage
+- profile services
+- upload services
+- block/unblock/report services
+- GPS/location components
+- any TextInput for latitude/longitude/coordinates
+- home_city/home_country inputs
+- ManualCityPicker
+- expo-location usage
+- location permission flows
+- profile privacy rendering
+- blocked/private/deleted profile states
+
+Build two matrices before fixes:
+
+A. User Profile UI Matrix:
+- Area
+- Current state
+- Backend/schema dependency
+- Screen/component
+- Status: pass / partial / fail / missing / production-blocked
+- Evidence
+- Fix needed
+
+B. GPS/Location Input Matrix:
+- Screen/component
+- Field/action
+- Current input method
+- Required method
+- Backend field
+- Privacy risk
+- Status
+- Fix needed
+
+Part 2 — Own Passport/profile screen
+
+Verify and complete display of:
+- cover photo
+- avatar
+- display name
+- handle
+- bio
+- home city
+- home country
+- default language
+- spoken languages
+- interests
+- travel style
+- trust score
+- verified badge only if backend confirms
+- passport stamps
+- memories/postcards
+- real stats only
+- edit profile button
+- settings/privacy entry if present
+- profile completion prompt if incomplete
+
+Rules:
+- no fake stats
+- no fake verified badge
+- no fake trust score
+- no blank broken images
+- stale data must refresh after edit
+- missing fields need honest empty states
+
+Part 3 — Edit profile completion
+
+Complete editable fields if backend/schema supports them:
+- display name
+- handle
+- bio
+- avatar
+- cover photo
+- home city
+- home country
+- default language
+- spoken languages
+- interests
+- travel style
+- privacy settings if already visible
+
+Behavior:
+- load current profile values
+- save through API server
+- show loading state
+- show backend errors honestly
+- show success only after backend confirms
+- refresh own Passport/profile after save
+- no fields silently dropped
+- no direct Supabase writes
+
+Handle validation:
+- unique if backend supports lookup
+- allowed characters only
+- min/max length
+- reserved words blocked:
+  admin, support, travelbuddy, api, root, system, moderator, official
+
+Part 4 — Avatar and cover photo
+
+Avatar:
+- picker works
+- upload route writes avatar_url
+- profile screen refreshes after upload
+- fallback works for missing/broken URL
+
+Cover:
+- picker works
+- upload route writes cover_photo_url
+- profile screen displays cover_photo_url
+- fallback works for missing/broken URL
+- no white/blank cover area
+
+Part 5 — Public profile states
+
+Verify and complete:
+- normal visible profile
+- private profile
+- I blocked them
+- they blocked me
+- deleted/deactivated profile
+- missing user
+- network/API error
+
+Rules:
+- blocked/private/deleted profiles must not leak avatar, cover, bio, posts, memories, trips, GPS, or private fields
+- if I blocked them, show unblock action
+- if they blocked me, no unblock action
+- deleted/missing profile shows: “This profile is no longer available.”
+
+Part 6 — Profile actions
+
+Every visible profile action must work, be hidden, or be honestly disabled.
+
+Audit/fix:
+- Edit profile
+- Change avatar
+- Change cover
+- Message
+- Block
+- Unblock
+- Report
+- Share profile if visible
+- View stamps
+- View memories/postcards
+- Open settings
+- Open privacy settings
+
+Rules:
+- no silent no-op
+- no fake success
+- no broken route
+- no misleading success toast
+- no blocked-user data leak
+
+Part 7 — Avatar navigation
+
+Search avatar/profile tap usage in:
+- posts
+- comments
+- memories
+- Telegraph
+- TripCircle
+- search results
+- event attendees
+- notifications
+- profile cards
+
+Confirm:
+- tapping routes to correct public profile
+- blocked users do not leak data through navigation
+- missing/broken avatar uses fallback
+- no dead avatar buttons
+
+Part 8 — Replace manual coordinate input with GPS flow
+
+Search for:
+- latitude
+- longitude
+- lat
+- lng
+- coordinates
+- GPS coordinates
+- exact location
+- raw coordinate TextInput
+- numeric keyboard tied to location fields
+
+Replace normal user-facing coordinate entry with:
+- “Use my current location”
+- location permission request
+- GPS capture
+- reverse-geocoded label where available
+- denied/unavailable fallback
+- privacy explanation
+
+Required copy:
+“Use my current location”
+“We’ll use GPS to detect your location. Your precise location is never shown publicly.”
+
+Denied state:
+“Location permission is off. Enable it in settings or choose a city/place from search.”
+
+GPS-required flows:
+- do not allow typed coordinates
+- show “GPS is required for this feature” if permission denied
+- do not fake location/stamp success
+
+Part 9 — Profile home city/country assisted input
+
+Replace manual home city/country typing where practical:
+- Use current location option to prefill city/country
+- Use assisted city selector if already available
+- country should come from selected city/GPS result
+- do not store precise GPS on profile
+- display only city/country, never raw coordinates
+
+If full city autocomplete provider is not ready:
+- keep existing city selector only as a validated fallback
+- do not ask for coordinates
+
+Part 10 — Reusable components
+
+Create or reuse minimal components only if needed:
+- GpsLocationCapture
+- CitySearchField
+- LocationPrivacyNotice
+- LocationDisplay
+
+Minimum GpsLocationCapture behavior:
+- asks permission only after tap
+- handles granted/denied/unavailable/timeout
+- returns latitude, longitude, city, region, country, label, accuracy
+- displays privacy-safe label
+- never exposes raw coordinates publicly
+
+Part 11 — Direct Supabase risk check
+
+Confirm no live profile/location UI mutation uses:
+- supabase.from(...).insert
+- update
+- upsert
+- delete
+- rpc
+
+Profile/location writes must use API server.
+
+Part 12 — Fix policy
+
+Fix only proven issues:
+- missing/broken profile field display
+- profile edit field not saving
+- avatar/cover upload/display broken
+- blocked/private/deleted data leak
+- fake stats/badges
+- dead profile actions
+- manual coordinate inputs
+- raw coordinate public display
+- missing GPS permission flow for GPS-required features
+- direct Supabase live mutations for profile/location
+
+Do not fix:
+- public web Passport
+- rich social share images
+- full map redesign
+- unrelated trip/event/RAB features
+- new verification provider
+- future 0093 stamp activation
+- cosmetic-only layout changes
+
+Part 13 — Validation
+
+After fixes, run:
+- pnpm --filter @workspace/api-server run typecheck
+- cd travel-buddy-standalone && pnpm typecheck
+- pnpm run typecheck if practical
+- bash scripts/sync-standalone.sh --fix-source if artifacts changed
+- bash scripts/sync-standalone.sh --check-source
+- bash scripts/sync-standalone.sh --check-deps
+- pnpm --filter @workspace/scripts run test:routes-guard if available
+- bash scripts/test-sync-standalone.sh if practical
+- relevant profile/location tests if existing
+
+Final report must include:
+1. Executive summary
+2. User Profile UI Matrix
+3. GPS/Location Input Matrix
+4. Profile fixes completed
+5. GPS/location fixes completed
+6. Reusable components created/reused
+7. Backend/schema dependencies
+8. Direct Supabase risks fixed
+9. Privacy/blocking findings
+10. Manual coordinate fields removed
+11. Avatar navigation findings
+12. Stats/badge/trust truth findings
+13. Remaining blockers
+14. Honest-disabled items
+15. Manual production actions still required
+16. Validation table
+17. Commit message
+
+Important:
+Complete this as a cohesive user-facing profile/location pass.
+Users should not type coordinates.
+Users should not be forced to manually type city names where GPS or assisted input can fill them.
+Precise GPS must never leak publicly.
+Profile data must never leak through blocked/private/deleted states.
+No fake success.
+No dead buttons.

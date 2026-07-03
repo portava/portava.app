@@ -679,6 +679,7 @@ export interface PulseAuthor {
   id: ID;
   name: string;
   avatarUrl: string;
+  username?: string | null;
 }
 
 export interface PulseFeedItem {

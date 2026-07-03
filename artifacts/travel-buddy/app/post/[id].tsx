@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
   Image, ActivityIndicator,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
@@ -89,7 +89,10 @@ function PostDetailCard({ post }: { post: PostRow }) {
 
   return (
     <View style={card.wrap}>
-      <View style={card.authorRow}>
+      <Pressable
+        style={card.authorRow}
+        onPress={post.author?.handle ? () => router.push(`/u/${post.author!.handle}` as any) : undefined}
+      >
         {authorAvatar ? (
           <Image source={{ uri: authorAvatar }} style={card.avatar} />
         ) : (
@@ -101,7 +104,7 @@ function PostDetailCard({ post }: { post: PostRow }) {
           <Text style={card.authorName}>{authorName}</Text>
           <Text style={card.ts}>{ts}</Text>
         </View>
-      </View>
+      </Pressable>
 
       {firstMedia ? (
         <Image source={{ uri: firstMedia }} style={card.media} resizeMode="cover" />
