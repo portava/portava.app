@@ -232,8 +232,16 @@ export default function PostDetail() {
             : <PostDetailCard post={post} />
         ) : null}
 
-        <Text style={{ ...t.heading, color: color.ink }}>Comments</Text>
-        <Text style={{ ...t.body, color: color.mute }}>Comments coming soon.</Text>
+        {post && !reported && (
+          <View style={{ gap: space.sm }}>
+            <Text style={{ ...t.heading, color: color.ink }}>Comments</Text>
+            <Text style={{ ...t.body, color: color.mute }}>
+              {post.commentCount > 0
+                ? `${post.commentCount} comment${post.commentCount !== 1 ? 's' : ''} — thread coming soon.`
+                : 'No comments yet.'}
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       {post && !isOwnPost && (

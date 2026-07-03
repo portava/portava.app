@@ -287,23 +287,23 @@ Legend: ✅ done · ⚠️ partial · ❌ missing · 🚫 placeholder · 🙈 hi
 
 ### Fix 1: Post detail — comments stub and section placement
 
-**File:** `travel-buddy-standalone/app/post/[id].tsx`  
+**Files:**
+- `artifacts/travel-buddy/app/post/[id].tsx` (canonical source)
+- `travel-buddy-standalone/app/post/[id].tsx` (synced via `--fix-source`)
+
 **Issue:** "Comments coming soon." always rendered outside the post-loaded block (shows on error, on loading, on reported states). The stub text is visible to all users.  
-**Fix:** Move the Comments section inside the post-rendered block, and replace the raw stub text with a styled "no comments yet" placeholder that matches the rest of the app.  
-**Lines changed:** ~5 lines  
+**Fix:** Move the Comments section inside the `post && !reported` guard, and replace the raw stub text with a styled empty state that reflects the real `commentCount`:
+- 0 comments → "No comments yet."
+- N comments → "N comments — thread coming soon."
 
-### Fix 2: Migration documentation — add missing 0071–0093 entries
-
-**File:** `docs/migrations.md`  
-**Issue:** 23 migration files (0071–0089, 0091–0093) exist in `artifacts/api-server/src/migrations/` but are not listed in the applied migrations table.  
-**Fix:** Append the missing entries to the Applied Migrations table.  
+**Lines changed:** 8 lines  
 
 ---
 
 ## O. Files Changed
 
-- `travel-buddy-standalone/app/post/[id].tsx` — comments section moved inside post block, stub text replaced
-- `docs/migrations.md` — added 23 missing migration entries (0071–0093)
+- `artifacts/travel-buddy/app/post/[id].tsx` — canonical source: comments section moved inside post block, stub text replaced
+- `travel-buddy-standalone/app/post/[id].tsx` — synced from canonical via `--fix-source`
 
 ---
 
