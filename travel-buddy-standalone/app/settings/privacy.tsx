@@ -22,17 +22,27 @@ export default function PrivacySettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  const loadSettings = useCallback(() => {
+    setLoading(true);
+    setLoadError(false);
+    getPrivacySettings()
+      .then((res) => {
+        if (res.ok && res.data) {
+          setPrivacy(res.data);
+        } else {
+          setLoadError(true);
+        }
+      })
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!live) { setLoading(false); return; }
-    setLoading(true);
-    getPrivacySettings()
-      .then((res) => {
-        if (res.ok && res.data) setPrivacy(res.data);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [live]);
+    loadSettings();
+  }, [live, loadSettings]);
 
   const handleChange = useCallback(
     <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
@@ -75,9 +85,18 @@ export default function PrivacySettingsScreen() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}>
         {!privacy ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>Sign in to manage privacy settings.</Text>
-          </View>
+          live && loadError ? (
+            <View style={styles.errorState}>
+              <Text style={styles.errorText}>Failed to load settings.</Text>
+              <Pressable style={styles.retryButton} onPress={loadSettings}>
+                <Text style={styles.retryText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>Sign in to manage privacy settings.</Text>
+            </View>
+          )
         ) : (
           <>
             {/* Profile visibility */}
@@ -239,6 +258,28 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.mute,
     textAlign: 'center',
+  },
+  errorState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space.xl,
+    gap: space.md,
+  },
+  errorText: {
+    ...t.body,
+    color: color.mute,
+    textAlign: 'center',
+  },
+  retryButton: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    backgroundColor: color.deep,
+    borderRadius: radius.md,
+  },
+  retryText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+    fontSize: 14,
   },
   section: {
     marginTop: space.xl,
