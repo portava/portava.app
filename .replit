@@ -3,7 +3,7 @@ modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-build = ["bash", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"]
+build = ["bash", "-c", "pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"]
 run = ["bash", "-c", "node --enable-source-maps artifacts/api-server/dist/index.mjs"]
 
 [deployment.postBuild]
