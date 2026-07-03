@@ -193,82 +193,136 @@ async function _awardStampCore(
     .eq("idempotency_key", idemKey)
     .maybeSingle();
 
+  // Recovery path: if the award event was committed but the user_stamp row is
+  // missing (e.g. the DB went down between step 6 and step 7), skip directly to
+  // the stamp insertion to heal the partial failure rather than returning
+  // already_awarded with a missing passport row.
+  //
+  // For repeatable stamps we must match by (source_type, source_id) — not just
+  // definition_id — so that an existing stamp from a different source does not
+  // mask a missing stamp for this event's specific source.
+  let skipToStampInsert = false;
   if (existingEvent && (existingEvent as any).status === "awarded") {
-    return { awarded: false, reason: "already_awarded" };
-  }
-
-  // 4. For non-repeatable stamps: check if user already has one
-  if (!definition.is_repeatable) {
-    const { data: existingStamp } = await sc
+    const resolvedSourceId = sourceId !== "none" ? sourceId : null;
+    let stampQuery = sc
       .from("user_stamps")
       .select("id")
       .eq("user_id", userId)
       .eq("stamp_definition_id", definition.id)
-      .eq("is_revoked", false)
-      .maybeSingle();
-
-    if (existingStamp) {
-      return { awarded: false, reason: "already_earned" };
-    }
-  }
-
-  // 5. For repeatable stamps: check max_awards_per_user cap
-  if (definition.is_repeatable && definition.max_awards_per_user != null) {
-    const { count } = await sc
-      .from("user_stamps")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("stamp_definition_id", definition.id)
+      .eq("source_type", sourceType)
       .eq("is_revoked", false);
 
-    if ((count ?? 0) >= definition.max_awards_per_user) {
-      return { awarded: false, reason: "max_awards_reached" };
-    }
-  }
+    // Use .is() for null comparisons; .eq() translates to = null which is always false in SQL.
+    stampQuery = resolvedSourceId === null
+      ? (stampQuery as any).is("source_id", null)
+      : (stampQuery as any).eq("source_id", resolvedSourceId);
 
-  // 6. Insert award event (with idempotency key)
-  const { error: eventErr } = await sc.from("stamp_award_events").insert({
-    user_id:             userId,
-    stamp_definition_id: definition.id,
-    source_type:         sourceType,
-    source_id:           sourceId !== "none" ? sourceId : null,
-    award_reason:        awardReason ?? null,
-    criteria_snapshot:   metadata ?? null,
-    idempotency_key:     idemKey,
-    status:              "awarded",
-    admin_id:            adminId ?? null,
-  });
+    const { data: existingStampForEvent } = await (stampQuery as any).maybeSingle();
 
-  if (eventErr) {
-    // Concurrent insert hit the unique constraint — treat as already awarded
-    if ((eventErr as any).code === "23505") {
+    if (existingStampForEvent) {
       return { awarded: false, reason: "already_awarded" };
     }
-    return { awarded: false, reason: `event_insert_failed: ${eventErr.message}` };
+    // Event row is committed but stamp row is missing — heal it.
+    skipToStampInsert = true;
   }
 
-  // 7. Insert user_stamp row
-  const { data: stampRow, error: stampErr } = await sc
-    .from("user_stamps")
-    .insert({
+  if (!skipToStampInsert) {
+    // 4. For non-repeatable stamps: check if user already has one
+    if (!definition.is_repeatable) {
+      const { data: existingStamp } = await sc
+        .from("user_stamps")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("stamp_definition_id", definition.id)
+        .eq("is_revoked", false)
+        .maybeSingle();
+
+      if (existingStamp) {
+        return { awarded: false, reason: "already_earned" };
+      }
+    }
+
+    // 5. For repeatable stamps: check max_awards_per_user cap
+    if (definition.is_repeatable && definition.max_awards_per_user != null) {
+      const { count } = await sc
+        .from("user_stamps")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("stamp_definition_id", definition.id)
+        .eq("is_revoked", false);
+
+      if ((count ?? 0) >= definition.max_awards_per_user) {
+        return { awarded: false, reason: "max_awards_reached" };
+      }
+    }
+
+    // 6. Insert award event (with idempotency key)
+    const { error: eventErr } = await sc.from("stamp_award_events").insert({
       user_id:             userId,
       stamp_definition_id: definition.id,
       source_type:         sourceType,
       source_id:           sourceId !== "none" ? sourceId : null,
-      city:                city ?? null,
-      country:             country ?? null,
-      lat:                 lat ?? null,
-      lng:                 lng ?? null,
-      metadata:            metadata ?? null,
-      visibility:          definition.visibility_default ?? "public",
-      display_on_passport: true,
-      is_revoked:          false,
-      awarded_by_admin_id: adminId ?? null,
-    })
-    .select("id")
-    .single();
+      award_reason:        awardReason ?? null,
+      criteria_snapshot:   metadata ?? null,
+      idempotency_key:     idemKey,
+      status:              "awarded",
+      admin_id:            adminId ?? null,
+    });
+
+    if (eventErr) {
+      // Concurrent insert hit the unique constraint — treat as already awarded
+      if ((eventErr as any).code === "23505") {
+        return { awarded: false, reason: "already_awarded" };
+      }
+      return { awarded: false, reason: `event_insert_failed: ${eventErr.message}` };
+    }
+  }
+
+  // 7. Insert user_stamp row (with exponential-backoff retry for transient failures).
+  // If the DB goes down after step 6 commits the award event, up to 3 attempts are
+  // made before giving up. On the next call to awardStamp with the same input the
+  // recovery path above (skipToStampInsert) will attempt the insert again, so no
+  // stamp is permanently lost.
+  const STAMP_INSERT_MAX_ATTEMPTS = 3;
+  let stampRow: any = null;
+  let stampErr: any = null;
+  for (let attempt = 0; attempt < STAMP_INSERT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 100 ms, 200 ms
+      await new Promise<void>((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+    }
+    const result = await sc
+      .from("user_stamps")
+      .insert({
+        user_id:             userId,
+        stamp_definition_id: definition.id,
+        source_type:         sourceType,
+        source_id:           sourceId !== "none" ? sourceId : null,
+        city:                city ?? null,
+        country:             country ?? null,
+        lat:                 lat ?? null,
+        lng:                 lng ?? null,
+        metadata:            metadata ?? null,
+        visibility:          definition.visibility_default ?? "public",
+        display_on_passport: true,
+        is_revoked:          false,
+        awarded_by_admin_id: adminId ?? null,
+      })
+      .select("id")
+      .single();
+    stampRow = result.data;
+    stampErr = result.error;
+    if (!stampErr) break;
+    // Do not retry unique-constraint violations — not transient.
+    if ((stampErr as any).code === "23505") break;
+  }
 
   if (stampErr) {
+    // A unique-constraint violation in the recovery path means a concurrent process
+    // already inserted the missing stamp — treat as a successful heal.
+    if (skipToStampInsert && (stampErr as any).code === "23505") {
+      return { awarded: false, reason: "already_awarded" };
+    }
     return { awarded: false, reason: `stamp_insert_failed: ${stampErr.message}` };
   }
 
