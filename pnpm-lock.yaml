@@ -72,7 +72,7 @@ importers:
   .:
     devDependencies:
       '@types/node':
-        specifier: 'catalog:'
+        specifier: 22.20.0
         version: 22.20.0
       eslint:
         specifier: ^10.6.0
