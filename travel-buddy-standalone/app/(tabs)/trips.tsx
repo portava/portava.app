@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { useFocusEffect } from 'expo-router';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
@@ -373,8 +372,8 @@ const styles = StyleSheet.create({
 
 export default function Trips() {
   return (
-    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+    <ScreenErrorBoundary>
       <TripsScreen />
-    </ErrorBoundary>
+    </ScreenErrorBoundary>
   );
 }

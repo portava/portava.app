@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput,
 } from 'react-native';
@@ -1182,8 +1181,8 @@ const styles = StyleSheet.create({
 
 export default function DiscoveryHub() {
   return (
-    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+    <ScreenErrorBoundary>
       <DiscoveryHubScreen />
-    </ErrorBoundary>
+    </ScreenErrorBoundary>
   );
 }

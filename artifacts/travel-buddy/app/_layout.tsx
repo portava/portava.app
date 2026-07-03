@@ -24,6 +24,7 @@ import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedTo
 import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { reportCrash } from '@/src/lib/crashReporter';
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
@@ -66,7 +67,7 @@ export default function RootLayout() {
               <PlanPickerControllerProvider>
                 <NotificationToastProvider>
                 <StampEarnedToastProvider>
-                  <ErrorBoundary>
+                  <ErrorBoundary onError={(error, stack) => reportCrash(error, stack)}>
                     <PushSetup />
                     <CompassFrontloadSetup />
                     <StatusBar style="dark" />

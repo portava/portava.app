@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -763,8 +762,8 @@ const mp = StyleSheet.create({
 
 export default function TripDetail() {
   return (
-    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+    <ScreenErrorBoundary>
       <TripDetailScreen />
-    </ErrorBoundary>
+    </ScreenErrorBoundary>
   );
 }
