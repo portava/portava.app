@@ -133,8 +133,10 @@ STANDALONE_OWNED_FILES=(
   "src/components/__tests__/ReviewsSection.place.component.test.tsx"
   "src/components/__tests__/ReviewsSection.delete.component.test.tsx"
   "src/components/discovery/__tests__/FilterStrip.nearest.test.ts"
+  "src/components/discovery/__tests__/FilterStrip.sort.test.ts"
   "src/components/discovery/__tests__/DiscoveryCategoryTab.nearest.test.ts"
   "src/components/discovery/filterStripNearest.ts"
+  "src/components/discovery/filterStripSort.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
