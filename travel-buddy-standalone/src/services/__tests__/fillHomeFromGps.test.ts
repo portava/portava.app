@@ -283,3 +283,94 @@ describe('runFillHomeFromGps — geocode error is swallowed', () => {
     );
   });
 });
+
+// ── GPS timeout guard ─────────────────────────────────────────────────────────
+
+/**
+ * A getCurrentGps that never settles — simulates the OS permission dialog
+ * left open (or the device hanging indefinitely on location acquisition).
+ */
+function hangingGps(): () => Promise<GpsFillResult> {
+  return () => new Promise<GpsFillResult>(() => { /* never resolves */ });
+}
+
+describe('runFillHomeFromGps — maxLoadingMs timeout guard', () => {
+  it('clears loading when getCurrentGps hangs past maxLoadingMs', async () => {
+    const spy = makeSetterSpy();
+
+    await assert.doesNotReject(async () => {
+      await runFillHomeFromGps(
+        {
+          getCurrentGps: hangingGps(),
+          reverseGeocodeDetailed: geocode({ city: 'ShouldNotReach', country: 'ShouldNotReach' }),
+          onPermissionDenied: neverCalled(),
+          maxLoadingMs: 50,
+        },
+        spy.setters,
+      );
+    });
+
+    assert.equal(spy.loadingStates[0], true,  'loading must be set true at start');
+    assert.equal(
+      spy.loadingStates[spy.loadingStates.length - 1],
+      false,
+      'loading must be cleared after the timeout fires',
+    );
+  });
+
+  it('does not set homeCity or homeCountry when GPS times out', async () => {
+    const spy = makeSetterSpy();
+
+    await runFillHomeFromGps(
+      {
+        getCurrentGps: hangingGps(),
+        reverseGeocodeDetailed: geocode({ city: 'ShouldNotReach', country: 'ShouldNotReach' }),
+        onPermissionDenied: () => {},
+        maxLoadingMs: 50,
+      },
+      spy.setters,
+    );
+
+    assert.equal(spy.cities.length,    0, 'setHomeCity must not be called on timeout');
+    assert.equal(spy.countries.length, 0, 'setHomeCountry must not be called on timeout');
+  });
+
+  it('does not call onPermissionDenied when GPS times out', async () => {
+    const spy = makeSetterSpy();
+    let deniedCount = 0;
+
+    await runFillHomeFromGps(
+      {
+        getCurrentGps: hangingGps(),
+        reverseGeocodeDetailed: geocode({ city: null, country: null }),
+        onPermissionDenied: () => { deniedCount++; },
+        maxLoadingMs: 50,
+      },
+      spy.setters,
+    );
+
+    assert.equal(deniedCount, 0, 'onPermissionDenied must not be called when GPS times out');
+  });
+
+  it('completes successfully before the timeout when GPS resolves quickly', async () => {
+    const spy = makeSetterSpy();
+
+    await runFillHomeFromGps(
+      {
+        getCurrentGps: grantedGps(48.8584, 2.2945),
+        reverseGeocodeDetailed: geocode({ city: 'Paris', country: 'France' }),
+        onPermissionDenied: neverCalled(),
+        maxLoadingMs: 5_000,
+      },
+      spy.setters,
+    );
+
+    assert.equal(spy.cities[0],    'Paris',  'city must be set when GPS resolves before timeout');
+    assert.equal(spy.countries[0], 'France', 'country must be set when GPS resolves before timeout');
+    assert.equal(
+      spy.loadingStates[spy.loadingStates.length - 1],
+      false,
+      'loading must be cleared on success path with generous timeout',
+    );
+  });
+});

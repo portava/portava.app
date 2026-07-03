@@ -36,6 +36,13 @@ export interface FillHomeDeps {
   reverseGeocodeDetailed(lat: number, lng: number): Promise<PlaceFillResult>;
   /** Called instead of Alert.alert so the caller decides how to present the denial prompt. */
   onPermissionDenied(opts: PermissionDeniedOpts): void;
+  /**
+   * Maximum milliseconds to wait for `getCurrentGps()` before aborting and
+   * clearing the loading state. Prevents the spinner from staying stuck when
+   * the OS permission dialog is force-closed or the component unmounts.
+   * Default: 12_000 ms.
+   */
+  maxLoadingMs?: number;
 }
 
 export interface FillHomeSetters {
@@ -48,21 +55,28 @@ export interface FillHomeSetters {
  * Core GPS → home-city fill logic.
  *
  * 1. Sets loading = true.
- * 2. Requests GPS. If denied, calls onPermissionDenied and returns.
- * 3. Reverse-geocodes the coordinates.
+ * 2. Races `getCurrentGps()` against a `maxLoadingMs` timeout (default 12 s).
+ *    If the timeout fires first the error is swallowed and loading is cleared.
+ * 3. If GPS is granted and coordinates are valid, reverse-geocodes them.
  * 4. Sets homeCity if a city was found; sets homeCountry if a country was found.
- * 5. Clears loading in the finally block (always runs, even on error).
+ * 5. Clears loading in the finally block (always runs, even on error/timeout).
  *
- * Errors from geocoding are swallowed — the user can still type or pick from
- * the list manually.
+ * Errors from geocoding and GPS timeouts are swallowed — the user can still
+ * type or pick from the list manually.
  */
 export async function runFillHomeFromGps(
   deps: FillHomeDeps,
   setters: FillHomeSetters,
 ): Promise<void> {
+  const timeoutMs = deps.maxLoadingMs ?? 12_000;
   setters.setGpsLoading(true);
   try {
-    const gps = await deps.getCurrentGps();
+    const gps = await Promise.race([
+      deps.getCurrentGps(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('gps_timeout')), timeoutMs),
+      ),
+    ]);
     if (!gps.granted) {
       deps.onPermissionDenied({
         onOpenSettings: () => {},
@@ -75,7 +89,7 @@ export async function runFillHomeFromGps(
     if (place.city) setters.setHomeCity(place.city);
     if (place.country) setters.setHomeCountry(place.country);
   } catch {
-    // silent — user can still type or choose from list
+    // silent — covers GPS errors, geocode errors, and the max-loading timeout guard
   } finally {
     setters.setGpsLoading(false);
   }
