@@ -1,0 +1,224 @@
+Travel Buddy — Replace Manual Coordinate Inputs With GPS Permission Flow
+
+Focus only on places where the app asks users to enter coordinates, latitude, longitude, or precise location manually.
+
+Do not rebuild the location system yet.
+Do not redesign unrelated forms.
+Do not touch city/place autocomplete in this pass unless it is directly tied to removing manual coordinate entry.
+Do not expose precise GPS publicly.
+
+Goal:
+Users should never be asked to type coordinates.
+If a feature needs precise location, the app should prompt the user to allow location services and capture GPS automatically.
+
+Core rule:
+Any field asking for:
+- latitude
+- longitude
+- coordinates
+- GPS coordinates
+- exact location
+- current location
+- precise location
+
+must be replaced with:
+- “Use my current location”
+- location permission request
+- GPS capture
+- reverse-geocoded city/place label where useful
+- privacy explanation
+- clear denied/unavailable fallback
+
+Audit targets:
+Search the app for:
+- latitude
+- longitude
+- lat
+- lng
+- coordinates
+- coordinate
+- GPS
+- precise location
+- current location
+- location input
+- TextInput fields tied to lat/lng
+- placeholder text mentioning coordinates
+- keyboardType numeric used for location fields
+- forms that submit lat/lng manually
+
+Likely affected areas:
+1. Posts / Pulse
+   - geotagged posts
+   - delayed posting
+   - location credit
+   - public location label
+   - private precise coordinates
+
+2. Memories / Postcards
+   - memory location
+   - postcard location
+   - stamp earning
+   - photo location metadata fallback
+
+3. Passport stamps
+   - check-in / stamp earning
+   - city/place verification
+   - GPS required state
+
+4. Discovery / Hidden Gems / Community Places
+   - adding a community place
+   - hidden gem submission
+   - place coordinates
+   - nearby places
+
+5. Events / Plans
+   - event venue coordinates
+   - meeting point
+   - map pin if present
+
+6. Trips
+   - destination coordinates if visible
+   - route planner start/end coordinates if visible
+   - saved idea coordinates if visible
+
+7. Safe Return
+   - start location
+   - live location
+   - check-in coordinates
+   - destination coordinates
+
+8. Rent a Buddy
+   - booking meeting point
+   - provider available location
+   - service area if precise coordinates are requested
+
+Required replacement pattern:
+
+1. UI copy:
+   Replace manual coordinate fields with a button/card:
+
+   “Enable location services”
+   “Use my current location”
+   “We’ll use GPS to detect your location. Your precise location is never shown publicly.”
+
+2. Permission flow:
+   - Ask permission only after user taps the location button.
+   - Do not ask automatically on screen load unless the feature cannot function without it and app already does that pattern.
+   - If permission granted:
+     - get current GPS coordinates
+     - reverse-geocode to city/region/country or nearby place label if available
+     - show confirmation:
+       “Location detected: Miami, FL”
+       or
+       “Location detected near Cloud 9, Siargao”
+   - If permission denied:
+     - show:
+       “Location permission is off. Enable it in settings or choose a city/place from search.”
+   - If GPS unavailable/timeouts:
+     - show clear retry option.
+
+3. Data handling:
+   - Store precise lat/lng only when the backend feature requires it.
+   - Store/display privacy-safe label for public surfaces.
+   - Do not display raw coordinates to normal users.
+   - Do not allow users to type fake coordinates to earn stamps/location credit.
+   - For location-credit/stamps, GPS should be captured by the device, not manually entered.
+
+4. Privacy:
+   - Public feed/profile/event/trip surfaces should display city/place label, not exact coordinates.
+   - Delayed posting should still hide real-time location until the user leaves the geofence.
+   - Safe Return may share live precise location only with trusted contacts.
+   - Admin/debug views may show coordinates only if already intended.
+
+5. Backend:
+   - Confirm backend accepts GPS-derived coordinates from trusted app flow.
+   - Confirm backend does not require users to submit manual coordinate text.
+   - Confirm route validation rejects invalid lat/lng.
+   - Confirm public response projections do not include precise coordinates unless explicitly allowed.
+   - Confirm any location-credit/stamp route treats client GPS carefully and cannot be spoofed trivially beyond normal mobile constraints.
+
+6. Reusable component:
+   If not already available, create a reusable component such as:
+
+   `GpsLocationCapture`
+   - button label
+   - permission request
+   - loading state
+   - success state
+   - denied state
+   - retry
+   - reverse-geocode label
+   - returns `{ latitude, longitude, city, region, country, label, accuracy }`
+
+   Use it anywhere manual coordinates were previously requested.
+
+7. Assisted fallback:
+   If the user denies GPS and the feature does not require precise verification:
+   - allow assisted city/place search fallback.
+   If the feature requires precise verification, such as stamp/check-in/location credit:
+   - do not allow manual coordinate fallback.
+   - show “GPS is required for this feature.”
+
+Fix only proven issues:
+- TextInput for latitude/longitude
+- manual coordinate entry fields
+- raw coordinate placeholders
+- fake coordinate success
+- stamp/location-credit flows accepting typed coordinates
+- public display of raw coordinates
+- missing permission explanation
+- GPS denied state causing crash/dead end
+
+Do not fix:
+- normal city autocomplete fields
+- normal venue/place search fields
+- unrelated date/time or profile fields
+- full map redesign
+- new location provider integration unless required for GPS capture
+
+Required process:
+1. Survey first.
+2. Build a Coordinate Input Matrix:
+   - Screen/component
+   - Field/action
+   - Current behavior
+   - Why it needs GPS
+   - Replacement UI
+   - Backend field
+   - Privacy risk
+   - Status
+   - Fix needed
+
+3. Implement minimal targeted fixes.
+
+4. Run validation:
+   - `pnpm --filter @workspace/api-server run typecheck`
+   - `cd travel-buddy-standalone && pnpm typecheck`
+   - `pnpm run typecheck` if practical
+   - `bash scripts/sync-standalone.sh --fix-source` if artifacts changed
+   - `bash scripts/sync-standalone.sh --check-source`
+   - `bash scripts/sync-standalone.sh --check-deps`
+   - `pnpm --filter @workspace/scripts run test:routes-guard` if available
+
+5. Final report:
+   - Coordinate Input Matrix
+   - Manual coordinate fields removed
+   - GPS permission flows added
+   - Privacy behavior
+   - Backend validation findings
+   - Remaining blockers
+   - Validation table
+   - Commit message
+
+Important:
+Users should never be asked:
+“Enter latitude”
+“Enter longitude”
+“Enter coordinates”
+
+They should be asked:
+“Allow Travel Buddy to use your location?”
+or tap:
+“Use my current location”
+
+GPS-required features should use real device location, not manual coordinate input.
