@@ -423,25 +423,43 @@ export function UnifiedPostComposer({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* 2-column type grid */}
-            <View style={uc.grid}>
-              {POST_TYPES.map(({ id, label, sub, icon: Icon, iconColor }) => {
-                const on = selectedType === id;
+            {/* When a type is selected show a compact chip; otherwise show the full 2-col grid.
+                This keeps the form fields visible even when the keyboard is open. */}
+            {selectedType ? (
+              (() => {
+                const pt = POST_TYPES.find(p => p.id === selectedType)!;
+                const Icon = pt.icon;
                 return (
                   <Pressable
-                    key={id}
-                    style={[uc.typeCard, on && uc.typeCardOn]}
-                    onPress={() => handleTypeSelect(id)}
+                    style={uc.typeChip}
+                    onPress={() => { setSelectedType(null); setError(null); }}
                   >
-                    <View style={[uc.typeIcon, on && { backgroundColor: iconColor + '20' }]}>
-                      <Icon size={16} color={on ? iconColor : color.mute} />
+                    <View style={[uc.typeChipIcon, { backgroundColor: pt.iconColor + '20' }]}>
+                      <Icon size={14} color={pt.iconColor} />
                     </View>
-                    <Text style={[uc.typeLabel, on && { color: color.ink }]} numberOfLines={1}>{label}</Text>
-                    <Text style={uc.typeSub} numberOfLines={1}>{sub}</Text>
+                    <Text style={uc.typeChipLabel}>{pt.label}</Text>
+                    <View style={{ flex: 1 }} />
+                    <X size={14} color={color.mute} />
                   </Pressable>
                 );
-              })}
-            </View>
+              })()
+            ) : (
+              <View style={uc.grid}>
+                {POST_TYPES.map(({ id, label, sub, icon: Icon, iconColor }) => (
+                  <Pressable
+                    key={id}
+                    style={uc.typeCard}
+                    onPress={() => handleTypeSelect(id)}
+                  >
+                    <View style={uc.typeIcon}>
+                      <Icon size={16} color={color.mute} />
+                    </View>
+                    <Text style={uc.typeLabel} numberOfLines={1}>{label}</Text>
+                    <Text style={uc.typeSub} numberOfLines={1}>{sub}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
 
             {/* form fields — appear once type is selected */}
             {selectedType && (
@@ -757,6 +775,28 @@ const uc = StyleSheet.create({
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   scroll: { paddingHorizontal: space.lg, paddingBottom: space.lg },
+
+  /* selected-type compact chip (replaces full grid once a type is picked) */
+  typeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: color.signal,
+    backgroundColor: color.signal + '08',
+    marginBottom: space.md,
+  },
+  typeChipIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeChipLabel: { ...t.bodyStrong, fontSize: 13, color: color.ink },
 
   /* type grid — 2 columns */
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: space.md },
