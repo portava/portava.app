@@ -27,7 +27,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleSubmitResult, handleUploadResult } from '../PulseCreate.machine.ts';
+import { createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult } from '../PulseCreate.machine.ts';
 
 // ── Success path ──────────────────────────────────────────────────────────────
 
@@ -476,6 +476,256 @@ describe('upload-result — upload fails with unauthenticated error', () => {
       { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => { errorCalls++; } },
     );
     assert.equal(errorCalls, 0, 'setError must NOT be called on unauthenticated failure');
+  });
+});
+
+// ── createSubmitLock — prevents concurrent re-entry into handleSubmit() ────────
+//
+// The `submitting` flag from usePostActions only flips true inside create() —
+// AFTER the upload phase. A rapid double-tap can therefore re-enter
+// handleSubmit() while upload is in flight, with `submitting` still false.
+//
+// createSubmitLock() returns a shared lock stored in a useRef. At the start of
+// handleSubmit(), acquire() is called synchronously. If the lock is already held
+// (first invocation is still in the upload phase), acquire() returns false and
+// the second invocation bails out immediately — no upload, no handleUploadResult,
+// no onClose() call.
+//
+// These tests model the two-concurrent-submit scenario at the machine layer
+// without mounting the component, mirroring the component's call semantics.
+
+describe('createSubmitLock — prevents concurrent re-entry into handleSubmit()', () => {
+  it('acquire() returns true on the first call', () => {
+    const lock = createSubmitLock();
+    assert.equal(lock.acquire(), true, 'first acquire must succeed');
+  });
+
+  it('acquire() returns false while the lock is held', () => {
+    const lock = createSubmitLock();
+    lock.acquire();
+    assert.equal(lock.acquire(), false, 'second acquire must fail while lock is held');
+  });
+
+  it('acquire() returns false on any additional call while held', () => {
+    const lock = createSubmitLock();
+    lock.acquire();
+    assert.equal(lock.acquire(), false);
+    assert.equal(lock.acquire(), false);
+    assert.equal(lock.acquire(), false, 'every acquire while held must return false');
+  });
+
+  it('acquire() returns true again after release()', () => {
+    const lock = createSubmitLock();
+    lock.acquire();
+    lock.release();
+    assert.equal(lock.acquire(), true, 'acquire must succeed again after release');
+  });
+
+  it('each createSubmitLock() call returns an independent lock', () => {
+    const lockA = createSubmitLock();
+    const lockB = createSubmitLock();
+    lockA.acquire();
+    assert.equal(lockB.acquire(), true, 'lockB must be independent from lockA');
+  });
+
+  it('models two concurrent submit attempts — second is blocked, onClose fires only once', async () => {
+    // Simulate the component call shape:
+    //   submitLock = createSubmitLock() stored in useRef (shared across calls)
+    //   call1 = handleSubmit() invocation that acquires the lock and starts upload
+    //   call2 = rapid second handleSubmit() invocation that arrives while upload is in flight
+    const lock = createSubmitLock();
+    let closeCalls = 0;
+    const onClose = () => { closeCalls++; };
+
+    // call1 acquires the lock before upload
+    const call1Acquired = lock.acquire();
+    assert.equal(call1Acquired, true, 'first submit must acquire the lock');
+
+    // call2 tries to acquire while call1 is in upload phase — must be blocked
+    const call2Acquired = lock.acquire();
+    assert.equal(call2Acquired, false, 'second submit must be blocked while upload is in flight');
+
+    // call1 proceeds through the upload unauthenticated failure path
+    try {
+      await handleUploadResult(
+        { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+        { onClose, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+      );
+    } finally {
+      lock.release();
+    }
+
+    // call2 was blocked, so onClose fired exactly once (from call1)
+    assert.equal(
+      closeCalls,
+      1,
+      'only the first submit invocation reaches handleUploadResult — onClose must fire exactly once',
+    );
+  });
+
+  it('models rapid double-tap recovery — lock is released after error so next submit works', async () => {
+    const lock = createSubmitLock();
+    let closeCalls = 0;
+    const onClose = () => { closeCalls++; };
+
+    // First submit: unauthenticated upload failure — should close and release lock
+    const acquired = lock.acquire();
+    assert.equal(acquired, true);
+    try {
+      await handleUploadResult(
+        { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+        { onClose, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+      );
+    } finally {
+      lock.release();
+    }
+    assert.equal(closeCalls, 1, 'first submit must have closed once');
+
+    // After release, a subsequent (non-concurrent) submit can proceed normally
+    const acquiredAgain = lock.acquire();
+    assert.equal(acquiredAgain, true, 'lock must be acquirable again after release — next submit must not be permanently blocked');
+    lock.release();
+  });
+});
+
+// ── createOnceGuard — prevents double-close across the full submit lifecycle ───
+//
+// handleUploadResult is intentionally stateless — it has no internal once-guard.
+// Without a guard, two concurrent invocations with an unauthenticated result
+// would each call onClose(), corrupting navigation state. createOnceGuard() is
+// the runtime guard: it wraps onClose so it fires at most once, regardless of
+// how many times the guarded function is called.
+//
+// In PulseCreate.tsx, one guard is created at the start of handleSubmit()
+// (before uploadMedia() is awaited) and the same guard is passed to both
+// handleUploadResult and handleSubmitResult. The `submitting` flag from
+// usePostActions only becomes true inside create() — after the upload — so it
+// does NOT protect the upload failure path. createOnceGuard() is the actual
+// runtime protection.
+
+describe('createOnceGuard — fires the wrapped function at most once', () => {
+  it('calls the wrapped function on the first invocation', () => {
+    let calls = 0;
+    const guarded = createOnceGuard(() => { calls++; });
+    guarded();
+    assert.equal(calls, 1, 'wrapped function must be called on first invocation');
+  });
+
+  it('does NOT call the wrapped function a second time', () => {
+    let calls = 0;
+    const guarded = createOnceGuard(() => { calls++; });
+    guarded();
+    guarded();
+    assert.equal(calls, 1, 'wrapped function must only fire once regardless of how many times guarded() is called');
+  });
+
+  it('does NOT call the wrapped function on any subsequent invocation', () => {
+    let calls = 0;
+    const guarded = createOnceGuard(() => { calls++; });
+    guarded();
+    guarded();
+    guarded();
+    guarded();
+    assert.equal(calls, 1, 'only the first call may pass through');
+  });
+
+  it('each call to createOnceGuard() returns an independent guard', () => {
+    let calls = 0;
+    const fn = () => { calls++; };
+    const guardA = createOnceGuard(fn);
+    const guardB = createOnceGuard(fn);
+    guardA();
+    guardB();
+    assert.equal(calls, 2, 'each guard is independent — both fire once on their first invocation');
+  });
+
+  it('prevents double-close when the same guarded onClose is passed to handleUploadResult twice', async () => {
+    let closeCalls = 0;
+    const closeOnce = createOnceGuard(() => { closeCalls++; });
+    const handlers = {
+      onClose: closeOnce,
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' }, handlers);
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' }, handlers);
+    assert.equal(
+      closeCalls,
+      1,
+      'createOnceGuard prevents double-close: second unauthenticated upload result must not call onClose again',
+    );
+  });
+
+  it('prevents double-close when unauthenticated upload is followed by a successful create', async () => {
+    let closeCalls = 0;
+    const closeOnce = createOnceGuard(() => { closeCalls++; });
+    // Simulate: upload leg closes (unauthenticated), then create also tries to close (ok: true)
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+      { onClose: closeOnce, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    await handleSubmitResult(
+      { ok: true },
+      { onClose: closeOnce, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(
+      closeCalls,
+      1,
+      'createOnceGuard prevents double-close across upload + submit phases: second call must not re-fire onClose',
+    );
+  });
+});
+
+// ── Upload-result — double-invocation without guard — documents machine statelessness ──
+//
+// Without a createOnceGuard wrapper, handleUploadResult is stateless and will
+// call onClose() every time the unauthenticated branch fires. These tests pin
+// that contract so it is clear the machine itself provides no protection.
+// In production this path is always wrapped with createOnceGuard().
+
+describe('upload-result double-invocation (no guard) — machine is stateless', () => {
+  it('calls onClose twice when handleUploadResult is called twice with unauthenticated (no guard)', async () => {
+    let closeCalls = 0;
+    const handlers = {
+      onClose: () => { closeCalls++; },
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' }, handlers);
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' }, handlers);
+    assert.equal(
+      closeCalls,
+      2,
+      'handleUploadResult is stateless — without createOnceGuard a double unauthenticated call fires onClose twice',
+    );
+  });
+
+  it('does NOT call onClose a second time when the second call is a non-auth failure', async () => {
+    let closeCalls = 0;
+    const handlers = {
+      onClose: () => { closeCalls++; },
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' }, handlers);
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'upload_failed' }, handlers);
+    assert.equal(closeCalls, 1, 'second call with non-auth failure must not re-fire onClose');
+  });
+
+  it('does NOT call onClose at all when both calls are non-auth failures', async () => {
+    let closeCalls = 0;
+    const handlers = {
+      onClose: () => { closeCalls++; },
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'upload_failed' }, handlers);
+    await handleUploadResult({ ok: false, url: null, mediaType: null, errorKind: 'upload_failed' }, handlers);
+    assert.equal(closeCalls, 0, 'non-auth failures must never call onClose regardless of invocation count');
   });
 });
 

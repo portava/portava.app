@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, handleSubmitResult, handleUploadResult, handleFilterApplyResult } from './PulseCreate.machine';
+import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 
 /* ── Types ── */
@@ -162,6 +162,9 @@ export function UnifiedPostComposer({
   const [text, setText] = useState('');
   const [placeName, setPlaceName] = useState('');
   const mentionRef = useRef<MentionInputHandle>(null);
+  // Shared lock across concurrent handleSubmit() calls — prevents double-close
+  // on the upload unauthenticated path where `submitting` is still false.
+  const submitLock = useRef(createSubmitLock());
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
@@ -298,61 +301,76 @@ export function UnifiedPostComposer({
 
   async function handleSubmit() {
     if (!selectedType || submitting) return;
+    // Acquire the shared submit lock before any async work.
+    // The `submitting` flag from usePostActions only flips true inside create(),
+    // AFTER the upload phase — so without this lock a rapid double-tap could
+    // re-enter here while upload is in flight and call onClose() twice on an
+    // unauthenticated upload failure.
+    if (!submitLock.current.acquire()) return;
     setError(null);
     const vErr = validate(selectedType, text, placeName, media);
-    if (vErr) { setError(vErr); return; }
+    if (vErr) { submitLock.current.release(); setError(vErr); return; }
 
-    let mediaUrl: string | null = null;
-    let mediaType: string | undefined = undefined;
-    if (media) {
-      const up = await uploadMedia(media);
-      const outcome = await handleUploadResult(up, {
-        onClose,
+    // Defense-in-depth: even within a single submit invocation wrap onClose so
+    // it can only fire once (covers hypothetical paths where both upload and
+    // submit legs try to close).
+    const closeOnce = createOnceGuard(onClose);
+
+    try {
+      let mediaUrl: string | null = null;
+      let mediaType: string | undefined = undefined;
+      if (media) {
+        const up = await uploadMedia(media);
+        const outcome = await handleUploadResult(up, {
+          onClose: closeOnce,
+          signOut,
+          navigate: router.replace as (path: string) => void,
+          setError,
+        });
+        if (!outcome.continue) return;
+        mediaUrl = outcome.url;
+        mediaType = outcome.mediaType ?? undefined;
+      }
+
+      const cat = TYPE_CATEGORY[selectedType];
+      const placePrefix = needsPlace(selectedType) && placeName.trim() ? `📍 ${placeName.trim()}\n` : '';
+      const content = `[${cat}] ${placePrefix}${text.trim()}`.trim();
+
+      let locationFields: Record<string, unknown> = { locationSource: 'none' };
+      if (loc.source === 'gps') {
+        locationFields = {
+          locationSource: 'gps', locationName: loc.name, locationCity: loc.city,
+          locationCountry: loc.country, locationLat: loc.lat, locationLng: loc.lng,
+          userGpsLat: loc.lat, userGpsLng: loc.lng,
+        };
+      } else if (loc.source === 'manual') {
+        locationFields = { locationSource: 'manual', locationName: loc.name, locationCity: loc.city, locationCountry: loc.country };
+      }
+
+      const autoPassport = selectedType === 'share_postcard';
+      const res = await create({
+        content,
+        visibility: vis,
+        mediaUrls: mediaUrl ? [mediaUrl] : [],
+        ...(mediaType ? { mediaType } : {}),
+        addToPassport: autoPassport || addToPassport,
+        ...locationFields,
+        filterId,
+        filterIntensity,
+        locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
+        publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
+      });
+
+      await handleSubmitResult(res, {
+        onSuccess,
+        onClose: closeOnce,
         signOut,
         navigate: router.replace as (path: string) => void,
         setError,
       });
-      if (!outcome.continue) return;
-      mediaUrl = outcome.url;
-      mediaType = outcome.mediaType ?? undefined;
+    } finally {
+      submitLock.current.release();
     }
-
-    const cat = TYPE_CATEGORY[selectedType];
-    const placePrefix = needsPlace(selectedType) && placeName.trim() ? `📍 ${placeName.trim()}\n` : '';
-    const content = `[${cat}] ${placePrefix}${text.trim()}`.trim();
-
-    let locationFields: Record<string, unknown> = { locationSource: 'none' };
-    if (loc.source === 'gps') {
-      locationFields = {
-        locationSource: 'gps', locationName: loc.name, locationCity: loc.city,
-        locationCountry: loc.country, locationLat: loc.lat, locationLng: loc.lng,
-        userGpsLat: loc.lat, userGpsLng: loc.lng,
-      };
-    } else if (loc.source === 'manual') {
-      locationFields = { locationSource: 'manual', locationName: loc.name, locationCity: loc.city, locationCountry: loc.country };
-    }
-
-    const autoPassport = selectedType === 'share_postcard';
-    const res = await create({
-      content,
-      visibility: vis,
-      mediaUrls: mediaUrl ? [mediaUrl] : [],
-      ...(mediaType ? { mediaType } : {}),
-      addToPassport: autoPassport || addToPassport,
-      ...locationFields,
-      filterId,
-      filterIntensity,
-      locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
-      publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
-    });
-
-    await handleSubmitResult(res, {
-      onSuccess,
-      onClose,
-      signOut,
-      navigate: router.replace as (path: string) => void,
-      setError,
-    });
   }
 
   // Highlight type: open dedicated composer immediately on type select

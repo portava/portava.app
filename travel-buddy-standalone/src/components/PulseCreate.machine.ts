@@ -23,6 +23,92 @@
  * that the component depends on. If either contract changes, the tests catch it.
  */
 
+// ── Submit lock ───────────────────────────────────────────────────────────────
+
+/**
+ * A mutual-exclusion lock for the handleSubmit() async flow.
+ *
+ * The `submitting` flag from usePostActions is only set to true inside
+ * create() — which runs AFTER uploadMedia(). This means a rapid double-tap
+ * can re-enter handleSubmit() while the upload is in flight, with `submitting`
+ * still false. Both concurrent invocations would then reach handleUploadResult
+ * and, on an unauthenticated failure, each call onClose() — corrupting
+ * navigation state.
+ *
+ * createSubmitLock() returns a lock object whose acquire() method returns true
+ * exactly once (atomically in the JS single-threaded sense) and returns false
+ * on all subsequent calls until release() is called. The component stores the
+ * lock in a useRef so the same lock instance is shared across concurrent
+ * handleSubmit() invocations.
+ *
+ * Usage in PulseCreate.tsx:
+ *   const submitLock = useRef(createSubmitLock());
+ *
+ *   async function handleSubmit() {
+ *     if (!selectedType || submitting) return;
+ *     if (!submitLock.current.acquire()) return;   // ← concurrent re-entry guard
+ *     try {
+ *       // ... uploadMedia + handleUploadResult + create + handleSubmitResult
+ *     } finally {
+ *       submitLock.current.release();
+ *     }
+ *   }
+ *
+ * The lock is pure and stateless at the module level — each call to
+ * createSubmitLock() returns an independent lock object. This makes it
+ * testable with node:test without any React Native imports or mocking.
+ */
+export interface SubmitLock {
+  /** Returns true and acquires the lock if it was free; returns false if already held. */
+  acquire: () => boolean;
+  /** Releases the lock so the next acquire() call succeeds. */
+  release: () => void;
+}
+
+export function createSubmitLock(): SubmitLock {
+  let locked = false;
+  return {
+    acquire: () => {
+      if (locked) return false;
+      locked = true;
+      return true;
+    },
+    release: () => {
+      locked = false;
+    },
+  };
+}
+
+// ── Once-guard ────────────────────────────────────────────────────────────────
+
+/**
+ * Wraps a callback so it fires at most once.
+ *
+ * Defense-in-depth for the close path within a single submit invocation.
+ * The primary guard against concurrent double-close is the submit lock
+ * (createSubmitLock + useRef), which prevents re-entry at the handleSubmit
+ * boundary. createOnceGuard is an additional safeguard passed as the `onClose`
+ * handler to both handleUploadResult and handleSubmitResult, ensuring that even
+ * if both paths somehow resolve in the same invocation, onClose fires exactly once.
+ *
+ * Usage in PulseCreate.tsx (one guard per handleSubmit call, created after
+ * the lock is acquired):
+ *   const closeOnce = createOnceGuard(onClose);
+ *   // pass closeOnce as onClose to handleUploadResult and handleSubmitResult
+ *
+ * The guard is intentionally stateless at the module level — each call to
+ * createOnceGuard() returns a fresh closure. This makes it trivially testable
+ * with node:test without any imports or mocking.
+ */
+export function createOnceGuard(fn: () => void): () => void {
+  let called = false;
+  return () => {
+    if (called) return;
+    called = true;
+    fn();
+  };
+}
+
 // ── Dismiss handlers ──────────────────────────────────────────────────────────
 
 export interface ComposerDismissHandlers {
@@ -185,6 +271,27 @@ export type UploadOutcome =
  *   if (!outcome.continue) return;
  *   mediaUrl = outcome.url;
  *   mediaType = outcome.mediaType ?? undefined;
+ *
+ * ## Double-invocation responsibility
+ *
+ * This function is intentionally stateless — it has no internal guard against
+ * being called more than once. If called twice with the unauthenticated error
+ * kind, onClose() will fire twice, which can silently corrupt navigation state.
+ *
+ * The caller MUST pass a guarded onClose created via createOnceGuard(). In
+ * PulseCreate.tsx this is done at the start of handleSubmit(), before
+ * uploadMedia() is awaited, so the same guard covers both the upload and submit
+ * phases:
+ *
+ *   const closeOnce = createOnceGuard(onClose);   // top of handleSubmit()
+ *   // ...
+ *   await handleUploadResult(up, { onClose: closeOnce, ... });
+ *   // ...
+ *   await handleSubmitResult(res, { onClose: closeOnce, ... });
+ *
+ * Note: the `submitting` flag from usePostActions is only set inside create()
+ * (after the upload phase), so it does NOT protect the upload failure path.
+ * createOnceGuard() is the actual runtime guard for this path.
  */
 export async function handleUploadResult(
   result: MediaUploadResult,
