@@ -90,6 +90,30 @@ function isFresh(e: CacheEntry) {
   return Date.now() - e.cachedAt < CACHE_TTL_MS;
 }
 
+/**
+ * Patch the savedCount for a single OSM place across all live cache entries.
+ *
+ * Called by the wishlist router immediately after `trackOsmPlaceSave` /
+ * `trackOsmPlaceUnsave` increments or decrements `saved_count` in the DB, so
+ * the popular sort reflects the change on the next request instead of serving
+ * a stale count for up to the 2-hour TTL.
+ *
+ * The cache key encodes destination + category + radius, none of which are
+ * available in the wishlist path, so we scan all entries and patch every place
+ * whose `id` (the OSM element string, e.g. "node/12345678") matches.
+ * In practice at most one entry per category bucket will match.
+ */
+export function patchOsmSavedCount(osmId: string, newCount: number): void {
+  for (const entry of cache.values()) {
+    for (const place of entry.places) {
+      if (place.id === osmId) {
+        place.savedCount = newCount;
+        break;
+      }
+    }
+  }
+}
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {

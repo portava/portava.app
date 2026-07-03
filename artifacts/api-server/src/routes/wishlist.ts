@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { patchOsmSavedCount } from "./discovery.js";
 
 const router = Router();
 
@@ -90,6 +91,9 @@ async function trackOsmPlaceSave(
         .from("discovery_places")
         .update({ saved_count: currentCount + 1 })
         .eq("id", (dpRow as any).id);
+      // Patch the in-memory discovery cache so the popular sort reflects the
+      // new count on the very next request instead of waiting for the 2-hour TTL.
+      patchOsmSavedCount(osmId, currentCount + 1);
     }
   } catch {
     // Non-blocking — wishlist save already committed
@@ -161,11 +165,15 @@ async function trackOsmPlaceUnsave(
     if (!delErr) {
       // .gt("saved_count", 0) ensures a concurrent unsave cannot push the
       // count negative — the UPDATE becomes a no-op if the race is lost.
+      const newCount = Math.max(0, ((dpRow as any).saved_count ?? 1) - 1);
       await svc
         .from("discovery_places")
-        .update({ saved_count: ((dpRow as any).saved_count ?? 1) - 1 })
+        .update({ saved_count: newCount })
         .eq("id", (dpRow as any).id)
         .gt("saved_count", 0);
+      // Patch the in-memory discovery cache so the popular sort reflects the
+      // decremented count immediately.
+      patchOsmSavedCount(osmId, newCount);
     }
   } catch {
     // Non-blocking
