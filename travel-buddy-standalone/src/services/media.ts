@@ -11,7 +11,23 @@
  * verify identity, then uploads with the service-role key — same pattern as
  * trip / post creation.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+
+// ---------------------------------------------------------------------------
+// Test-only injection slots — let unit tests bypass supabase at the boundary.
+// Never set in production.
+// ---------------------------------------------------------------------------
+let _testTokenProvider: (() => Promise<string | null>) | null = null;
+/** Inject a fake token provider for unit tests. Pass null to reset. */
+export function _setTestTokenProvider(fn: (() => Promise<string | null>) | null): void {
+  _testTokenProvider = fn;
+}
+
+let _testConfiguredOverride: boolean | null = null;
+/** Override the isSupabaseConfigured check for unit tests. Pass null to reset. */
+export function _setTestConfiguredOverride(v: boolean | null): void {
+  _testConfiguredOverride = v;
+}
 
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 export const ALLOWED_VIDEO_TYPES = ['video/mp4'];
@@ -93,7 +109,7 @@ export function validateMedia(
  * parse { url, path }. Rich error detail on failure.
  */
 export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult> {
-  if (!isSupabaseConfigured) {
+  if (!(_testConfiguredOverride ?? isSupabaseConfigured)) {
     return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
   const base = apiBase();
@@ -107,9 +123,15 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
   }
 
   // Get a fresh bearer token (mirrors createPost / createTrip pattern).
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  const token = session?.access_token ?? null;
+  // _testTokenProvider bypasses supabase.auth in unit tests.
+  let token: string | null;
+  if (_testTokenProvider) {
+    token = await _testTokenProvider();
+  } else {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+    token = session?.access_token ?? null;
+  }
   if (!token) {
     return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Please sign in to upload media' };
   }
