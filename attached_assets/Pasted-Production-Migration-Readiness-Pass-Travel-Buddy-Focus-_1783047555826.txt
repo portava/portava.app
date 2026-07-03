@@ -1,0 +1,90 @@
+Production Migration Readiness Pass — Travel Buddy
+
+Focus only on ship-blocking migrations:
+#120, #128, #137, #147, #172, #175, #214, #223, #235
+
+Goal:
+Confirm every migration required for blocking, push tokens, thread reads, meetups, highlights, and filters exists, is safe, is ordered correctly, and is ready to apply to production.
+
+Do not build new features.
+Do not polish UI.
+Do not touch unrelated systems.
+Do not apply production migrations unless explicitly supported by tooling and instructed.
+
+Scope:
+1. Locate all migration files connected to:
+   - blocking
+   - push tokens
+   - thread reads
+   - meetups
+   - highlights
+   - filters
+
+2. For each migration:
+   - Identify file name and number
+   - Explain what tables/columns/indexes/policies it adds or changes
+   - Identify which app features depend on it
+   - Confirm whether backend/frontend code already references those schema pieces
+   - Check for duplicate migration numbers or ordering issues
+   - Check if migration is idempotent/safe where possible
+   - Check if rollback notes exist or are needed
+
+3. Verify schema dependencies:
+   - Blocked profile placeholder
+   - Hiding blocked-user threads
+   - Push notification token storage
+   - Thread read/unread state
+   - Meetup creation, time polling, confirmed time, attendee state
+   - Highlights creation, delete/archive, badge clear, cross-device sync
+   - Discovery/profile/trip/event filters
+
+4. Classify each item:
+   - Ready to apply
+   - Needs migration fix before apply
+   - Missing migration
+   - Code references schema but migration missing
+   - Migration exists but code not wired
+   - Not actually ship-blocking
+
+5. Fix only proven migration/schema blockers:
+   - missing column used by live code
+   - wrong column name
+   - duplicate migration number
+   - broken SQL
+   - missing index/constraint needed by live route
+   - missing RLS policy for direct frontend access
+   - missing feature flag default required for live screen load
+
+6. Produce a production SQL application plan:
+   - exact migration files in order
+   - what each migration does
+   - whether it is safe to apply
+   - manual Supabase SQL steps if needed
+   - post-apply verification queries
+   - rollback/risk notes
+
+7. Run validations:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if practical
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - any schema/migration validation script available
+
+Final report must include:
+- Migration inventory for #120, #128, #137, #147, #172, #175, #214, #223, #235
+- Feature dependency map
+- Ready/not-ready table
+- Fixes completed
+- Files changed
+- Manual production SQL steps
+- Post-apply verification checklist
+- Remaining real ship blockers
+- Validation table
+- Commit message
+
+Important:
+Do not claim production is migrated unless verified.
+If local migration files exist but production Supabase has not applied them, say that clearly.
+If any live app feature depends on an unapplied migration, mark it as a ship blocker.
