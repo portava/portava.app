@@ -3,14 +3,93 @@ import { z } from "zod";
 
 const router = Router();
 
-// ── Sliding-window rate limiter ───────────────────────────────────────────────
+// ── Constants (env-configurable) ──────────────────────────────────────────────
 
-const WINDOW_MS   = 60_000;
-const MAX_REPORTS = 10;
+function parsePositiveInt(value: string | undefined, defaultVal: number): number {
+  const parsed = parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal;
+}
+
+const WINDOW_MS   = parsePositiveInt(process.env.CRASH_REPORT_WINDOW_MS,  60_000);
+const MAX_REPORTS = parsePositiveInt(process.env.CRASH_REPORT_MAX_REPORTS, 10);
+
+// ── Redis client (optional) ───────────────────────────────────────────────────
+
+/**
+ * We import ioredis lazily so the module still loads in environments where
+ * REDIS_URL is not set (the Redis client constructor would throw on a bad URL).
+ * If REDIS_URL is absent or Redis becomes unavailable the limiter falls back
+ * to the in-memory store transparently (fail-open).
+ */
+let _redis: import("ioredis").Redis | null = null;
+
+async function getRedis(): Promise<import("ioredis").Redis | null> {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+
+  if (_redis) return _redis;
+
+  try {
+    const { default: Redis } = await import("ioredis");
+    const client = new Redis(url, {
+      lazyConnect:            true,
+      enableReadyCheck:       true,
+      maxRetriesPerRequest:   1,
+      connectTimeout:         2000,
+      commandTimeout:         1000,
+    });
+    await client.connect();
+    _redis = client;
+    return _redis;
+  } catch {
+    return null;
+  }
+}
+
+// ── In-memory fallback store ──────────────────────────────────────────────────
 
 const _store = new Map<string, number[]>();
 
-function checkRateLimit(key: string): boolean {
+// ── Sliding-window implementations ────────────────────────────────────────────
+
+/**
+ * Redis sliding-window check using a sorted set.
+ * Score = timestamp (ms), members are unique per hit (timestamp + random).
+ * Returns true (allowed) or false (rate-limited).
+ * Throws on Redis errors so the caller can fall back to in-memory.
+ */
+async function checkRateLimitRedis(
+  redis: import("ioredis").Redis,
+  key: string,
+): Promise<boolean> {
+  const now    = Date.now();
+  const cutoff = now - WINDOW_MS;
+  const member = `${now}:${Math.random().toString(36).slice(2)}`;
+  const ttlSec = Math.ceil(WINDOW_MS / 1000);
+
+  const pipe = redis.pipeline();
+  pipe.zremrangebyscore(key, "-inf", cutoff);   // evict expired
+  pipe.zadd(key, now, member);                   // record this hit
+  pipe.zcard(key);                               // count in window
+  pipe.expire(key, ttlSec);                      // sliding TTL
+  const results = await pipe.exec();
+
+  // results[2] is [err, count] for ZCARD
+  const countResult = results?.[2];
+  const count = (countResult && countResult[0] == null)
+    ? (countResult[1] as number)
+    : MAX_REPORTS + 1; // assume over-limit on error
+
+  if (count > MAX_REPORTS) {
+    // undo the hit we just added
+    await redis.zrem(key, member).catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+/** In-memory sliding-window fallback. */
+function checkRateLimitMemory(key: string): boolean {
   const now  = Date.now();
   const cut  = now - WINDOW_MS;
   const hits = (_store.get(key) ?? []).filter((t) => t > cut);
@@ -23,9 +102,35 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
-/** Test seam — clears the rate-limit store between test runs. */
-export function _resetRateLimiter(): void {
+async function checkRateLimit(key: string): Promise<boolean> {
+  try {
+    const redis = await getRedis();
+    if (redis) {
+      return await checkRateLimitRedis(redis, `crash_rl:${key}`);
+    }
+  } catch {
+    // fall through to in-memory
+  }
+  return checkRateLimitMemory(key);
+}
+
+// ── Test seam ─────────────────────────────────────────────────────────────────
+
+/**
+ * Clears the in-memory fallback store and, when a Redis client is connected,
+ * deletes all crash-report rate-limit keys so tests start clean regardless of
+ * which backend is active.
+ */
+export async function _resetRateLimiter(): Promise<void> {
   _store.clear();
+  if (_redis) {
+    try {
+      const keys = await _redis.keys("crash_rl:*");
+      if (keys.length) await _redis.del(...keys);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 // ── Schema ────────────────────────────────────────────────────────────────────
@@ -49,12 +154,15 @@ const CrashReportBody = z.object({
  * Only the opaque userId is accepted; no email, name, or other PII.
  *
  * Rate limited to MAX_REPORTS per IP per WINDOW_MS to prevent log flooding
- * from devices stuck in a crash loop.
+ * from devices stuck in a crash loop.  The limit state is persisted in Redis
+ * (when REDIS_URL is set) so it survives server restarts and works across
+ * multiple instances.  Falls back to in-memory when Redis is unavailable.
  */
-router.post("/crash-report", (req, res) => {
+router.post("/crash-report", async (req, res) => {
   const key = (req.ip ?? "unknown").replace(/^::ffff:/, "");
 
-  if (!checkRateLimit(key)) {
+  const allowed = await checkRateLimit(key).catch(() => true); // fail-open
+  if (!allowed) {
     res.status(429).json({ error: "rate_limited" });
     return;
   }

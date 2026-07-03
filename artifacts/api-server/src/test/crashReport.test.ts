@@ -57,8 +57,8 @@ describe("POST /crash-report — rate limiter", () => {
 
   after(() => stopServer(server));
 
-  beforeEach(() => {
-    _resetRateLimiter();
+  beforeEach(async () => {
+    await _resetRateLimiter();
   });
 
   async function post(body: unknown): Promise<Response> {
@@ -112,7 +112,7 @@ describe("POST /crash-report — rate limiter", () => {
     const over = await post(VALID_BODY);
     assert.equal(over.status, 429);
 
-    _resetRateLimiter();
+    await _resetRateLimiter();
 
     const fresh = await post(VALID_BODY);
     assert.equal(fresh.status, 200);
