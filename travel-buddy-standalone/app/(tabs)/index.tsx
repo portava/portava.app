@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
@@ -78,6 +79,13 @@ export default function Pulse() {
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
+  // Comment count overrides: populated by the post detail screen via commentCountStore.
+  // Initialised from the store snapshot so overrides from a previous visit are applied
+  // immediately on mount, before any reload completes.
+  const [commentCountOverrides, setCommentCountOverrides] = useState<Map<string, number>>(
+    () => new Map(getCommentCountSnapshot()),
+  );
+
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
@@ -104,10 +112,28 @@ export default function Pulse() {
 
   useFocusEffect(
     useCallback(() => {
+      // Seed overrides from the store snapshot so feed cards reflect any
+      // comment count changes made on the detail screen before the reload lands.
+      const snapshot = getCommentCountSnapshot();
+      if (snapshot.size > 0) {
+        setCommentCountOverrides(new Map(snapshot));
+      }
       pulseFeed.reload();
       if (feedMode === 'following') followingFeed.reload();
     }, [pulseFeed.reload, followingFeed.reload, feedMode]),
   );
+
+  // Keep overrides in sync while the detail screen is open in the background
+  // (e.g. the user opens comments, adds one, then returns).
+  useEffect(() => {
+    return subscribeCommentCount((postId, count) => {
+      setCommentCountOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(postId, count);
+        return next;
+      });
+    });
+  }, []);
 
   // When switching to Following, load it on first activation.
   const handleFeedMode = useCallback((mode: FeedMode) => {
@@ -148,18 +174,31 @@ export default function Pulse() {
 
   // Inject a synthetic rent_a_buddy feed item (rendered by PulseFeedCard switch) at position 3
   const feed = useMemo<PulseFeedItem[]>(() => {
-    if (!rentBuddyEnabled || feedMode === 'following') return baseFeed;
-    const buddyItem: PulseFeedItem = {
-      id: '__rent_a_buddy__',
-      type: 'rent_a_buddy',
-      city: activeCity ?? '',
-      createdAt: new Date().toISOString(),
-      tags: [],
-      source: 'editorial',
-    };
-    const insertAt = Math.min(3, baseFeed.length);
-    return [...baseFeed.slice(0, insertAt), buddyItem, ...baseFeed.slice(insertAt)];
-  }, [baseFeed, rentBuddyEnabled, feedMode, activeCity]);
+    let result: PulseFeedItem[];
+    if (!rentBuddyEnabled || feedMode === 'following') {
+      result = baseFeed;
+    } else {
+      const buddyItem: PulseFeedItem = {
+        id: '__rent_a_buddy__',
+        type: 'rent_a_buddy',
+        city: activeCity ?? '',
+        createdAt: new Date().toISOString(),
+        tags: [],
+        source: 'editorial',
+      };
+      const insertAt = Math.min(3, baseFeed.length);
+      result = [...baseFeed.slice(0, insertAt), buddyItem, ...baseFeed.slice(insertAt)];
+    }
+
+    // Apply comment count overrides from the detail screen so counts are
+    // correct immediately on return, without waiting for the feed reload.
+    if (commentCountOverrides.size === 0) return result;
+    return result.map((item) => {
+      const override = commentCountOverrides.get(item.id);
+      if (override === undefined || override === item.commentCount) return item;
+      return { ...item, commentCount: override };
+    });
+  }, [baseFeed, rentBuddyEnabled, feedMode, activeCity, commentCountOverrides]);
 
   const filterCount = active.filter((f) => f !== 'All').length;
 

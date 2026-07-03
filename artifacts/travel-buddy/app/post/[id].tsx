@@ -15,6 +15,7 @@ import { CommentsSection } from '../../src/components/CommentsSheet';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { emitCommentCount } from '../../src/lib/commentCountStore';
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -186,6 +187,13 @@ export default function PostDetail() {
   useEffect(() => () => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
   }, []);
+
+  // Emit the live comment count so feed cards update instantly on return.
+  useEffect(() => {
+    if (id && typeof commentCount === 'number') {
+      emitCommentCount(id, commentCount);
+    }
+  }, [id, commentCount]);
 
   const isOwnPost = !!(userId && post?.author?.id === userId);
 
