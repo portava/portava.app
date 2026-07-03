@@ -1,0 +1,437 @@
+Full Database + Backend Readiness Audit — Travel Buddy
+
+Run a complete audit of everything still needed on the database and backend before beta/production.
+
+This is an audit-first pass.
+Do not rebuild systems.
+Do not add product features unless a real backend/database blocker is proven.
+Do not make cosmetic changes.
+Only fix proven issues that would break production, leak data, cause fake success, create duplicates, block live features, or make frontend actions fail.
+
+Goal:
+Create a complete, current map of:
+1. What database schema exists.
+2. What migrations exist.
+3. What production still needs applied.
+4. What backend routes exist.
+5. What frontend functions depend on those routes/schema.
+6. What is still missing, unsafe, or incomplete.
+7. Which issues are true beta/production blockers.
+
+High-priority context:
+Previous audits found:
+- Trip update/delete direct Supabase mutation was fixed by routing through API server.
+- DELETE /api/trips/:tripId was added.
+- RAB fake marketplace data was removed.
+- Events comments were corrected.
+- Backend audit claimed all 14 systems were surveyed.
+Now do a deeper second-round audit focused specifically on database/backend needs, migrations, RLS, route coverage, and production readiness.
+
+Major warning:
+Migrations #120, #128, #137, #147, #172, #175, #214, #223, #235 were previously identified as ship-blockers for production because features are built but migrations may not be live.
+Audit these first.
+
+Systems to audit:
+
+1. Migration readiness
+   - Inventory every migration file.
+   - Identify latest migration number.
+   - Identify missing numbers or duplicate numbers.
+   - Identify migrations tied to:
+     - #120 blocking
+     - #128 push tokens
+     - #137 thread reads
+     - #147 meetups
+     - #172 highlights
+     - #175 filters
+     - #214 filters / production feature dependency
+     - #223 blocking/push/thread/meetup/highlight/filter dependency
+     - #235 final production dependency
+   - Confirm whether each migration file exists.
+   - Confirm what schema it adds/changes.
+   - Identify which live frontend/backend features depend on it.
+   - Determine whether code references schema not guaranteed to exist in production.
+   - Classify every migration:
+     - required before beta
+     - required before production
+     - already applied locally only
+     - missing
+     - risky / needs manual review
+     - optional / future
+
+2. Database schema coverage
+   Audit table and column coverage for:
+   - profiles
+   - feature_flags
+   - blocks
+   - follows
+   - mutes
+   - restrictions
+   - push_tokens
+   - notification_preferences
+   - notifications
+   - telegraph_threads / message_threads
+   - telegraph_messages / messages
+   - thread_reads
+   - message_requests
+   - message_translations
+   - trips
+   - trip_members
+   - trip_invites
+   - trip_plan_items
+   - trip_saved_ideas
+   - trip_circles / circles
+   - events
+   - event_attendees
+   - event_waitlist
+   - event_reviews
+   - event_time_polls
+   - meetup tables
+   - posts
+   - comments
+   - post_likes
+   - post_saves
+   - post_reports / content_reports
+   - hidden_posts / hidden_content
+   - memories
+   - memory_items
+   - highlights
+   - highlight_items
+   - stories
+   - passport_stamps
+   - saved_places
+   - community_places
+   - hidden_gems
+   - media_uploads / media references
+   - safe_return_sessions
+   - safe_return_checkins
+   - trusted_contacts
+   - emergency_contacts
+   - rent_a_buddy_applications
+   - rent_a_buddy_providers
+   - rent_a_buddy_bookings
+   - rent_a_buddy_reviews
+   - rent_a_buddy_reports
+   - rent_a_buddy_flags
+   - admin moderation tables
+   - trust review / gaming flags / hashtag moderation tables
+
+3. Column compatibility
+   Compare all backend route usage and frontend service usage against schema/migrations:
+   - Every `.select()` column exists.
+   - Every `.insert()` column exists.
+   - Every `.update()` column exists.
+   - Every `.upsert()` column exists.
+   - Every `.eq()`, `.in()`, `.contains()`, `.order()`, `.range()` column exists.
+   - Every Zod schema field maps to a real database column or deliberate derived field.
+   - Every TypeScript interface representing DB rows matches real schema.
+   - Every JSON field is stored in a compatible column.
+   - Every enum/status value is accepted by DB constraints.
+
+Special fields to verify:
+   - profiles.role
+   - profiles.home_city
+   - profiles.home_country
+   - profile privacy fields
+   - trips.progress
+   - trip privacy/status/member roles
+   - event RSVP statuses
+   - event age/trust/language filters
+   - report reason/status fields
+   - RAB booking statuses
+   - RAB provider availability/status
+   - thread read timestamps
+   - push token platform fields
+   - highlights archived/deleted/badge fields
+   - meetup confirmed time / poll slot fields
+   - blocked profile visibility fields
+   - post hidden/reported state
+
+4. Backend route coverage
+   Inventory all API route files and routes:
+   - auth
+   - profile
+   - passport
+   - posts
+   - comments
+   - memories
+   - highlights
+   - stories
+   - trips
+   - trip invites
+   - circles
+   - events
+   - meetups
+   - messaging / Telegraph
+   - notifications
+   - push tokens
+   - discovery
+   - places
+   - saves
+   - reports
+   - moderation
+   - safe return
+   - rent a buddy
+   - media uploads
+   - admin routes
+   - feature flags
+   - hashtags
+   - trust/gaming systems
+
+For each route:
+   - HTTP method
+   - path
+   - auth guard
+   - permission guard
+   - tables touched
+   - frontend service caller
+   - response shape
+   - status: live / partial / 501 honest / missing / unused / unsafe
+
+5. Frontend-to-backend dependency map
+   Build a full map of frontend service calls to backend routes:
+   - service file
+   - function name
+   - route/method
+   - request body
+   - response expected
+   - backend handler exists?
+   - schema exists?
+   - auth token used?
+   - direct Supabase usage?
+   - safe or risky?
+
+Flag:
+   - frontend calls to missing backend routes
+   - wrong HTTP methods
+   - wrong request body fields
+   - wrong response shape assumptions
+   - fake success
+   - direct Supabase writes that should use API server
+   - frontend relying on migrations not yet applied
+
+6. RLS and direct Supabase risk audit
+   Search for direct Supabase client usage in mobile/frontend:
+   - `.from(`
+   - `.insert(`
+   - `.update(`
+   - `.delete(`
+   - `.upsert(`
+   - `.rpc(`
+
+Classify each usage:
+   - safe read
+   - safe auth/profile read
+   - risky write
+   - legacy unused
+   - test-only
+   - should move to API server
+
+Given the known P-256 JWT/RLS issue:
+   - Treat direct frontend writes as risky unless proven safe.
+   - Check whether equivalent API routes already exist.
+   - Fix only live risky mutations.
+   - For unused legacy risky functions, document but do not rewrite unless they are called from UI.
+
+7. Service-role backend safety
+   Search backend for getServiceClient/service role usage.
+   For every service-role route:
+   - Confirm requireUser or requireAdmin runs first.
+   - Confirm owner/member/admin permission check runs before private write/read.
+   - Confirm blocked/private content filtering happens where needed.
+   - Confirm route does not leak broad select data.
+   - Confirm write success is checked.
+   - Confirm Supabase errors are handled honestly.
+   - Confirm no fake `{ ok: true }` is returned after failed DB writes.
+
+8. Constraints, uniqueness, and duplicate prevention
+   Confirm database constraints or backend guards exist for:
+   - unique username/handle
+   - one profile per user
+   - one block edge per pair
+   - no self-block/self-follow
+   - one trip membership per user/trip
+   - one pending invite per user/trip
+   - one RSVP per user/event
+   - one saved item per user/item
+   - one like per user/post
+   - one review per booking/event
+   - duplicate community place prevention
+   - duplicate push token handling
+   - duplicate thread participant handling
+   - duplicate meetup poll slots
+   - duplicate highlight/story items if relevant
+
+9. Index and performance readiness
+   Confirm indexes exist for beta-critical queries:
+   - profiles username/handle/search
+   - posts feed status/created_at/user/location
+   - comments post_id/created_at
+   - messages thread_id/created_at
+   - thread_reads user_id/thread_id
+   - notifications user_id/read/category/created_at
+   - trips owner/date/destination/status
+   - trip_members user_id/trip_id
+   - trip_invites invitee/status
+   - events city/date/status/category/privacy
+   - event_attendees event_id/user_id/status
+   - community_places city/status/source
+   - saved_places user_id/item_id
+   - blocks blocker_id/blocked_id
+   - RAB bookings traveler/provider/status
+   - safe_return_sessions user_id/status/trip_id
+   - reports status/type/created_at
+   - highlights user_id/created_at/status
+   - meetups trip_id/event_id/status/time
+
+10. Production readiness assumptions
+   Identify anything that may work locally but fail in production:
+   - migrations not applied
+   - feature flags missing
+   - env vars missing
+   - storage buckets missing
+   - service role key missing
+   - push credentials missing
+   - media bucket policies missing
+   - route mounts missing
+   - SQL function/RPC missing
+   - cron/scheduled jobs missing
+   - realtime subscriptions missing
+   - Supabase RLS relying on auth.uid() under P-256 issue
+   - seed/admin user missing
+
+11. Storage readiness
+   Audit upload/storage paths:
+   - avatar
+   - cover
+   - post media
+   - memory media
+   - story media
+   - highlights
+   - event cover
+   - trip cover
+   - RAB provider photos
+   - Telegraph attachments if visible
+
+Confirm:
+   - buckets exist or migration/setup docs exist
+   - upload route validates file type
+   - upload route validates file size
+   - public/private access is intentional
+   - URL columns exist
+   - deletion/replacement behavior is safe
+   - no frontend writes to missing media fields
+
+12. Backend tests and validation gaps
+   Inventory existing backend tests.
+   Identify missing tests for:
+   - trip update/delete API routing
+   - RAB review completed-only guard
+   - duplicate community place DB error guard
+   - reportContent / hide post
+   - block hiding profile/thread behavior
+   - pending trip invites
+   - push token registration
+   - thread reads/unread counts
+   - meetups poll confirmation
+   - highlights archive/delete/badge clear
+   - Safe Return trip scoping
+
+Do not add all tests unless the task is scoped to testing.
+Only add tests if a fix is made and an existing pattern is clear.
+
+Required process:
+
+1. Survey first.
+   Do not edit until the inventory is complete enough to classify risks.
+
+2. Produce three matrices:
+   A. Migration Readiness Matrix
+      - Migration/task #
+      - File
+      - Schema changed
+      - Dependent feature
+      - Production applied?
+      - Status
+      - Fix/manual action needed
+
+   B. Backend Route Coverage Matrix
+      - System
+      - Route
+      - Method
+      - Auth guard
+      - Permission guard
+      - Tables touched
+      - Frontend caller
+      - Status
+      - Issue/fix
+
+   C. Schema Dependency Matrix
+      - System
+      - Table/columns expected
+      - Migration source
+      - Code references
+      - Constraints/indexes
+      - RLS/direct Supabase risk
+      - Status
+      - Fix/manual action needed
+
+3. Fix only proven blockers:
+   - missing migration file for live feature
+   - duplicate/broken migration
+   - missing column used by live code
+   - route references non-existent table/column
+   - frontend calls missing backend route
+   - risky live direct Supabase mutation
+   - missing auth/admin/owner guard around service-role route
+   - fake success on DB failure
+   - missing constraint causing duplicate live data
+   - status enum mismatch
+   - feature flag missing but required for screen load
+
+4. Do not fix:
+   - future features not live
+   - meetups/highlights polish unless schema blocks live screens
+   - web sharing/growth features
+   - large architecture redesigns
+   - payment system expansion
+   - cosmetic naming preferences
+
+5. After any fixes, run:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if practical
+   - bash scripts/sync-standalone.sh --fix-source if artifacts changed
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - any migration/schema validation script found
+   - relevant backend tests for changed routes if feasible
+
+6. Final report must include:
+   - Executive summary
+   - Migration Readiness Matrix
+   - Backend Route Coverage Matrix
+   - Schema Dependency Matrix
+   - Ship-blockers found
+   - Fixes completed
+   - Files changed
+   - Migrations added/updated
+   - Direct Supabase risks found
+   - Service-role route safety findings
+   - Required manual Supabase production actions
+   - Remaining real beta/production blockers
+   - Non-blocking backend/database gaps
+   - Validation table
+   - Commit message
+
+Important:
+Do not claim production is ready unless production-applied migrations are verified.
+If migration files exist locally but production may not have them applied, classify as "manual production action required."
+If a live feature depends on a migration that is missing or unapplied, mark it as a ship-blocker.
+If backend uses service role, app-level permission checks are mandatory.
+If frontend uses direct Supabase writes, assume risky under the current JWT/RLS issue unless proven safe.
+No fake success.
+No silent data loss.
+No private data leaks.
+No mock data presented as live data.

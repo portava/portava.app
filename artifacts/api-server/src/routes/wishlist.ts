@@ -161,17 +161,25 @@ export async function trackOsmPlaceUnsave(
       .select("place_id");
 
     if (deletedRows && deletedRows.length > 0) {
-      // .gt("saved_count", 0) is a belt-and-suspenders guard: the UPDATE
-      // becomes a no-op if saved_count is somehow already 0.
-      const newCount = Math.max(0, ((dpRow as any).saved_count ?? 1) - 1);
-      await svc
-        .from("discovery_places")
-        .update({ saved_count: newCount })
-        .eq("id", (dpRow as any).id)
-        .gt("saved_count", 0);
+      // Atomically decrement saved_count using a DB function that evaluates
+      // GREATEST(0, saved_count - 1) inside PostgreSQL's own transaction.
+      // Unlike computing newCount = snapshot - 1 in Node and then SET-ing
+      // an absolute value, this form is immune to the stale-snapshot race
+      // where two concurrent different-user unsaves both read the same
+      // saved_count and both overwrite the DB with snapshot-1.
+      const { data: newCount } = await svc.rpc(
+        "decrement_discovery_place_saved_count",
+        { p_id: (dpRow as any).id },
+      );
       // Patch the in-memory discovery cache so the popular sort reflects the
-      // decremented count immediately.
-      patchOsmSavedCount(osmId, newCount);
+      // decremented count immediately.  Prefer the value returned by the RPC;
+      // fall back to a best-effort approximation if it is not numeric.
+      patchOsmSavedCount(
+        osmId,
+        typeof newCount === "number"
+          ? newCount
+          : Math.max(0, ((dpRow as any).saved_count ?? 1) - 1),
+      );
     }
   } catch {
     // Non-blocking

@@ -434,6 +434,19 @@ function makeOsmFakeClient(opts: {
       if (table === "wishlist_places")       return tableChain(wl);
       return tableChain([]);
     },
+    rpc(fn: string, args: Record<string, any>) {
+      if (fn === "decrement_discovery_place_saved_count") {
+        // Mirrors GREATEST(0, saved_count - 1) evaluated against the current
+        // in-memory row — each call sees the state left by any prior call, so
+        // Promise.all with two concurrent unsaves correctly lands at 0.
+        const row = dp.find((r) => r.id === args.p_id);
+        if (row) {
+          row.saved_count = Math.max(0, (row.saved_count ?? 0) - 1);
+        }
+        return Promise.resolve({ data: row?.saved_count ?? 0, error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: `unknown rpc: ${fn}` } });
+    },
     auth: {
       getUser(token: string) {
         if (token === "valid-token") return Promise.resolve({ data: { user: { id: USER_ID } }, error: null });
@@ -585,19 +598,17 @@ describe("OSM save-count deduplication — trackOsmPlaceUnsave", () => {
     assert.equal(dpsRows.length, 0, "discovery_place_saves record should be removed exactly once");
   });
 
-  it("two different users unsave the same place concurrently: saved_count stays non-negative", async () => {
+  it("two different users unsave the same place concurrently: saved_count decrements to exactly 0", async () => {
     // Both users have a save record; saved_count=2.  Two concurrent unsaves
-    // from different users should never push the count below 0.
-    // Each DELETE targets a different row so both succeed; the .gt guard on
-    // the UPDATE ensures neither can SET the count below 0 even if both
-    // compute newCount from a stale snapshot.
+    // should each decrement by exactly 1 so the count lands at 0.
     //
-    // NOTE: With the current absolute-value UPDATE, both concurrent calls can
-    // compute newCount=1 from the shared dpRow snapshot and write saved_count=1
-    // instead of 0 — this is a known limitation of the stale-snapshot pattern
-    // for multi-user concurrent unsaves.  A full fix would require a DB-side
-    // atomic decrement (GREATEST(0, saved_count - 1)) which is out of scope
-    // here.  This test documents and enforces the non-negative contract.
+    // Each DELETE targets a different (user_id, place_id) row so both succeed
+    // and both enter the RPC branch.  The fake rpc() shim evaluates
+    // GREATEST(0, saved_count - 1) against the current in-memory state — just
+    // as the real Postgres function would evaluate it against the committed row
+    // — so the two micro-task-interleaved calls each see the state left by the
+    // previous call: 2→1→0.  This test verifies the atomic-decrement RPC
+    // approach fixes the stale-snapshot race that previously landed at 1.
     const fake = makeOsmFakeClient({
       dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 2, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
       dpsRows: [
@@ -614,7 +625,7 @@ describe("OSM save-count deduplication — trackOsmPlaceUnsave", () => {
     ]);
 
     const dpRows = fake.getDp();
-    assert.ok(dpRows[0].saved_count >= 0, "saved_count must never go negative regardless of concurrency");
+    assert.equal(dpRows[0].saved_count, 0, "saved_count must decrement to 0 after both users unsave");
 
     const dpsRows = fake.getDps();
     assert.equal(dpsRows.length, 0, "both users' discovery_place_saves records should be removed");
