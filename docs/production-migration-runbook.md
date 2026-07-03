@@ -824,36 +824,15 @@ Expo push notifications use `expo_push_token` stored in `profiles` (0023) and `n
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY` is the `sb_publishable_*` format
 - `POST /api/me/devices` is called from the mobile app on app startup to register/refresh the device token
 
-### 9.7 rent_buddy_city_rollouts bootstrap
+### 9.7 rent_buddy_city_rollouts — bootstrap and new city launch
 
 Without at least one row in `rent_buddy_city_rollouts` at `public_mvp` or `beta_testing` status, all calls to `checkRentBuddyAccess` return `city_not_available` — the feature is deployed but completely invisible to users.
 
-**Option A — apply the seed migration (recommended)**
-
-Run migration `0092_seed_rent_buddy_launch_cities.sql` via the Supabase SQL Editor. It inserts the three initial Philippines launch cities (Cebu, Manila, Davao City) all at `public_mvp` status:
-
-```
-File: artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql
-```
-
-```sql
-INSERT INTO rent_buddy_city_rollouts (city, country, status, notes)
-VALUES
-  ('Cebu',       'Philippines', 'public_mvp', 'Initial Philippines launch city — Cebu City metro area.'),
-  ('Manila',     'Philippines', 'public_mvp', 'Initial Philippines launch city — Metro Manila (NCR).'),
-  ('Davao City', 'Philippines', 'public_mvp', 'Initial Philippines launch city — Davao region.')
-ON CONFLICT (city) DO NOTHING;
-```
-
-**Option B — add cities via the admin API**
-
-After an admin account exists in production, use `POST /api/admin/rent-buddy/rollout/cities` to add cities programmatically without touching the database directly.
-
-**Correct status values** (`rent_buddy_city_status` enum, defined in migration 0090):
+**City status progression** (`rent_buddy_city_status` enum, defined in migration 0090):
 
 | Status | Meaning |
 |--------|---------|
-| `disabled` | Not visible to any users (default) |
+| `disabled` | Not visible to any users (default for new cities) |
 | `waitlist_only` | Users can join the waitlist only |
 | `buddy_applications_open` | Buddy applications accepted; no traveler bookings yet |
 | `internal_testing` | Internal staff only |
@@ -862,19 +841,212 @@ After an admin account exists in production, use `POST /api/admin/rent-buddy/rol
 | `paused` | Temporarily suspended; existing bookings still accessible |
 | `suspended` | Treated same as `disabled` — feature off |
 
-> **Note:** The runbook originally showed `status = 'live'` in this section — that is not a valid enum value. Use `public_mvp` for a fully open city.
+> **Note:** `'live'` is not a valid enum value. Use `public_mvp` for a fully open city.
 
-**Verify after seeding:**
+---
+
+#### 9.7.1 Bootstrap — initial Philippines launch (ONE-TIME EXCEPTION)
+
+The seed migration `0092_seed_rent_buddy_launch_cities.sql` inserts Cebu, Manila, and Davao City **directly at `public_mvp`**, bypassing the QA checklist gate. This was a deliberate one-time exception for the initial market launch.
+
+> ⚠️ **Do not add new cities this way.** Direct SQL inserts skip the safety checklist that `advance-status` enforces. Use the API workflow in §9.7.2 for every city expansion after the initial Philippines trio.
+
+Apply via the Supabase SQL Editor if it hasn't already been applied:
+
+```
+File: artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql
+```
+
+Verify after applying:
 
 ```sql
 SELECT city, country, status FROM rent_buddy_city_rollouts ORDER BY city;
--- Expect: at least one row with status = 'public_mvp' or 'beta_testing'
+-- Expect: Cebu, Manila, Davao City all at public_mvp
 
 SELECT COUNT(*) FROM rent_buddy_city_rollouts WHERE status IN ('public_mvp', 'beta_testing');
 -- Expect: >= 1
 ```
 
-The pre-release check (`bash scripts/pre-release-check.sh`) will also verify this automatically under the `db-triggers` step — a release will not pass until at least one live city exists in production.
+The pre-release check (`bash scripts/pre-release-check.sh`) also verifies this under the `db-triggers` step.
+
+---
+
+#### 9.7.2 New City Launch Workflow — curl runbook
+
+All future city expansions **must** go through the admin API so the QA gate is enforced.
+The `advance-status` endpoint blocks reaching `public_mvp` until all nine QA checklist items are signed off (policy scan, safety flow, booking flow, Telegraph, trust score, payment flow, moderation, waitlist flow, buddy application). Only a platform **owner** can override with a written reason.
+
+**Prerequisites**
+
+- A valid admin or owner JWT (`TOKEN`) from Supabase Auth.
+- The API base URL (`API` — e.g. `https://<domain>/api`).
+- `jq` installed locally for parsing JSON responses.
+
+```bash
+TOKEN="<admin-or-owner-jwt>"
+API="https://<your-domain>/api"
+```
+
+---
+
+**Step 1 — Create the city at `disabled`**
+
+```bash
+CITY_ID=$(curl -s -X POST "$API/admin/rent-buddy/rollout/cities" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "city": "Bali",
+    "country": "Indonesia",
+    "notes": "Southeast Asia expansion — Bali pilot"
+  }' | jq -r '.city.id')
+
+echo "Created city ID: $CITY_ID"
+```
+
+New cities start at `disabled` by default. No users can see the city yet.
+
+---
+
+**Step 2 — Advance through pre-launch stages**
+
+Each call moves the city forward one step. Run them in order as the city becomes ready for each phase.
+
+```bash
+# disabled → waitlist_only  (open waitlist signups)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+
+# waitlist_only → buddy_applications_open  (start accepting buddy applications)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+
+# buddy_applications_open → internal_testing  (begin internal QA)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+
+# internal_testing → beta_testing  (invite beta users)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+```
+
+Each response confirms `{ "ok": true, "fromStatus": "...", "toStatus": "..." }`.
+
+---
+
+**Step 3 — Create the QA checklist**
+
+This must exist before the city can advance to `public_mvp`.
+
+```bash
+CL_ID=$(curl -s -X POST "$API/admin/rent-buddy/qa/checklists" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"cityRolloutId\": \"$CITY_ID\", \"notes\": \"Bali beta QA round\"}" \
+  | jq -r '.checklist.id')
+
+echo "Checklist ID: $CL_ID"
+```
+
+---
+
+**Step 4 — Tick off QA checklist items as each check passes**
+
+Update individual items as the QA team verifies them (partial updates are fine — unticked items default to `false`):
+
+```bash
+curl -s -X PATCH "$API/admin/rent-buddy/qa/checklists/$CL_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_scan_passed":       true,
+    "safety_flow_passed":       true,
+    "booking_flow_passed":      true,
+    "telegraph_passed":         true,
+    "trust_score_passed":       true,
+    "payment_flow_passed":      true,
+    "moderation_passed":        true,
+    "waitlist_flow_passed":     true,
+    "buddy_application_passed": true
+  }' | jq .
+```
+
+Check current state at any time:
+
+```bash
+curl -s "$API/admin/rent-buddy/qa/checklists?cityRolloutId=$CITY_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq '.checklists[0]'
+```
+
+---
+
+**Step 5 — Mark the checklist as passed**
+
+Once all nine items are `true`, seal the checklist:
+
+```bash
+curl -s -X POST "$API/admin/rent-buddy/qa/checklists/$CL_ID/mark-passed" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+```
+
+This sets `checklist_status = "passed"` and records the admin ID and timestamp.
+
+---
+
+**Step 6 — Advance to `public_mvp`**
+
+With the checklist passed, the gate opens:
+
+```bash
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' | jq .
+# → { "ok": true, "fromStatus": "beta_testing", "toStatus": "public_mvp" }
+```
+
+The city is now live. All authenticated users can book buddies in it.
+
+---
+
+**Owner override (use sparingly)**
+
+If the checklist cannot be fully completed before launch and a platform **owner** accepts the risk:
+
+```bash
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/advance-status" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"overrideReason": "Emergency launch approved by CTO — checklist items deferred to post-launch audit #XYZ"}' \
+  | jq .
+```
+
+The override is permanently recorded in `rent_buddy_launch_audit_logs` with the reason. Admin-role users cannot override — only owner-role users.
+
+---
+
+**Emergency controls**
+
+To pause or suspend a live city without going through the status ladder:
+
+```bash
+# Pause (bookings paused; existing confirmed bookings still accessible)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/pause" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Investigating booking dispute spike"}' | jq .
+
+# Suspend (treated same as disabled — invisible to users)
+curl -s -X POST "$API/admin/rent-buddy/rollout/cities/$CITY_ID/suspend" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Safety incident — pending review"}' | jq .
+```
+
+Audit log entries are written for every status change. Review them with:
+
+```bash
+curl -s "$API/admin/rent-buddy/audit-log?cityRolloutId=$CITY_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq '.logs[] | {action, fromStatus, toStatus, created_at}'
+```
 
 ### 9.8 Realtime channels
 

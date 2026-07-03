@@ -6,6 +6,23 @@
 -- city_not_available and the feature is invisible to all users even though
 -- migration 0090 fully deployed the tables and flags.
 --
+-- ┌─────────────────────────────────────────────────────────────────────────┐
+-- │  ONE-TIME BOOTSTRAP EXCEPTION — initial Philippines launch only         │
+-- │                                                                         │
+-- │  This migration inserts the three PH launch cities DIRECTLY at          │
+-- │  public_mvp, bypassing the QA checklist gate enforced by the            │
+-- │  POST /api/admin/rent-buddy/rollout/cities/:id/advance-status endpoint. │
+-- │                                                                         │
+-- │  For ALL future city expansions beyond this initial trio, operators     │
+-- │  must use the proper admin API workflow:                                 │
+-- │    1. Create the city at "disabled" via POST /api/admin/rent-buddy/...  │
+-- │    2. Advance through each status step via advance-status               │
+-- │    3. Complete the QA checklist before reaching public_mvp              │
+-- │                                                                         │
+-- │  See docs/production-migration-runbook.md §9.7.2 for the full           │
+-- │  step-by-step curl runbook.                                             │
+-- └─────────────────────────────────────────────────────────────────────────┘
+--
 -- City status progression (defined in 0090 enum rent_buddy_city_status):
 --   disabled → waitlist_only → buddy_applications_open → internal_testing
 --   → beta_testing → public_mvp → paused | suspended
