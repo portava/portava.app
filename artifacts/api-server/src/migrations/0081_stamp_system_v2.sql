@@ -1,8 +1,10 @@
--- Migration: 0080_stamp_system_v2.sql
+-- Migration: 0081_stamp_system_v2.sql
 -- Adds the full Passport Stamps v2 data model:
 --   stamp_definitions, user_stamps, stamp_award_events,
---   stamp_progress, stamp_collections, stamp_collection_items
+--   stamp_progress, stamp_collections, stamp_collection_items,
+--   stamp_campaigns
 -- Existing passport_stamps / stamps tables are NOT modified.
+-- All CREATE POLICY statements are idempotent (DROP IF EXISTS guards).
 
 -- ─── stamp_definitions ────────────────────────────────────────────────────────
 
@@ -33,17 +35,20 @@ CREATE TABLE IF NOT EXISTS stamp_definitions (
 
 ALTER TABLE stamp_definitions ENABLE ROW LEVEL SECURITY;
 
--- Everyone can read active definitions
+DROP POLICY IF EXISTS "stamp_definitions_public_read" ON stamp_definitions;
 CREATE POLICY "stamp_definitions_public_read" ON stamp_definitions
   FOR SELECT USING (is_active = true);
 
--- Admins read everything
+DROP POLICY IF EXISTS "stamp_definitions_admin_all" ON stamp_definitions;
 CREATE POLICY "stamp_definitions_admin_all" ON stamp_definitions
   FOR ALL USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
 -- ─── user_stamps ──────────────────────────────────────────────────────────────
+-- NOTE: lat/lng columns are PRIVATE — the API server must never expose them in
+-- public-facing SELECT responses. RLS USING clauses filter rows, not columns;
+-- column exclusion is enforced at the application layer.
 
 CREATE TABLE IF NOT EXISTS user_stamps (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -69,11 +74,11 @@ CREATE TABLE IF NOT EXISTS user_stamps (
 
 ALTER TABLE user_stamps ENABLE ROW LEVEL SECURITY;
 
--- Owner sees all own stamps (including revoked/private)
+DROP POLICY IF EXISTS "user_stamps_owner_read" ON user_stamps;
 CREATE POLICY "user_stamps_owner_read" ON user_stamps
   FOR SELECT USING (auth.uid() = user_id);
 
--- Public reads: only non-revoked, public-visibility stamps; lat/lng excluded via SELECT column list
+DROP POLICY IF EXISTS "user_stamps_public_read" ON user_stamps;
 CREATE POLICY "user_stamps_public_read" ON user_stamps
   FOR SELECT USING (
     is_revoked = false
@@ -81,7 +86,7 @@ CREATE POLICY "user_stamps_public_read" ON user_stamps
     AND auth.uid() != user_id
   );
 
--- Friends-only stamps visible to circle members
+DROP POLICY IF EXISTS "user_stamps_friends_read" ON user_stamps;
 CREATE POLICY "user_stamps_friends_read" ON user_stamps
   FOR SELECT USING (
     is_revoked = false
@@ -96,6 +101,11 @@ CREATE POLICY "user_stamps_friends_read" ON user_stamps
          )
     )
   );
+
+-- Service role needs write access to award stamps
+DROP POLICY IF EXISTS "user_stamps_service_all" ON user_stamps;
+CREATE POLICY "user_stamps_service_all" ON user_stamps
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 -- ─── stamp_award_events ───────────────────────────────────────────────────────
 
@@ -116,15 +126,19 @@ CREATE TABLE IF NOT EXISTS stamp_award_events (
 
 ALTER TABLE stamp_award_events ENABLE ROW LEVEL SECURITY;
 
--- Owner sees own audit trail
+DROP POLICY IF EXISTS "stamp_award_events_owner_read" ON stamp_award_events;
 CREATE POLICY "stamp_award_events_owner_read" ON stamp_award_events
   FOR SELECT USING (auth.uid() = user_id);
 
--- Admins read all
+DROP POLICY IF EXISTS "stamp_award_events_admin_read" ON stamp_award_events;
 CREATE POLICY "stamp_award_events_admin_read" ON stamp_award_events
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
   );
+
+DROP POLICY IF EXISTS "stamp_award_events_service_all" ON stamp_award_events;
+CREATE POLICY "stamp_award_events_service_all" ON stamp_award_events
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 -- ─── stamp_progress ───────────────────────────────────────────────────────────
 
@@ -140,8 +154,13 @@ CREATE TABLE IF NOT EXISTS stamp_progress (
 
 ALTER TABLE stamp_progress ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "stamp_progress_owner_read" ON stamp_progress;
 CREATE POLICY "stamp_progress_owner_read" ON stamp_progress
   FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "stamp_progress_service_all" ON stamp_progress;
+CREATE POLICY "stamp_progress_service_all" ON stamp_progress
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 -- ─── stamp_collections ────────────────────────────────────────────────────────
 
@@ -157,6 +176,7 @@ CREATE TABLE IF NOT EXISTS stamp_collections (
 
 ALTER TABLE stamp_collections ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "stamp_collections_public_read" ON stamp_collections;
 CREATE POLICY "stamp_collections_public_read" ON stamp_collections
   FOR SELECT USING (is_active = true);
 
@@ -171,6 +191,7 @@ CREATE TABLE IF NOT EXISTS stamp_collection_items (
 
 ALTER TABLE stamp_collection_items ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "stamp_collection_items_public_read" ON stamp_collection_items;
 CREATE POLICY "stamp_collection_items_public_read" ON stamp_collection_items
   FOR SELECT USING (true);
 
@@ -192,13 +213,26 @@ CREATE TABLE IF NOT EXISTS stamp_campaigns (
 
 ALTER TABLE stamp_campaigns ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "stamp_campaigns_public_read" ON stamp_campaigns;
 CREATE POLICY "stamp_campaigns_public_read" ON stamp_campaigns
   FOR SELECT USING (is_active = true);
 
+DROP POLICY IF EXISTS "stamp_campaigns_admin_all" ON stamp_campaigns;
 CREATE POLICY "stamp_campaigns_admin_all" ON stamp_campaigns
   FOR ALL USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
   );
+
+-- ─── Column-level privacy enforcement ────────────────────────────────────────
+-- lat/lng are stored for internal proximity/geo-lock operations only and must
+-- never be visible to end-users via PostgREST (authenticated or anon role).
+-- PostgreSQL column-level REVOKE takes precedence over table-level GRANT, so
+-- these two statements enforce the restriction regardless of RLS row filtering.
+-- The service_role bypasses both RLS and column privileges and retains full
+-- access for server-side geo operations.
+
+REVOKE SELECT (lat, lng) ON user_stamps FROM authenticated;
+REVOKE SELECT (lat, lng) ON user_stamps FROM anon;
 
 -- ─── Indexes ──────────────────────────────────────────────────────────────────
 

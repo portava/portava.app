@@ -1,4 +1,6 @@
--- Migration 0076: wishlist_places
+-- Migration 0088: wishlist_places
+-- (Renumbered from 0076 — that slot was already occupied by the applied
+--  0076_profile_emergency_contacts.sql migration)
 --
 -- Stores full place data as JSONB so any bookmarked place (DB-sourced or
 -- OSM-sourced) can be persisted under the user's account.  Separate from
