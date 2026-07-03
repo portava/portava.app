@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { getSessionUserId, onAuthChange, signOut as svcSignOut } from '../services/auth';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getAccountStatus } from '../services/profile';
+import type { AccountStatus } from '../services/profile';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -15,6 +17,10 @@ interface SessionContextValue {
   signOut: () => Promise<void>;
   role: string | null;
   roleLoaded: boolean;
+  accountStatus: AccountStatus | null;
+  accountStatusLoaded: boolean;
+  deletionScheduledAt: string | null;
+  refreshAccountStatus: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -24,6 +30,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<string | null>(null);
   const [roleLoaded, setRoleLoaded] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [accountStatusLoaded, setAccountStatusLoaded] = useState(false);
+  const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -46,13 +55,58 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       );
   }, [userId]);
 
+  const fetchAccountStatus = useCallback(async (uid: string | null) => {
+    if (!uid) {
+      setAccountStatus(null);
+      setDeletionScheduledAt(null);
+      setAccountStatusLoaded(true);
+      return;
+    }
+    setAccountStatusLoaded(false);
+    const result = await getAccountStatus();
+    if (result.ok && result.data) {
+      setAccountStatus(result.data.accountStatus);
+      setDeletionScheduledAt(result.data.deletionScheduledAt);
+    } else {
+      // Fail-closed: on any error (network, API) we cannot confirm the account
+      // is active, so keep accountStatus = null (unknown). AccountStatusGate
+      // will block the app and show a retry screen until status is confirmed.
+      setAccountStatus(null);
+      setDeletionScheduledAt(null);
+    }
+    setAccountStatusLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    fetchAccountStatus(userId);
+  }, [userId, fetchAccountStatus]);
+
+  const refreshAccountStatus = useCallback(async () => {
+    await fetchAccountStatus(userId);
+  }, [userId, fetchAccountStatus]);
+
   const signOut = useCallback(async () => {
     await svcSignOut();
     setUserId(null);
+    setAccountStatus(null);
+    setDeletionScheduledAt(null);
+    setAccountStatusLoaded(false);
   }, []);
 
   return (
-    <SessionContext.Provider value={{ userId, isAuthed: Boolean(userId), loading, configured: isSupabaseConfigured, signOut, role, roleLoaded }}>
+    <SessionContext.Provider value={{
+      userId,
+      isAuthed: Boolean(userId),
+      loading,
+      configured: isSupabaseConfigured,
+      signOut,
+      role,
+      roleLoaded,
+      accountStatus,
+      accountStatusLoaded,
+      deletionScheduledAt,
+      refreshAccountStatus,
+    }}>
       {children}
     </SessionContext.Provider>
   );
@@ -61,7 +115,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext);
   if (!ctx) {
-    return { userId: null, isAuthed: false, loading: false, configured: isSupabaseConfigured, signOut: async () => {}, role: null, roleLoaded: true };
+    return {
+      userId: null,
+      isAuthed: false,
+      loading: false,
+      configured: isSupabaseConfigured,
+      signOut: async () => {},
+      role: null,
+      roleLoaded: true,
+      accountStatus: null,
+      accountStatusLoaded: true,
+      deletionScheduledAt: null,
+      refreshAccountStatus: async () => {},
+    };
   }
   return ctx;
 }

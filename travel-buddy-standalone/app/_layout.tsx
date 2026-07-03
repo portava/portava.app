@@ -23,6 +23,7 @@ import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
 import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
+import { AccountStatusGate } from '../src/components/AccountStatusGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 
@@ -87,22 +88,24 @@ export default function RootLayout() {
                 <NotificationToastProvider>
                 <StampEarnedToastProvider>
                   <RootCrashHandler>
-                    <PushSetup />
-                    <CompassFrontloadSetup />
-                    <StatusBar style="dark" />
-                    <Stack
-                      screenOptions={{
-                        headerShown: false,
-                        contentStyle: { backgroundColor: color.paper },
-                        animation: 'slide_from_right',
-                      }}
-                    >
-                      <Stack.Screen name="(tabs)" />
-                      <Stack.Screen name="(auth)" />
-                      <Stack.Screen name="create" options={{ presentation: 'modal' }} />
-                      <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
-                      <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
-                    </Stack>
+                    <AccountStatusGate>
+                      <PushSetup />
+                      <CompassFrontloadSetup />
+                      <StatusBar style="dark" />
+                      <Stack
+                        screenOptions={{
+                          headerShown: false,
+                          contentStyle: { backgroundColor: color.paper },
+                          animation: 'slide_from_right',
+                        }}
+                      >
+                        <Stack.Screen name="(tabs)" />
+                        <Stack.Screen name="(auth)" />
+                        <Stack.Screen name="create" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
+                      </Stack>
+                    </AccountStatusGate>
                   </RootCrashHandler>
                 </StampEarnedToastProvider>
                 </NotificationToastProvider>

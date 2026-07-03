@@ -449,6 +449,37 @@ export async function updatePrivacySettings(
   }
 }
 
+// ── Account status ────────────────────────────────────────────────────────────
+
+export type AccountStatus = 'active' | 'deactivated' | 'pending_deletion';
+
+export interface AccountStatusResult {
+  accountStatus: AccountStatus;
+  deletionScheduledAt: string | null;
+}
+
+export async function getAccountStatus(): Promise<ProfileResult<AccountStatusResult>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/account-status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 // ── Account controls ──────────────────────────────────────────────────────────
 
 export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean }>> {

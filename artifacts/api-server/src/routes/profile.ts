@@ -694,6 +694,66 @@ router.put("/me/push-token", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /me/account-status — lightweight account health check
+ * ===========================================================================
+ * Returns accountStatus ("active" | "deactivated" | "pending_deletion") and,
+ * when pending_deletion, the scheduled deletion date.
+ * Uses the service client so the read bypasses RLS reliably.
+ */
+router.get("/me/account-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data: profile, error: profileErr } = await sc
+    .from("profiles")
+    .select("account_status")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "account-status: profile query failed");
+    sendError(res, "db_error", "Could not load account status");
+    return;
+  }
+  if (!profile) {
+    sendError(res, "not_found", "Profile not found");
+    return;
+  }
+
+  const rawStatus: string = (profile as any).account_status ?? "active";
+
+  // If the profile is deactivated, check whether there is a pending deletion
+  // request — if so, surface the more specific "pending_deletion" status so
+  // the mobile client can show the correct interstitial.
+  if (rawStatus === "deactivated") {
+    const { data: deletionRow } = await sc
+      .from("user_deletion_requests")
+      .select("scheduled_at, status")
+      .eq("user_id", user.id)
+      .eq("status", "pending")
+      .maybeSingle()
+      .then(
+        (r: any) => r,
+        () => ({ data: null }),
+      );
+
+    if (deletionRow) {
+      res.status(200).json({
+        accountStatus: "pending_deletion",
+        deletionScheduledAt: (deletionRow as any).scheduled_at ?? null,
+      });
+      return;
+    }
+  }
+
+  res.status(200).json({ accountStatus: rawStatus, deletionScheduledAt: null });
+});
+
+/* ===========================================================================
  * POST /me/reactivate — re-activate a self-deactivated account
  * ===========================================================================
  * Only works when account was self-deactivated (state = 'deactivated').
@@ -744,6 +804,16 @@ router.post("/me/reactivate", async (req, res) => {
     sendError(res, "db_error", "Failed to reactivate account");
     return;
   }
+
+  // Cancel any pending deletion request (awaited so that a subsequent
+  // GET /me/account-status call does not race with the cancellation write).
+  // Fail-open: if the table doesn't exist yet (pre-migration 0094) or the
+  // update fails for any reason, the reactivation itself already succeeded.
+  await sc.from("user_deletion_requests")
+    .update({ status: "cancelled", cancelled_at: now })
+    .eq("user_id", user.id)
+    .eq("status", "pending")
+    .then(undefined, () => {});
 
   // Secondary writes are best-effort after the primary write succeeds
   sc.from("user_account_states")
