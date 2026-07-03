@@ -1,0 +1,219 @@
+Upgrade the Travel Buddy Postcard presentation across the app so postcards look larger, fuller, more premium, and more travel-native on phone screens — without copying Instagram or rebuilding Pulse.
+
+Goal:
+Make Postcards feel like immersive travel keepsakes. They should take up more of the phone screen, feel easier to view and tap, and look intentionally designed for Travel Buddy. This is a visual/layout polish pass plus safe regression fixes only.
+
+Do not rebuild the posting system. Do not redesign all of Pulse. Do not add new backend schema. Do not add heavy new dependencies. Do not break existing likes, comments, saves, shares, profile navigation, delayed posting, GPS/stamp credit, trip memory linking, or privacy behavior.
+
+Before changing anything, survey current implementation:
+- Pulse/Postcard feed cards
+- Passport postcard tiles/grid
+- Post detail or postcard detail screen
+- Trip memories
+- Saved memories
+- Memory/post components
+- Shared components such as PostCard, PostcardCard, MemoryCard, PulseFeedCard, PostEngagementBar, ActionBar, SaveButton, media renderers, and profile/passport tabs
+- Existing responsive/mobile/tablet/web layout rules
+- Existing tests that cover postcard rendering, Pulse actions, Passport grid, or memory cards
+
+Core visual upgrade:
+1. Increase postcard size and screen presence on mobile:
+   - Postcards should feel around 90–96% of the phone screen width where appropriate.
+   - Reduce unnecessary outer margins.
+   - Increase media/image/video height.
+   - Use a taller, more cinematic visual frame, such as 4:5, 3:4, or an adaptive travel-card ratio.
+   - Keep enough padding so the screen does not feel cramped.
+   - The image/media should be the hero.
+
+2. Do not make postcards look like Instagram:
+   - Do not copy Instagram’s exact square-photo layout.
+   - Do not copy the top-header, square image, caption-under-post pattern exactly.
+   - Avoid generic social-feed styling.
+   - Use Travel Buddy identity: postcard framing, destination feel, soft rounded corners, stamp/passport/travel cues, trip/city/date/location context.
+   - The user should immediately feel: “This is a travel memory/postcard,” not just “this is a photo post.”
+
+3. Separate postcard posts from normal Pulse posts:
+   - Normal text/question/status posts should stay normal size.
+   - Only postcards, memories, media-heavy travel posts, or explicit postcard post types should get the larger immersive treatment.
+   - Do not accidentally enlarge every feed item.
+   - If the post type/kind is missing, use existing data shape safely to identify media-heavy travel memory posts.
+
+Postcard layout variants:
+4. Add or cleanly support postcard layout variants if the component structure allows it:
+   - Standard postcard: larger travel memory card for Pulse.
+   - Featured postcard: more immersive version for special/high-quality travel memories.
+   - Compact postcard: smaller version only for tight preview areas.
+   - Passport postcard tile: larger profile/passport grid version.
+   - Do not overbuild variant systems if a simple prop/style adjustment is enough.
+
+Media handling:
+5. Make media feel premium:
+   - Images should crop cleanly without stretching.
+   - Avoid aggressive cropping of faces, landmarks, or important scenery where possible.
+   - Videos should use the same larger postcard frame.
+   - Multiple-image postcards should keep existing carousel/stack behavior if present, but make it feel consistent with the larger frame.
+   - If media fails to load, show a polished Travel Buddy placeholder instead of a broken blank area.
+   - If a postcard has no image/media, show a designed memory/postcard placeholder rather than an empty broken card.
+   - Avoid layout shifts while media loads.
+   - Keep existing image caching/lazy-loading behavior if present.
+
+Travel Buddy identity:
+6. Add or preserve subtle postcard-specific details:
+   - destination/location chip
+   - trip label
+   - city label
+   - date mark
+   - stamp badge
+   - passport-inspired edge or frame
+   - delayed-post/privacy marker where needed
+   - caption preview
+   - save/like/comment/share controls if already wired
+   - Keep these details subtle and not gimmicky.
+   - Do not clutter the image.
+
+Spacing and hierarchy:
+7. Improve visual hierarchy:
+   - Media should lead.
+   - User/profile info should not overpower the postcard.
+   - Like/comment/save/share controls should remain available but visually secondary.
+   - Captions should be readable but not dominate.
+   - Long captions should clamp cleanly without breaking card height.
+   - Use “read more” only if already supported or easy to preserve.
+   - Location/privacy badges should remain visible but not crowd the card.
+   - Bigger should not mean overcrowded.
+
+Pulse feed:
+8. Improve postcard presence in Pulse:
+   - Pulse postcards should feel bigger, fuller, and more immersive.
+   - The first postcard visible in the feed should make the app feel alive and travel-focused.
+   - Scrolling should feel like browsing travel memories, not a generic list of small cards.
+   - Do not make non-postcard Pulse cards huge.
+   - Keep actions/comments/likes visually secondary but functional.
+
+Passport/profile grid:
+9. Improve Passport postcard section:
+   - Passport postcards should feel like a personal travel album.
+   - Make tiles larger and easier to tap.
+   - Avoid tiny thumbnails.
+   - Prefer a clean 2-column mobile layout if current tiles are too small.
+   - Keep profile page clean and not overcrowded.
+   - Keep stamp/trip/city details visible where supported.
+   - Increase tap comfort and obvious press areas.
+
+Postcard/detail screen:
+10. Improve postcard or post detail screen if it exists:
+   - Use a larger hero image/media area.
+   - Keep metadata below clean and travel-focused.
+   - Preserve comments, likes, saves, shares, and navigation.
+   - Do not redesign unrelated detail content.
+
+Trip memories and saved memories:
+11. Check and update all postcard surfaces:
+   - Pulse feed
+   - Passport/profile postcard grid
+   - Postcard detail screen
+   - Trip memories
+   - Saved memories
+   - Discovery/Compass recommendation surfaces if they reuse postcard cards
+   - Empty/loading/error states
+   - These screens do not need to be identical, but they should clearly belong to the same postcard design family.
+   - Avoid one screen using the new large design while another still uses tiny old thumbnails.
+
+Responsive requirements:
+12. Mobile-first rules:
+   - Small phones: near-full width, but keep safe padding.
+   - Large phones: fuller width with taller media.
+   - Tap targets must be comfortable.
+   - Avoid tiny icons or cramped action rows.
+   - Check Android and iOS spacing if platform-specific styles exist.
+
+13. Tablet/web rules:
+   - Do not let postcards become comically huge on tablet or web.
+   - Add max-width rules where needed.
+   - Web can remain card-based, but should still feel fuller than the old design.
+   - Keep layout controlled and premium.
+
+Safety, privacy, and connected behavior:
+14. Preserve all existing connected systems:
+   - Like/comment/save/share must still work.
+   - Profile navigation from avatar/name must still work.
+   - Detail tap must still work.
+   - Trip tap/place tap must still work if present.
+   - Delayed posting badges must remain visible.
+   - Protected location labels must remain visible.
+   - Hidden or approximate locations must not become exposed through larger cards.
+   - Do not show map/address previews on cards unless privacy rules allow it.
+   - Passport stamps/GPS credit logic must not be touched unless broken.
+   - Trip memory linking must not break.
+   - Saved memories must not break.
+   - Compass/Discovery surfaces must not break if they reuse the same card component.
+
+Graceful fallbacks:
+15. Improve fallback states:
+   - Missing image: show a designed Travel Buddy memory placeholder.
+   - Failed image load: show a clean fallback instead of a blank/broken card.
+   - Private/delayed location: show a privacy-safe label.
+   - Long text: clamp cleanly.
+   - Loading state: match postcard style.
+   - Empty state: match postcard style.
+
+Performance:
+16. Keep the upgrade lightweight:
+   - Do not load unnecessarily massive images.
+   - Do not add heavy animation or media libraries.
+   - Preserve existing lazy loading/caching if present.
+   - Avoid layout shifts while images load.
+   - Avoid expensive rendering changes in long feeds.
+
+Testing and regression checks:
+17. Add or update tests only where existing tests support layout/rendering or behavior:
+   - Postcard renders with larger media container.
+   - Passport postcard grid still renders.
+   - Pulse postcard actions still work.
+   - Privacy/delayed-location markers still render.
+   - Non-postcard Pulse posts are not accidentally oversized if testable.
+   - Media fallback renders when image is missing or fails if testable.
+
+18. Manual/visual QA checklist:
+   - Compare before/after card width.
+   - Compare before/after media height.
+   - Confirm Pulse postcards feel larger and more immersive.
+   - Confirm Passport postcard tiles are larger and easier to tap.
+   - Confirm non-postcard Pulse cards are not oversized.
+   - Confirm actions still work.
+   - Confirm profile navigation still works.
+   - Confirm detail navigation still works.
+   - Confirm privacy/delayed-location badges still render.
+   - Confirm no exact protected/approximate location is exposed.
+   - Confirm no image stretching, awkward clipping, or broken text overflow.
+   - Confirm tablet/web do not become oversized.
+
+Validation required:
+19. Run:
+   - Standalone typecheck
+   - Relevant component/tests if present
+   - Pulse/postcard/memory tests if present
+   - Passport/profile tests if present
+   - Source drift check
+   - Dependency drift check
+   - API server typecheck only if API files are touched
+
+Final report:
+20. Report:
+   - Exact files changed
+   - Exact screens affected
+   - What visual behavior changed
+   - Which postcard surfaces were updated
+   - Which surfaces did not exist or could not be updated
+   - Which tests/typechecks/drift checks passed
+   - Any confirmed issues found but intentionally not fixed because they are outside this pass
+
+Acceptance standard:
+The postcard upgrade is successful only if:
+- Postcards look noticeably larger on mobile.
+- Pulse feels more visual and travel-focused.
+- Passport postcards are easier to see and tap.
+- Normal non-postcard posts are not oversized.
+- The design feels like Travel Buddy, not Instagram.
+- Existing actions and privacy behavior still work.
+- Typecheck, relevant tests, and drift checks pass.
