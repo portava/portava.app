@@ -1383,6 +1383,89 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
 // ── POST /trips/:tripId/plan/items/:itemId/reorder — plan-edit permission ─────
 
+/* ===========================================================================
+ * POST /trips/:tripId/members  — owner directly adds a user as a member
+ * ===========================================================================
+ * Body: { userId: string, role?: "member" | "invited" }
+ * Only the trip owner may call this. Idempotent if the user already has the
+ * requested role.
+ */
+router.post("/trips/:tripId/members", async (req, res) => {
+  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
+
+  const client = getServiceClient()!;
+  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
+  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
+
+  const { userId, role = "member" } = req.body ?? {};
+  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  if (role !== "member" && role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "role must be 'member' or 'invited'" }); return; }
+  if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot add yourself" }); return; }
+
+  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
+  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
+
+  const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (existing && (existing as any).role === role) { res.status(200).json({ status: "already_member", role, idempotent: true }); return; }
+
+  if (existing) {
+    const { error } = await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
+    if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+    syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+    res.status(200).json({ status: "updated", tripId, userId, role });
+    return;
+  }
+
+  const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
+  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+
+  syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+
+  res.status(201).json({ status: "added", tripId, userId, role });
+});
+
+/* ===========================================================================
+ * DELETE /trips/:tripId/members/:userId  — owner removes a member from a trip
+ * ===========================================================================
+ * Only the trip owner may call this. The owner cannot remove themselves.
+ */
+router.delete("/trips/:tripId/members/:userId", async (req, res) => {
+  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
+
+  const client = getServiceClient()!;
+  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
+  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+
+  const { tripId, userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid user id" }); return; }
+
+  if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot remove yourself" }); return; }
+
+  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
+  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can remove members" }); return; }
+
+  const { data: memberRow } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (!memberRow) { res.status(404).json({ error: "not_found", message: "Member not found on this trip" }); return; }
+  if ((memberRow as any).role === "owner") { res.status(400).json({ error: "invalid_payload", message: "Cannot remove the trip owner" }); return; }
+
+  const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
+  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+
+  syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+
+  res.status(200).json({ status: "removed", tripId, userId });
+});
+
 router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
