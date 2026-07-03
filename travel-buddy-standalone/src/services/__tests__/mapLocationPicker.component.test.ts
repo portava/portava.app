@@ -504,3 +504,153 @@ describe('initial-props isolation — pre-filled location does not leak into con
     expect(result.label).toContain('Buenos Aires');
   });
 });
+
+// ── 6. Concurrent calls — slow geocode race condition
+//
+// `resolveMapPickerResult` is a pure function with no module-level state.
+// These tests confirm that two in-flight calls never contaminate each other's
+// coordinates, even when a slow geocode from call A resolves after a fast
+// geocode from call B has already completed.
+//
+// This mirrors the unmount scenario guarded by `mountedRef` in
+// MapLocationPicker.tsx: if the user navigates away while a slow geocode is
+// still in flight, the eventual resolve must carry the right coords and must
+// not bleed into the next picker session.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('resolveMapPickerResult() — concurrent slow geocode calls', () => {
+  it('two concurrent calls with slow geocoders complete independently with correct coordinates', async () => {
+    let resolveFirst!: (value: any) => void;
+    let resolveSecond!: (value: any) => void;
+
+    const slowGeocode1 = jest.fn().mockReturnValue(
+      new Promise<any>(resolve => { resolveFirst = resolve; }),
+    );
+    const slowGeocode2 = jest.fn().mockReturnValue(
+      new Promise<any>(resolve => { resolveSecond = resolve; }),
+    );
+
+    // Start both calls concurrently — neither geocode has resolved yet
+    const promise1 = resolveMapPickerResult({
+      center: KYOTO_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: slowGeocode1,
+      fetchFn: failingFetch(),
+    });
+    const promise2 = resolveMapPickerResult({
+      center: BUENOS_AIRES_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: slowGeocode2,
+      fetchFn: failingFetch(),
+    });
+
+    // Resolve in reverse order: second before first
+    resolveSecond({ city: 'Buenos Aires', district: null, country: 'Argentina' });
+    resolveFirst({ city: 'Kyoto', district: null, country: 'Japan' });
+
+    const [result1, result2] = await Promise.all([promise1, promise2]);
+
+    // First call → Kyoto, regardless of resolve order
+    expect(result1.lat).toBe(KYOTO_LAT);
+    expect(result1.lng).toBe(KYOTO_LNG);
+    expect(result1.label).toContain('Kyoto');
+
+    // Second call → Buenos Aires, regardless of resolve order
+    expect(result2.lat).toBe(BUENOS_AIRES_LAT);
+    expect(result2.lng).toBe(BUENOS_AIRES_LNG);
+    expect(result2.label).toContain('Buenos Aires');
+  });
+
+  it('slow call result is not contaminated by a concurrent fast call that resolved first', async () => {
+    let resolveSlowGeocode!: (value: any) => void;
+    const slowGeocode = jest.fn().mockReturnValue(
+      new Promise<any>(resolve => { resolveSlowGeocode = resolve; }),
+    );
+
+    // Slow call: Paris — in flight, not yet resolved
+    const slowPromise = resolveMapPickerResult({
+      center: PARIS_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: slowGeocode,
+      fetchFn: failingFetch(),
+    });
+
+    // Fast call: Kyoto — resolves immediately
+    const fastResult = await resolveMapPickerResult({
+      center: KYOTO_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Kyoto', 'Japan'),
+      fetchFn: failingFetch(),
+    });
+
+    // Fast call must have Kyoto coords
+    expect(fastResult.lat).toBe(KYOTO_LAT);
+    expect(fastResult.lng).toBe(KYOTO_LNG);
+
+    // Now resolve the slow call — must return Paris, unaffected by Kyoto result
+    resolveSlowGeocode({ city: 'Paris', district: null, country: 'France' });
+    const slowResult = await slowPromise;
+
+    expect(slowResult.lat).toBe(PARIS_LAT);
+    expect(slowResult.lng).toBe(PARIS_LNG);
+    expect(slowResult.label).toContain('Paris');
+    expect(slowResult.label).not.toContain('Kyoto');
+  });
+
+  it('slow call with failing geocode still returns correct coords with "Selected location" label', async () => {
+    // Mirrors unmount scenario: geocode throws after a long delay.
+    // Coordinates from `center` must still be correct even when label falls back.
+    const result = await resolveMapPickerResult({
+      center: PARIS_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: failingGeocode(),
+      fetchFn: failingFetch(),
+    });
+
+    expect(result.lat).toBe(PARIS_LAT);
+    expect(result.lng).toBe(PARIS_LNG);
+    expect(result.label).toBe('Selected location');
+  });
+
+  it('three concurrent calls all produce independent results regardless of resolve order', async () => {
+    let resolveA!: (v: any) => void;
+    let resolveB!: (v: any) => void;
+    let resolveC!: (v: any) => void;
+
+    const LONDON_CENTER: [number, number] = [-0.1276, 51.5074];
+
+    const promA = resolveMapPickerResult({
+      center: KYOTO_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: jest.fn().mockReturnValue(new Promise<any>(r => { resolveA = r; })),
+      fetchFn: failingFetch(),
+    });
+    const promB = resolveMapPickerResult({
+      center: PARIS_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: jest.fn().mockReturnValue(new Promise<any>(r => { resolveB = r; })),
+      fetchFn: failingFetch(),
+    });
+    const promC = resolveMapPickerResult({
+      center: LONDON_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: jest.fn().mockReturnValue(new Promise<any>(r => { resolveC = r; })),
+      fetchFn: failingFetch(),
+    });
+
+    // Resolve in C → A → B order (opposite of declaration)
+    resolveC({ city: 'London', district: null, country: 'United Kingdom' });
+    resolveA({ city: 'Kyoto', district: null, country: 'Japan' });
+    resolveB({ city: 'Paris', district: null, country: 'France' });
+
+    const [resA, resB, resC] = await Promise.all([promA, promB, promC]);
+
+    expect(resA.lat).toBe(KYOTO_LAT);   expect(resA.lng).toBe(KYOTO_LNG);
+    expect(resB.lat).toBe(PARIS_LAT);   expect(resB.lng).toBe(PARIS_LNG);
+    expect(resC.lat).toBe(51.5074);     expect(resC.lng).toBe(-0.1276);
+
+    expect(resA.label).toContain('Kyoto');
+    expect(resB.label).toContain('Paris');
+    expect(resC.label).toContain('London');
+  });
+});

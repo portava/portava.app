@@ -8,7 +8,7 @@
  * Metro automatically uses MapLocationPicker.web.tsx on web where MapLibre
  * native modules are unavailable.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -81,6 +81,19 @@ export function MapLocationPicker({
       : DEFAULT_CENTER,
   );
 
+  // Unmount safety: suppress setState calls from in-flight geocode requests
+  // that complete after the component has been dismissed.  Without this guard,
+  // a slow reverse-geocode response landing after unmount would trigger a React
+  // "setState on unmounted component" warning and, in edge cases, a stale
+  // onConfirm call the parent is no longer expecting.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const [confirming, setConfirming] = useState(false);
   const [geocodeError, setGeocodeError] = useState(false);
 
@@ -103,11 +116,12 @@ export function MapLocationPicker({
         apiBase: API_BASE,
         reverseGeocodeDetailed,
       });
-      onConfirm(result);
+      // Guard: component may have unmounted while the geocode was in flight.
+      if (mountedRef.current) onConfirm(result);
     } catch {
-      setGeocodeError(true);
+      if (mountedRef.current) setGeocodeError(true);
     } finally {
-      setConfirming(false);
+      if (mountedRef.current) setConfirming(false);
     }
   }, [onConfirm]);
 
