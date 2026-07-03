@@ -154,9 +154,11 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         ) : (
           <PostMediaPlaceholder city={item.city} />
         )}
-        {/* Bottom scrim for AuthorRow readability */}
+        {/* Bottom scrim for AuthorRow readability.
+            End-stop 0.85 + height 60 % ensures WCAG AA contrast (≥4.5:1) for
+            white author-name text on the brightest travel media (snowy/beach). */}
         <LinearGradient
-          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.75)']}
+          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.85)']}
           style={s.postScrim}
           pointerEvents="none"
         />
@@ -597,7 +599,7 @@ const s = StyleSheet.create({
   postCard: { backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
   postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%' },
   postMedia: { overflow: 'hidden', backgroundColor: color.deep },
-  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%' },
+  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%' },
   postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.md },
   postcardLabel: {
     position: 'absolute', top: 10, left: 10,

@@ -359,9 +359,10 @@ export function HighlightViewer({
           />
         </View>
 
-        {/* Cinematic scrim — bottom 50 % gradient keeps author / controls readable */}
+        {/* Cinematic scrim — bottom 60 % gradient, end-stop 0.85, keeps
+            author / controls WCAG AA readable on bright (snowy/beach) media. */}
         <LinearGradient
-          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.75)']}
+          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.85)']}
           style={s.scrim}
           pointerEvents="none"
         />
@@ -514,7 +515,7 @@ const s = StyleSheet.create({
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },
-  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', zIndex: 8 },
+  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%', zIndex: 8 },
   bottom: {
     position: 'absolute',
     left: 0,
