@@ -30,4 +30,20 @@ description: Patterns for GlobalCalendarPicker, GlobalTimePicker, DurationPicker
 - UNIQUE NULLS NOT DISTINCT on `(user_id, (place_snapshot->>'id'))`.
 - RLS: users select/insert/delete own rows; service role bypasses.
 
+## Date+time split-state pattern (EventComposerSheet model)
+
+When a form needs both a date and a time separately:
+- State: `dateStr: string | null` (ISO YYYY-MM-DD from GlobalCalendarPicker) + `timeHHmm: string | null` (from GlobalTimePicker).
+- Combine with `buildISODateTime(dateStr, timeHHmm)`: returns `"${date}T${time}:00"` or `"${date}T00:00:00"` when no time set.
+- Display with `formatDateDisplay(iso)` + `formatTimeDisplay(hhmm)`.
+- Pickers need `visible` state per slot: `calPickerFor: 'start' | 'end' | null`, `timePickerFor: 'start' | 'end' | null`.
+- Render pickers **outside** ScrollView to avoid clipping.
+- Validate end-before-start using the combined ISO strings before advancing steps.
+
+## Confirmed freeform-input replacements (task #1419)
+
+- LayoverModeSheet: arrival/departure used `TextInput keyboardType="number-pad"` for hour 0–23 → replaced with GlobalTimePicker tappable triggers (state: `string | null`, `"HH:mm"`).
+- EventComposerSheet: used DatePickerField (native combined picker) → replaced with separate GlobalCalendarPicker + GlobalTimePicker.
+- All other number-pad TextInputs in the codebase are numeric config values (age, capacity, score) — not time-of-day inputs.
+
 **Why:** Consistent picker surface across all date/time/location fields; avoids raw TextInput YYYY-MM-DD and GPS-only location patterns scattered across forms.

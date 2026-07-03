@@ -116,6 +116,48 @@ function mapProfile(r: any) {
 }
 
 /* ===========================================================================
+ * POST /profile/ensure — idempotently create a profile row for the authed user
+ * ===========================================================================
+ * Uses the service-role key so the insert bypasses RLS. This is necessary for
+ * new sign-ups before PostgREST picks up the P-256 JWT key rotation (auth.uid()
+ * returns NULL under PostgREST when the key is in ECC P-256 format).
+ */
+router.post("/profile/ensure", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
+
+  const email: string = req.body?.email ?? '';
+  const nameMeta: string | undefined = req.body?.name ?? undefined;
+  const handleMeta: string | undefined = req.body?.handle ?? undefined;
+
+  const base = (handleMeta || email.split('@')[0] || 'traveler').replace(/[^a-zA-Z0-9_]/g, '');
+  const handle = `${base}_${user.id.slice(0, 4)}`;
+  const name = nameMeta || email.split('@')[0] || 'Traveler';
+
+  const { error } = await sc
+    .from('profiles')
+    .upsert(
+      { id: user.id, handle, name },
+      { onConflict: 'id', ignoreDuplicates: true },
+    );
+
+  if (error) {
+    req.log.warn({ err: error }, "profile/ensure upsert failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true });
+});
+
+/* ===========================================================================
  * GET /me/profile/analytics — private owner analytics (7d / 30d views, follower growth)
  * ===========================================================================
  * Only the profile owner can call this. Never exposes viewer identity.

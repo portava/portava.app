@@ -244,7 +244,7 @@ export default function EditProfileScreen() {
   }, [navigation, isDirty]);
 
   const handleUsernameChange = useCallback((text: string) => {
-    const cleaned = text.toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    const cleaned = text.toLowerCase().replace(/[^a-z0-9_]/g, '');
     setForm((f) => ({ ...f, username: cleaned }));
     setUsernameStatus('idle');
     setUsernameMessage(null);
@@ -563,7 +563,7 @@ export default function EditProfileScreen() {
                       onChangeText={handleUsernameChange}
                       placeholder="username"
                       placeholderTextColor={color.faint}
-                      maxLength={24}
+                      maxLength={30}
                       autoCapitalize="none"
                       autoCorrect={false}
                       returnKeyType="next"

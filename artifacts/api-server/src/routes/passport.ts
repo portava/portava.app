@@ -182,7 +182,8 @@ router.get("/users/:username/passport", async (req, res) => {
   }
 
   if (visibility === "blocked") {
-    res.status(200).json({ blocked: true });
+    // Include targetId so the client can call unblockUser(targetId) without a separate lookup.
+    res.status(200).json({ blocked: true, targetId });
     return;
   }
 

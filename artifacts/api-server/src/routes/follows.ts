@@ -1151,7 +1151,68 @@ async function getSharedDestinationReason(
  * Never returns private posts, trips, circle memberships, or location data.
  */
 const PUBLIC_PASSPORT_FIELDS =
-  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style";
+  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status";
+
+/** Build the public passport JSON payload from a profile row + context. */
+function buildPassportResponse(
+  p: any,
+  followersCount: number,
+  followingCount: number,
+  isFollowing: boolean,
+  isOwnProfile: boolean,
+  reason: string | null,
+): object {
+  const isPrivate = p.is_private ?? false;
+  // Private profile viewed by a non-follower non-owner: redact rich fields.
+  if (isPrivate && !isOwnProfile && !isFollowing) {
+    return {
+      id: p.id,
+      handle: p.handle,
+      name: p.name,
+      avatarUrl: p.avatar_url ?? null,
+      isPrivate: true,
+      isOwnProfile,
+      followersCount,
+      followingCount,
+      isFollowing,
+      reason,
+      memberSince: p.created_at,
+    };
+  }
+  return {
+    id: p.id,
+    handle: p.handle,
+    name: p.name,
+    avatarUrl: p.avatar_url ?? null,
+    bio: p.bio ?? null,
+    homeCity: p.home_city ?? null,
+    homeCountry: p.home_country ?? null,
+    currentCity: p.current_city ?? null,
+    travelStyle: p.travel_style ?? null,
+    interests: p.interests ?? [],
+    verified: p.verified ?? false,
+    verificationStatus: p.verification_status ?? "unverified",
+    verifiedAt: p.verified_at ?? null,
+    openToMeet: p.open_to_meet ?? false,
+    isPrivate,
+    memberSince: p.created_at,
+    followersCount,
+    followingCount,
+    isFollowing,
+    isOwnProfile,
+    reason,
+    spokenLanguages: p.spoken_languages ?? [],
+    defaultLanguage: p.default_language ?? null,
+    travelStyles: p.travel_styles ?? [],
+    travelPace: p.travel_pace ?? null,
+    budgetStyle: p.budget_style ?? null,
+    travelGroupStyle: p.travel_group_style ?? [],
+    lookingFor: p.looking_for ?? [],
+    comfortLevel: p.comfort_level ?? null,
+    availabilityTags: p.availability_tags ?? [],
+    planningStyle: p.planning_style ?? null,
+  };
+}
 
 router.get("/users/:userId", async (req, res) => {
   const target = req.params.userId;
@@ -1173,22 +1234,61 @@ router.get("/users/:userId", async (req, res) => {
     callerId = data?.user?.id ?? null;
   }
 
-  // Fetch profile + counts in parallel.
-  const [profileRes, followersRes, followingRes] = await Promise.all([
-    sc.from("profiles").select(PUBLIC_PASSPORT_FIELDS).eq("id", target).maybeSingle(),
-    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
-    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-  ]);
+  const isOwnProfile = callerId === target;
+  const needBlockCheck = !!callerId && !isOwnProfile;
+
+  // Fetch profile + counts + blocks in one parallel sweep.
+  const [profileRes, followersRes, followingRes, callerBlockedTargetRes, targetBlockedCallerRes] =
+    await Promise.all([
+      sc.from("profiles").select(PUBLIC_PASSPORT_FIELDS).eq("id", target).maybeSingle(),
+      sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
+      sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
+      needBlockCheck
+        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
+            .eq("blocker_id", callerId!).eq("blocked_id", target)
+        : Promise.resolve({ count: 0 }),
+      needBlockCheck
+        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
+            .eq("blocker_id", target).eq("blocked_id", callerId!)
+        : Promise.resolve({ count: 0 }),
+    ]);
 
   if (profileRes.error || !profileRes.data) {
     sendError(res, "not_found", "User not found");
     return;
   }
 
+  const p = profileRes.data as any;
+
+  // Guard: deleted / banned / suspended accounts return an unavailable sentinel.
+  const acctStatus = (p.account_status ?? "active") as string;
+  if (acctStatus === "deleted" || acctStatus === "banned" || acctStatus === "suspended") {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+  // Deactivated is also unavailable unless it is the owner checking their own profile.
+  if (acctStatus === "deactivated" && !isOwnProfile) {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
+  // Guard: blocks. Caller blocked target → they can still see the stub (to unblock).
+  //         Target blocked caller → profile is fully hidden (reason only).
+  const callerBlockedTarget = ((callerBlockedTargetRes as any).count ?? 0) > 0;
+  const targetBlockedCaller = ((targetBlockedCallerRes as any).count ?? 0) > 0;
+  if (targetBlockedCaller) {
+    res.status(200).json({ unavailable: true, reason: "blocked", isBlocker: false });
+    return;
+  }
+  if (callerBlockedTarget) {
+    res.status(200).json({ unavailable: true, reason: "blocked", isBlocker: true });
+    return;
+  }
+
   // Is the authenticated caller already following this user? Also fetch match reason.
   let isFollowing = false;
   let reason: string | null = null;
-  if (callerId && callerId !== target) {
+  if (callerId && !isOwnProfile) {
     const [edgeRes, reasonResult] = await Promise.all([
       sc.from("user_follows").select("follower_id")
         .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
@@ -1198,40 +1298,9 @@ router.get("/users/:userId", async (req, res) => {
     reason = reasonResult;
   }
 
-  const p = profileRes.data as any;
-  res.status(200).json({
-    id: p.id,
-    handle: p.handle,
-    name: p.name,
-    avatarUrl: p.avatar_url ?? null,
-    bio: p.bio ?? null,
-    homeCity: p.home_city ?? null,
-    homeCountry: p.home_country ?? null,
-    currentCity: p.current_city ?? null,
-    travelStyle: p.travel_style ?? null,
-    interests: p.interests ?? [],
-    verified: p.verified ?? false,
-    verificationStatus: p.verification_status ?? 'unverified',
-    verifiedAt: p.verified_at ?? null,
-    openToMeet: p.open_to_meet ?? false,
-    isPrivate: p.is_private ?? false,
-    memberSince: p.created_at,
-    followersCount: followersRes.count ?? 0,
-    followingCount: followingRes.count ?? 0,
-    isFollowing,
-    isOwnProfile: callerId === target,
-    reason,
-    spokenLanguages: p.spoken_languages ?? [],
-    defaultLanguage: p.default_language ?? null,
-    travelStyles: p.travel_styles ?? [],
-    travelPace: p.travel_pace ?? null,
-    budgetStyle: p.budget_style ?? null,
-    travelGroupStyle: p.travel_group_style ?? [],
-    lookingFor: p.looking_for ?? [],
-    comfortLevel: p.comfort_level ?? null,
-    availabilityTags: p.availability_tags ?? [],
-    planningStyle: p.planning_style ?? null,
-  });
+  res.status(200).json(
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason),
+  );
 });
 
 /* ===========================================================================
@@ -1268,16 +1337,51 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     return;
   }
 
-  const target = (profileRes.data as any).id;
+  const p = profileRes.data as any;
+  const target = p.id as string;
+  const isOwnProfile = callerId === target;
+  const needBlockCheck = !!callerId && !isOwnProfile;
 
-  const [followersRes, followingRes] = await Promise.all([
-    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
-    sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-  ]);
+  // Guard: deleted / banned / suspended accounts return an unavailable sentinel.
+  const acctStatus = (p.account_status ?? "active") as string;
+  if (acctStatus === "deleted" || acctStatus === "banned" || acctStatus === "suspended") {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+  if (acctStatus === "deactivated" && !isOwnProfile) {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
+  const [followersRes, followingRes, callerBlockedTargetRes, targetBlockedCallerRes] =
+    await Promise.all([
+      sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
+      sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
+      needBlockCheck
+        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
+            .eq("blocker_id", callerId!).eq("blocked_id", target)
+        : Promise.resolve({ count: 0 }),
+      needBlockCheck
+        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
+            .eq("blocker_id", target).eq("blocked_id", callerId!)
+        : Promise.resolve({ count: 0 }),
+    ]);
+
+  // Guard: blocks.
+  const callerBlockedTarget = ((callerBlockedTargetRes as any).count ?? 0) > 0;
+  const targetBlockedCaller = ((targetBlockedCallerRes as any).count ?? 0) > 0;
+  if (targetBlockedCaller) {
+    res.status(200).json({ unavailable: true, reason: "blocked", isBlocker: false });
+    return;
+  }
+  if (callerBlockedTarget) {
+    res.status(200).json({ unavailable: true, reason: "blocked", isBlocker: true });
+    return;
+  }
 
   let isFollowing = false;
   let reason: string | null = null;
-  if (callerId && callerId !== target) {
+  if (callerId && !isOwnProfile) {
     const [edgeRes, reasonResult] = await Promise.all([
       sc.from("user_follows").select("follower_id")
         .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
@@ -1287,40 +1391,9 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     reason = reasonResult;
   }
 
-  const p = profileRes.data as any;
-  res.status(200).json({
-    id: p.id,
-    handle: p.handle,
-    name: p.name,
-    avatarUrl: p.avatar_url ?? null,
-    bio: p.bio ?? null,
-    homeCity: p.home_city ?? null,
-    homeCountry: p.home_country ?? null,
-    currentCity: p.current_city ?? null,
-    travelStyle: p.travel_style ?? null,
-    interests: p.interests ?? [],
-    verified: p.verified ?? false,
-    verificationStatus: p.verification_status ?? 'unverified',
-    verifiedAt: p.verified_at ?? null,
-    openToMeet: p.open_to_meet ?? false,
-    isPrivate: p.is_private ?? false,
-    memberSince: p.created_at,
-    followersCount: followersRes.count ?? 0,
-    followingCount: followingRes.count ?? 0,
-    isFollowing,
-    isOwnProfile: callerId === target,
-    reason,
-    spokenLanguages: p.spoken_languages ?? [],
-    defaultLanguage: p.default_language ?? null,
-    travelStyles: p.travel_styles ?? [],
-    travelPace: p.travel_pace ?? null,
-    budgetStyle: p.budget_style ?? null,
-    travelGroupStyle: p.travel_group_style ?? [],
-    lookingFor: p.looking_for ?? [],
-    comfortLevel: p.comfort_level ?? null,
-    availabilityTags: p.availability_tags ?? [],
-    planningStyle: p.planning_style ?? null,
-  });
+  res.status(200).json(
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason),
+  );
 });
 
 export default router;

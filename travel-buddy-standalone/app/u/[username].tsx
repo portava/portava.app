@@ -602,7 +602,7 @@ export default function PublicPassportScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
-  const { profile, postcards, loading, error, isPrivate, notFound } = usePublicPassport(username ?? '');
+  const { profile, postcards, loading, error, isPrivate, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
 
@@ -617,39 +617,54 @@ export default function PublicPassportScreen() {
   const [iBlockedThem, setIBlockedThem] = useState(false);
   const [isMutedByMe, setIsMutedByMe] = useState(false);
 
-  const loadSocial = useCallback(async (userId: string) => {
-    if (!userId) return;
+  // loadSocial has no parameter — it derives userId from the getProfileByHandle response.
+  // It runs on username (not profile?.id) so blocked users are detected even when
+  // the passport endpoint returns a blocked sentinel (profile is null in that case).
+  const loadSocial = useCallback(async () => {
+    if (!username) return;
     setSocialLoading(true);
 
-    // Try handle first, fall back to userId
-    const res = username
-      ? await getProfileByHandle(username).catch(() => ({ ok: false, data: null }))
-      : { ok: false, data: null };
+    const res = await getProfileByHandle(username).catch(() => ({ ok: false, data: null }));
+    const d: any = res.ok && res.data ? res.data : null;
 
-    const data: any = res.ok && res.data ? res.data : null;
+    // Handle blocked sentinel from the by-handle endpoint:
+    // { unavailable: true, reason: "blocked", isBlocker: boolean }
+    // isBlocker = true  → viewer blocked the target (I blocked them)
+    // isBlocker = false → target blocked the viewer (they blocked me)
+    if (res.ok && res.data && (res.data as any).unavailable === true) {
+      const reason = (res.data as any).reason;
+      if (reason === 'blocked') {
+        const isBlocker = (res.data as any).isBlocker === true;
+        setIsBlockedRelation(true);
+        setIBlockedThem(isBlocker);
+      }
+      setSocialLoading(false);
+      return;
+    }
 
-    if (data) {
+    if (d && d.id) {
       setSocial({
-        id: data.id,
-        handle: data.handle ?? null,
-        name: data.name ?? null,
-        openToMeet: data.openToMeet ?? false,
-        isPrivate: data.isPrivate ?? false,
-        isOwnProfile: data.isOwnProfile ?? (data.id === currentUserId),
-        spokenLanguages: data.spokenLanguages ?? [],
-        travelStyles: data.travelStyles ?? [],
-        travelPace: data.travelPace ?? null,
-        budgetStyle: data.budgetStyle ?? null,
-        travelGroupStyle: data.travelGroupStyle ?? [],
-        lookingFor: data.lookingFor ?? [],
-        availabilityTags: data.availabilityTags ?? [],
-        planningStyle: data.planningStyle ?? null,
-        comfortLevel: data.comfortLevel ?? null,
-        reason: data.reason ?? null,
+        id: d.id,
+        handle: d.handle ?? null,
+        name: d.name ?? null,
+        openToMeet: d.openToMeet ?? false,
+        isPrivate: d.isPrivate ?? false,
+        isOwnProfile: d.isOwnProfile ?? (d.id === currentUserId),
+        spokenLanguages: d.spokenLanguages ?? [],
+        travelStyles: d.travelStyles ?? [],
+        travelPace: d.travelPace ?? null,
+        budgetStyle: d.budgetStyle ?? null,
+        travelGroupStyle: d.travelGroupStyle ?? [],
+        lookingFor: d.lookingFor ?? [],
+        availabilityTags: d.availabilityTags ?? [],
+        planningStyle: d.planningStyle ?? null,
+        comfortLevel: d.comfortLevel ?? null,
+        reason: d.reason ?? null,
       });
     }
 
-    if (userId !== currentUserId) {
+    const userId = d?.id as string | undefined;
+    if (userId && userId !== currentUserId) {
       const [blockRes, muteRes] = await Promise.all([
         getBlockStatus(userId).catch(() => ({ ok: false, data: null })),
         getMuteStatus(userId).catch(() => ({ ok: false, data: null })),
@@ -668,37 +683,42 @@ export default function PublicPassportScreen() {
   }, [username, currentUserId]);
 
   const handleUnblock = useCallback(async () => {
-    if (!profile?.id) return;
-    const res = await unblockUser(profile.id);
+    // blockedTargetId comes from the hook (passport blocked sentinel).
+    // Fall back to social?.id (loaded by loadSocial) or profile?.id (normal profile).
+    const targetId = blockedTargetId ?? social?.id ?? profile?.id;
+    if (!targetId) return;
+    const res = await unblockUser(targetId);
     if (res.ok) {
       setIsBlockedRelation(false);
       setIBlockedThem(false);
     } else {
       Alert.alert('Error', 'Could not unblock. Please try again.');
     }
-  }, [profile?.id]);
+  }, [blockedTargetId, social?.id, profile?.id]);
 
-  // Load social data whenever the passport profile resolves
+  // Load social data whenever the username changes.
+  // Triggers even when the passport endpoint returns a blocked sentinel (profile is null).
   useEffect(() => {
-    if (profile?.id) {
-      loadSocial(profile.id);
+    if (username) {
+      loadSocial();
     }
-  }, [profile?.id, loadSocial]);
+  }, [username, loadSocial]);
 
-  // Reload social data on focus (friend/block state may have changed)
+  // Reload social data on focus (friend/block/mute state may have changed).
   useFocusEffect(useCallback(() => {
-    if (profile?.id) {
-      loadSocial(profile.id);
+    if (username) {
+      loadSocial();
     }
-  }, [profile?.id, loadSocial]));
+  }, [username, loadSocial]));
 
-  // Reset session-viewed flag when navigating to a different user's profile
+  // Reset per-username state when navigating to a different user's profile.
   useEffect(() => {
     setSessionAllViewed(false);
     setSocial(null);
     setIsBlockedRelation(false);
     setIsMutedByMe(false);
-  }, [profile?.id]);
+    setIBlockedThem(false);
+  }, [username]);
 
   function handleViewerClose() {
     setHighlightViewerOpen(false);
@@ -755,7 +775,7 @@ export default function PublicPassportScreen() {
       );
     }
 
-    if (isBlockedRelation) {
+    if (isBlocked || isBlockedRelation) {
       return (
         <View style={styles.center}>
           <ShieldAlert size={40} color={color.haze} />
