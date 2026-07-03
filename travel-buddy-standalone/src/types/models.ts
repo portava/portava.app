@@ -742,6 +742,8 @@ export interface PulseFeedItem {
   spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
   /** ID of the discovery_places row — set only when type = 'place_card'. */
   placeId?: string | null;
+  /** Trip name label surfaced when the post is attached to a trip — displayed as a badge on the media frame. */
+  tripLabel?: string | null;
 }
 
 export const PULSE_FILTERS = [

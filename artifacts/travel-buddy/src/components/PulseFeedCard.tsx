@@ -137,7 +137,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
   // 4:5 portrait media frame; capped at 600 for tablet/web
   const effectiveWidth = Math.min(width, 600);
   const mediaHeight = Math.round(effectiveWidth * (5 / 4));
-  const tripLabel = (item as any).tripLabel as string | undefined;
+  const tripLabel = item.tripLabel ?? undefined;
 
   return (
     <View style={[s.postCard, width > 600 ? s.postCardWide : undefined]}>
@@ -177,7 +177,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
       {/* ── Content footer ── */}
       <View style={s.postFooter}>
         {item.caption ? (
-          <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} />
+          <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={4} />
         ) : null}
         <TagRow tags={item.tags} />
         {chipVariant !== 'no_location' && (
