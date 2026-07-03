@@ -371,6 +371,21 @@ export function _setTestDbPlacesOverride(fn: typeof _testDbOverride): void {
   _testDbOverride = fn;
 }
 
+/**
+ * Test hook: inject a fake cache entry so unit tests can verify that
+ * `patchOsmSavedCount` updates the right place without requiring a real
+ * Overpass round-trip.  Objects are stored by reference so in-place
+ * mutations by `patchOsmSavedCount` are observable on the original objects.
+ */
+export function _injectTestCacheEntry(key: string, places: DiscoveryPlace[]): void {
+  cache.set(key, { places, cachedAt: Date.now() });
+}
+
+/** Test hook: remove a cache entry previously injected by _injectTestCacheEntry. */
+export function _clearTestCacheEntry(key: string): void {
+  cache.delete(key);
+}
+
 async function queryDbPlaces(
   destination: string,
   category: string,
