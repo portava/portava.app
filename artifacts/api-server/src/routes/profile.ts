@@ -194,7 +194,7 @@ router.get("/me/profile", async (req, res) => {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (error && (error as any).code === "42703") {
+  if (error && ((error as any).code === "42703" || (error as any).code === "PGRST204")) {
     ({ data, error } = await client
       .from("profiles")
       .select(PROFILE_COLUMNS_FALLBACK)
@@ -378,7 +378,7 @@ router.patch("/me/profile", async (req, res) => {
     .select(PROFILE_COLUMNS)
     .single();
 
-  if (updateError && (updateError as any).code === "42703") {
+  if (updateError && ((updateError as any).code === "42703" || (updateError as any).code === "PGRST204")) {
     const safeRow = { ...row };
     delete safeRow.display_name;
     delete safeRow.spoken_languages;
@@ -392,6 +392,7 @@ router.patch("/me/profile", async (req, res) => {
     delete safeRow.availability_tags;
     delete safeRow.planning_style;
     delete safeRow.public_social_links;
+    delete safeRow.cover_photo_url;
     ({ data: updated, error: updateError } = await client
       .from("profiles")
       .update(safeRow)
