@@ -11,6 +11,7 @@ import type { OwnProfile } from '../types/models';
 import { updateMyProfile, checkUsername, uploadAvatar } from '../services/profile';
 import { buildPassportSettingsPatch } from '../services/profilePatchBuilder';
 import { getCurrentGps, reverseGeocodeDetailed } from '../services/location';
+import { runFillHomeFromGps } from '../services/fillHomeFromGps.machine';
 import { ManualCityPicker } from './ManualCityPicker';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -260,30 +261,28 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   };
 
   const fillHomeFromGps = useCallback(async () => {
-    setGpsLoadingHome(true);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted) {
-        Alert.alert(
-          'Location permission is off',
-          'Enable it in settings or choose a city/place from search.',
-          [
-            { text: 'Open Settings', onPress: () => Linking.openSettings() },
-            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        );
-        return;
-      }
-      if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
-      if (place.city) setHomeCity(place.city);
-      if (place.country) setHomeCountry(place.country);
-    } catch {
-      // silent — user can still choose from list
-    } finally {
-      setGpsLoadingHome(false);
-    }
+    await runFillHomeFromGps(
+      {
+        getCurrentGps,
+        reverseGeocodeDetailed,
+        onPermissionDenied: ({ onOpenSettings, onPickFromList }) => {
+          Alert.alert(
+            'Location permission is off',
+            'Enable it in settings or choose a city/place from search.',
+            [
+              { text: 'Open Settings', onPress: () => { onOpenSettings(); Linking.openSettings(); } },
+              { text: 'Choose from list', onPress: () => { onPickFromList(); setShowHomePicker(true); } },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        },
+      },
+      {
+        setHomeCity,
+        setHomeCountry,
+        setGpsLoading: setGpsLoadingHome,
+      },
+    );
   }, []);
 
   const pickAvatar = async () => {

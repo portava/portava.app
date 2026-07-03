@@ -7,6 +7,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { updateMyProfile, getMyProfile } from '../../src/services/profile';
 import { buildOnboardingPatch } from '../../src/services/profilePatchBuilder';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
+import { runFillHomeFromGps } from '../../src/services/fillHomeFromGps.machine';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
@@ -30,30 +31,28 @@ export default function Onboarding() {
   const toggle = (i: Interest) => setPicked((p) => p.includes(i) ? p.filter((x) => x !== i) : [...p, i]);
 
   const fillHomeFromGps = useCallback(async () => {
-    setGpsLoadingHome(true);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted) {
-        Alert.alert(
-          'Location permission is off',
-          'Enable it in settings or choose a city/place from search.',
-          [
-            { text: 'Open Settings', onPress: () => Linking.openSettings() },
-            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        );
-        return;
-      }
-      if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
-      if (place.city) setHomeCity(place.city);
-      if (place.country) setHomeCountry(place.country);
-    } catch {
-      // silent — user can still type or choose from list
-    } finally {
-      setGpsLoadingHome(false);
-    }
+    await runFillHomeFromGps(
+      {
+        getCurrentGps,
+        reverseGeocodeDetailed,
+        onPermissionDenied: ({ onOpenSettings, onPickFromList }) => {
+          Alert.alert(
+            'Location permission is off',
+            'Enable it in settings or choose a city/place from search.',
+            [
+              { text: 'Open Settings', onPress: () => { onOpenSettings(); Linking.openSettings(); } },
+              { text: 'Choose from list', onPress: () => { onPickFromList(); setShowHomePicker(true); } },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          );
+        },
+      },
+      {
+        setHomeCity,
+        setHomeCountry,
+        setGpsLoading: setGpsLoadingHome,
+      },
+    );
   }, []);
 
   useEffect(() => {

@@ -154,6 +154,8 @@ STANDALONE_OWNED_FILES=(
   "app/settings/index.tsx"
   "src/test/accountActivation.test.ts"
   "src/test/onboardingPassportFlow.test.ts"
+  "src/services/fillHomeFromGps.machine.ts"
+  "src/services/__tests__/fillHomeFromGps.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
