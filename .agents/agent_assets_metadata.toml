@@ -30,3 +30,9 @@ id = "ao2s-oELXtoPGMUl9nMrx"
 uri = "file://docs/beta-closeout-report.md"
 type = "text"
 title = "Core Beta Closeout Report + SQL/Backend Inventory"
+
+[[outputs]]
+id = "IT2-D_81mAwoS7XuISjdG"
+uri = "file://docs/supabase-beta-runbook.md"
+type = "text"
+title = "Supabase Production SQL Runbook — Beta Launch"

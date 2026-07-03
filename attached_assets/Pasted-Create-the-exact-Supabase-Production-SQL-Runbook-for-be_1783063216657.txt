@@ -1,0 +1,63 @@
+Create the exact Supabase Production SQL Runbook for beta.
+
+Use docs/beta-closeout-report.md as the source of truth.
+
+Do not add new features.
+Do not change app code unless the report contains an error that must be corrected.
+Do not widen scope.
+
+Goal:
+Produce a copy/paste-ready production runbook for Supabase.
+
+Include only:
+1. Pre-apply checklist
+2. Backup/snapshot reminder
+3. Exact migration apply order:
+   0077 → 0078 → 0079 → 0080 → 0086 → 0088 → 0089 → 0085
+4. For each migration:
+   - File name
+   - What it does
+   - Why beta needs it
+   - Any dependency/risk note
+   - Verification SQL after applying
+5. Storage bucket setup:
+   - profile-media
+   - post-media
+   - memories
+   Include bucket visibility/public-private expectation and verification SQL/API check if available.
+6. Required environment variables:
+   - SUPABASE_URL
+   - SUPABASE_ANON_KEY
+   - SUPABASE_SERVICE_ROLE_KEY
+   - Any other backend env var listed in docs/beta-closeout-report.md
+7. Admin bootstrap SQL:
+   - Safe query to find the user/profile
+   - UPDATE profiles SET role='admin' WHERE id='...'
+   - Verification query
+8. Final post-apply verification checklist:
+   - trip sub-resource tables exist
+   - event extension tables exist
+   - wishlist tables/routes schema exist
+   - passport stamp/memory flags exist
+   - storage buckets exist
+   - admin user exists
+   - service role key configured
+9. Smoke test checklist:
+   - create/edit/delete trip
+   - add trip plan item
+   - event invite/co-host/media check
+   - save/unsave wishlist item
+   - passport stamps/memories load
+   - upload profile photo
+   - upload post/memory media
+   - admin route access
+10. What not to apply yet:
+   - RAB payment/dispute stubs if not ready
+   - 0081/0082 stamps if still gated
+   - Any non-blocking SQL function from the report
+
+Important:
+Do not claim production is updated.
+Phrase everything as a runbook for the human to execute in Supabase.
+Make it clear which steps are manual.
+Include "stop if this fails" notes after each verification section.
