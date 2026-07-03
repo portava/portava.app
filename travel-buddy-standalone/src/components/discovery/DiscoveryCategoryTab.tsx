@@ -16,6 +16,7 @@ import { DiscoveryMapView } from './DiscoveryMapView';
 // covered by node:test without pulling in the full React Native module graph.
 import { handleNearestChipPress } from './filterStripNearest';
 export { handleNearestChipPress };
+import { resolveNearestFetchCoords, shouldBootstrapNearestLoad } from './discoveryCategoryTabNearest';
 
 // ── Sort labels ───────────────────────────────────────────────────────────────
 
@@ -427,8 +428,9 @@ export function DiscoveryCategoryTab({
     // sortBy=nearest so the backend can recompute distances from the user's position.
     // The lat/lng params always remain the destination coordinates — the Overpass query
     // centre and cache key must never use user coords.
-    const nearestUserLat = currentFilters.sortBy === 'nearest' ? snapUserLat : null;
-    const nearestUserLng = currentFilters.sortBy === 'nearest' ? snapUserLng : null;
+    const { nearestUserLat, nearestUserLng } = resolveNearestFetchCoords(
+      currentFilters.sortBy, snapUserLat, snapUserLng,
+    );
 
     const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
@@ -462,21 +464,23 @@ export function DiscoveryCategoryTab({
   // Detect meaningful location changes while 'nearest' sort is active and
   // auto-refresh so the order stays accurate as the user moves around.
   useEffect(() => {
-    if (filters.sortBy !== 'nearest') return;
-    if (userLat == null || userLng == null) return;
-
-    const prev = lastFetchedCoords.current;
-
-    if (prev == null) {
-      // Bootstrap case: Nearest was already active but the last fetch ran
-      // without valid user coords (e.g. permission was granted after the user
-      // tapped the Nearest chip). Re-fetch now that we have a real position.
-      // No nudge is needed — this is effectively the initial nearest load completing.
+    // Bootstrap case: Nearest sort is active, real coords just arrived, but
+    // the last fetch ran without user coords (e.g. permission was granted after
+    // the user tapped the chip). Re-fetch now with the real position.
+    // No nudge is needed — this is the initial nearest load completing.
+    if (shouldBootstrapNearestLoad({ sortBy: filters.sortBy, userLat, userLng, lastFetchedCoords: lastFetchedCoords.current })) {
       setPlaces([]);
       setPage(1);
       load(1, filters, true);
       return;
     }
+
+    // Movement case: all of the following must hold — nearest is active, we
+    // have coords, and lastFetchedCoords is non-null (bootstrap already ran).
+    if (filters.sortBy !== 'nearest') return;
+    if (userLat == null || userLng == null) return;
+    const prev = lastFetchedCoords.current;
+    if (!prev) return; // guarded above by shouldBootstrapNearestLoad
 
     const distKm = approxDistanceKm(prev.lat, prev.lng, userLat, userLng);
     if (distKm < NEAREST_REFRESH_THRESHOLD_KM) return;
