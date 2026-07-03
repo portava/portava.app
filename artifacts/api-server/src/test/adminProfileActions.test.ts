@@ -371,3 +371,45 @@ describe("POST /admin/deletion-requests/:id/execute", () => {
     assert.strictEqual(profileUpdate.data.avatar_url, null);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Admin role guard — non-admin caller gets 403 (profiles.role check)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("Admin routes — non-admin caller gets 403 (uses profiles.role, not is_admin)", () => {
+  it("caller with role='user' gets 403 on suspend", async () => {
+    // ADMIN_USER_ID profile has role='user' → requireAdmin must reject
+    setClient([], [], {
+      profiles: [
+        { id: ADMIN_USER_ID, role: "user" },
+        { id: TARGET_USER_ID, role: "user", account_status: "active" },
+      ],
+    });
+    const r = await req("POST", `/admin/users/${TARGET_USER_ID}/suspend`, { reason: "test", expires_in_days: 7 });
+    assert.equal(r.status, 403, "non-admin must get 403");
+    assert.equal(r.body.error, "forbidden", "error code must be 'forbidden'");
+  });
+
+  it("caller with role='user' gets 403 on ban", async () => {
+    setClient([], [], {
+      profiles: [
+        { id: ADMIN_USER_ID, role: "user" },
+        { id: TARGET_USER_ID, role: "user", account_status: "active" },
+      ],
+    });
+    const r = await req("POST", `/admin/users/${TARGET_USER_ID}/ban`, { reason: "test" });
+    assert.equal(r.status, 403, "non-admin must get 403 on ban");
+    assert.equal(r.body.error, "forbidden");
+  });
+
+  it("caller with role='moderator' (not 'admin') also gets 403", async () => {
+    setClient([], [], {
+      profiles: [
+        { id: ADMIN_USER_ID, role: "moderator" },
+        { id: TARGET_USER_ID, role: "user", account_status: "active" },
+      ],
+    });
+    const r = await req("POST", `/admin/users/${TARGET_USER_ID}/suspend`, { reason: "test", expires_in_days: 1 });
+    assert.equal(r.status, 403, "moderator role must not pass admin guard");
+  });
+});

@@ -1065,3 +1065,199 @@ describe("account_status fast-path + unauthenticated viewer privacy controls", (
     assert.equal(body.user_id, ME, "user_id should be present");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 14. POST /me/reactivate — all edge cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/me/reactivate", () => {
+  it("deactivated account can self-reactivate → 200 { reactivated: true }", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, account_status: "deactivated" } : p
+    );
+    setup(state);
+    const r = await req("/me/reactivate", { method: "POST" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.reactivated, true, "deactivated account must be reactivatable");
+  });
+
+  it("suspended account cannot self-reactivate → 403 forbidden", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, account_status: "suspended" } : p
+    );
+    setup(state);
+    const r = await req("/me/reactivate", { method: "POST" });
+    assert.equal(r.status, 403);
+    const body = await r.json() as any;
+    assert.equal(body.error, "forbidden", "suspended account must not self-reactivate");
+  });
+
+  it("banned account cannot self-reactivate → 403 forbidden", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, account_status: "banned" } : p
+    );
+    setup(state);
+    const r = await req("/me/reactivate", { method: "POST" });
+    assert.equal(r.status, 403);
+    const body = await r.json() as any;
+    assert.equal(body.error, "forbidden", "banned account must not self-reactivate");
+  });
+
+  it("already-active account cannot reactivate → 403 (nothing to reactivate)", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, account_status: "active" } : p
+    );
+    setup(state);
+    const r = await req("/me/reactivate", { method: "POST" });
+    assert.equal(r.status, 403);
+    const body = await r.json() as any;
+    assert.equal(body.error, "forbidden");
+  });
+
+  it("missing profile returns 404", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.filter((p) => p.id !== ME);
+    setup(state);
+    const r = await req("/me/reactivate", { method: "POST" });
+    assert.equal(r.status, 404);
+    const body = await r.json() as any;
+    assert.equal(body.error, "not_found");
+  });
+
+  it("requires authentication → 401", async () => {
+    setup(baseState());
+    const r = await req("/me/reactivate", { method: "POST", tok: null });
+    assert.equal(r.status, 401);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 15. Passport limited_preview — avatarUrl/coverPhotoUrl must be null
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("Passport limited_preview — no avatar/cover/bio/homeCity leak", () => {
+  it("private profile (unauthenticated): avatarUrl is null, no bio/homeCity/coverPhotoUrl", async () => {
+    const state = baseState();
+    // BOB is is_private=true; unauthenticated viewer gets limited_preview
+    state.profiles = state.profiles.map((p) =>
+      p.id === BOB ? { ...p, avatar_url: "https://cdn.example.com/bob.jpg", cover_photo_url: "https://cdn.example.com/cover.jpg", bio: "Bob's private bio", home_city: "Secret City" } : p
+    );
+    setup(state);
+    const r = await req("/users/bob_user/passport", { tok: null });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.visibility, "private", "must return limited_preview stub");
+    assert.strictEqual(body.avatarUrl, null, "avatarUrl must be null — must not leak private avatar");
+    assert.ok(!("coverPhotoUrl" in body), "coverPhotoUrl must not appear in limited_preview response");
+    assert.ok(!("bio" in body), "bio must not appear in limited_preview response");
+    assert.ok(!("homeCity" in body), "homeCity must not appear in limited_preview response");
+    assert.ok(!("interests" in body), "interests must not appear in limited_preview response");
+  });
+
+  it("passport_visibility=private: avatarUrl is null in limited_preview", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ALICE
+        ? { ...p, is_private: false, passport_visibility: "private", avatar_url: "https://cdn.example.com/alice.jpg" }
+        : p
+    );
+    setup(state);
+    const r = await req("/users/alice_user/passport", { tok: null });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.visibility, "private");
+    assert.strictEqual(body.avatarUrl, null, "avatarUrl must be null for passport_visibility=private");
+    assert.ok(!("coverPhotoUrl" in body), "coverPhotoUrl must not leak for passport_visibility=private");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 16. GET /api/users/:username/profile — limited_preview no private data leak
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("GET /api/users/:username/profile — limited_preview no private data leak", () => {
+  it("private profile stub: avatarUrl null, coverUrl null, no bio/homeCity/interests/posts", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === BOB
+        ? { ...p, avatar_url: "https://cdn.example.com/bob.jpg", cover_photo_url: "https://cdn.example.com/cover.jpg", bio: "Private bio", home_city: "Private City", interests: ["hiking"] }
+        : p
+    );
+    setup(state);
+    // ME views BOB (private, non-follower) → limited_preview
+    const r = await req("/users/bob_user/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.private, true, "must return limited_preview stub");
+    assert.equal(body.visibility, "private");
+    assert.strictEqual(body.avatarUrl, null, "avatarUrl must be null in limited_preview stub");
+    assert.strictEqual(body.coverUrl, null, "coverUrl must be null in limited_preview stub");
+    assert.ok(!("bio" in body), "bio must not appear in limited_preview stub");
+    assert.ok(!("homeCity" in body), "homeCity must not appear in limited_preview stub");
+    assert.ok(!("interests" in body), "interests must not appear in limited_preview stub");
+    assert.ok(!("posts" in body), "posts must not appear in limited_preview stub");
+    assert.ok(!("email" in body), "email must never appear in any profile response");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 17. pending_deletion account_status → unavailable on public endpoints
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("pending_deletion account_status → unavailable on public endpoints", () => {
+  it("passport endpoint: pending_deletion → unavailable, no avatar/cover exposed", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ALICE ? { ...p, account_status: "pending_deletion", avatar_url: "https://cdn.example.com/alice.jpg" } : p
+    );
+    setup(state);
+    const r = await req("/users/alice_user/passport");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.unavailable, true, "pending_deletion must return unavailable on passport");
+    assert.ok(!("avatarUrl" in body), "avatarUrl must not be exposed for pending_deletion");
+    assert.ok(!("bio" in body), "bio must not be exposed for pending_deletion");
+  });
+
+  it("profile endpoint: pending_deletion → unavailable, no avatar/cover exposed", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ALICE ? { ...p, account_status: "pending_deletion", avatar_url: "https://cdn.example.com/alice.jpg" } : p
+    );
+    setup(state);
+    const r = await req("/users/alice_user/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.unavailable, true, "pending_deletion must return unavailable on profile endpoint");
+    assert.ok(!("avatarUrl" in body), "avatarUrl must not be exposed for pending_deletion");
+    assert.ok(!("coverUrl" in body), "coverUrl must not be exposed for pending_deletion");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 18. POST /me/delete-request — duplicate upsert succeeds (not 409)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/me/delete-request — duplicate upsert", () => {
+  it("second call to delete-request succeeds via upsert, not 409", async () => {
+    const state = baseState();
+    // Seed an existing pending deletion request for ME
+    state.user_deletion_requests = [
+      { user_id: ME, status: "pending", requested_at: new Date().toISOString(), scheduled_at: new Date().toISOString() },
+    ];
+    setup(state);
+    const r = await req("/me/delete-request", { method: "POST" });
+    assert.equal(r.status, 200, "duplicate delete-request must return 200 via upsert, not 409");
+    const body = await r.json() as any;
+    assert.equal(body.deletionScheduled, true);
+    assert.ok(body.scheduledAt, "scheduledAt must be present on duplicate call");
+    const scheduled = new Date(body.scheduledAt).getTime();
+    const diff = scheduled - Date.now();
+    assert.ok(diff > 28 * 24 * 60 * 60 * 1000, "scheduledAt must still be ~30 days in future on duplicate call");
+  });
+});

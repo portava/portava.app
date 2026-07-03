@@ -1,0 +1,265 @@
+Travel Buddy — Profile Privacy + Account Lifecycle Smoke Tests
+
+Run a verification-first smoke test pass for profile privacy settings and account lifecycle behavior.
+
+Do not build new features.
+Do not redesign UI.
+Do not touch trips/events/RAB/discovery unless directly required by a proven profile privacy/lifecycle bug.
+Do not change production SQL unless a missing schema item is proven and you provide the exact manual SQL separately.
+Do not fake success.
+
+Context:
+The previous pass is closed:
+- Profile UI Completion + GPS Input Replacement passed
+- Public Passport deep-link maps real profile data
+- Avatar/profile taps route correctly
+- Home city/country no longer use freeform typing
+- GPS prefill/city picker is wired
+- Private Passport limited preview avatar leak was fixed
+- All validations passed
+
+Known follow-up areas from Replit:
+- Task #1440 — privacy/lifecycle route smoke tests
+- Task #1445 / #1446 — deactivation/reactivation edge cases
+
+Goal:
+Prove the account privacy and lifecycle flows work end to end:
+1. Privacy settings load/save correctly
+2. Private profile visibility behaves correctly
+3. Deactivation hides user safely
+4. Reactivation works only when allowed
+5. Delete request creates the correct pending request
+6. Suspended/banned/deleted accounts cannot reactivate
+7. Public/profile/passport endpoints do not leak private/deactivated/deleted user data
+8. Mobile UI reflects these states honestly
+
+Part 1 — Survey first
+
+Inspect before editing:
+- artifacts/api-server/src/routes/profile.ts
+- artifacts/api-server/src/routes/passport.ts
+- artifacts/api-server/src/routes/admin.ts
+- profileVisibility service/helper files
+- account lifecycle routes
+- profile privacy routes
+- user_deletion_requests usage
+- user_account_states usage
+- profile_privacy_settings usage
+- mobile profile settings/privacy screens
+- mobile account settings screen
+- public profile screen
+- passport/[username].tsx
+- profile services
+- auth/session handling after deactivate/reactivate/delete request
+
+Build this matrix before fixes:
+
+A. Backend Privacy/Lifecycle Matrix:
+- Route/helper
+- Expected behavior
+- Current behavior
+- DB dependency
+- Status: pass / partial / fail / missing / blocked
+- Evidence
+- Fix needed
+
+B. Mobile Privacy/Lifecycle Matrix:
+- Screen/action
+- Expected behavior
+- Current behavior
+- Status
+- Fix needed
+
+Part 2 — Backend route smoke tests
+
+Add or update tests for the following routes if not already covered.
+
+Privacy:
+1. GET /api/me/privacy
+   - authenticated user gets defaults if no row exists
+   - authenticated user gets saved row if it exists
+   - unauthenticated request returns 401
+   - missing table error is handled honestly according to current fallback design
+
+2. PATCH /api/me/privacy
+   - authenticated user can update valid fields
+   - invalid enum/value returns 400
+   - unknown fields are ignored or rejected consistently with current schema
+   - row is upserted for the authenticated user
+   - unauthenticated request returns 401
+
+Private profile visibility:
+3. GET /api/users/:username/profile
+   - public profile returns allowed public fields
+   - private profile returns limited preview only
+   - limited preview does not include avatarUrl, coverPhotoUrl, bio, homeCity, interests, trips, posts, memories, GPS, or private fields
+   - accepted follower/allowed viewer can see according to current rules
+   - blocked viewer cannot see profile details
+
+4. GET /api/users/:username/passport
+   - public passport returns allowed fields
+   - private passport returns limited preview only
+   - limited preview does not leak avatarUrl or coverPhotoUrl
+   - blocked/deleted/deactivated user states handled safely
+
+Account lifecycle:
+5. POST /api/me/deactivate
+   - authenticated user can deactivate own account
+   - profiles.account_status becomes deactivated
+   - user_account_states records deactivated state if that table is part of current flow
+   - response is success only after the required write succeeds
+   - unauthenticated request returns 401
+
+6. POST /api/me/reactivate
+   - deactivated account can reactivate
+   - account_status becomes active
+   - suspended account cannot reactivate
+   - banned account cannot reactivate
+   - deleted account cannot reactivate
+   - missing/active state behaves honestly
+   - unauthenticated request returns 401
+
+7. POST /api/me/delete-request
+   - authenticated user creates or updates pending deletion request
+   - scheduled_at is about 30 days in future
+   - profiles.account_status becomes pending_deletion if current route is intended to do that
+   - duplicate request upserts instead of failing
+   - unauthenticated request returns 401
+
+Admin lifecycle:
+8. Admin suspend/ban/unban/delete/reactivate actions, if present
+   - require admin role
+   - non-admin gets 403
+   - admin role uses profiles.role === "admin"
+   - actions write account_status consistently
+   - actions do not reference profiles.is_admin
+
+Part 3 — Public leak tests
+
+Add tests proving these states do not leak private data:
+
+- private profile
+- blocked profile
+- deactivated profile
+- pending_deletion profile
+- deleted profile
+- suspended profile
+- banned profile
+- missing profile
+
+For each state, verify public responses do not include:
+- avatarUrl
+- coverPhotoUrl
+- bio
+- homeCity
+- currentCity
+- homeCountry if private
+- interests
+- travelStyle
+- posts
+- memories
+- trips
+- exact GPS
+- private settings
+- email
+- phone
+- admin notes
+- moderation fields
+
+Part 4 — Mobile UI smoke tests / inspection
+
+Inspect and fix only proven issues in:
+- settings/privacy screen
+- account settings screen
+- profile settings screen
+- public profile blocked/private/deleted state UI
+- Passport screen
+- profile services
+
+Verify:
+- privacy settings load from API
+- privacy settings save through API
+- failed privacy save shows error, not success
+- deactivate button calls API
+- reactivate flow exists or is honestly handled
+- delete request button calls API
+- pending deletion state is shown honestly if available
+- private/deactivated/deleted public profile states show safe placeholder
+- blocked state does not leak avatar/cover/private fields
+- no direct Supabase writes
+
+Part 5 — DB/schema assumptions
+
+Verify code assumptions only; do not apply SQL automatically.
+
+Required schema:
+- profiles.account_status
+- profiles.role
+- profile_privacy_settings
+- user_deletion_requests
+- user_account_states if still used by lifecycle routes
+
+If a code path depends on a missing production column/table, report the exact manual SQL needed separately.
+
+Part 6 — Fix policy
+
+Only fix proven bugs:
+- missing/incorrect smoke tests
+- fake success after failed lifecycle write
+- private/deactivated/deleted profile data leak
+- blocked user data leak
+- privacy settings not saving/loading
+- invalid privacy values accepted
+- reactivate allows suspended/banned/deleted
+- delete request does not upsert
+- role/admin check still broken
+- UI shows success after API error
+- direct Supabase mutation in mobile profile/account flows
+
+Do not fix:
+- unrelated design
+- new profile features
+- GPS autocomplete
+- trip/event/RAB systems
+- payment
+- verification provider
+- full database migration automation
+
+Part 7 — Validation
+
+Run:
+- pnpm --filter @workspace/api-server run typecheck
+- cd travel-buddy-standalone && pnpm typecheck
+- pnpm run typecheck if practical
+- privacy/profile/lifecycle tests
+- passport/profile public leak tests
+- admin lifecycle tests if available
+- bash scripts/sync-standalone.sh --fix-source if artifacts changed
+- bash scripts/sync-standalone.sh --check-source
+- bash scripts/sync-standalone.sh --check-deps
+- pnpm --filter @workspace/scripts run test:routes-guard if available
+- bash scripts/test-sync-standalone.sh if practical
+
+Final report must include:
+1. Executive summary
+2. Backend Privacy/Lifecycle Matrix
+3. Mobile Privacy/Lifecycle Matrix
+4. Smoke tests added/updated
+5. Privacy leak tests added/updated
+6. Account lifecycle edge cases verified
+7. Admin role/lifecycle findings
+8. Mobile UI findings
+9. Files changed
+10. Production SQL/manual actions required, if any
+11. Remaining blockers
+12. Honest-disabled items
+13. Validation table
+14. Commit message
+
+Important:
+No fake success.
+No private data leaks.
+No avatar/cover leaks for private/blocked/deactivated/deleted users.
+Suspended, banned, deleted users must not self-reactivate.
+Use profiles.role, not is_admin.
+Use handle/username mapping safely.
