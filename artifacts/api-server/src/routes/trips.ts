@@ -7,7 +7,7 @@ import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendPushNotification } from "../lib/push.js";
-import { awardStamp } from "../services/passport/StampAwardEngine.js";
+import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 
 const router = Router();
 
@@ -79,6 +79,7 @@ async function awardTripCompletionStamps(
   tripId: string,
   ownerId: string,
   trip: Record<string, any>,
+  log?: StampLogger,
 ): Promise<void> {
   // Only accepted participants earn completion stamps — exclude pending invitees.
   const { data: membersData } = await sc
@@ -153,7 +154,7 @@ async function awardTripCompletionStamps(
         sourceId: tripId,
         city,
         country,
-      }).then((result) => ({ userId, slug, ...result })),
+      }, log).then((result) => ({ userId, slug, ...result })),
     ),
   );
 
@@ -683,7 +684,7 @@ router.patch("/trips/:tripId", async (req, res) => {
     })();
 
     // Passport stamp awards — fire-and-forget, fully idempotent
-    void awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>).catch(() => {});
+    void awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>, req.log).catch(() => {});
   }
 
   res.json(updated);

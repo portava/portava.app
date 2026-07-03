@@ -630,7 +630,7 @@ router.post("/stamps/award", async (req, res) => {
     return;
   }
 
-  const result = await awardStamp(sc, parsed.data);
+  const result = await awardStamp(sc, parsed.data, req.log);
 
   if (result.awarded) {
     (async () => {

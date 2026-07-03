@@ -11,6 +11,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Logger } from "pino";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,8 @@ export interface EligibilityResult {
   reason: string;
   definition?: Record<string, unknown>;
 }
+
+export type StampLogger = Pick<Logger, "warn">;
 
 // ── Source-state validation ───────────────────────────────────────────────────
 // Checks that the triggering source entity is in an award-eligible state.
@@ -98,7 +101,13 @@ function buildIdempotencyKey(
 
 // ── Core award ────────────────────────────────────────────────────────────────
 
-export async function awardStamp(
+const WARN_REASONS = new Set([
+  "feature_disabled",
+  "definition_not_found",
+  "source_validation_failed",
+]);
+
+async function _awardStampCore(
   sc: SupabaseClient,
   input: AwardInput,
 ): Promise<AwardResult> {
@@ -297,6 +306,21 @@ export async function awardStamp(
     reason: "awarded",
     userStampId: newStampId,
   };
+}
+
+export async function awardStamp(
+  sc: SupabaseClient,
+  input: AwardInput,
+  log?: StampLogger,
+): Promise<AwardResult> {
+  const result = await _awardStampCore(sc, input);
+  if (!result.awarded && log && WARN_REASONS.has(result.reason)) {
+    log.warn(
+      { userId: input.userId, definitionSlug: input.definitionSlug, reason: result.reason },
+      "awardStamp: skipped",
+    );
+  }
+  return result;
 }
 
 // ── Revoke ────────────────────────────────────────────────────────────────────

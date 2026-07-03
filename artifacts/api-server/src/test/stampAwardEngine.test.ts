@@ -29,6 +29,8 @@ import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp, type AwardInput } from "../services/passport/StampAwardEngine.js";
 
+const noopLog = { warn: () => {} };
+
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
 const ALICE_ID = "aaaaaaaa-0000-4000-8000-000000000011";
@@ -207,7 +209,7 @@ describe("R. awardStamp — full award path (flag enabled + definition exists)",
     };
     const sc = makeFakeClient(db);
 
-    const result = await awardStamp(sc, makeInput());
+    const result = await awardStamp(sc, makeInput(), noopLog);
 
     assert.equal(result.awarded, true, "Expected awarded:true");
     assert.equal(result.reason, "awarded");
@@ -230,7 +232,7 @@ describe("R. awardStamp — full award path (flag enabled + definition exists)",
     };
     const sc = makeFakeClient(db);
 
-    await awardStamp(sc, makeInput({ sourceType: "trips", sourceId: TRIP_ID }));
+    await awardStamp(sc, makeInput({ sourceType: "trips", sourceId: TRIP_ID }), noopLog);
 
     assert.equal(db.stamp_award_events[0].source_type, "trips");
     assert.equal(db.stamp_award_events[0].source_id, TRIP_ID);
@@ -255,7 +257,7 @@ describe("R. awardStamp — full award path (flag enabled + definition exists)",
       sourceType:     "trips",
       sourceId:       TRIP_ID,
       awardReason:    "trip marked completed",
-    });
+    }, noopLog);
 
     assert.equal(result.awarded, true, `Expected awarded:true, got ${result.reason}`);
     assert.equal(db.user_stamps.length, 1);
@@ -276,7 +278,7 @@ describe("S. awardStamp — stamp_system_v2_enabled disabled (not throws)", () =
     };
     const sc = makeFakeClient(db);
 
-    const result = await awardStamp(sc, makeInput());
+    const result = await awardStamp(sc, makeInput(), noopLog);
 
     assert.equal(result.awarded, false, "Expected awarded:false when flag is disabled");
     assert.equal(result.reason, "feature_disabled");
@@ -295,7 +297,7 @@ describe("S. awardStamp — stamp_system_v2_enabled disabled (not throws)", () =
     };
     const sc = makeFakeClient(db);
 
-    const result = await awardStamp(sc, makeInput());
+    const result = await awardStamp(sc, makeInput(), noopLog);
 
     assert.equal(result.awarded, false, "Expected awarded:false when flag row absent");
     assert.equal(result.reason, "feature_disabled");
@@ -316,7 +318,7 @@ describe("S. awardStamp — stamp_system_v2_enabled disabled (not throws)", () =
     let threw = false;
     let result: Awaited<ReturnType<typeof awardStamp>> | undefined;
     try {
-      result = await awardStamp(sc, makeInput());
+      result = await awardStamp(sc, makeInput(), noopLog);
     } catch {
       threw = true;
     }
@@ -342,12 +344,12 @@ describe("T. awardStamp — idempotency via idempotency_key", () => {
     const sc = makeFakeClient(db);
     const input = makeInput();
 
-    const first = await awardStamp(sc, input);
+    const first = await awardStamp(sc, input, noopLog);
     assert.equal(first.awarded, true, "First call must award the stamp");
     assert.equal(db.user_stamps.length, 1, "First call must create one user_stamps row");
     assert.equal(db.stamp_award_events.length, 1, "First call must create one audit event");
 
-    const second = await awardStamp(sc, input);
+    const second = await awardStamp(sc, input, noopLog);
     assert.equal(second.awarded, false, "Second call must return awarded:false");
     assert.ok(
       second.reason === "already_awarded" || second.reason === "already_earned",
@@ -373,8 +375,8 @@ describe("T. awardStamp — idempotency via idempotency_key", () => {
     };
     const sc = makeFakeClient(db);
 
-    const r1 = await awardStamp(sc, makeInput({ sourceId: TRIP_ID }));
-    const r2 = await awardStamp(sc, makeInput({ sourceId: TRIP_ID_2 }));
+    const r1 = await awardStamp(sc, makeInput({ sourceId: TRIP_ID }), noopLog);
+    const r2 = await awardStamp(sc, makeInput({ sourceId: TRIP_ID_2 }), noopLog);
 
     assert.equal(r1.awarded, true, "First trip must be awarded");
     assert.equal(r2.awarded, true, "Second trip (different sourceId) must also be awarded");
@@ -395,13 +397,107 @@ describe("T. awardStamp — idempotency via idempotency_key", () => {
     const sc = makeFakeClient(db);
     const input = makeInput();
 
-    await awardStamp(sc, input);
-    const second = await awardStamp(sc, input);
+    await awardStamp(sc, input, noopLog);
+    const second = await awardStamp(sc, input, noopLog);
 
     assert.equal(second.awarded, false);
     assert.ok(
       second.reason === "already_awarded" || second.reason === "already_earned",
       `Expected already_awarded or already_earned, got: ${second.reason}`,
     );
+  });
+});
+
+// ── U. log.warn emitted for skipped reasons ────────────────────────────────────
+
+describe("U. awardStamp — log.warn emitted for specified skip reasons", () => {
+  it("calls log.warn with userId, definitionSlug, and reason when stamp_system_v2_enabled is disabled", async () => {
+    const db: FakeDB = {
+      feature_flags:     [{ flag: "stamp_system_v2_enabled", key: "stamp_system_v2_enabled", enabled: false }],
+      stamp_definitions: [BASE_DEFINITION],
+      user_stamps:       [],
+      stamp_award_events: [],
+      stamp_progress:    [],
+      trips:             [],
+    };
+    const sc = makeFakeClient(db);
+
+    const warnings: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const spyLog = {
+      warn(obj: Record<string, unknown>, msg: string) { warnings.push({ obj, msg }); },
+    };
+
+    await awardStamp(sc, makeInput(), spyLog);
+
+    assert.equal(warnings.length, 1, "Expected exactly one warn call");
+    assert.equal(warnings[0].obj.reason, "feature_disabled");
+    assert.equal(warnings[0].obj.userId, ALICE_ID);
+    assert.equal(warnings[0].obj.definitionSlug, DEF_SLUG);
+    assert.equal(warnings[0].msg, "awardStamp: skipped");
+  });
+
+  it("calls log.warn when stamp definition is not found", async () => {
+    const db: FakeDB = {
+      feature_flags:     [{ flag: "stamp_system_v2_enabled", key: "stamp_system_v2_enabled", enabled: true }],
+      stamp_definitions: [],
+      user_stamps:       [],
+      stamp_award_events: [],
+      stamp_progress:    [],
+      trips:             [],
+    };
+    const sc = makeFakeClient(db);
+
+    const warnings: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const spyLog = {
+      warn(obj: Record<string, unknown>, msg: string) { warnings.push({ obj, msg }); },
+    };
+
+    await awardStamp(sc, makeInput(), spyLog);
+
+    assert.equal(warnings.length, 1, "Expected exactly one warn call");
+    assert.equal(warnings[0].obj.reason, "definition_not_found");
+    assert.equal(warnings[0].obj.definitionSlug, DEF_SLUG);
+    assert.equal(warnings[0].msg, "awardStamp: skipped");
+  });
+
+  it("does NOT call log.warn for already_awarded (not a misconfiguration)", async () => {
+    const db: FakeDB = {
+      feature_flags:     [{ flag: "stamp_system_v2_enabled", key: "stamp_system_v2_enabled", enabled: true }],
+      stamp_definitions: [BASE_DEFINITION],
+      user_stamps:       [],
+      stamp_award_events: [],
+      stamp_progress:    [],
+      trips:             [{ id: TRIP_ID, status: "completed" }],
+    };
+    const sc = makeFakeClient(db);
+    const input = makeInput();
+
+    const warnings: Array<unknown> = [];
+    const spyLog = { warn(...args: unknown[]) { warnings.push(args); } };
+
+    await awardStamp(sc, input, spyLog);
+    await awardStamp(sc, input, spyLog);
+
+    assert.equal(warnings.length, 0, "already_awarded must NOT trigger log.warn");
+  });
+
+  it("does NOT call log.warn when stamp is successfully awarded", async () => {
+    const db: FakeDB = {
+      feature_flags:     [{ flag: "stamp_system_v2_enabled", key: "stamp_system_v2_enabled", enabled: true }],
+      stamp_definitions: [BASE_DEFINITION],
+      user_stamps:       [],
+      stamp_award_events: [],
+      stamp_progress:    [],
+      trips:             [{ id: TRIP_ID, status: "completed" }],
+    };
+    const sc = makeFakeClient(db);
+
+    const warnings: Array<unknown> = [];
+    const spyLog = { warn(...args: unknown[]) { warnings.push(args); } };
+
+    const result = await awardStamp(sc, makeInput(), spyLog);
+
+    assert.equal(result.awarded, true);
+    assert.equal(warnings.length, 0, "Successful award must NOT trigger log.warn");
   });
 });
