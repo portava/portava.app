@@ -16,6 +16,7 @@ import { submitGem, type GemCategory, type GemSensitivity } from '../../src/serv
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import { mapCaptureToFormCoords, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture.machine';
 import { canNext as wizardCanNext, buildSubmitPayload } from './submit.machine';
+import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -290,16 +291,31 @@ function PrivacyStep({ form, update }: { form: FormState; update: (k: keyof Form
 }
 
 function ReviewStep({ form }: { form: FormState }) {
+  const hasCoords = form.gpsLat != null && form.gpsLng != null;
+
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Review your gem</Text>
       <Text style={styles.stepSub}>Double-check everything before submitting</Text>
 
+      {hasCoords && (
+        <View style={styles.mapPreviewSection}>
+          <Text style={styles.mapPreviewLabel}>Pinned location</Text>
+          <GemLocationPreview lat={form.gpsLat as number} lng={form.gpsLng as number} />
+          {form.gpsLabel && (
+            <Text style={styles.mapPreviewLocationText}>
+              <Ionicons name="location-outline" size={13} color="#8A9BB5" />
+              {' '}{form.gpsLabel}
+            </Text>
+          )}
+        </View>
+      )}
+
       <View style={styles.reviewCard}>
         <ReviewRow label="Name"        value={form.name} />
         <ReviewRow label="Category"    value={form.category} />
         <ReviewRow label="City"        value={[form.neighborhood, form.city, form.country].filter(Boolean).join(', ')} />
-        {form.gpsLabel && <ReviewRow label="Location detected" value={form.gpsLabel} />}
+        {!hasCoords && form.gpsLabel && <ReviewRow label="Location detected" value={form.gpsLabel} />}
         {form.description    && <ReviewRow label="Description"  value={form.description} />}
         {form.bestTimeToGo   && <ReviewRow label="Best Time"    value={form.bestTimeToGo} />}
         {form.safetyNotes    && <ReviewRow label="Safety Notes" value={form.safetyNotes} />}
@@ -513,6 +529,12 @@ const styles = StyleSheet.create({
   privacyOptionLabel: { color: '#B0C4DE', fontWeight: '700', fontSize: 15, marginBottom: 2 },
   activeText: { color: '#E8F0FE' },
   privacyOptionDesc: { color: '#8A9BB5', fontSize: 13, lineHeight: 18 },
+
+  mapPreviewSection: { marginBottom: 20 },
+  mapPreviewLabel: { color: '#8A9BB5', fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  mapPreviewLocationText: {
+    marginTop: 8, color: '#8A9BB5', fontSize: 13, lineHeight: 18,
+  },
 
   reviewCard: {
     backgroundColor: '#13213A', borderRadius: 14,
