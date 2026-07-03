@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import { mapCaptureToFormCoords, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture.machine';
+import { canNext as wizardCanNext, buildSubmitPayload } from './submit.machine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -349,43 +350,19 @@ export default function SubmitGemScreen() {
     setForm((f) => ({ ...f, [key]: value }));
   }, []);
 
-  const canNext = useCallback(() => {
-    if (step === 0) return form.city.trim().length > 0;
-    if (step === 1) return form.name.trim().length > 0 && form.category.length > 0;
-    return true;
-  }, [step, form]);
+  const canNext = useCallback(() => wizardCanNext(step, form), [step, form]);
 
   const handleNext = useCallback(() => {
     if (step < STEPS.length - 1) { setStep((s) => s + 1); return; }
     // Submit
     void (async () => {
-      if (!form.name.trim() || !form.category || !form.city.trim()) {
+      const payload = buildSubmitPayload(form);
+      if (!payload) {
         Alert.alert('Required', 'Name, category, and city are required.'); return;
       }
       setSub(true);
       try {
-        const tags = form.vibeTags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean);
-
-        await submitGem({
-          name:                  form.name.trim(),
-          category:              form.category as GemCategory,
-          city:                  form.city.trim(),
-          country:               form.country.trim() || undefined,
-          neighborhood:          form.neighborhood.trim() || undefined,
-          description:           form.description.trim() || undefined,
-          latitude:              form.gpsLat,
-          longitude:             form.gpsLng,
-          vibeTags:              tags.length > 0 ? tags : undefined,
-          priceRange:            form.priceRange || undefined,
-          safetyNotes:           form.safetyNotes.trim() || undefined,
-          bestTimeToGo:          form.bestTimeToGo.trim() || undefined,
-          layoverSafe:           form.layoverSafe,
-          minimumLayoverMinutes: form.minimumLayoverMinutes ? parseInt(form.minimumLayoverMinutes) : undefined,
-          sensitivityLevel:      form.sensitivityLevel,
-        });
+        await submitGem(payload);
 
         Alert.alert(
           'Gem Submitted!',

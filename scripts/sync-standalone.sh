@@ -146,6 +146,8 @@ STANDALONE_OWNED_FILES=(
   "src/services/locationPrefsLogic.ts"
   "src/components/__tests__/PulseCreate.filter.test.ts"
   "src/services/__tests__/media.upload.test.ts"
+  "app/gems/submit.machine.ts"
+  "src/services/__tests__/gems.submit.wizard.component.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
