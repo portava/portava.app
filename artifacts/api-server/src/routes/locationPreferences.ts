@@ -36,7 +36,7 @@ router.get("/me/location-preferences", async (req, res) => {
   if (!db) { sendError(res, "server_not_configured"); return; }
 
   const { data, error } = await db
-    .from("user_location_preferences")
+    .from("location_preferences")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
@@ -106,7 +106,7 @@ router.patch("/me/location-preferences", async (req, res) => {
   if (d.hotelBlurEnabled     !== undefined) patch.hotel_blur_enabled      = d.hotelBlurEnabled;
 
   const { error } = await db
-    .from("user_location_preferences")
+    .from("location_preferences")
     .upsert(patch, { onConflict: "user_id" });
 
   if (error) {

@@ -39,6 +39,31 @@ import { NotificationRouter as NotifRouter } from "../services/notifications/Not
 
 const router = Router();
 
+// ── Guard: Stamp System v2 tables (stamp_definitions, user_stamps, etc.) are
+// created by migration 0081 which may not yet be applied to production.
+// Fail-closed: if the feature_flags row for stamp_system_v2_enabled is absent
+// OR disabled, return 503 so callers get a clear error instead of a 500 from
+// "relation stamp_definitions does not exist".
+router.use(async (req, res, next) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  try {
+    const { data } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "stamp_system_v2_enabled")
+      .maybeSingle();
+    if (data?.enabled !== true) {
+      res.status(503).json({ error: "feature_not_available", message: "Stamp System v2 is not yet enabled." });
+      return;
+    }
+  } catch {
+    res.status(503).json({ error: "feature_not_available", message: "Stamp System v2 is not yet enabled." });
+    return;
+  }
+  next();
+});
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(s: string) { return UUID_RE.test(s); }
 

@@ -1,0 +1,208 @@
+Data Integrity + Migration Readiness Pass — Travel Buddy
+
+Audit the database layer before beta.
+
+Do not rebuild systems.
+Do not add new product features.
+Do not rewrite working routes.
+Only fix proven schema, migration, policy, seed, index, constraint, or frontend/backend/table mismatches that could break real user flows.
+
+Goal:
+Confirm every feature that is currently live has the required Supabase tables, columns, indexes, policies, constraints, migrations, and safe backend access patterns.
+
+Special focus:
+Migrations 0080–0085 were reported as pending. Verify whether they exist, whether they have been applied, and whether any live feature depends on them.
+
+Scope:
+
+1. Migration inventory
+   - List every migration file in order.
+   - Identify gaps, duplicate numbers, conflicting names, or unapplied migrations.
+   - Specifically inspect migrations 0080–0085.
+   - Determine which app features depend on each pending migration.
+   - Confirm whether migration files are source-controlled and safe to apply.
+
+2. Table coverage
+   For every live system, confirm required tables exist in migrations/schema:
+   - profiles
+   - blocks/follows/mutes/restrictions
+   - posts/comments/likes/saves/reactions
+   - memories/memory_items
+   - passport_stamps
+   - trips/trip_members/trip_plan_items/trip_invites
+   - events/event_attendees/waitlist/reviews/event_chat links
+   - telegraph/messaging threads/messages/message_requests/translations
+   - notifications/preferences
+   - safe_return_sessions/checkins/trusted_contacts/emergency_contacts
+   - rent_a_buddy applications/providers/bookings/reviews/reports/flags
+   - reports/content_reports/admin moderation tables
+   - discovery/community_places/hidden_gems/saved_places
+   - media/uploads/storage references
+   - feature_flags
+   - admin/trust/gaming/hashtag moderation tables
+
+3. Column and type compatibility
+   Compare backend/frontend expectations against database schema:
+   - Every selected column exists.
+   - Every inserted/updated column exists.
+   - Enum/string values match backend validation.
+   - Nullable vs required fields match app behavior.
+   - Timestamp columns are present where code expects them.
+   - Foreign key IDs match expected table names.
+   - JSON columns are typed/used consistently.
+   - `progress`, `role`, feature flag columns, privacy columns, report reason fields, and RAB status fields must be checked carefully.
+
+4. RLS and service-role access
+   - Identify tables accessed directly from frontend Supabase client.
+   - Confirm RLS policies support those direct reads/writes.
+   - Confirm all risky writes go through API server instead of direct Supabase.
+   - Confirm API server service-role routes enforce requireUser/requireAdmin/ownership/member checks before using service role.
+   - Flag any direct frontend mutation that can silently fail under the current P-256 JWT/RLS issue.
+   - Do not rely on RLS for service-role routes; verify explicit app-level guards.
+
+5. Constraints and data integrity
+   - Unique constraints:
+     - usernames/handles
+     - saved items
+     - trip memberships
+     - event RSVPs
+     - message thread participants where applicable
+     - one review per booking/event where applicable
+   - Foreign keys:
+     - user IDs
+     - trip IDs
+     - event IDs
+     - booking IDs
+     - post IDs
+     - place IDs
+   - Status constraints:
+     - RAB booking states
+     - event RSVP states
+     - trip member roles
+     - report statuses
+     - Safe Return session statuses
+   - Check constraints:
+     - ratings 1–5, including 5.0
+     - progress 0–100
+     - age/trust thresholds if stored
+     - file size/type metadata if stored
+
+6. Index/performance readiness
+   Confirm indexes exist for beta-critical queries:
+   - profiles.username / handle
+   - posts feed by created_at/location/status
+   - trips by owner/member/destination/date
+   - events by city/date/category/status/privacy
+   - messages by thread_id/created_at
+   - notifications by user_id/read/category/created_at
+   - reports by status/type/created_at
+   - RAB bookings by traveler/provider/status
+   - discovery places by city/status/source
+   - saved items by user_id/item_id
+   - blocks by blocker_id/blocked_id
+
+7. Storage readiness
+   - Confirm storage buckets exist or migrations document creation.
+   - Confirm upload routes use the correct bucket names.
+   - Confirm allowed file types and size limits match frontend copy.
+   - Confirm public URL/path behavior is consistent.
+   - Confirm avatar/cover/post/event/trip/story/highlight media tables or URL columns exist.
+   - Confirm no feature writes media metadata to a missing column.
+
+8. Seed/admin readiness
+   - Feature flags required for beta exist or have safe defaults.
+   - Admin role bootstrapping documented.
+   - Default notification preferences exist or are created lazily.
+   - Hidden Gems/community place seed assumptions are safe.
+   - No fake marketplace/event/trip seed data appears live as real user data unless clearly marked.
+
+9. API/schema mismatch scan
+   Use targeted greps to find:
+   - `.select("...")`
+   - `.insert({ ... })`
+   - `.update({ ... })`
+   - `.upsert({ ... })`
+   - `from("table_name")`
+   - `rpc(`
+   - `eq("column_name"`
+   - Zod schemas
+   - TypeScript interfaces representing DB rows
+
+   Compare these against migration-defined schema.
+
+10. Migration application plan
+   If migrations are pending:
+   - List exact migration files.
+   - Explain what each does.
+   - State whether it is safe to apply before beta.
+   - Identify any migration that needs manual Supabase SQL editor application.
+   - Include rollback/risk notes if present.
+   - Do not apply production migrations unless the environment/tooling explicitly supports it and the task asks for it.
+
+Required process:
+
+1. Survey first.
+   Build a migration and schema inventory before editing anything.
+
+2. Produce a Data Integrity Matrix:
+   Columns:
+   - System
+   - Tables/columns required
+   - Migration source
+   - Backend/frontend references
+   - RLS/service-role pattern
+   - Constraints/indexes
+   - Status: pass / partial / fail / pending migration / unknown
+   - Evidence
+   - Fix needed
+
+3. Fix only proven issues:
+   - Missing migration file
+   - Missing column used by live code
+   - Wrong column name used by live code
+   - Missing route guard around service-role table access
+   - Direct frontend mutation that should go through existing API route
+   - Constraint mismatch causing valid app input to fail
+   - Missing unique constraint causing duplicate live data
+   - Missing status value causing route validation/database mismatch
+   - Missing feature flag default required for screen load
+   - Bad migration ordering or duplicate migration number
+
+4. Do not fix:
+   - Future features not live
+   - Cosmetic schema naming preferences
+   - Large table redesigns
+   - New marketplace/payment systems
+   - Anything not proven by schema/code evidence
+
+5. After fixes, run:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if practical
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - any migration/schema validation scripts if available
+   - relevant backend tests for changed schema/routes if available
+
+6. Final report must include:
+   - Migration inventory
+   - Status of migrations 0080–0085
+   - Data Integrity Matrix
+   - Schema/backend mismatches found
+   - RLS/direct Supabase risks found
+   - Fixes completed
+   - Files changed
+   - Migrations added/updated
+   - Required manual Supabase SQL actions, if any
+   - Remaining real beta blockers
+   - Non-blocking schema gaps
+   - Validation table
+   - Commit message
+
+Important:
+Do not claim a migration has been applied unless verified by tooling/output.
+If the local repo has migration files but production Supabase may not have them applied, report that clearly.
+If a live screen depends on a pending migration, classify it as a beta blocker.
+If a feature is not live and only depends on a future migration, classify it as non-blocking.
+No fake success. No silent schema assumptions.
