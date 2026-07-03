@@ -119,7 +119,7 @@ const pt = StyleSheet.create({
   loc: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.deep, letterSpacing: 0.5 },
   caption: { ...t.small, color: color.ink, fontSize: 12 },
 
-  wall: { flexDirection: 'row', gap: space.md, paddingHorizontal: space.md },
+  wall: { flexDirection: 'row', gap: space.md, paddingHorizontal: space.md, maxWidth: 600, alignSelf: 'center', width: '100%' },
   col: { flex: 1, gap: space.md },
   empty: { marginHorizontal: space.lg, padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze, alignItems: 'center', gap: 4 },
   emptyTitle: { ...t.bodyStrong, color: color.ink },
