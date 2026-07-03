@@ -36,47 +36,16 @@ import { router } from 'expo-router';
 import { color } from '../theme/tokens';
 import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet';
 import { removeSelfTag } from '../services/tagging';
+import {
+  buildSegments,
+  type RichTextEntityType,
+  type RichTextTag,
+  type RichTextHashtag,
+  type Segment,
+} from './richTextSegments';
 
-// ── Public types ───────────────────────────────────────────────────────────────
-
-export type RichTextEntityType = 'user' | 'event' | 'circle' | 'trip' | 'place';
-
-/** A persisted @mention annotation returned by the API (from the `tags` table). */
-export interface RichTextTag {
-  /** Entity type of the tagged target. */
-  type: RichTextEntityType;
-  /** UUID of the entity — used for trip/place navigation and circle/event preview sheet. */
-  id: string;
-  /**
-   * The token that appears after `@` in the text, e.g. `"alice"` for `@alice`.
-   * For `user` type this equals the handle; used for navigation and TagPreviewSheet.
-   */
-  matchToken: string;
-  /** Zero-based start character index of the @token in the source text. */
-  startChar: number;
-  /** Zero-based end character index (exclusive) of the @token. */
-  endChar: number;
-  /** When true the target is blocked by (or blocking) the viewer → plain text. */
-  isBlocked?: boolean;
-  /** When true the target has been deleted → plain text. */
-  isDeleted?: boolean;
-  /** When true the target is private/inaccessible → plain text. */
-  isPrivate?: boolean;
-  /** UUID of the `tags` table row — provided so the tagged user can self-remove. */
-  tagRowId?: string;
-}
-
-/** A persisted #hashtag annotation returned by the API (from `hashtag_usage`). */
-export interface RichTextHashtag {
-  /** Canonical slug without the `#` prefix, e.g. `"travel"` for `#travel`. */
-  slug: string;
-  /** Zero-based start character index of the #token in the source text. */
-  startChar: number;
-  /** Zero-based end character index (exclusive) of the #token. */
-  endChar: number;
-  /** When true the hashtag is blocked by the viewer → plain text. */
-  isBlocked?: boolean;
-}
+// Re-export public types so consumers can import from 'RichText' as before.
+export type { RichTextEntityType, RichTextTag, RichTextHashtag };
 
 export interface RichTextProps {
   content: string;
@@ -97,66 +66,6 @@ export interface RichTextProps {
    * "Remove this tag" action (calls DELETE /api/tags/:id).
    */
   currentUserId?: string;
-}
-
-// ── Internal segment types ─────────────────────────────────────────────────────
-
-type PlainSegment   = { kind: 'plain';   text: string };
-type MentionSegment = { kind: 'mention'; tag: RichTextTag;        displayText: string; interactive: boolean };
-type HashtagSegment = { kind: 'hashtag'; hashtag: RichTextHashtag; displayText: string; interactive: boolean };
-type Segment = PlainSegment | MentionSegment | HashtagSegment;
-
-// ── Position-based segment builder ────────────────────────────────────────────
-
-function buildSegments(
-  content: string,
-  tags: RichTextTag[],
-  hashtagUsages: RichTextHashtag[],
-): Segment[] {
-  type SpanEntry =
-    | { start: number; end: number; tag: RichTextTag }
-    | { start: number; end: number; hashtag: RichTextHashtag };
-
-  const spans: SpanEntry[] = [
-    ...tags.map((t) => ({ start: t.startChar, end: t.endChar, tag: t })),
-    ...hashtagUsages.map((h) => ({ start: h.startChar, end: h.endChar, hashtag: h })),
-  ];
-
-  // Sort by start position; discard out-of-bounds spans
-  spans.sort((a, b) => a.start - b.start);
-
-  const segs: Segment[] = [];
-  let cursor = 0;
-
-  for (const span of spans) {
-    // Skip overlapping or out-of-bounds spans
-    if (span.start < cursor || span.end > content.length || span.start >= span.end) continue;
-
-    // Plain text before this span
-    if (span.start > cursor) {
-      segs.push({ kind: 'plain', text: content.slice(cursor, span.start) });
-    }
-
-    const displayText = content.slice(span.start, span.end);
-
-    if ('tag' in span) {
-      const { tag } = span;
-      const interactive = !(tag.isBlocked || tag.isDeleted || tag.isPrivate);
-      segs.push({ kind: 'mention', tag, displayText, interactive });
-    } else {
-      const { hashtag } = span;
-      segs.push({ kind: 'hashtag', hashtag, displayText, interactive: !hashtag.isBlocked });
-    }
-
-    cursor = span.end;
-  }
-
-  // Trailing plain text
-  if (cursor < content.length) {
-    segs.push({ kind: 'plain', text: content.slice(cursor) });
-  }
-
-  return segs;
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
