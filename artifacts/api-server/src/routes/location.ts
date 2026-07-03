@@ -424,4 +424,93 @@ router.post("/location/exit-geofence", async (req, res) => {
   res.status(200).json({ ok: true, publishEligibleAt: eligibleAt });
 });
 
+// ── GET /api/me/circle-locations ─────────────────────────────────────────────
+router.get("/me/circle-locations", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  // 1. Resolve caller's circle members
+  const { data: memberRows, error: memberErr } = await sc
+    .from("circle_memberships")
+    .select("member_id")
+    .eq("owner_id", user.id);
+
+  if (memberErr) {
+    req.log.error({ err: memberErr }, "circle-locations: circle lookup failed");
+    sendError(res, "db_error", memberErr.message);
+    return;
+  }
+
+  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.member_id as string);
+
+  if (memberIds.length === 0) {
+    res.status(200).json({ ok: true, locations: [] });
+    return;
+  }
+
+  // 2. Identify members who explicitly opted out.
+  //    Schema default for trusted_circle_share is true, so a missing prefs row = consented.
+  const { data: optedOutRows, error: prefErr } = await sc
+    .from("location_preferences")
+    .select("user_id")
+    .in("user_id", memberIds)
+    .eq("trusted_circle_share", false);
+
+  if (prefErr) {
+    req.log.error({ err: prefErr }, "circle-locations: prefs lookup failed");
+    sendError(res, "db_error", prefErr.message);
+    return;
+  }
+
+  const optedOut = new Set((optedOutRows ?? []).map((r: any) => r.user_id as string));
+  const visibleIds = memberIds.filter(id => !optedOut.has(id));
+
+  if (visibleIds.length === 0) {
+    res.status(200).json({ ok: true, locations: [] });
+    return;
+  }
+
+  // 3. Fetch location state + profile display info for visible members in parallel.
+  const [locationRes, profileRes] = await Promise.all([
+    sc
+      .from("user_location_state")
+      .select("user_id, lat, lng, city, country, updated_at")
+      .in("user_id", visibleIds),
+    sc
+      .from("profiles")
+      .select("id, name, avatar_url")
+      .in("id", visibleIds),
+  ]);
+
+  if (locationRes.error) {
+    req.log.error({ err: locationRes.error }, "circle-locations: location state read failed");
+    sendError(res, "db_error", locationRes.error.message);
+    return;
+  }
+
+  const profileMap = new Map(
+    (profileRes.data ?? []).map((p: any) => [p.id as string, p])
+  );
+
+  const locations = (locationRes.data ?? []).map((row: any) => {
+    const profile = profileMap.get(row.user_id as string);
+    return {
+      userId:    row.user_id as string,
+      name:      (profile?.name as string | null) ?? null,
+      avatarUrl: (profile?.avatar_url as string | null) ?? null,
+      lat:       row.lat != null ? Number(row.lat) : null,
+      lng:       row.lng != null ? Number(row.lng) : null,
+      city:      (row.city as string | null) ?? null,
+      country:   (row.country as string | null) ?? null,
+      updatedAt: (row.updated_at as string | null) ?? null,
+    };
+  });
+
+  res.status(200).json({ ok: true, locations });
+});
+
 export default router;

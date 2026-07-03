@@ -132,3 +132,40 @@ export async function listNearbyUsers(city: string, excludeUserId: string): Prom
     avatarUrl: (r.avatar_url as string | null) ?? null,
   }));
 }
+
+/* ---------- Circle member locations ---------------------------------------- */
+
+export interface CircleMemberLocation {
+  userId: string;
+  name: string | null;
+  avatarUrl: string | null;
+  lat: number | null;
+  lng: number | null;
+  city: string | null;
+  country: string | null;
+  updatedAt: string | null;
+}
+
+/**
+ * Returns location data for the caller's trusted circle members who have not
+ * opted out of circle sharing (schema default = true, so a missing prefs row
+ * means consented). Reads are done server-side to bypass the user_location_state
+ * RLS policy which restricts each user to their own row.
+ * Returns an empty array on any error.
+ */
+export async function listVisibleCircleLocations(): Promise<CircleMemberLocation[]> {
+  if (!isSupabaseConfigured) return [];
+  const token = await authToken();
+  if (!token) return [];
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/circle-locations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.locations) ? json.locations : [];
+  } catch {
+    return [];
+  }
+}
