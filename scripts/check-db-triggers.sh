@@ -138,7 +138,11 @@ WHERE tablename = 'rent_buddy_city_rollouts' AND schemaname = 'public' \
 UNION ALL \
 SELECT 'feature_flag' AS check_type, flag AS name, enabled::text AS detail \
 FROM feature_flags \
-WHERE flag = 'rent_buddy_enabled'"
+WHERE flag = 'rent_buddy_enabled' \
+UNION ALL \
+SELECT 'live_city_count' AS check_type, COUNT(*)::text AS name, 'public_mvp,beta_testing' AS detail \
+FROM rent_buddy_city_rollouts \
+WHERE status IN ('public_mvp', 'beta_testing')"
 
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then

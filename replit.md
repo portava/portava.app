@@ -54,7 +54,7 @@ Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 | `source-drift`         | `bash scripts/sync-standalone.sh --check-source` | Run `--fix-source` to re-sync |
 | `api-server-build`     | `pnpm --filter @workspace/api-server run build`  | Fix esbuild errors in `artifacts/api-server/src/` |
 | `lockfile-drift`       | `bash scripts/sync-standalone.sh --check-lockfile` | Run `--fix-lockfile` to re-sync resolved versions |
-| `db-triggers`          | `export SUPABASE_PROJECT_TOKEN=<token> && bash scripts/pre-release-check.sh` | Apply migrations 0071–0074, 0090 via Supabase dashboard or psql; CI: set `SUPABASE_PROJECT_TOKEN` repo secret (Project Settings → API → Project API tokens); local: `export SUPABASE_ACCESS_TOKEN=sbp_...` from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens); see [docs/eas-runbook.md](docs/eas-runbook.md) → "DB triggers check in CI" |
+| `db-triggers`          | `export SUPABASE_PROJECT_TOKEN=<token> && bash scripts/pre-release-check.sh` | Apply migrations 0071–0074, 0090, 0092 via Supabase dashboard or psql; CI: set `SUPABASE_PROJECT_TOKEN` repo secret (Project Settings → API → Project API tokens); local: `export SUPABASE_ACCESS_TOKEN=sbp_...` from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens); see [docs/eas-runbook.md](docs/eas-runbook.md) → "DB triggers check in CI" |
 
 ## Stack
 
@@ -86,7 +86,7 @@ Users sign in with Supabase Auth (email/password) to create and manage trips (de
 - `DAILY_BRIEF_RETENTION_DAYS` (default `60`, days) and `DAILY_BRIEF_CLEANUP_INTERVAL_HOURS` (default `24`) — set in `artifacts/api-server/.env` to tune without a deploy.
 - `EXPO_PUBLIC_API_BASE_URL` in `artifacts/travel-buddy/.env` must point to the Replit dev domain (not the Expo domain).
 - Feature-flag routes in `routes/*.ts` use paths without the `/api` prefix (the router is mounted at `app.use("/api", router)`).
-- `rent_buddy_city_rollouts`: when the table is empty all city-specific calls return `city_not_available`. Add rows with `status = 'live'` via the Supabase dashboard or `POST /api/rent-buddy/admin/cities`.
+- `rent_buddy_city_rollouts`: when the table has no rows at `public_mvp` or `beta_testing` status, all city-specific calls return `city_not_available`. Apply migration `0092_seed_rent_buddy_launch_cities.sql` (seeds Cebu, Manila, Davao City at `public_mvp`) or add rows via `POST /api/admin/rent-buddy/rollout/cities`. The `db-triggers` pre-release check now verifies at least one live city exists.
 
 ## Reference docs
 

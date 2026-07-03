@@ -155,6 +155,52 @@ if (!flagRow) {
   }
 }
 
+// ── live city count ──────────────────────────────────────────────────────────
+// At least one city must be at public_mvp or beta_testing status before the
+// feature is usable.  An empty table means every checkRentBuddyAccess call
+// returns city_not_available regardless of the feature flag.
+
+const liveCityRow = rows.find((r) => r.check_type === "live_city_count");
+if (!liveCityRow) {
+  console.error(
+    "  \u2718  live city count query missing — check SQL in check-db-triggers.sh"
+  );
+  allPresent = false;
+} else {
+  const count = parseInt(liveCityRow.name ?? "0", 10);
+  if (count >= 1) {
+    console.log(
+      `  \u2714  rent_buddy_city_rollouts has ${count} live city/cities (public_mvp or beta_testing)`
+    );
+  } else {
+    console.error(
+      "  \u2718  rent_buddy_city_rollouts has NO cities at public_mvp or beta_testing status"
+    );
+    console.error(
+      "     Rent a Buddy is deployed but invisible — all access checks return city_not_available."
+    );
+    console.error(
+      "     Apply the seed migration via the Supabase dashboard or psql:"
+    );
+    console.error(
+      "       artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql"
+    );
+    console.error(
+      "     Or insert manually (see docs/production-migration-runbook.md \u00a79.7):"
+    );
+    console.error(
+      "       INSERT INTO rent_buddy_city_rollouts (city, country, status)"
+    );
+    console.error(
+      "         VALUES ('Cebu', 'Philippines', 'public_mvp')"
+    );
+    console.error(
+      "         ON CONFLICT (city) DO NOTHING;"
+    );
+    allPresent = false;
+  }
+}
+
 if (!allPresent) {
   console.error("");
   console.error(
@@ -168,7 +214,13 @@ if (!allPresent) {
   );
   console.error("       " + MIGRATION);
   console.error(
-    "     Then add launch cities (see docs/production-migration-runbook.md §9.7)."
+    "     Then seed launch cities:"
+  );
+  console.error(
+    "       artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql"
+  );
+  console.error(
+    "     See docs/production-migration-runbook.md \u00a79.7 for the full seeding runbook."
   );
   process.exit(1);
 }

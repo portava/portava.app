@@ -826,12 +826,55 @@ Expo push notifications use `expo_push_token` stored in `profiles` (0023) and `n
 
 ### 9.7 rent_buddy_city_rollouts bootstrap
 
-Without any rows in `rent_buddy_city_rollouts`, all calls to `checkRentBuddyAccess` return `city_not_available`. Add launch cities after applying the inline migration (or verifying the tables exist):
+Without at least one row in `rent_buddy_city_rollouts` at `public_mvp` or `beta_testing` status, all calls to `checkRentBuddyAccess` return `city_not_available` — the feature is deployed but completely invisible to users.
+
+**Option A — apply the seed migration (recommended)**
+
+Run migration `0092_seed_rent_buddy_launch_cities.sql` via the Supabase SQL Editor. It inserts the three initial Philippines launch cities (Cebu, Manila, Davao City) all at `public_mvp` status:
+
+```
+File: artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql
+```
 
 ```sql
--- Add a city to the live rollout
-INSERT INTO rent_buddy_city_rollouts (city, status) VALUES ('Cebu', 'live') ON CONFLICT DO NOTHING;
+INSERT INTO rent_buddy_city_rollouts (city, country, status, notes)
+VALUES
+  ('Cebu',       'Philippines', 'public_mvp', 'Initial Philippines launch city — Cebu City metro area.'),
+  ('Manila',     'Philippines', 'public_mvp', 'Initial Philippines launch city — Metro Manila (NCR).'),
+  ('Davao City', 'Philippines', 'public_mvp', 'Initial Philippines launch city — Davao region.')
+ON CONFLICT (city) DO NOTHING;
 ```
+
+**Option B — add cities via the admin API**
+
+After an admin account exists in production, use `POST /api/admin/rent-buddy/rollout/cities` to add cities programmatically without touching the database directly.
+
+**Correct status values** (`rent_buddy_city_status` enum, defined in migration 0090):
+
+| Status | Meaning |
+|--------|---------|
+| `disabled` | Not visible to any users (default) |
+| `waitlist_only` | Users can join the waitlist only |
+| `buddy_applications_open` | Buddy applications accepted; no traveler bookings yet |
+| `internal_testing` | Internal staff only |
+| `beta_testing` | Beta-invited users only |
+| `public_mvp` | Open to all authenticated users ✅ |
+| `paused` | Temporarily suspended; existing bookings still accessible |
+| `suspended` | Treated same as `disabled` — feature off |
+
+> **Note:** The runbook originally showed `status = 'live'` in this section — that is not a valid enum value. Use `public_mvp` for a fully open city.
+
+**Verify after seeding:**
+
+```sql
+SELECT city, country, status FROM rent_buddy_city_rollouts ORDER BY city;
+-- Expect: at least one row with status = 'public_mvp' or 'beta_testing'
+
+SELECT COUNT(*) FROM rent_buddy_city_rollouts WHERE status IN ('public_mvp', 'beta_testing');
+-- Expect: >= 1
+```
+
+The pre-release check (`bash scripts/pre-release-check.sh`) will also verify this automatically under the `db-triggers` step — a release will not pass until at least one live city exists in production.
 
 ### 9.8 Realtime channels
 
