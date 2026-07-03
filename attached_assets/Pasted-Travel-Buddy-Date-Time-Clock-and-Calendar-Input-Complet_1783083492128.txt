@@ -1,0 +1,375 @@
+Travel Buddy — Date, Time, Clock, and Calendar Input Completion Pass
+
+Wire clocks, calendars, date pickers, time pickers, timezone handling, and calendar integrations across the entire app.
+
+Users should NOT be required to manually type dates or times anywhere in the app.
+
+Do not rebuild unrelated systems.
+Do not redesign full screens unless required to replace manual date/time entry.
+Do not touch unrelated backend logic unless date/time storage or validation requires it.
+Do not add fake calendar behavior.
+Do not create fake success.
+Do not leave broken date/time fields that accept invalid manual text.
+
+Goal:
+Every date/time function in Travel Buddy must use a proper calendar, clock, picker, or structured selector.
+
+Users should be able to choose:
+- dates from a calendar picker
+- times from a clock/time picker
+- date ranges from a date-range picker
+- recurring availability from a visual schedule grid or time-range picker
+- timezone-aware trip/event/meetup times
+- calendar export/add-to-calendar where already part of the feature
+- reminders and schedule-based flows without manual typing
+
+Manual text entry should be removed, disabled, or replaced everywhere a user is expected to enter a date or time.
+
+Scope:
+Audit and wire date/time UI across:
+
+1. Trips
+   - Create trip start date
+   - Create trip end date
+   - Edit trip start date
+   - Edit trip end date
+   - Trip timeline item dates
+   - Trip saved idea scheduling
+   - Add-to-trip scheduled date/time
+   - Trip invites expiration if visible
+   - Trip preview dates
+   - Route planner timing if present
+
+2. Events / Plans
+   - Create event date
+   - Create event start time
+   - Create event end time
+   - Edit event date/time if present
+   - RSVP deadlines if present
+   - Event waitlist timing
+   - Event preview time
+   - Event filters by date
+   - Availability-aware event matching
+   - Add to calendar action if visible
+
+3. Meetups
+   - Meetup date selection
+   - Time poll slot creation
+   - Time poll slot removal
+   - Confirmed meetup time
+   - Add to Calendar
+   - Reminder timing
+   - Push when time confirmed
+   - Timezone-safe display for travelers in different zones
+
+4. Availability
+   - Weekly recurring availability
+   - Trip-window availability
+   - Free/busy day marking
+   - Time range picker
+   - Calendar grid
+   - “Friend marked day free” logic if visible
+   - No manual time typing
+
+5. Safe Return
+   - Check-in interval selection
+   - Scheduled check-in times
+   - Missed check-in timing
+   - Emergency escalation timing
+   - Active session elapsed/remaining time
+   - End time/cancel time if shown
+   - Use structured duration pickers, not manual text
+
+6. Rent a Buddy
+   - Booking date
+   - Booking start time
+   - Booking duration
+   - Add extra time
+   - Reschedule if visible
+   - Cancellation/report timing windows
+   - Review/report allowed time windows
+   - Provider availability schedule
+   - No manual date/time typing
+
+7. Telegraph / Messaging
+   - Message timestamps
+   - Thread last-message time
+   - Read receipts/time read
+   - Translation retry timestamps if displayed
+   - Schedule/send later only if visible
+   - Activity recommendations with dates/times if Compass inserts them
+   - Timezone-safe display
+
+8. Notifications / Activity Center
+   - Notification timestamps
+   - Relative time formatting
+   - Deep links to time-based content
+   - Reminder scheduling if visible
+   - Mark-read timestamp behavior
+
+9. Posts / Memories / Highlights / Stories
+   - Post creation date display
+   - Delayed posting publish time
+   - Memory date selection
+   - Highlight/story timestamps
+   - Archive/delete confirmation timing if relevant
+   - Location-delay timing/geofence exit display if visible
+
+10. Discovery / Search / Filters
+   - Date filters
+   - Time of day filters
+   - “Open now” / hours filters if present
+   - Date range filters for events/trips/places
+   - Calendar selector instead of manual date text
+
+11. Profile / Passport
+   - Birthday/age if present
+   - Travel dates if shown on profile
+   - Availability shown on profile
+   - Joined date
+   - Last active time if visible
+   - Passport stamp dates
+
+12. Admin / Moderation
+   - Date filters
+   - Report timestamps
+   - Trust review timestamps
+   - Feature flag scheduled windows if present
+   - Ban/suspension expiration if present
+   - No manual date/time typing where admin chooses a date/time
+
+Required UX rules:
+
+1. No manual typing for date/time fields.
+   Replace text inputs with:
+   - calendar date picker
+   - clock time picker
+   - date range picker
+   - duration picker
+   - recurring availability grid
+   - dropdown/select for common intervals
+   - native calendar/event picker if appropriate
+
+2. Keep manual fallback only if required by platform limitations.
+   If a fallback is needed:
+   - validate strictly
+   - show clear format
+   - prefer hidden developer fallback over user-facing manual typing
+
+3. Use native/mobile-friendly pickers.
+   Prefer existing project dependencies first.
+   If date/time picker library already exists, use it.
+   If no picker exists, inspect Expo/React Native setup and choose the smallest safe dependency only if necessary.
+
+4. Timezone handling must be correct.
+   - Store timestamps in UTC or existing backend standard.
+   - Display in the user’s local timezone unless the event/trip has a destination timezone.
+   - For trips/events in another city, show destination timezone where useful.
+   - Avoid ambiguous times.
+   - Include timezone label when needed.
+   - Do not shift all-day dates incorrectly.
+
+5. Date range rules:
+   - End date cannot be before start date.
+   - End time cannot be before start time unless overnight is intentionally supported.
+   - Trip end date cannot be before trip start date.
+   - Booking end time/duration must be valid.
+   - Meetup poll slots must be future times.
+   - Safe Return check-ins must use valid future intervals.
+
+6. Duration rules:
+   Use structured duration controls:
+   - 15 min
+   - 30 min
+   - 1 hour
+   - 2 hours
+   - custom picker only if needed
+
+7. Calendar integration:
+   Audit visible “Add to Calendar” actions.
+   If already visible:
+   - wire to native calendar export or .ics/share flow if feasible
+   - request permission honestly
+   - show success only after calendar action succeeds
+   - show unavailable copy if not supported
+   - do not fake calendar add success
+
+8. Display formatting:
+   Standardize:
+   - Today / Tomorrow where appropriate
+   - Month day, year for future trips/events
+   - Localized 12-hour time for current user preference/location
+   - timezone abbreviation/label when needed
+   - relative time for feeds/messages
+   - absolute time in detail screens
+
+9. Accessibility:
+   - date/time picker buttons must have labels
+   - selected dates/times must be readable
+   - error states must be clear
+   - keyboard should not block picker controls
+
+Technical audit requirements:
+
+1. Search for all manual date/time inputs:
+   - placeholder contains Date
+   - placeholder contains Time
+   - placeholder contains Start
+   - placeholder contains End
+   - keyboardType numeric used for date/time
+   - TextInput with date/time state
+   - setStartDate
+   - setEndDate
+   - start_date
+   - end_date
+   - startTime
+   - endTime
+   - starts_at
+   - ends_at
+   - scheduled_at
+   - created_at display
+   - updated_at display
+   - check_in
+   - reminder
+   - availability
+   - duration
+   - timezone
+   - datetime
+   - dateInput
+   - timeInput
+
+2. Search backend schema/routes for date/time fields:
+   - timestamptz
+   - timestamp
+   - date
+   - time
+   - starts_at
+   - ends_at
+   - start_date
+   - end_date
+   - scheduled_for
+   - scheduled_at
+   - expires_at
+   - confirmed_at
+   - read_at
+   - published_at
+   - archived_at
+   - deleted_at
+   - last_seen_at
+   - timezone
+   - duration_minutes
+
+3. Build a Date/Time Matrix:
+   Columns:
+   - System
+   - Screen/component
+   - Field/action
+   - Current input method
+   - Required picker/control
+   - Backend field
+   - Timezone behavior
+   - Status: pass / partial / fail / missing / honest-disabled
+   - Fix needed
+
+4. Build a Calendar Integration Matrix:
+   Columns:
+   - System
+   - Visible calendar action
+   - Current behavior
+   - Native calendar/.ics/share support
+   - Permission handling
+   - Status
+   - Fix needed
+
+Implementation rules:
+
+1. Create reusable components if needed:
+   - DatePickerField
+   - TimePickerField
+   - DateRangePickerField
+   - DateTimePickerField
+   - DurationPickerField
+   - AvailabilityGrid
+   - TimezoneLabel
+   - AddToCalendarButton
+
+2. Use these reusable components across screens instead of one-off picker code.
+
+3. Do not change backend date formats unless required.
+   If backend already expects ISO strings, keep ISO strings.
+   Convert picker values to ISO safely before submit.
+
+4. If backend lacks timezone field but screen needs timezone-aware display:
+   - use user/device timezone for display
+   - use destination timezone only if already available from trip/event data
+   - document any remaining limitation
+
+5. Do not introduce fake calendar sync.
+   Calendar add must either:
+   - actually create/export a calendar event,
+   - open native calendar/share flow,
+   - or be honestly disabled.
+
+6. Preserve existing validation.
+   Add missing validation only where date/time picker now controls the field.
+
+Fix only proven issues:
+- manual date/time text entry
+- invalid date/time accepted
+- end before start
+- fake calendar success
+- dead Add to Calendar button
+- wrong timezone display
+- date formatting inconsistency that confuses users
+- visible date/time action with no handler
+- backend/frontend mismatch for date/time fields
+
+Do not fix:
+- unrelated layout polish
+- new reminder systems not already visible
+- new recurring event engine unless existing availability/meetup system needs it
+- full Google Calendar sync unless already in scope
+- full external calendar account connection
+
+Production/database considerations:
+1. Confirm schema has timezone fields where code expects them.
+2. Confirm duration/date/time columns exist where backend routes use them.
+3. Confirm migrations are applied for meetup/event/trip date tables.
+4. If a date/time column is missing for a live field, mark as blocker and add/apply the smallest migration only if necessary.
+5. Do not claim production is ready unless verified.
+
+Validation:
+After fixes, run:
+- `pnpm --filter @workspace/api-server run typecheck`
+- `cd travel-buddy-standalone && pnpm typecheck`
+- `pnpm run typecheck` if practical
+- `bash scripts/sync-standalone.sh --fix-source` if artifacts changed
+- `bash scripts/sync-standalone.sh --check-source`
+- `bash scripts/sync-standalone.sh --check-deps`
+- `pnpm --filter @workspace/scripts run test:routes-guard` if available
+- relevant frontend/backend tests for changed date/time flows if existing
+
+Final report must include:
+1. Executive summary
+2. Date/Time Matrix
+3. Calendar Integration Matrix
+4. Reusable picker components created/used
+5. Screens changed
+6. Backend/schema date-time findings
+7. Timezone behavior summary
+8. Manual date/time inputs removed
+9. Calendar actions fixed/honest-disabled
+10. Remaining real blockers
+11. Honest-disabled date/time items
+12. Validation table
+13. Commit message
+
+Important:
+Every date and time function should feel like a real app:
+- tap calendar for dates
+- tap clock for times
+- tap duration chips for durations
+- tap schedule grid for availability
+- no manual typing required
+- no fake success
+- no broken timezones

@@ -810,7 +810,6 @@ const uc = StyleSheet.create({
     paddingVertical: 10,
     gap: 4,
   },
-  typeCardOn: { borderColor: color.signal, backgroundColor: color.signal + '08' },
   typeIcon: {
     width: 30,
     height: 30,
