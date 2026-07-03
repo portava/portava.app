@@ -421,6 +421,45 @@ async function queryDbPlaces(
   }
 }
 
+// ── OSM saved-count enrichment ────────────────────────────────────────────────
+//
+// OSM places returned by Overpass have no saved_count because they live only
+// in the in-memory cache, not in discovery_places.  When a user saves an OSM
+// place via POST /api/wishlist the wishlist handler upserts a row in
+// discovery_places (source="osm", osm_id=<type>/<id>).  This function does a
+// single batch lookup to attach those real save counts to the Overpass results
+// before they are stored in the cache.  Failures are swallowed — a missing
+// savedCount just means the popular sort falls back to rating as the tie-breaker.
+
+async function enrichOsmSavedCounts(places: DiscoveryPlace[]): Promise<DiscoveryPlace[]> {
+  if (places.length === 0) return places;
+  const sc = getServiceClient();
+  if (!sc) return places;
+
+  try {
+    const osmIds = places.map((p) => p.id);
+    const { data } = await sc
+      .from("discovery_places")
+      .select("osm_id, saved_count")
+      .in("osm_id", osmIds)
+      .gt("saved_count", 0);
+
+    if (!data || data.length === 0) return places;
+
+    const countMap = new Map(
+      (data as Array<{ osm_id: string; saved_count: number }>)
+        .map((r) => [r.osm_id, r.saved_count]),
+    );
+
+    return places.map((p) => {
+      const count = countMap.get(p.id);
+      return count != null ? { ...p, savedCount: count } : p;
+    });
+  } catch {
+    return places;
+  }
+}
+
 // ── Merge + deduplicate ────────────────────────────────────────────────────────
 //
 // OSM places take precedence. DB places whose normalised name already appears
@@ -769,22 +808,33 @@ router.get("/discovery", async (req, res) => {
       queryDbPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
 
+    // Enrich OSM places with real save counts from discovery_places before
+    // merging and caching.  A single batch SELECT by osm_id attaches savedCount
+    // to any place saved by at least one user so the popular sort can order OSM
+    // results by real traveler demand instead of relying solely on the OSM rating
+    // field.  Enrichment runs before the cache write so subsequent cache-hit
+    // requests get the counts without an extra round trip (counts are at most
+    // 2 hours stale, which is acceptable for a popularity signal).
+    const enrichedOsm = osmPlaces.length > 0
+      ? await enrichOsmSavedCounts(osmPlaces)
+      : osmPlaces;
+
     // When sortBy=nearest, recompute OSM place distances from the user's position
     // (OSM query ran from destination centre; cached entry will too on next request).
     const osmForMerge = sortBy === "nearest" && userCoords
-      ? osmPlaces.map((p) =>
+      ? enrichedOsm.map((p) =>
           p.lat != null && p.lng != null
             ? { ...p, distanceKm: Math.round(haversineKm(userCoords.lat, userCoords.lng, p.lat, p.lng) * 10) / 10 }
             : p,
         )
-      : osmPlaces;
+      : enrichedOsm;
 
     const places = mergeAndDedup(osmForMerge, dbPlaces);
 
     // Only cache when we have results — avoids locking out a destination for
     // 2 hours if Overpass timed out or returned nothing transiently.
-    if (osmPlaces.length > 0) {
-      cache.set(key, { places: osmPlaces, cachedAt: Date.now() });
+    if (enrichedOsm.length > 0) {
+      cache.set(key, { places: enrichedOsm, cachedAt: Date.now() });
     }
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
@@ -927,12 +977,13 @@ router.get("/discovery/feed", async (req, res) => {
   try {
     const categoryResults = await Promise.all(
       effectiveCats.map(async (cat) => {
-        const [osmPlaces, dbPlaces] = includePlaces
+        const [rawOsmPlaces, dbPlaces] = includePlaces
           ? await Promise.all([
               queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
               queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
             ])
           : [[], [] as DiscoveryPlace[]];
+        const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
         return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
       }),
     );
