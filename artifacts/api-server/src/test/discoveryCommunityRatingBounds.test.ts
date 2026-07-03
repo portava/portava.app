@@ -154,6 +154,38 @@ describe("POST /api/discovery/community — rating bounds validation", () => {
     assert.equal(r.body.error, "invalid_payload");
   });
 
+  it("returns 400 for ULP-above-5 constructed via DataView bit-manipulation after JSON round-trip", async () => {
+    // Construct the smallest IEEE 754 float64 strictly above 5 by writing 5.0
+    // as raw bytes (big-endian: 40 14 00 00 00 00 00 00) and incrementing the
+    // last (least-significant mantissa) byte by 1, yielding 40 14 00 00 00 00 00 01.
+    // This is equivalent to 5 + 4*Number.EPSILON but avoids any risk of the
+    // arithmetic expression being optimised or constant-folded differently across
+    // runtimes.
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, 5.0, /* littleEndian= */ false); // big-endian representation
+    view.setUint8(7, view.getUint8(7) + 1);             // increment LSB of mantissa
+    const ulpAbove5 = view.getFloat64(0, false);
+
+    // Sanity: the bit manipulation produced a value that is representable and
+    // distinct from 5 in float64.
+    assert.notEqual(ulpAbove5, 5,
+      `sanity: DataView-constructed float must differ from 5.0 (got ${ulpAbove5})`);
+
+    // Sanity: JSON.stringify → JSON.parse must not collapse the ULP back to 5.
+    // If it did, the HTTP layer would receive exactly 5 and the guard would
+    // (correctly) accept it — making this an invalid test.  On all V8/Node.js
+    // versions used in this project the round-trip is lossless.
+    const roundTripped = JSON.parse(JSON.stringify(ulpAbove5)) as number;
+    assert.notEqual(roundTripped, 5,
+      `sanity: JSON round-trip collapsed ${ulpAbove5} back to 5 — test is invalid on this runtime`);
+
+    const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: ulpAbove5 });
+    assert.equal(r.status, 400,
+      `expected 400 for DataView ULP-above-5 (${ulpAbove5}), got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
   it("returns 400 when rating is less than 0", async () => {
     const r = await post(url, "/api/discovery/community", { ...VALID_BODY, rating: -0.0001 });
     assert.equal(r.status, 400, `expected 400 for rating=-0.0001, got ${r.status}`);
