@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput,
 } from 'react-native';
@@ -81,7 +83,7 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
-export default function DiscoveryHub() {
+function DiscoveryHubScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
@@ -1177,3 +1179,11 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
 });
+
+export default function DiscoveryHub() {
+  return (
+    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+      <DiscoveryHubScreen />
+    </ErrorBoundary>
+  );
+}

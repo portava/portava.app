@@ -1,4 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,7 +38,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 // via the plan-item detail sheets.  If a trip-level description is added to the
 // DB schema and the `TripDetail` type in the future, render it here with:
 //   <RichText content={trip.description} tags={trip.descriptionTags} hashtagUsages={trip.descriptionHashtags} />
-export default function TripDetail() {
+function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const { configured, isAuthed, userId } = useSession();
@@ -758,3 +760,11 @@ const mp = StyleSheet.create({
   privacy: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.sm, backgroundColor: color.paper, paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill },
   privacyText: { ...t.small, color: color.mute, fontSize: 11 },
 });
+
+export default function TripDetail() {
+  return (
+    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+      <TripDetailScreen />
+    </ErrorBoundary>
+  );
+}

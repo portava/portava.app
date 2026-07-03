@@ -1,4 +1,6 @@
 import React, { useState, useCallback } from 'react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ScreenErrorFallback } from '@/components/ScreenErrorFallback';
 import { useFocusEffect } from 'expo-router';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
@@ -150,7 +152,7 @@ function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   );
 }
 
-export default function Trips() {
+function TripsScreen() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
   const { data: realTrips, loading, error, reload } = useMyTrips();
@@ -368,3 +370,11 @@ const styles = StyleSheet.create({
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
 });
+
+export default function Trips() {
+  return (
+    <ErrorBoundary FallbackComponent={ScreenErrorFallback}>
+      <TripsScreen />
+    </ErrorBoundary>
+  );
+}
