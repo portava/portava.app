@@ -16,7 +16,7 @@
  * POST   /api/hidden-gems/:id/share-telegraph — share to Telegraph
  * POST   /api/hidden-gems/:id/plan     — add to trip plan
  *
- * Admin (requires is_admin role on profile):
+ * Admin (requires profiles.role = 'admin'):
  * GET    /api/admin/hidden-gems/pending          — pending queue
  * GET    /api/admin/hidden-gems/reported         — reported gems
  * GET    /api/admin/hidden-gems/guide-applications — guide applications

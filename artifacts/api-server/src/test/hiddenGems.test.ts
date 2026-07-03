@@ -760,7 +760,7 @@ describe("Hidden Gems — admin actions", () => {
       {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem({ status: "pending" })],
-        profiles: [{ id: ADMIN_ID, is_admin: true }],
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
         gemVerifications: [],
       },
       ADMIN_ID,
@@ -773,7 +773,7 @@ describe("Hidden Gems — admin actions", () => {
     const client = makeFakeClient(
       {
         featureFlags: { hidden_gems_enabled: true },
-        profiles: [{ id: USER_ID, is_admin: false }],
+        profiles: [{ id: USER_ID, role: "user" }],
       },
       USER_ID,
     );
@@ -790,7 +790,7 @@ describe("Hidden Gems — admin actions", () => {
       {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem({ status: "pending" })],
-        profiles: [{ id: ADMIN_ID, is_admin: true }],
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
         gemVerifications: [],
       },
       ADMIN_ID,
@@ -814,7 +814,7 @@ describe("Hidden Gems — admin actions", () => {
       {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem()],
-        profiles: [{ id: ADMIN_ID, is_admin: true }],
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
       },
       ADMIN_ID,
     );
@@ -835,7 +835,7 @@ describe("Hidden Gems — admin actions", () => {
       {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem(), makeActiveGem({ id: CANONICAL_ID })],
-        profiles: [{ id: ADMIN_ID, is_admin: true }],
+        profiles: [{ id: ADMIN_ID, role: "admin" }],
       },
       ADMIN_ID,
     );

@@ -1,0 +1,239 @@
+Travel Buddy — Verify Production Profile + GPS SQL Deployment
+
+Verify everything we just applied in Supabase production.
+
+Context:
+We manually applied/fixed:
+1. `profiles.account_status`
+2. `profile_privacy_settings`
+3. `user_deletion_requests`
+4. `profiles.role`
+5. `profiles.display_name`
+6. Admin role set for profile id:
+   `92602b6c-0eca-433d-9ee2-a82696b3837f`
+7. `profiles.cover_photo_url` was already present
+8. The user confirmed the admin update succeeded
+
+Do not add new features.
+Do not redesign UI.
+Do not change code unless a real verification failure is proven.
+This is a verification-first pass.
+
+Goal:
+Confirm the production database, backend routes, profile/admin behavior, GPS/location privacy, and mobile assumptions are now consistent and working.
+
+Part 1 — Production schema verification
+
+Run production verification queries, using the available Supabase production connection or Management API if available.
+
+Verify profile columns:
+- profiles.account_status
+- profiles.cover_photo_url
+- profiles.role
+- profiles.display_name
+- profiles.handle
+- profiles.id
+
+Expected:
+- account_status exists, text, default active, not nullable
+- cover_photo_url exists
+- role exists, default user, not nullable if migration applied that way
+- display_name exists
+- handle exists
+- id exists
+
+Verify admin user:
+- profile id `92602b6c-0eca-433d-9ee2-a82696b3837f` exists
+- role = admin
+
+Verify privacy/deletion tables:
+- profile_privacy_settings exists
+- user_deletion_requests exists
+- RLS enabled on both
+- policies exist:
+  - profile_privacy_settings: pps_own, pps_svc
+  - user_deletion_requests: udr_own, udr_svc
+- index exists:
+  - udr_status_scheduled_idx
+
+Verify profile constraints:
+- account_status check allows:
+  - active
+  - deactivated
+  - pending_deletion
+  - deleted
+  - suspended
+  - banned
+- role check allows:
+  - user
+  - admin
+
+Part 2 — Backend route verification
+
+Verify backend code and, where possible, route behavior:
+
+1. Profile privacy:
+   - GET /api/me/privacy
+   - PATCH /api/me/privacy
+   Confirm:
+   - requireUser
+   - returns defaults if no row
+   - writes profile_privacy_settings
+   - enum validation matches DB constraints
+   - no db_error if table exists
+
+2. Account lifecycle:
+   - POST /api/me/deactivate
+   - POST /api/me/reactivate
+   - POST /api/me/delete-request
+   Confirm:
+   - requireUser
+   - account_status write path is valid
+   - delete request upserts into user_deletion_requests
+   - no hard failure from missing table/column
+
+3. Admin:
+   - admin user list / admin user summary routes that select account_status
+   - hidden gems admin routes
+   Confirm:
+   - use profiles.role, not profiles.is_admin
+   - admin profile id above passes role check
+   - non-admin should 403
+   - no route references nonexistent profiles.is_admin
+   - no route references nonexistent username if production uses handle
+
+4. Profile core:
+   - GET /api/me/profile
+   - PATCH /api/me/profile
+   - cover upload route
+   - avatar upload route
+   Confirm:
+   - cover_photo_url can be selected/written
+   - display_name handling is safe now that column exists
+   - handle is used correctly where username is absent
+   - no PGRST204 missing-column issue remains
+
+Part 3 — GPS/location verification
+
+Verify production GPS/location schema:
+- discovery_places lat
+- discovery_places lng
+- discovery_places osm_id
+- discovery_places primary_category
+- discovery_places saved_count
+- wishlist_places exists
+- decrement_discovery_place_saved_count exists
+- decrement function is SECURITY DEFINER
+- service_role has EXECUTE if applicable
+- stamp tables exist:
+  - stamp_definitions
+  - user_stamps
+  - stamp_award_events
+  - stamp_progress
+- anon/authenticated do NOT have column grants on user_stamps.lat/lng
+
+Verify backend privacy behavior:
+- hidden gems protected coordinates are redacted before public response
+- user_stamps lat/lng omitted from API responses
+- public place coordinates are allowed
+- private user GPS is not exposed publicly
+- no backend endpoint requires manually typed coordinate strings from normal users
+
+Part 4 — Mobile/frontend verification
+
+Inspect mobile/frontend assumptions:
+
+1. Profile:
+   - profile edit/display uses handle or display_name safely
+   - does not assume username exists unless backend maps handle to username
+   - avatar fallback works
+   - cover fallback works
+   - profile save uses API server
+   - privacy settings use API server
+
+2. Admin:
+   - admin visibility/guards use role
+   - no frontend relies on is_admin
+
+3. GPS/location:
+   - no normal-user TextInput asks for latitude/longitude/coordinates
+   - GPS-required flows use permission/capture flow or are honestly disabled
+   - no direct Supabase writes to profile/location tables
+
+Part 5 — Search for broken assumptions
+
+Search entire repo for:
+- `is_admin`
+- `username`
+- `display_name`
+- `account_status`
+- `profile_privacy_settings`
+- `user_deletion_requests`
+- `cover_photo_url`
+- `profiles.role`
+- `profiles.username`
+- `lat`
+- `lng`
+- `coordinates`
+
+Flag only real issues:
+- backend selecting `username` from profiles if column does not exist
+- backend selecting `display_name` before column was added, if not fixed
+- frontend expecting username directly from DB instead of mapped handle
+- hidden gems/admin still using is_admin
+- direct Supabase writes to profile/location tables
+- public GPS leaks
+
+Part 6 — Validation commands
+
+Run:
+- `pnpm --filter @workspace/api-server run typecheck`
+- `cd travel-buddy-standalone && pnpm typecheck`
+- `pnpm run typecheck` if practical
+- `bash scripts/sync-standalone.sh --check-source`
+- `bash scripts/sync-standalone.sh --check-deps`
+- `pnpm --filter @workspace/scripts run test:routes-guard` if available
+- `bash scripts/test-sync-standalone.sh` if practical
+- relevant backend/profile/location tests if existing
+
+Part 7 — Fix policy
+
+Only fix if a real verification failure is proven:
+- missing column/table/policy/index
+- route still checks profiles.is_admin
+- route selects nonexistent profiles.username
+- route selects nonexistent columns
+- enum mismatch between backend and DB
+- fake success after DB failure
+- public GPS leak
+- direct live Supabase mutation to profile/location table
+- admin role still cannot work
+
+Do not fix:
+- cosmetic UI
+- future 0093 stamp activation
+- broad GPS autocomplete
+- unrelated trip/event/RAB systems
+- new features
+
+Final report must include:
+1. Executive summary
+2. Production schema verification table
+3. Admin role verification
+4. Backend route verification table
+5. Profile core verification
+6. GPS/location privacy verification
+7. Mobile/frontend assumption verification
+8. Broken assumptions found/fixed
+9. Files changed, if any
+10. Remaining real blockers
+11. Manual production actions still required
+12. Validation table
+13. Commit message, if changes were made
+
+Important:
+Do not claim production is fixed unless production verification proves it.
+The user manually confirmed admin update succeeded, but still verify by query.
+Use `handle` instead of `username` if production has no username column.
+No private GPS leaks.
+No fake success.
