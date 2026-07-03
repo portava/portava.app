@@ -1,12 +1,9 @@
 /**
  * Location Settings screen
  *
- * Accessible from profile/settings. Shows:
- * - Current location mode with description
- * - Pause-sharing toggle
- * - Per-feature visibility selectors (Pulse, Discovery)
- * - Safe Return toggle
- * - Trusted-circle live share management stub
+ * Accessible from Settings → "Location settings".
+ * Uses getMyLocationPrivacy / updateMyLocationPrivacy from the map service,
+ * which call GET/PATCH /api/me/location-preferences.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -14,22 +11,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { ArrowLeft, MapPin, Navigation, EyeOff, Shield, Users, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, MapPin, Navigation, EyeOff, Users, ChevronRight } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type LocationMode = 'off' | 'city_only' | 'nearby' | 'live_during_activity' | 'trusted_circle_live';
-type VisibilityOption = 'city_only' | 'neighborhood' | 'venue_tagged' | 'exact_hidden' | 'no_location';
-
-interface LocationPrefs {
-  locationMode: LocationMode;
-  sharingPaused: boolean;
-  pulseVisibility: VisibilityOption | null;
-  discoveryVisibility: VisibilityOption | null;
-  safeReturnEnabled: boolean;
-  trustedCircleShare: boolean;
-  hotelBlurEnabled: boolean;
-}
+import {
+  getMyLocationPrivacy,
+  updateMyLocationPrivacy,
+  type LocationMode,
+  type LocationVisibility,
+  type LocationPrivacy,
+} from '../../src/services/map';
 
 const MODE_INFO: Record<LocationMode, { label: string; description: string; Icon: React.ComponentType<any> }> = {
   off: {
@@ -59,7 +49,7 @@ const MODE_INFO: Record<LocationMode, { label: string; description: string; Icon
   },
 };
 
-const VISIBILITY_LABELS: Record<VisibilityOption, string> = {
+const VISIBILITY_LABELS: Record<LocationVisibility, string> = {
   city_only:    'City only',
   neighborhood: 'Neighborhood',
   venue_tagged: 'Venue tagged',
@@ -68,89 +58,38 @@ const VISIBILITY_LABELS: Record<VisibilityOption, string> = {
 };
 
 const ORDERED_MODES: LocationMode[] = ['off', 'city_only', 'nearby', 'live_during_activity', 'trusted_circle_live'];
-const ORDERED_VISIBILITY: VisibilityOption[] = ['city_only', 'neighborhood', 'venue_tagged', 'exact_hidden', 'no_location'];
+const ORDERED_VISIBILITY: LocationVisibility[] = ['city_only', 'neighborhood', 'venue_tagged', 'exact_hidden', 'no_location'];
 
 // ── Hook: load/save preferences ───────────────────────────────────────────────
 
-async function getToken(): Promise<string | null> {
-  try {
-    const { supabase } = await import('../../src/lib/supabase');
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function useLocationPrefs() {
-  const [prefs, setPrefs] = useState<LocationPrefs | null>(null);
+  const [prefs, setPrefs] = useState<LocationPrivacy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const apiBase = (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
-
-  const defaultPrefs: LocationPrefs = {
-    locationMode: 'city_only',
-    sharingPaused: false,
-    pulseVisibility: null,
-    discoveryVisibility: null,
-    safeReturnEnabled: true,
-    trustedCircleShare: false,
-    hotelBlurEnabled: true,
-  };
-
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const token = await getToken();
-      if (!token) { if (alive) { setPrefs(defaultPrefs); setLoading(false); } return; }
-      try {
-        const r = await fetch(`${apiBase}/api/me/location-preferences`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const d = await r.json();
-        if (alive) {
-          setPrefs({
-            locationMode:        d.locationMode ?? 'city_only',
-            sharingPaused:       Boolean(d.sharingPaused),
-            pulseVisibility:     d.pulseVisibility ?? null,
-            discoveryVisibility: d.discoveryVisibility ?? null,
-            safeReturnEnabled:   d.safeReturnEnabled !== false,
-            trustedCircleShare:  Boolean(d.trustedCircleShare),
-            hotelBlurEnabled:    d.hotelBlurEnabled !== false,
-          });
-        }
-      } catch {
-        if (alive) setPrefs(defaultPrefs);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
+    getMyLocationPrivacy().then((p) => {
+      if (alive) { setPrefs(p); setLoading(false); }
+    });
     return () => { alive = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const save = useCallback(async (patch: Partial<LocationPrefs>) => {
+  const save = useCallback(async (patch: Partial<LocationPrivacy>) => {
     if (!prefs) return;
     const previous = prefs;
     setPrefs({ ...prefs, ...patch });
     setSaving(true);
     try {
-      const token = await getToken();
-      if (!token) throw new Error('not_authed');
-      const response = await fetch(`${apiBase}/api/me/location-preferences`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(patch),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const ok = await updateMyLocationPrivacy(patch);
+      if (!ok) throw new Error('save_failed');
     } catch {
       setPrefs(previous);
       Alert.alert('Save failed', 'Could not save preferences. Please try again.');
     } finally {
       setSaving(false);
     }
-  }, [prefs, apiBase]);
+  }, [prefs]);
 
   return { prefs, loading, saving, save };
 }
@@ -343,7 +282,7 @@ export default function LocationSettingsScreen() {
             })),
           ]}
           onSelect={(k) => {
-            save({ pulseVisibility: k === '__inherit__' ? null : (k as VisibilityOption) });
+            save({ pulseVisibility: k === '__inherit__' ? null : (k as LocationVisibility) });
             setShowPulseSheet(false);
           }}
           onClose={() => setShowPulseSheet(false)}
@@ -364,7 +303,7 @@ export default function LocationSettingsScreen() {
             })),
           ]}
           onSelect={(k) => {
-            save({ discoveryVisibility: k === '__inherit__' ? null : (k as VisibilityOption) });
+            save({ discoveryVisibility: k === '__inherit__' ? null : (k as LocationVisibility) });
             setShowDiscoverySheet(false);
           }}
           onClose={() => setShowDiscoverySheet(false)}
@@ -409,7 +348,7 @@ function OptionSheet({
   );
 }
 
-const VISIBILITY_DESCRIPTIONS: Record<VisibilityOption, string> = {
+const VISIBILITY_DESCRIPTIONS: Record<LocationVisibility, string> = {
   city_only:    'Only city name is shown on posts.',
   neighborhood: 'Neighborhood label shown (no exact address).',
   venue_tagged: 'Venue name shown if tagged.',
