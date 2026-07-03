@@ -44,20 +44,43 @@ export async function getMyProfile(): Promise<ProfileRow | null> {
 
 export async function updateMyProfile(patch: Partial<ProfileRow>): Promise<ProfileRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data: s } = await supabase.auth.getSession();
-  const uid = s.session?.user?.id;
-  if (!uid) return null;
-  const row: any = {};
-  if (patch.name !== undefined) row.name = patch.name;
-  if (patch.bio !== undefined) row.bio = patch.bio;
-  if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
-  if (patch.currentCity !== undefined) row.current_city = patch.currentCity;
-  if (patch.openToMeet !== undefined) row.open_to_meet = patch.openToMeet;
-  if (patch.isPrivate !== undefined) row.is_private = patch.isPrivate;
-  if (patch.interests !== undefined) row.interests = patch.interests;
-  const { data, error } = await supabase.from('profiles').update(row).eq('id', uid).select('*').single();
-  if (error || !data) return null;
-  return mapProfile(data);
+  // Route through the API server so the update uses the service role key,
+  // bypassing PostgREST's JWT verification (P-256 key rotation issue).
+  const token = await freshToken();
+  if (!token) return null;
+  const body: Record<string, unknown> = {};
+  if (patch.name !== undefined) body.displayName = patch.name;
+  if (patch.bio !== undefined) body.bio = patch.bio;
+  if (patch.avatarUrl !== undefined) body.avatarUrl = patch.avatarUrl;
+  if (patch.currentCity !== undefined) body.currentCity = patch.currentCity;
+  if (patch.openToMeet !== undefined) body.openToMeet = patch.openToMeet;
+  if (patch.isPrivate !== undefined) body.isPrivate = patch.isPrivate;
+  if (patch.interests !== undefined) body.interests = patch.interests;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/me/profile`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (!data) return null;
+  // API returns camelCase; map back to ProfileRow
+  return {
+    id: data.id,
+    handle: data.handle ?? data.username ?? '',
+    name: data.displayName ?? data.name ?? '',
+    avatarUrl: data.avatarUrl ?? null,
+    homeCity: data.homeCity ?? null,
+    homeCountry: data.homeCountry ?? null,
+    currentCity: data.currentCity ?? null,
+    travelStyle: data.travelStyle ?? null,
+    interests: data.interests ?? [],
+    verified: data.verified ?? false,
+    openToMeet: data.openToMeet ?? false,
+    isPrivate: data.isPrivate ?? false,
+    bio: data.bio ?? null,
+  };
 }
 
 /* ---------- Trips ---------- */
@@ -262,12 +285,27 @@ export async function declineTripInvite(tripId: string): Promise<void> {
 
 export async function addMember(tripId: string, userId: string, role: 'member' | 'invited' = 'member'): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
-  const { error } = await supabase.from('trip_members').insert({ trip_id: tripId, user_id: userId, role });
-  return !error;
+  // Route through the API server (service role key) to bypass PostgREST RLS.
+  const token = await freshToken();
+  if (!token) return false;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/members`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, role }),
+  });
+  return res.ok;
 }
 
 export async function removeMember(tripId: string, userId: string): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
-  const { error } = await supabase.from('trip_members').delete().eq('trip_id', tripId).eq('user_id', userId);
-  return !error;
+  // Route through the API server (service role key) to bypass PostgREST RLS.
+  const token = await freshToken();
+  if (!token) return false;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/members/${userId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
 }

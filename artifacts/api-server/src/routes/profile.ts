@@ -257,6 +257,7 @@ const patchProfileSchema = z.object({
   preferredLanguage: z.string().max(20).nullish(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateOfBirth must be YYYY-MM-DD").nullable().optional(),
   tagPermission: z.enum(['anyone', 'interacted', 'friends_only', 'nobody']).optional(),
+  isPrivate: z.boolean().optional(),
 });
 
 router.patch("/me/profile", async (req, res) => {
@@ -326,6 +327,7 @@ router.patch("/me/profile", async (req, res) => {
   }
 
   if (p.tagPermission !== undefined) row.tag_permission = p.tagPermission;
+  if (p.isPrivate !== undefined) row.is_private = p.isPrivate;
 
   if (p.username !== undefined) {
     const v = validateUsername(p.username);
