@@ -60,7 +60,7 @@ function MemoryCard({ memory, onVisibilityChange }: MemoryCardProps) {
   return (
     <View style={mc.card}>
       {memory.photoUrl && (
-        <Image source={{ uri: memory.photoUrl }} style={mc.photo} />
+        <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
       )}
       <View style={mc.body}>
         <View style={mc.row}>
@@ -344,7 +344,7 @@ const mc = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, overflow: 'hidden',
     marginBottom: space.md,
   },
-  photo: { width: '100%', height: 140, backgroundColor: color.haze },
+  photo: { width: '100%', aspectRatio: 4 / 5, backgroundColor: color.haze },
   body: { padding: space.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: 4 },
   catLabel: { fontFamily: 'Courier', fontSize: 10, color: color.mute, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },

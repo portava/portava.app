@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import {
   MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
@@ -40,7 +40,7 @@ function resolveLocationChipVariant(
 }
 
 /* shared bits */
-function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string } }) {
+function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string }; light?: boolean }) {
   const { userId: currentUserId } = useSession();
   const ringState = useHighlightRingState(item.author?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -67,10 +67,10 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
         {badge ? <View style={[s.kindBadge, { backgroundColor: badge.bg }]}><Text style={[s.kindText, { color: badge.fg }]}>{badge.label}</Text></View> : null}
         {item.author ? (
           <Pressable onPress={handleAuthorPress}>
-            <Text style={s.author}>{item.author.name}</Text>
+            <Text style={[s.author, light ? { color: color.onInk } : undefined]}>{item.author.name}</Text>
           </Pressable>
         ) : null}
-        <Text style={s.meta}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
+        <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
       </View>
       <Pressable
         hitSlop={layout.hitSlop}
@@ -86,7 +86,7 @@ function AuthorRow({ item, badge }: { item: PulseFeedItem; badge?: { label: stri
           )
         }
       >
-        <MoreHorizontal size={18} color={color.faint} />
+        <MoreHorizontal size={18} color={light ? color.onInkMute : color.faint} />
       </Pressable>
 
       {ringState?.highlights && (
@@ -114,8 +114,19 @@ function FitBadge() {
   return <View style={s.fit}><Clock size={11} color={color.success} /><Text style={s.fitText}>Fits your time</Text></View>;
 }
 
+/* ── Traveler Post placeholder (no media / failed image) ── */
+function PostMediaPlaceholder({ city }: { city?: string }) {
+  return (
+    <View style={s.postPlaceholder}>
+      <MapPin size={30} color={color.onInk} />
+      {city ? <Text style={s.postPlaceholderCity}>{city.toUpperCase()}</Text> : null}
+    </View>
+  );
+}
+
 /* ── Traveler Post ── */
 function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+  const { width } = useWindowDimensions();
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
@@ -123,19 +134,53 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
   const [mediaFailed, setMediaFailed] = useState(false);
   if (dismissed) return null;
 
+  // 4:5 portrait media frame; capped at 600 for tablet/web
+  const effectiveWidth = Math.min(width, 600);
+  const mediaHeight = Math.round(effectiveWidth * (5 / 4));
+  const tripLabel = (item as any).tripLabel as string | undefined;
+
   return (
-    <View style={s.card}>
-      <AuthorRow item={item} />
-      {item.mediaUrl || true ? (
-        <View style={s.media}>
-          {item.mediaUrl && !mediaFailed ? <Image source={{ uri: item.mediaUrl }} style={StyleSheet.absoluteFill} onError={() => setMediaFailed(true)} /> : null}
-          <View style={s.mediaTag}><Text style={s.mediaTagText}>POST</Text></View>
+    <View style={[s.postCard, width > 600 ? s.postCardWide : undefined]}>
+      {/* ── Immersive media frame ── */}
+      <View style={[s.postMedia, { height: mediaHeight }]}>
+        {item.mediaUrl && !mediaFailed ? (
+          <Image
+            source={{ uri: item.mediaUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            onError={() => setMediaFailed(true)}
+          />
+        ) : (
+          <PostMediaPlaceholder city={item.city} />
+        )}
+        {/* Bottom scrim for AuthorRow readability */}
+        <View style={s.postScrim} pointerEvents="none" />
+        {/* Passport-stamp label — city name top-left */}
+        <View style={s.postcardLabel}>
+          <MapPin size={9} color={color.onInk} />
+          <Text style={s.postcardLabelText}>{item.city?.toUpperCase() ?? 'POSTCARD'}</Text>
         </View>
-      ) : null}
-      {item.caption ? <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} /> : null}
-      <TagRow tags={item.tags} />
-      {chipVariant !== 'no_location' && (
-        <View style={s.locationRow}>
+        {/* Date mark top-right */}
+        <Text style={s.postcardDate}>{item.timeAgo}</Text>
+        {/* Optional trip label badge */}
+        {tripLabel ? (
+          <View style={s.tripLabelBadge}>
+            <Text style={s.tripLabelBadgeText}>{tripLabel}</Text>
+          </View>
+        ) : null}
+        {/* AuthorRow on bottom scrim */}
+        <View style={s.postAuthorOverlay}>
+          <AuthorRow item={item} light />
+        </View>
+      </View>
+
+      {/* ── Content footer ── */}
+      <View style={s.postFooter}>
+        {item.caption ? (
+          <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} />
+        ) : null}
+        <TagRow tags={item.tags} />
+        {chipVariant !== 'no_location' && (
           <LocationChip
             variant={chipVariant}
             label={chipLabel}
@@ -143,27 +188,27 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
             size="sm"
             muted
           />
-        </View>
-      )}
-      <View style={s.actions}>
-        <View style={{ flex: 1 }}>
-          <PostEngagementBar
-            postId={item.id}
-            likeCount={item.likeCount ?? 0}
-            commentCount={item.commentCount ?? 0}
-            likedByMe={item.likedByMe ?? false}
-            canLike={item.canLike !== false}
-            canComment={item.canComment !== false}
-            canShare={item.canShare !== false}
+        )}
+        <View style={s.actions}>
+          <View style={{ flex: 1 }}>
+            <PostEngagementBar
+              postId={item.id}
+              likeCount={item.likeCount ?? 0}
+              commentCount={item.commentCount ?? 0}
+              likedByMe={item.likedByMe ?? false}
+              canLike={item.canLike !== false}
+              canComment={item.canComment !== false}
+              canShare={item.canShare !== false}
+            />
+          </View>
+          <CompassFeedbackMenu
+            recommendationId={item.id}
+            itemType={item.type}
+            category={item.type}
+            onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+            onDismiss={() => setDismissed(true)}
           />
         </View>
-        <CompassFeedbackMenu
-          recommendationId={item.id}
-          itemType={item.type}
-          category={item.type}
-          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={() => setDismissed(true)}
-        />
       </View>
     </View>
   );
@@ -542,6 +587,27 @@ const s = StyleSheet.create({
   safetyCard: { backgroundColor: '#FBF6EC', borderColor: '#EAD9B5' },
   safetyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   safetyLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.warn, letterSpacing: 1 },
+
+  // ── Immersive PostCard (type='post') ─────────────────────────────────────────
+  postCard: { backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
+  postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%' },
+  postMedia: { overflow: 'hidden', backgroundColor: color.deep },
+  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 110, backgroundColor: 'rgba(17,17,15,0.62)' },
+  postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.md },
+  postcardLabel: {
+    position: 'absolute', top: 10, left: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: 'rgba(250,249,246,0.70)',
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4,
+    backgroundColor: 'rgba(17,17,15,0.38)',
+  },
+  postcardLabelText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 1 },
+  postcardDate: { position: 'absolute', top: 12, right: 12, fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: 'rgba(250,249,246,0.85)', letterSpacing: 0.5 },
+  tripLabelBadge: { position: 'absolute', bottom: 62, left: 10, backgroundColor: color.signal, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
+  tripLabelBadgeText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.5 },
+  postFooter: { padding: space.md, gap: space.sm },
+  postPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  postPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },
 });
 
 const plc = StyleSheet.create({

@@ -14,7 +14,7 @@ import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 type Variant = 'tall' | 'wide' | 'square';
 
 export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: Post; variant?: Variant; rotate?: number }) {
-  const h = variant === 'tall' ? 230 : variant === 'wide' ? 150 : 190;
+  const h = variant === 'tall' ? 290 : variant === 'wide' ? 200 : 250;
   const date = new Date(post.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
   const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
@@ -38,9 +38,13 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
               StyleSheet.absoluteFill,
               shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
             ]}
+            resizeMode="cover"
           />
         ) : (
-          <View style={[StyleSheet.absoluteFill, pt.noImage]}><Text style={pt.noImageText} numberOfLines={3}>{post.title ?? post.caption}</Text></View>
+          <View style={[StyleSheet.absoluteFill, pt.noImage]}>
+            <MapPin size={22} color={color.onInk} />
+            <Text style={pt.noImageText} numberOfLines={2}>{post.destination.city.toUpperCase()}</Text>
+          </View>
         )}
         {/* video play badge */}
         {post.media[0]?.kind === 'video' && (
@@ -94,12 +98,12 @@ export function PostcardWall({ posts }: { posts: Post[] }) {
 const pt = StyleSheet.create({
   card: {
     backgroundColor: color.paper, borderRadius: 6,
-    borderWidth: 4, borderColor: '#FFFFFF',
+    borderWidth: 6, borderColor: '#FFFFFF',
     overflow: 'hidden', ...shadow.card,
   },
   media: { flex: 1, backgroundColor: color.deep },
-  noImage: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center', padding: space.md },
-  noImageText: { ...t.body, color: color.onInk, textAlign: 'center' },
+  noImage: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center', padding: space.md, gap: 8 },
+  noImageText: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.onInk, letterSpacing: 1, textAlign: 'center' },
   playBadge: {
     position: 'absolute', top: '50%', left: '50%',
     transform: [{ translateX: -14 }, { translateY: -14 }],
@@ -110,12 +114,12 @@ const pt = StyleSheet.create({
     paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3,
   },
   dateText: { fontFamily: 'Courier', fontSize: 8, fontWeight: '700', color: color.onInk, letterSpacing: 1 },
-  footer: { backgroundColor: color.paper, padding: space.sm, gap: 2, borderTopWidth: 1, borderTopColor: color.haze },
+  footer: { backgroundColor: color.paper, padding: space.md, gap: 2, borderTopWidth: 1, borderTopColor: color.haze },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   loc: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.deep, letterSpacing: 0.5 },
   caption: { ...t.small, color: color.ink, fontSize: 12 },
 
-  wall: { flexDirection: 'row', gap: space.md, paddingHorizontal: space.lg },
+  wall: { flexDirection: 'row', gap: space.md, paddingHorizontal: space.md },
   col: { flex: 1, gap: space.md },
   empty: { marginHorizontal: space.lg, padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze, alignItems: 'center', gap: 4 },
   emptyTitle: { ...t.bodyStrong, color: color.ink },

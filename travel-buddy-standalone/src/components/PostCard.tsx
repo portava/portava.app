@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, Platform,
+  View, Text, Image, Pressable, StyleSheet, Platform, Dimensions,
 } from 'react-native';
 import { router } from 'expo-router';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
@@ -14,6 +14,9 @@ import { useSession } from '../context/SessionContext';
 import { ReportPostSheet } from './ReportPostSheet';
 import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu';
 import { SaveButton } from './SaveButton';
+
+const { height: _screenH } = Dimensions.get('window');
+const HERO_HEIGHT = Math.min(Math.round(_screenH * 0.60), 560);
 
 const DEFAULT_SETTINGS: PostSettings = {
   commentsSetting: 'everyone',
@@ -64,6 +67,15 @@ function Byline({ post, onInk }: { post: Post; onInk?: boolean }) {
   );
 }
 
+function ImgPlaceholder({ city, fill }: { city?: string; fill?: boolean }) {
+  return (
+    <View style={[styles.imgPlaceholder, fill ? StyleSheet.absoluteFill : undefined]}>
+      <MapPin size={28} color={color.onInk} />
+      {city ? <Text style={styles.imgPlaceholderCity}>{city.toUpperCase()}</Text> : null}
+    </View>
+  );
+}
+
 /* 1. HERO — full-bleed image, scrim, editorial title overlaid. */
 function HeroCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
@@ -77,7 +89,10 @@ function HeroCard({ post }: { post: Post }) {
 
   return (
     <Pressable style={[styles.card, styles.hero]} onPress={() => router.push(`/post/${post.id}`)}>
-      {!imgFailed ? <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} onError={() => setImgFailed(true)} /> : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E5E7EB' }]} />}
+      {!imgFailed
+        ? <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setImgFailed(true)} />
+        : <ImgPlaceholder city={post.destination?.city} fill />
+      }
       <Scrim />
       <View style={styles.heroTop}>
         <Stamp label={post.category} tone="onInk" />
@@ -156,27 +171,27 @@ function StandardCard({ post }: { post: Post }) {
           <MoreVertical size={16} color={color.mute} />
         </Pressable>
       </View>
-      {hasMedia && (
-        <View>
-          {!imgFailed ? (
-            <Image
-              source={{ uri: post.media[0].url }}
-              style={[
-                styles.stdImage,
-                shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
-              ]}
-              onError={() => setImgFailed(true)}
-            />
-          ) : (
-            <View style={[styles.stdImage, { backgroundColor: '#E5E7EB' }]} />
-          )}
-          {!imgFailed && post.media[0]?.kind === 'video' && (
-            <View style={styles.playBadge}>
-              <PlayCircle size={32} color="#FFFFFF" />
-            </View>
-          )}
-        </View>
-      )}
+      {/* Always render the media wrapper — placeholder shown for text-only or failed images */}
+      <View style={styles.stdImageWrap}>
+        {hasMedia && !imgFailed ? (
+          <Image
+            source={{ uri: post.media[0].url }}
+            style={[
+              StyleSheet.absoluteFill,
+              shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
+            ]}
+            resizeMode="cover"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <ImgPlaceholder city={post.destination?.city} fill />
+        )}
+        {hasMedia && !imgFailed && post.media[0]?.kind === 'video' && (
+          <View style={styles.playBadge}>
+            <PlayCircle size={32} color="#FFFFFF" />
+          </View>
+        )}
+      </View>
       <View style={styles.stdBody}>
         <View style={styles.stampRow}>
           <Stamp label={post.category} />
@@ -299,7 +314,7 @@ function ItineraryCard({ post }: { post: Post }) {
 
   return (
     <Pressable style={[styles.card, styles.itin]} onPress={() => router.push(`/post/${post.id}`)}>
-      {post.media[0] && <Image source={{ uri: post.media[0].url }} style={styles.itinCover} />}
+      {post.media[0] && <Image source={{ uri: post.media[0].url }} style={styles.itinCover} resizeMode="cover" />}
       <View style={styles.itinBody}>
         <View style={styles.itinHead}>
           <View style={styles.stampRow}>
@@ -347,7 +362,7 @@ function ItineraryCard({ post }: { post: Post }) {
 const styles = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, overflow: 'hidden', ...shadow.card },
 
-  hero: { height: 460 },
+  hero: { height: HERO_HEIGHT },
   heroTop: { position: 'absolute', top: space.lg, left: space.lg },
   heroMoreBtn: { position: 'absolute', top: space.lg, right: space.lg, padding: 4 },
   heroBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.lg, gap: space.sm },
@@ -357,10 +372,13 @@ const styles = StyleSheet.create({
 
   standard: {},
   stdHead: { flexDirection: 'row', alignItems: 'center', padding: space.md, gap: space.sm },
-  stdImage: { width: '100%', aspectRatio: 4 / 3, backgroundColor: color.haze },
+  stdImageWrap: { width: '100%', aspectRatio: 4 / 5, backgroundColor: color.deep, overflow: 'hidden' },
   playBadge: { position: 'absolute', top: '50%', left: '50%', transform: [{ translateX: -16 }, { translateY: -16 }] },
   stdBody: { padding: space.lg, gap: space.md },
   moreBtn: { padding: 4 },
+
+  imgPlaceholder: { alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: color.deep },
+  imgPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },
 
   question: { padding: space.lg, gap: space.md },
   qIconRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -371,7 +389,7 @@ const styles = StyleSheet.create({
   qMeta: { ...t.small, color: color.faint },
 
   itin: {},
-  itinCover: { width: '100%', height: 180, backgroundColor: color.haze },
+  itinCover: { width: '100%', height: 200, backgroundColor: color.haze },
   itinBody: { padding: space.lg, gap: space.sm },
   itinHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   itinTitle: { ...t.title, color: color.ink },
