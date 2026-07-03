@@ -150,6 +150,9 @@ STANDALONE_OWNED_FILES=(
   "src/services/__tests__/gems.submit.wizard.component.test.ts"
   "src/components/location/MapLocationPicker.machine.ts"
   "src/services/__tests__/mapLocationPicker.component.test.ts"
+  "app/settings/settings.machine.ts"
+  "app/settings/index.tsx"
+  "src/test/accountActivation.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

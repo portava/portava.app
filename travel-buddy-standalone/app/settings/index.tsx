@@ -9,6 +9,7 @@ import { color, space, type as t, radius, layout } from '../../src/theme/tokens'
 import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
+import { resolveAccountButton, applyReactivateResult } from './settings.machine';
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
@@ -100,14 +101,12 @@ export default function Settings() {
           text: 'Reactivate',
           onPress: async () => {
             const res = await reactivateAccount();
-            if (res.ok) {
-              setAccountStatus('active');
+            const directive = applyReactivateResult(res);
+            if (directive.type === 'success') {
+              setAccountStatus(directive.nextStatus);
               Alert.alert('Account reactivated', 'Your profile is now visible to other users.');
             } else {
-              const msg = res.errorKind === 'forbidden'
-                ? 'This account cannot be self-reactivated. Please contact support.'
-                : (res.message ?? 'Could not reactivate. Try again.');
-              Alert.alert('Error', msg);
+              Alert.alert('Error', directive.message);
             }
           },
         },
@@ -552,7 +551,7 @@ export default function Settings() {
 
           {(configured && isAuthed) && (
             <>
-              {accountStatus === 'deactivated' && (
+              {resolveAccountButton(accountStatus) === 'reactivate' && (
                 <Pressable
                   style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                   onPress={handleReactivate}
@@ -560,7 +559,7 @@ export default function Settings() {
                   <Text style={[styles.item, { color: color.success }]}>Reactivate account</Text>
                 </Pressable>
               )}
-              {accountStatus !== 'deactivated' && (
+              {resolveAccountButton(accountStatus) === 'deactivate' && (
                 <Pressable
                   style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                   onPress={handleDeactivate}
