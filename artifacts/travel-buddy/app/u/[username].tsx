@@ -25,7 +25,7 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import { getProfileByHandle, getProfileById } from '../../src/services/friends';
-import { blockUser, getBlockStatus } from '../../src/services/blocks';
+import { blockUser, getBlockStatus, unblockUser } from '../../src/services/blocks';
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
 import { submitReport, type ReportReason } from '../../src/services/reports';
@@ -614,6 +614,7 @@ export default function PublicPassportScreen() {
   const [social, setSocial] = useState<SocialProfile | null>(null);
   const [socialLoading, setSocialLoading] = useState(false);
   const [isBlockedRelation, setIsBlockedRelation] = useState(false);
+  const [iBlockedThem, setIBlockedThem] = useState(false);
   const [isMutedByMe, setIsMutedByMe] = useState(false);
 
   const loadSocial = useCallback(async (userId: string) => {
@@ -656,6 +657,7 @@ export default function PublicPassportScreen() {
       if (blockRes.ok && blockRes.data) {
         const bd = blockRes.data as any;
         setIsBlockedRelation(bd.iBlocked || bd.theyBlockedMe);
+        setIBlockedThem(bd.iBlocked === true);
       }
       if (muteRes.ok && muteRes.data) {
         setIsMutedByMe((muteRes.data as any).muted ?? false);
@@ -664,6 +666,17 @@ export default function PublicPassportScreen() {
 
     setSocialLoading(false);
   }, [username, currentUserId]);
+
+  const handleUnblock = useCallback(async () => {
+    if (!profile?.id) return;
+    const res = await unblockUser(profile.id);
+    if (res.ok) {
+      setIsBlockedRelation(false);
+      setIBlockedThem(false);
+    } else {
+      Alert.alert('Error', 'Could not unblock. Please try again.');
+    }
+  }, [profile?.id]);
 
   // Load social data whenever the passport profile resolves
   useEffect(() => {
@@ -748,6 +761,14 @@ export default function PublicPassportScreen() {
           <ShieldAlert size={40} color={color.haze} />
           <Text style={styles.stateTitle}>This user is unavailable</Text>
           <Text style={styles.stateSub}>You can't view this profile.</Text>
+          {iBlockedThem && (
+            <Pressable
+              style={{ marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: color.haze }}
+              onPress={handleUnblock}
+            >
+              <Text style={{ fontSize: 13, color: color.mute, fontWeight: '600' }}>Unblock</Text>
+            </Pressable>
+          )}
         </View>
       );
     }

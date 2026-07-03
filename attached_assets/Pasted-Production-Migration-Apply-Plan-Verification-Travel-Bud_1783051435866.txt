@@ -1,0 +1,184 @@
+Production Migration Apply Plan + Verification — Travel Buddy
+
+Create the exact production migration application plan for Travel Buddy.
+
+This is a planning + verification pass.
+Do not build new features.
+Do not change frontend UI.
+Do not rewrite backend systems.
+Do not apply production migrations unless explicitly instructed and tooling safely supports it.
+
+Goal:
+Turn the database/backend readiness audit into a production-safe migration checklist:
+- Which migrations must be applied before beta
+- What order to apply them in
+- What each migration changes
+- Which live features depend on each migration
+- How to verify each migration after applying
+- What risks/rollback notes exist
+- What production env/storage/admin setup is also required
+
+High-priority migration groups:
+- #120 blocking
+- #128 push tokens
+- #137 thread reads
+- #147 meetups
+- #172 highlights
+- #175 filters
+- #214 filters / feature dependency
+- #223 production dependency
+- #235 final production dependency
+
+Required work:
+
+1. Migration file inventory
+   - List every migration file in order.
+   - Identify the latest migration number.
+   - Identify missing numbers.
+   - Identify duplicate numbers.
+   - Identify renamed/conflicting migrations.
+   - Mark migrations related to:
+     - blocking
+     - push tokens
+     - thread reads
+     - meetups
+     - highlights
+     - filters
+     - profile/privacy
+     - trips
+     - Telegraph/messages
+     - notifications
+     - reports/moderation
+     - Rent a Buddy
+     - Safe Return
+     - media/storage
+     - feature flags
+
+2. Ship-blocking migration table
+   For each ship-blocking task/migration:
+   - Task number
+   - Migration file name
+   - Tables added
+   - Columns added
+   - Indexes added
+   - Constraints added
+   - RLS policies added/changed
+   - Feature flags inserted/updated
+   - Backend routes depending on it
+   - Frontend screens depending on it
+   - Whether it is safe to apply before beta
+   - Whether manual Supabase SQL Editor application is required
+   - Verification SQL after apply
+   - Risk notes
+
+3. Production apply order
+   Build the exact apply order:
+   - Include all dependencies before dependent migrations.
+   - Do not skip required earlier migrations.
+   - Warn if applying only selected migrations would break ordering.
+   - If migrations must be applied as one full batch, say so.
+   - If migrations can be applied individually, say which ones.
+
+4. Verification SQL checklist
+   For each required feature, provide SQL checks for production after migration:
+   - Table exists
+   - Column exists
+   - Index exists
+   - Constraint exists
+   - RLS policy exists
+   - Feature flag/default exists
+   - Critical enum/status values are accepted where applicable
+
+   Include checks for:
+   - blocks
+   - push_tokens
+   - thread_reads
+   - meetups/time polls
+   - highlights/highlight items
+   - filters/privacy fields
+   - hidden/reported content
+   - trip invites
+   - notification preferences
+   - Rent a Buddy booking/review/report fields
+   - Safe Return trip/session fields
+
+5. Backend compatibility verification
+   Confirm backend route code matches the migration schema:
+   - No route selects a missing column.
+   - No route inserts/updates a missing column.
+   - No Zod schema accepts fields that DB rejects.
+   - No DB constraint rejects valid app input.
+   - No live backend route depends on a future unapplied migration without a feature flag or safe fallback.
+
+6. Frontend compatibility verification
+   Confirm frontend service/screen code matches production schema:
+   - No service expects missing fields.
+   - No visible live screen depends on pending schema without fallback.
+   - Direct Supabase reads/writes are identified.
+   - Risky direct Supabase writes are either already moved to API server or listed as blockers.
+
+7. Production environment checklist
+   Audit required production setup:
+   - Supabase URL
+   - anon key
+   - service role key
+   - storage buckets
+   - bucket policies
+   - push notification credentials
+   - admin user role bootstrap
+   - feature flag defaults
+   - media upload limits
+   - notification preference defaults
+   - cron/scheduled jobs if any
+   - realtime subscriptions if any
+   - allowed origins/CORS if relevant
+
+8. Produce a manual Supabase runbook
+   Include:
+   - Pre-apply backup steps
+   - Confirm current production migration/version state
+   - Apply order
+   - SQL to run or migration files to apply
+   - Post-apply verification queries
+   - Smoke test checklist
+   - Rollback/risk notes
+   - What not to apply yet, if any
+
+9. Do not make code changes unless:
+   - a migration file is missing for live code
+   - a migration has invalid SQL
+   - migration order is broken
+   - a live backend route references a column that no migration creates
+   - a feature flag default required by live screens is missing
+
+10. Validation if any code/migration changes are made:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if practical
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - any migration/schema validation script found
+
+Final report must include:
+1. Executive summary
+2. Full migration inventory
+3. Ship-blocking migration table
+4. Exact production apply order
+5. Manual Supabase SQL/runbook
+6. Verification SQL checklist
+7. Production environment checklist
+8. Backend/frontend compatibility findings
+9. Required manual production actions
+10. Remaining ship blockers
+11. Non-blocking database/backend gaps
+12. Files changed, if any
+13. Validation table
+14. Commit message, if changes were made
+
+Important:
+Do not claim production is migrated unless verified directly.
+If local migration files exist but production status is unknown, mark them as “manual production verification required.”
+If a live feature depends on an unapplied migration, classify it as a ship blocker.
+Do not add new product scope.
+This pass is about safe production database readiness only.

@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging';
 import { useSession } from '../context/SessionContext';
 import { blockUser, getBlockList } from '../services/blocks';
+import { useBlockedIds } from '../context/BlockedIdsContext';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
@@ -254,6 +255,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  const { blockerIds } = useBlockedIds();
 
   const loadBlockList = useCallback(async () => {
     const res = await getBlockList();
@@ -273,10 +275,10 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   }, [reload, reloadRequests, loadBlockList]));
 
   const filtered = threads.filter((th) => {
-    // Hide direct threads where the other member is someone I blocked.
+    // Hide direct threads where the other member is blocked (either direction).
     if (th.threadType === 'direct' || th.threadType === 'rent_buddy_booking') {
       const otherId = th.otherMembers[0]?.id;
-      if (otherId && blockedIds.has(otherId)) return false;
+      if (otherId && (blockedIds.has(otherId) || blockerIds.has(otherId))) return false;
     }
     if (filter === 'direct' && th.threadType !== 'direct' && th.threadType !== 'rent_buddy_booking') return false;
     if (filter === 'trips' && th.threadType !== 'trip') return false;

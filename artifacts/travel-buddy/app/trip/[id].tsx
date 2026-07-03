@@ -214,9 +214,15 @@ function TripDetailScreen() {
         >
           <Share2 size={15} color={color.ink} /><Text style={styles.topBtnText}>Share Trip</Text>
         </Pressable>
-        <View style={[styles.topBtn, { opacity: 0.35 }]} accessibilityLabel="Edit trip (coming soon)">
-          <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
-        </View>
+        {isAuthed && realTrip?.ownerId === userId && (
+          <Pressable
+            style={styles.topBtn}
+            hitSlop={6}
+            onPress={() => router.push(`/trip/edit?id=${trip.id}` as any)}
+          >
+            <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>

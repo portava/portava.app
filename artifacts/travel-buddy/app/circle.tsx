@@ -33,9 +33,9 @@ function CircleUserRow({
   const [hidden, setHidden] = useState(false);
   const [inviteState, setInviteState] = useState<'idle' | 'loading' | 'done'>('idle');
   const invitingRef = useRef(false);
-  const { blockedIds } = useBlockedIds();
+  const { blockedIds, blockerIds } = useBlockedIds();
 
-  if (hidden || blockedIds.has(u.id)) return null;
+  if (hidden || blockedIds.has(u.id) || blockerIds.has(u.id)) return null;
 
   const displayName = u.name ?? u.handle ?? 'Traveler';
 

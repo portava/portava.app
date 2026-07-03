@@ -104,6 +104,20 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
           <CalendarDays size={12} color={color.mute} />
           <Text style={styles.inviteMetaText}>{dateStr}</Text>
         </View>
+        {(invite.visibility || invite.memberCount != null) && (
+          <View style={styles.inviteMeta}>
+            <Users size={12} color={color.mute} />
+            <Text style={styles.inviteMetaText} numberOfLines={1}>
+              {invite.memberCount != null ? `${invite.memberCount} member${invite.memberCount !== 1 ? 's' : ''}` : ''}
+              {invite.memberCount != null && invite.visibility ? ' · ' : ''}
+              {invite.visibility === 'public' ? 'Public'
+                : invite.visibility === 'buddies' ? 'Buddies only'
+                : invite.visibility === 'invite' ? 'Invite only'
+                : invite.visibility === 'private' ? 'Private'
+                : ''}
+            </Text>
+          </View>
+        )}
         <View style={styles.inviteActions}>
           <Pressable
             style={[styles.inviteBtn, styles.inviteBtnDecline]}

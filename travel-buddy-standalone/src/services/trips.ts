@@ -163,6 +163,10 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   const body: Record<string, any> = {};
   if (patch.title !== undefined) body.title = patch.title;
+  if (patch.destinationCity !== undefined) body.destinationCity = patch.destinationCity;
+  if (patch.destinationCountry !== undefined) body.destinationCountry = patch.destinationCountry;
+  if (patch.startDate !== undefined) body.startDate = patch.startDate;
+  if (patch.endDate !== undefined) body.endDate = patch.endDate;
   if (patch.status !== undefined) body.status = patch.status;
   if (patch.visibility !== undefined) body.visibility = patch.visibility;
   if (patch.coverUrl !== undefined) body.coverUrl = patch.coverUrl;
@@ -199,6 +203,8 @@ export interface TripInvite {
   endDate: string | null;
   coverUrl: string | null;
   invitedAt: string;
+  visibility: string | null;
+  memberCount: number | null;
   inviter: {
     id: string;
     name: string;

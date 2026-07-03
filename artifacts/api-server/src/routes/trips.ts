@@ -463,13 +463,26 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   // Fetch trip details
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
 
   const tripMap: Record<string, any> = {};
   for (const t of trips ?? []) tripMap[(t as any).id] = t;
+
+  // Count accepted members per trip (for invite preview)
+  const { data: memberCountData } = await sc
+    .from("trip_members")
+    .select("trip_id")
+    .in("trip_id", tripIds)
+    .in("role", ["owner", "member"]);
+
+  const memberCountMap: Record<string, number> = {};
+  for (const mr of memberCountData ?? []) {
+    const tid = (mr as any).trip_id as string;
+    memberCountMap[tid] = (memberCountMap[tid] ?? 0) + 1;
+  }
 
   // Collect unique owner IDs to resolve inviter profiles
   const ownerIds = [...new Set((trips ?? []).map((t: any) => t.owner_id as string))];
@@ -496,6 +509,8 @@ router.get("/me/trip-invites/pending", async (req, res) => {
         endDate:            trip.end_date ?? null,
         coverUrl:           trip.cover_url ?? null,
         invitedAt:          row.created_at,
+        visibility:         (trip.visibility as string) ?? null,
+        memberCount:        memberCountMap[row.trip_id] ?? null,
         inviter: inviter ? {
           id:        inviter.id,
           name:      inviter.name,

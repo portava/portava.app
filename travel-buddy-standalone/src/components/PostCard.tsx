@@ -68,10 +68,12 @@ function Byline({ post, onInk }: { post: Post; onInk?: boolean }) {
 function HeroCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [isReported, setIsReported] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const [imgFailed, setImgFailed] = useState(false);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+  if (isReported) return null;
 
   return (
     <Pressable style={[styles.card, styles.hero]} onPress={() => router.push(`/post/${post.id}`)}>
@@ -104,7 +106,7 @@ function HeroCard({ post }: { post: Post }) {
         </View>
       </View>
       {!isOwnPost && (
-        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} onReported={() => setIsReported(true)} />
       )}
       {isOwnPost && (
         <PostOwnerMenu
@@ -126,6 +128,7 @@ function HeroCard({ post }: { post: Post }) {
 function StandardCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [isReported, setIsReported] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const hasMedia = post.media.length > 0;
@@ -137,6 +140,7 @@ function StandardCard({ post }: { post: Post }) {
     : 'none';
   const [imgFailed, setImgFailed] = useState(false);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+  if (isReported) return null;
 
   return (
     <View style={[styles.card, styles.standard]}>
@@ -196,7 +200,7 @@ function StandardCard({ post }: { post: Post }) {
         />
       </View>
       {!isOwnPost && (
-        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} onReported={() => setIsReported(true)} />
       )}
       {isOwnPost && (
         <PostOwnerMenu
@@ -218,9 +222,11 @@ function StandardCard({ post }: { post: Post }) {
 function QuestionCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [isReported, setIsReported] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+  if (isReported) return null;
 
   return (
     <View style={[styles.card, styles.question]}>
@@ -263,7 +269,7 @@ function QuestionCard({ post }: { post: Post }) {
         </Pressable>
       </View>
       {!isOwnPost && (
-        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} onReported={() => setIsReported(true)} />
       )}
       {isOwnPost && (
         <PostOwnerMenu
@@ -285,9 +291,11 @@ function QuestionCard({ post }: { post: Post }) {
 function ItineraryCard({ post }: { post: Post }) {
   const { userId: currentUserId } = useSession();
   const [reportOpen, setReportOpen] = useState(false);
+  const [isReported, setIsReported] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [settings, setSettings] = useState<PostSettings>(DEFAULT_SETTINGS);
   const isOwnPost = !!(currentUserId && post.author.id === currentUserId);
+  if (isReported) return null;
 
   return (
     <Pressable style={[styles.card, styles.itin]} onPress={() => router.push(`/post/${post.id}`)}>
@@ -318,7 +326,7 @@ function ItineraryCard({ post }: { post: Post }) {
         </Pressable>
       </View>
       {!isOwnPost && (
-        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} />
+        <ReportPostSheet postId={post.id} visible={reportOpen} onClose={() => setReportOpen(false)} onReported={() => setIsReported(true)} />
       )}
       {isOwnPost && (
         <PostOwnerMenu
