@@ -1,0 +1,185 @@
+Build the focused Add to Trip / Add to Plan connection pass for Travel Buddy.
+
+Goal:
+Create one reusable, real Add to Trip / Add to Plan flow that connects Discovery, Hidden Gems, Pulse/Postcards, Compass recommendations, and Trips. This should make saved travel ideas feel connected instead of scattered across separate screens.
+
+Do not rebuild Trips, Discovery, Pulse, or Compass. Do not create fake success states. First inspect what already exists, then wire the safest real flow using existing routes/services/schema where possible.
+
+Current context:
+The previous dead-UI cleanup left these as larger follow-ups:
+- DiscoveryCardMessage “Add to Plan” still shows a stub because it needs a trip/plan picker.
+- Discovery/Hidden Gems/Pulse/Postcards/Compass need a shared way to attach an item to an existing trip or plan.
+- Saved ideas should appear inside Trips if supported by existing backend/schema.
+- If backend/schema support is missing, report the exact missing pieces instead of faking persistence.
+
+Scope:
+
+1. Survey existing implementation first
+Inspect:
+- Trip services/hooks
+- Trip detail screen
+- Trips tab
+- Create trip flow
+- Plan/event models
+- Saved ideas sections
+- Discovery card components
+- Hidden gem detail/card components
+- Pulse/Postcard components
+- Compass recommendation components
+- DiscoveryCardMessage
+- Any existing add-to-trip, save-to-trip, itinerary, saved idea, bookmark, wishlist, plan item, or trip item APIs
+- Database/schema/migrations/types for trips, plans, saved ideas, bookmarks, itinerary items, trip stops, events, places, hidden gems, posts, and recommendations
+- Existing tests for trips/discovery/bookmarks
+
+2. Determine the real current data model
+Before building, answer in the implementation notes:
+- Is there already a table/model for trip saved ideas?
+- Is there already a table/model for trip itinerary items?
+- Is there already a table/model for trip plans/events?
+- Can hidden gems, places, posts/postcards, and recommendations be attached to trips with the existing schema?
+- Is Add to Plan different from Add to Trip in the current app, or should this pass use one shared “Add to Trip” destination with future Plan support?
+- Which backend routes already exist?
+- Which routes are missing?
+
+3. Build one reusable picker component
+Create or reuse a component such as:
+- AddToTripSheet
+- TripPickerSheet
+- AddToPlanSheet
+- or the closest existing project naming pattern
+
+Requirements:
+- Opens as a bottom sheet/modal/action sheet on mobile.
+- Lists the user’s existing trips/plans using real data where available.
+- Shows loading, empty, and error states honestly.
+- Allows selecting a trip.
+- If existing create-trip flow exists, include a “Create new trip” action that routes to the real create trip screen.
+- If create-trip return-linking is not currently safe, route normally and report return-linking as follow-up.
+- Shows what item is being added: place/gem/postcard/recommendation/event.
+- Confirms success only after real persistence succeeds.
+- Shows honest failure if persistence fails.
+- Does not pretend to add something if no backend path exists.
+
+4. Support item source types
+The reusable flow should support these source item types where current data allows:
+- Hidden Gem
+- Discovery place/card
+- Pulse post
+- Postcard/memory
+- Compass recommendation
+- Event/plan suggestion if compatible
+
+Use a safe payload shape such as:
+- sourceType
+- sourceId
+- title
+- subtitle
+- city
+- country
+- latitude/longitude only if privacy rules allow
+- approximate location if exact location is not safe
+- thumbnailUrl
+- notes
+
+Privacy rule:
+Do not attach or expose exact protected coordinates. For approximate/protected gems or delayed-location posts, only store/display privacy-safe location data unless the backend already enforces stronger rules.
+
+5. Persistence behavior
+Use the existing backend/API/database path if one exists.
+
+If a real persistence path exists:
+- Add selected item to the selected trip.
+- Refresh relevant state.
+- Ensure the item appears in the Trip detail saved ideas/timeline section if that section exists.
+- Avoid duplicates where possible.
+- Return a helpful already-added state if duplicate prevention exists.
+
+If no real persistence path exists:
+- Do not fake it.
+- Make the UI honest:
+  - hide the primary Add action, or
+  - show “Trip saving is not available yet,” or
+  - route to Save if that is the only real available path.
+- Report the missing backend/schema/routes required to finish it.
+
+6. Wire the picker into priority surfaces
+Wire only where safe and supported:
+
+Priority A:
+- DiscoveryCardMessage “Add to Plan”
+- Hidden Gem detail “Add to Trip” / “Add to Plan” if present
+- Discovery cards with Add action if present
+
+Priority B:
+- Pulse/Postcard cards or post detail if an Add action already exists
+- Compass recommendation cards if an Add action already exists
+
+Do not add new buttons everywhere if no product placement exists. Prefer wiring existing visible/dead controls first.
+
+7. Trip detail integration
+Inspect Trip detail and saved ideas sections.
+
+If trip saved ideas already exist:
+- Make newly added items appear there.
+- Use clear labels for source type.
+- Preserve navigation back to the original item when possible.
+
+If trip saved ideas UI does not exist:
+- Do not build a full new Trips redesign.
+- Add a small honest section only if the data already exists and the change is safe.
+- Otherwise report as follow-up.
+
+8. Error and empty states
+Required states:
+- No trips yet: show “Create a trip first” with route to create trip.
+- API unavailable: show failure and do not claim success.
+- Item already added: show already-saved/already-added state if detectable.
+- Protected location: show privacy-safe copy.
+- Missing item ID: disable action or show honest error.
+- User not logged in: route to auth or show sign-in required using existing auth pattern.
+
+9. Tests
+Add or update tests where existing patterns exist:
+- Picker renders trips
+- Empty state renders when no trips exist
+- Add succeeds only after service/API success
+- Add failure does not show fake success
+- DiscoveryCardMessage Add to Plan opens picker instead of stub alert
+- Protected/approximate location payload does not expose exact coordinates if testable
+- Existing Trips/Discovery tests still pass
+
+Do not create brittle snapshot-only tests that do not verify behavior.
+
+10. Validation required
+Run:
+- Root typecheck
+- Standalone typecheck
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh
+- Relevant Trip/Discovery/Hidden Gem tests
+- API server typecheck if backend/API files are touched
+- API tests if backend routes are touched
+
+11. Final report
+Return:
+- Existing Add-to-Trip/Add-to-Plan data model found
+- What was wired
+- What was not wired and why
+- Whether persistence is real or unavailable
+- Files changed
+- Screens affected
+- Tests/typechecks/drift checks passed
+- Any missing database/backend pieces
+- Next recommended task
+
+Rules:
+- Do not fake persistence.
+- Do not show fake success toasts.
+- Do not expose protected coordinates.
+- Do not rebuild Trips.
+- Do not rebuild Discovery.
+- Do not rebuild Pulse.
+- Do not start Compass rewrite.
+- Fix only the Add to Trip / Add to Plan connection flow and directly related dead UI.
+- Keep canonical source and standalone in sync through the project workflow.
