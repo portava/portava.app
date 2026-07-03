@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
-  Image, ActivityIndicator,
+  Image, ActivityIndicator, useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -79,6 +79,8 @@ function ReportedBanner({
 // ── Minimal post detail card (renders a live PostRow) ────────────────────────
 
 function PostDetailCard({ post }: { post: PostRow }) {
+  const { width } = useWindowDimensions();
+  const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
   const firstMedia = post.mediaUrls[0] ?? null;
   const loc = post.locationName ?? post.locationCity ?? null;
   const authorName = post.author?.name ?? 'Traveler';
@@ -107,8 +109,15 @@ function PostDetailCard({ post }: { post: PostRow }) {
       </Pressable>
 
       {firstMedia ? (
-        <Image source={{ uri: firstMedia }} style={card.media} resizeMode="cover" />
-      ) : null}
+        <Image source={{ uri: firstMedia }} style={[card.media, { height: mediaHeight }]} resizeMode="cover" />
+      ) : (
+        <View style={[card.media, { height: mediaHeight }, card.mediaPlaceholder]}>
+          <MapPin size={28} color={color.onInk} />
+          <Text style={card.mediaPlaceholderText} numberOfLines={1}>
+            {(post.locationCity ?? post.locationName ?? 'TRAVEL').toUpperCase()}
+          </Text>
+        </View>
+      )}
 
       {post.content ? (
         <Text style={card.content}>{post.content}</Text>
@@ -271,7 +280,9 @@ const card = StyleSheet.create({
   },
   authorName: { ...t.bodyStrong, color: color.ink },
   ts:         { ...t.small,     color: color.mute },
-  media:      { width: '100%',  height: 280 },
+  media:      { width: '100%' },
+  mediaPlaceholder: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  mediaPlaceholderText: { fontFamily: 'Courier', fontSize: 12, fontWeight: '700', color: color.onInk, letterSpacing: 2 },
   content: {
     ...t.body,
     color: color.ink,
