@@ -470,8 +470,13 @@ router.post("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
-  const { city, country, status = "disabled", targetLaunchDate, buddyCap, notes } = req.body ?? {};
+  const { city, country, targetLaunchDate, buddyCap, notes } = req.body ?? {};
   if (!city) return sendError(res, "invalid_payload", "city is required");
+
+  // New cities ALWAYS start at "disabled". The only way to reach public_mvp
+  // is through advance-status, which enforces the QA checklist gate.
+  // Any caller-provided "status" in the body is intentionally ignored.
+  const initialStatus: CityRolloutStatus = "disabled";
 
   const now = new Date().toISOString();
   const { data, error } = await admin.sc
@@ -479,7 +484,7 @@ router.post("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
     .insert({
       city,
       country: country ?? null,
-      status,
+      status:             initialStatus,
       status_changed_at:  now,
       status_changed_by:  admin.userId,
       target_launch_date: targetLaunchDate ?? null,
@@ -495,7 +500,7 @@ router.post("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
     adminId:      admin.userId,
     action:       "city_created",
     cityRolloutId:(data as any)?.id ?? null,
-    toStatus:     status,
+    toStatus:     initialStatus,
   });
 
   return res.status(201).json({ city: data });

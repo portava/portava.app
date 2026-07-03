@@ -1244,6 +1244,61 @@ describe("QA Gate: Test booking creation restricted to admins", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QA Gate: City creation is always disabled — no direct path to public_mvp
+// ─────────────────────────────────────────────────────────────────────────────
+describe("QA Gate: city creation always starts at disabled", () => {
+  it("status=public_mvp in body is ignored — city created at disabled", async () => {
+    setupClient(ADMIN_ID, "admin");
+    const r = await req(
+      "POST", "/api/admin/rent-buddy/rollout/cities",
+      { city: "Singapore", country: "Singapore", status: "public_mvp" },
+      ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 201);
+    assert.equal(r.body.city.status, "disabled",
+      "caller-supplied status=public_mvp must be ignored");
+  });
+
+  it("status=beta_testing in body is ignored — city created at disabled", async () => {
+    setupClient(ADMIN_ID, "admin");
+    const r = await req(
+      "POST", "/api/admin/rent-buddy/rollout/cities",
+      { city: "Kuala Lumpur", country: "Malaysia", status: "beta_testing" },
+      ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 201);
+    assert.equal(r.body.city.status, "disabled");
+  });
+
+  it("omitting status also creates at disabled", async () => {
+    setupClient(ADMIN_ID, "admin");
+    const r = await req(
+      "POST", "/api/admin/rent-buddy/rollout/cities",
+      { city: "Tokyo", country: "Japan" },
+      ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 201);
+    assert.equal(r.body.city.status, "disabled");
+  });
+
+  it("audit log records toStatus=disabled regardless of body status", async () => {
+    setupClient(ADMIN_ID, "admin");
+    await req(
+      "POST", "/api/admin/rent-buddy/rollout/cities",
+      { city: "Seoul", country: "South Korea", status: "public_mvp" },
+      ADMIN_TOKEN,
+    );
+    const createdCity = Object.values(state.cityRollouts).find((r: any) => r.city === "Seoul") as any;
+    assert.ok(createdCity, "city row should exist");
+    const log = state.auditLogs.find(
+      (l: any) => l.action === "city_created" && l.city_rollout_id === createdCity.id,
+    );
+    assert.ok(log, "audit log entry should exist");
+    assert.equal(log.to_status, "disabled");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // QA Gate 30: Buddy dashboard mutations gated by rollout (feature_disabled)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("QA Gate: Buddy dashboard mutations blocked when feature disabled", () => {
