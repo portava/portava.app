@@ -47,8 +47,16 @@ import {
 } from '../services/postEngagement';
 import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
+import { computeOptimisticLike } from '../lib/commentLikeLogic';
 
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
+
+/**
+ * Controls the hitSlop of like buttons.
+ * Default (8) is used in the modal where vertical space is tight.
+ * CommentsSection (inline / scrollable) overrides to 12 for thumb comfort.
+ */
+const LikeHitSlopCtx = React.createContext<number>(8);
 
 interface Props {
   visible: boolean;
@@ -164,6 +172,7 @@ function ReplyRow({
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
   const onAuthorPress = React.useContext(AuthorPressCtx);
+  const likeHitSlop = React.useContext(LikeHitSlopCtx);
   const likedByMe = reply.likedByMe ?? false;
   const likeCount = reply.likeCount ?? 0;
 
@@ -172,7 +181,8 @@ function ReplyRow({
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
-    onLikeChange(reply.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
+    const optimistic = computeOptimisticLike(wasLiked, prevCount);
+    onLikeChange(reply.id, optimistic.likedByMe, optimistic.likeCount);
     try {
       const result = wasLiked
         ? await unlikeComment(postId, reply.id)
@@ -204,7 +214,7 @@ function ReplyRow({
         />
       </View>
       <View style={s.commentActions}>
-        <Pressable hitSlop={8} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+        <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
           <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
           {likeCount > 0 && <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>}
         </Pressable>
@@ -259,6 +269,7 @@ function CommentItem({
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
   const onAuthorPress = React.useContext(AuthorPressCtx);
+  const likeHitSlop = React.useContext(LikeHitSlopCtx);
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
 
@@ -267,7 +278,8 @@ function CommentItem({
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
-    onLikeChange(comment.id, !wasLiked, wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
+    const optimistic = computeOptimisticLike(wasLiked, prevCount);
+    onLikeChange(comment.id, optimistic.likedByMe, optimistic.likeCount);
     try {
       const result = wasLiked
         ? await unlikeComment(postId, comment.id)
@@ -310,7 +322,7 @@ function CommentItem({
           </Pressable>
         </View>
         <View style={s.commentActions}>
-          <Pressable hitSlop={8} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+          <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
             <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
             {likeCount > 0 && <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>}
           </Pressable>
@@ -503,6 +515,7 @@ export function CommentsSection({ postId, onCountChange }: SectionProps) {
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
   return (
+    <LikeHitSlopCtx.Provider value={12}>
     <AuthorPressCtx.Provider value={setPreviewHandle}>
       <View style={sec.wrap}>
         {loading ? (
@@ -602,6 +615,7 @@ export function CommentsSection({ postId, onCountChange }: SectionProps) {
         onClose={() => setPreviewHandle(null)}
       />
     </AuthorPressCtx.Provider>
+    </LikeHitSlopCtx.Provider>
   );
 }
 
