@@ -26,18 +26,28 @@ export function GemLocationPreview({ lat, lng }: GemLocationPreviewProps) {
   const center: [number, number] = [lng, lat];
   return (
     <View style={styles.container}>
-      <Map
-        style={StyleSheet.absoluteFill}
-        mapStyle={MAP_STYLE}
-        logo={false}
-        attribution={false}
-        dragPan={false}
-        doubleTapZoom={false}
-        doubleTapHoldZoom={false}
-        touchPitch={false}
-      >
-        <Camera initialViewState={{ center, zoom: 13 }} />
-      </Map>
+      {/*
+       * pointerEvents="none" on this wrapper prevents MapLibre's native gesture
+       * recognisers from intercepting touch events on Android/iOS.  Without it,
+       * dragPan={false} disables MapLibre-level panning but the native view can
+       * still swallow the initial touch, blocking the parent ScrollView.
+       * Setting pointerEvents="none" removes the Map subtree from the hit-test
+       * tree entirely so all gestures fall through to the ScrollView.
+       */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Map
+          style={StyleSheet.absoluteFill}
+          mapStyle={MAP_STYLE}
+          logo={false}
+          attribution={false}
+          dragPan={false}
+          doubleTapZoom={false}
+          doubleTapHoldZoom={false}
+          touchPitch={false}
+        >
+          <Camera initialViewState={{ center, zoom: 13 }} />
+        </Map>
+      </View>
       <View style={styles.pinWrap} pointerEvents="none">
         <Ionicons name="location" size={32} color="#4C8BF5" style={styles.pinIcon} />
       </View>

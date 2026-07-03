@@ -72,21 +72,31 @@ export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemM
   return (
     <View>
       <View style={s.mapContainer}>
-        <Map
-          style={StyleSheet.absoluteFill}
-          mapStyle={MAP_STYLE}
-          logo={false}
-          attribution={false}
-        >
-          <Camera
-            initialViewState={{ center: [lng, lat], zoom }}
-          />
-          <Marker lngLat={[lng, lat]}>
-            <View style={[s.pin, { backgroundColor: pinColor }]}>
-              <MapPin size={14} color="#fff" />
-            </View>
-          </Marker>
-        </Map>
+        {/*
+         * pointerEvents="none" prevents MapLibre's native gesture recognisers
+         * from intercepting touches inside the parent ScrollView on Android/iOS.
+         * dragPan disabled at the MapLibre level still lets the native view
+         * swallow the initial gesture; removing the subtree from the hit-test
+         * tree entirely ensures all swipes fall through to the ScrollView.
+         * The "Open in Maps" Pressable lives outside this wrapper so it works.
+         */}
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Map
+            style={StyleSheet.absoluteFill}
+            mapStyle={MAP_STYLE}
+            logo={false}
+            attribution={false}
+          >
+            <Camera
+              initialViewState={{ center: [lng, lat], zoom }}
+            />
+            <Marker lngLat={[lng, lat]}>
+              <View style={[s.pin, { backgroundColor: pinColor }]}>
+                <MapPin size={14} color="#fff" />
+              </View>
+            </Marker>
+          </Map>
+        </View>
       </View>
 
       <View style={s.footer}>
