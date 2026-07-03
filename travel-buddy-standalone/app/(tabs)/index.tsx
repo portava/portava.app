@@ -192,8 +192,11 @@ export default function Pulse() {
 
     // Apply comment count overrides from the detail screen so counts are
     // correct immediately on return, without waiting for the feed reload.
+    // Only applies to real user posts (type === 'post') — synthetic items like
+    // rent_a_buddy have no post ID in the store and must not be mutated.
     if (commentCountOverrides.size === 0) return result;
     return result.map((item) => {
+      if (item.type !== 'post') return item;
       const override = commentCountOverrides.get(item.id);
       if (override === undefined || override === item.commentCount) return item;
       return { ...item, commentCount: override };

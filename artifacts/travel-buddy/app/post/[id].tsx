@@ -189,11 +189,13 @@ export default function PostDetail() {
   }, []);
 
   // Emit the live comment count so feed cards update instantly on return.
+  // Guard on `post` being loaded — commentCount starts at 0 before the fetch
+  // resolves, and emitting that premature zero would clobber the feed card.
   useEffect(() => {
-    if (id && typeof commentCount === 'number') {
+    if (id && post && typeof commentCount === 'number') {
       emitCommentCount(id, commentCount);
     }
-  }, [id, commentCount]);
+  }, [id, post, commentCount]);
 
   const isOwnPost = !!(userId && post?.author?.id === userId);
 
