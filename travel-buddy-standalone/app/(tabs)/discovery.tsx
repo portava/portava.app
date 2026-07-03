@@ -213,13 +213,43 @@ export default function DiscoveryHub() {
    */
   const nearestIntentPending = useRef(false);
 
+  /**
+   * Timeout handle for the GPS-wait guard. If coords don't arrive within
+   * NEAREST_GPS_TIMEOUT_MS after the user taps the Nearest chip, the intent
+   * is cleared and an inline message is shown so the user isn't left waiting
+   * silently.
+   */
+  const nearestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const NEAREST_GPS_TIMEOUT_MS = 10_000;
+
+  /** Inline GPS-timeout message shown below the filter panel. Auto-clears. */
+  const [nearestGpsMessage, setNearestGpsMessage] = useState<string | null>(null);
+  const nearestMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNearestGpsMessage = useCallback((msg: string) => {
+    if (nearestMsgTimerRef.current) clearTimeout(nearestMsgTimerRef.current);
+    setNearestGpsMessage(msg);
+    nearestMsgTimerRef.current = setTimeout(() => setNearestGpsMessage(null), 5_000);
+  }, []);
+
   const handleNearestUnavailable = useCallback(() => {
     if (locationState.permissionStatus === 'denied') {
       return;
     }
+    // Cancel any previous pending timeout before starting a new one.
+    if (nearestTimeoutRef.current) clearTimeout(nearestTimeoutRef.current);
+
     nearestIntentPending.current = true;
     requestLocation();
-  }, [locationState.permissionStatus, requestLocation]);
+
+    // Guard: if GPS hasn't resolved within the timeout, clear the intent and
+    // surface a message so the user knows what happened.
+    nearestTimeoutRef.current = setTimeout(() => {
+      if (!nearestIntentPending.current) return; // already resolved
+      nearestIntentPending.current = false;
+      showNearestGpsMessage("Couldn't get your location — try again or move to an open area.");
+    }, NEAREST_GPS_TIMEOUT_MS);
+  }, [locationState.permissionStatus, requestLocation, showNearestGpsMessage]);
 
   // If the Nearest sort is active but user location disappears (permission
   // revoked, location cleared), remove the sort so results aren't misleadingly
@@ -235,11 +265,15 @@ export default function DiscoveryHub() {
   // Auto-apply Nearest sort once location permission is granted.
   // When the user tapped the Nearest chip without coords, nearestIntentPending
   // is set. As soon as real coords arrive, apply the sort immediately without
-  // requiring a second tap.
+  // requiring a second tap. Also cancel the GPS timeout — coords arrived in time.
   useEffect(() => {
     if (!hasUserLocation) return;
     if (!nearestIntentPending.current) return;
     nearestIntentPending.current = false;
+    if (nearestTimeoutRef.current) {
+      clearTimeout(nearestTimeoutRef.current);
+      nearestTimeoutRef.current = null;
+    }
     handleFiltersChange({ ...activeFilters, sortBy: 'nearest' });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasUserLocation]);
@@ -647,6 +681,13 @@ export default function DiscoveryHub() {
                   <Text style={styles.resetFiltersText}>Reset filters</Text>
                 </Pressable>
               )}
+            </View>
+          )}
+
+          {/* GPS-timeout inline message — shown when Nearest chip times out */}
+          {nearestGpsMessage != null && (
+            <View style={styles.nearestGpsMessage} pointerEvents="none">
+              <Text style={styles.nearestGpsMessageText}>{nearestGpsMessage}</Text>
             </View>
           )}
 
@@ -1085,6 +1126,21 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 11,
     textDecorationLine: 'underline' as const,
+  },
+  nearestGpsMessage: {
+    marginHorizontal: space.lg,
+    marginTop: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.sm,
+    backgroundColor: color.mute + '14',
+    borderWidth: 1,
+    borderColor: color.mute + '30',
+  },
+  nearestGpsMessageText: {
+    ...t.small,
+    color: color.mute,
+    textAlign: 'center' as const,
   },
   activeSortChip: {
     flexDirection: 'row',
