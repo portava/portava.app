@@ -1,0 +1,193 @@
+Core Beta Trust + Usability Pass — Travel Buddy
+
+Focus only on the next beta-critical user trust and usability gaps:
+
+#216 — Trip editing screen
+#226 — Fix My Circle visibility
+#118 — Blocked profile placeholder
+#119 — Hide threads from blocked users
+#217 — Post reporting and hiding
+#124 — Badge on Trips tab for pending invites
+#125 / #150 — Preview a trip before accepting
+
+Do not rebuild systems.
+Do not add unrelated features.
+Do not widen into meetups/highlights/share polish.
+Do not change backend architecture unless a real blocker is proven.
+
+Goal:
+Make the core social/trip experience safe and usable for beta:
+- Users can edit trips after creating them.
+- My Circle actually shows the right people/content.
+- Blocked users are hidden or shown with honest placeholders.
+- Message threads from blocked users do not stay visible.
+- Posts can be reported and hidden.
+- Pending trip invites are visible from the Trips tab.
+- Users can preview a trip before accepting an invite.
+
+Scope:
+
+1. Trip editing screen — #216
+   Audit existing trip create/detail/update backend:
+   - Confirm PATCH /api/trips/:tripId exists and supports all editable fields.
+   - Confirm frontend updateTrip service uses the API server, not direct Supabase.
+   - Build or wire the existing disabled Edit Trip button to a real edit screen.
+   - Pre-fill existing trip data.
+   - Allow safe editing of live fields only:
+     - title
+     - destination/city/country
+     - dates
+     - privacy
+     - description/notes
+     - cover/photo only if existing upload path is already wired
+     - progress only if already used
+   - Enforce owner-only edit.
+   - Show loading/error/success states honestly.
+   - After save, return to trip detail and show updated data.
+   - Do not create a separate duplicate trip.
+
+2. My Circle visibility — #226
+   Audit Circle/Profile/TripCircle behavior:
+   - Find all "My Circle" screens/components/routes/services.
+   - Confirm data source is real, not mock.
+   - Confirm current user’s circle members load.
+   - Confirm blocked users are excluded.
+   - Confirm private profiles respect visibility rules.
+   - Confirm empty state is honest.
+   - Fix broken queries, missing route calls, bad filters, or incorrect props only.
+
+3. Blocked profile placeholder — #118
+   Audit public profile/passport/profile navigation:
+   - If viewing a blocked user or a user who blocked me, show a clear placeholder.
+   - Do not expose avatar, memories, posts, trip info, or private profile data.
+   - Copy should be simple:
+     - "Profile unavailable"
+     - "You can’t view this profile because one of you has blocked the other."
+   - Include unblock action only if the viewer blocked them and unblock backend exists.
+   - Do not show fake profile content.
+
+4. Hide blocked-user threads — #119
+   Audit Telegraph thread list and message request list:
+   - Threads involving blocked users should not appear in the normal inbox.
+   - Pending requests from blocked users should be hidden/cancelled.
+   - Existing backend behavior should be reused if block route already cancels requests.
+   - If frontend still displays blocked threads from cached/local state, filter them.
+   - Do not delete messages unless backend already supports that behavior.
+   - Mark as hidden from inbox, not destroyed.
+
+5. Post reporting and hiding — #217
+   Audit post cards, post detail, reportContent service, backend reports route:
+   - Report button must call real reportContent/report endpoint.
+   - After report, the post should either:
+     - hide locally from feed/detail, or
+     - show "Reported" state and remove from visible feed after refresh.
+   - Hide post action should hide locally and/or call an existing backend hide endpoint if present.
+   - Do not show fake success unless backend confirms success.
+   - Make sure blocked/hidden/reported posts do not immediately reappear after refresh if backend already supports persistence.
+   - If backend persistence does not exist, make local-only hiding honest and non-misleading.
+
+6. Trips tab pending invite badge — #124
+   Audit trip invites backend/service:
+   - Confirm pending invite count endpoint or data source exists.
+   - Add badge to Trips tab if pending invites > 0.
+   - Badge should update after accept/decline.
+   - If no endpoint exists but invite list is already loaded on Trips screen, derive from that data.
+   - Do not add a fake count.
+
+7. Trip preview before accepting — #125 / #150
+   Audit invitation acceptance flow:
+   - Before accepting, user should see trip preview:
+     - title
+     - destination
+     - dates
+     - host
+     - privacy
+     - member count if available
+     - description/notes if public to invitee
+   - Preview should not expose private member details beyond what invitee is allowed to see.
+   - Accept and decline should call existing backend routes.
+   - After accept, navigate to trip detail.
+   - After decline, remove invite from list.
+   - Handle expired/deleted invite honestly.
+
+Required process:
+
+1. Survey first.
+   Use targeted reads/greps for:
+   - trip edit/create/detail screens
+   - updateTrip service
+   - PATCH /api/trips/:tripId
+   - Circle/My Circle/TripCircle components and services
+   - blocked profile handling
+   - thread list/message request filtering
+   - reportContent/reportPost/hidePost services
+   - trip invite routes/services
+   - tab badge logic
+   - accept/decline invite flows
+
+2. Build a Core Beta Matrix:
+   Columns:
+   - Task #
+   - User flow
+   - Current state
+   - Backend route/service
+   - Frontend screen/component
+   - Status: pass / partial / fail / missing / honest-disabled
+   - Evidence
+   - Fix needed
+
+3. Fix only proven blockers:
+   - disabled edit trip action with backend already available
+   - broken My Circle visibility
+   - blocked profiles leaking data
+   - blocked-user threads still visible
+   - report/hide buttons not wired
+   - pending invites not surfaced
+   - accept invite flow lacks preview
+   - fake success or misleading copy
+
+4. Do not fix:
+   - meetups polish
+   - highlights polish
+   - web share pages
+   - push notification extras
+   - suggested travelers
+   - saved tab unless directly needed by post hiding/reporting
+   - visual-only preferences
+
+5. Use existing systems:
+   - Existing API routes
+   - Existing services
+   - Existing UI components
+   - Existing privacy/block filters
+   - Existing reportContent/reportBooking/report routes
+   - Existing trip invite routes
+
+6. Validation:
+   After fixes, run:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if practical
+   - bash scripts/sync-standalone.sh --fix-source if artifacts changed
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if available
+   - relevant frontend/backend tests for changed files if available
+
+7. Final report must include:
+   - Core Beta Matrix
+   - Fixes completed
+   - Files changed
+   - Backend routes touched
+   - Tests added/updated
+   - Remaining real beta blockers
+   - Honest-disabled items
+   - Validation table
+   - Commit message
+
+Important:
+Blocked-user privacy is a trust/safety issue. Treat data leakage as a blocker.
+Trip invite preview should not leak private trip/member data beyond what the invited user is allowed to see.
+Trip editing should update the existing trip, not create duplicates.
+If an item is already working, document it and do not rewrite it.
+If a backend route is missing, first check whether an existing route/service already covers the flow before adding anything new.
