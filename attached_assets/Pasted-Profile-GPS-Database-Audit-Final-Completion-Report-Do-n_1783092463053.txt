@@ -1,0 +1,99 @@
+Profile + GPS Database Audit — Final Completion Report
+
+Do not make more code changes unless validation fails.
+
+Produce the final completion report for the profile and GPS/location database/backend audit.
+
+Include:
+
+1. Executive summary
+   - What was audited
+   - What was fixed
+   - Whether any real blockers remain
+
+2. Profile Migration Matrix
+   Include:
+   - profiles.cover_photo_url / 0087
+   - profiles.account_status / 0094
+   - profile_privacy_settings / 0094
+   - user_deletion_requests / 0094
+   - profiles.role admin source
+   - blocks/mutes/restrictions
+   - reports/content reports
+   - passport stamps/memories profile dependencies
+
+3. GPS/Location Migration Matrix
+   Include:
+   - discovery_places latitude/longitude/osm_id/categories
+   - wishlist_places / 0088
+   - decrement_discovery_place_saved_count / 0089
+   - user_stamps latitude/longitude privacy
+   - hidden_gems coordinates/privacy
+   - community_places coordinates/dedupe
+   - Safe Return location columns
+   - geotag/post/memory location columns
+
+4. Production verification status
+   Clearly separate:
+   - verified in production
+   - local migration exists, production application still required
+   - unknown/manual verification required
+
+5. Backend/schema compatibility findings
+   Include:
+   - hiddenGems admin guard was using is_admin incorrectly
+   - admin/profile routes depend on account_status
+   - privacy route depends on profile_privacy_settings
+   - delete request route depends on user_deletion_requests
+
+6. GPS/location privacy findings
+   Include:
+   - precise hidden gem/user coordinates redaction path
+   - user_stamps lat/lng DB-level privacy if verified
+   - public place coordinates vs private user GPS distinction
+   - no manual coordinate DB requirement found, if true
+
+7. Direct Supabase risk findings
+   Include:
+   - profile/location direct frontend mutations found or not found
+   - read-only mobile Supabase access status
+   - remaining legacy risks if any
+
+8. Fixes completed
+   - hiddenGems.ts role fix
+   - 0094 migration
+   - docs/migrations.md update
+
+9. Files changed
+
+10. Exact SQL added
+   Summarize:
+   - profiles.account_status
+   - profile_privacy_settings
+   - user_deletion_requests
+   - indexes/constraints/RLS/policies if included
+
+11. Remaining real blockers
+   - If 0094 still needs to be applied to production, say so clearly.
+   - If none after apply, say none.
+
+12. Manual production actions still required
+   - Apply 0094 if not applied.
+   - Run verification SQL from docs/migrations.md.
+   - Any cover_photo_url/role verification still pending.
+
+13. Validation table
+   Include all checks run:
+   - api-server typecheck
+   - standalone typecheck if run
+   - sync check
+   - dependency check
+   - routes guard
+   - any schema verification
+
+14. Commit message
+
+Important:
+Do not claim 0094 is live in production unless it was applied and verified.
+Do not merge this with Task #1426 reviewer noise.
+This was a separate profile/GPS database audit.
