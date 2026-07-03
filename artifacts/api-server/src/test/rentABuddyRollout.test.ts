@@ -392,9 +392,18 @@ function makeClient(userId: string, role = "user") {
         }
 
         if (t === "rent_buddy_global_controls") {
-          const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
-          if (eqId && this._maybeSingle) return { data: state.globalControls, error: null };
-          return { data: [state.globalControls], error: null };
+          const gc = state.globalControls ?? {
+            id: 1,
+            all_bookings_paused: false,
+            applications_paused: false,
+            cash_balance_paused: false,
+            nightlife_paused: false,
+            force_full_in_app: false,
+            force_public_meetup: false,
+            force_delayed_posting: false,
+          };
+          if (this._maybeSingle) return { data: gc, error: null };
+          return { data: [gc], count: 1, error: null };
         }
 
         if (t === "rent_buddy_launch_audit_logs") {
