@@ -397,7 +397,7 @@ export async function getPrivacySettings(): Promise<ProfileResult<PrivacySetting
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
 
   try {
-    const res = await fetch(`${apiBase()}/api/profile/me/privacy`, {
+    const res = await fetch(`${apiBase()}/api/me/privacy`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -419,7 +419,7 @@ export async function updatePrivacySettings(
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
 
   try {
-    const res = await fetch(`${apiBase()}/api/profile/me/privacy`, {
+    const res = await fetch(`${apiBase()}/api/me/privacy`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(fields),
@@ -443,7 +443,7 @@ export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: 
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
 
   try {
-    const res = await fetch(`${apiBase()}/api/profile/me/deactivate`, {
+    const res = await fetch(`${apiBase()}/api/me/deactivate`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -464,7 +464,7 @@ export async function requestAccountDeletion(): Promise<ProfileResult<{ requeste
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
 
   try {
-    const res = await fetch(`${apiBase()}/api/profile/me/delete-request`, {
+    const res = await fetch(`${apiBase()}/api/me/delete-request`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });

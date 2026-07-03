@@ -43,44 +43,34 @@ export async function signUp(email: string, password: string, meta?: { name?: st
 /**
  * Ensure a profile row exists for the signed-in user. Idempotent (on conflict do nothing).
  * Routes through the API server so the service-role key is used for the insert, bypassing
- * PostgREST RLS failures caused by the P-256 JWT key rotation. Falls back to a direct
- * Supabase upsert if the API base URL is not configured.
+ * PostgREST RLS failures caused by the P-256 JWT key rotation.
+ *
+ * Throws if EXPO_PUBLIC_API_BASE_URL is not set or the session token is unavailable.
+ * The direct Supabase upsert fallback has been intentionally removed — PostgREST cannot
+ * verify P-256 JWTs so auth.uid() returns NULL under RLS and direct inserts fail for new users.
  */
 export async function ensureProfile(userId: string, email: string, meta?: { name?: string; handle?: string }): Promise<void> {
   if (!isSupabaseConfigured) return;
 
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  if (apiBase) {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (token) {
-        await fetch(`${apiBase}/api/profile/ensure`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ email, name: meta?.name, handle: meta?.handle }),
-        });
-        return;
-      }
-    } catch {
-      // Fall through to direct Supabase upsert below.
-    }
+  if (!apiBase) {
+    throw new Error('ensureProfile: EXPO_PUBLIC_API_BASE_URL is not configured');
   }
 
-  // Fallback: direct Supabase upsert — may fail for new users if PostgREST has
-  // not yet picked up the P-256 JWT key rotation.
-  const base = (meta?.handle || email.split('@')[0] || 'traveler').replace(/[^a-zA-Z0-9_]/g, '');
-  const handle = `${base}_${userId.slice(0, 4)}`;
-  const name = meta?.name || email.split('@')[0] || 'Traveler';
-  await supabase.from('profiles').upsert(
-    { id: userId, handle, name },
-    { onConflict: 'id', ignoreDuplicates: true },
-  );
-  // Note: the location_preferences row (migration 0032) is created on first
-  // location-service access — the old user_location_privacy table no longer exists.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) {
+    throw new Error('ensureProfile: no session token available');
+  }
+
+  await fetch(`${apiBase}/api/profile/ensure`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ email, name: meta?.name, handle: meta?.handle }),
+  });
 }
 
 export async function signIn(email: string, password: string): Promise<AuthResult> {

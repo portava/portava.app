@@ -114,3 +114,26 @@ All migrations have been applied to production Supabase unless noted otherwise.
 When the idempotency check at step 3 finds an existing `awarded` event but no corresponding `user_stamps` row, the engine skips steps 4–6 (dedup guards + event insert) and jumps directly to the stamp insert. This means any subsequent call to `awardStamp` with the same `(userId, definitionSlug, sourceType, sourceId)` tuple will automatically heal a partial failure — the passport row is created without needing a manual recalculate. The `recalculateForUser` engine path remains available as a manual repair tool for any rows that slipped through before this fix was deployed.
 
 | `0093_activate_stamp_definitions.sql` | Activates 15 previously-inactive stamp definitions whose route-level triggers are now wired: `first_post`, `storyteller`, `photographer` (post counts in posts.ts); `city_explorer`, `globe_trotter`, `world_citizen` (GPS location milestones in posts.ts); `community_connector`, `popular_traveler`, `travel_influencer` (follow counts in follows.ts); `trip_planner`, `good_host` (trip lifecycle in trips.ts); `buddy_veteran`, `nightlife_guide`, `food_guide`, `top_rated_buddy` (rent-a-buddy in rentABuddy.ts); `event_host`, `event_participant` (event completion in events.ts). Safe to re-run (idempotent). | Pending |
+
+## Schema verification notes (2026-07-03)
+
+### `profiles.role` column
+
+The `profiles` table carries a `role TEXT NOT NULL DEFAULT 'user'` column. This column was part of the initial schema and has no standalone numbered migration file — it is present in the baseline `profiles` table DDL.
+
+Verified values: `'user'` (default for all users) and `'admin'`.
+
+**Admin access guard** — `requireAdmin` in `artifacts/api-server/src/routes/admin.ts` reads role exclusively from `profiles.role`:
+
+```ts
+const { data, error } = await sc.from("profiles").select("role").eq("id", user.id).maybeSingle();
+if (error || !data || (data as any).role !== "admin") {
+  res.status(403).json({ error: "forbidden", message: "Admin role required" });
+}
+```
+
+Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`. To grant admin access to a user: `UPDATE profiles SET role = 'admin' WHERE id = '<uuid>';`.
+
+### `profiles.cover_photo_url` column
+
+Added by migration `0087_profiles_cover_photo_url.sql`. Column definition: `cover_photo_url TEXT` (nullable). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
