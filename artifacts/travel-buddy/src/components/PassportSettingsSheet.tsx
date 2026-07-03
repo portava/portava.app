@@ -265,7 +265,7 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       if (!gps.granted) {
         Alert.alert(
           'Location permission is off',
-          'Enable it in Settings or choose a city from the list.',
+          'Enable it in settings or choose a city/place from search.',
           [
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
             { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
@@ -481,6 +481,7 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
                     {homeCity || 'Tap to select — or use GPS below'}
                   </Text>
                 </Pressable>
+                <Text style={sh.locationIntro}>We'll use GPS to detect your location. Your precise location is never shown publicly.</Text>
                 <View style={sh.locationActions}>
                   <Pressable
                     style={sh.locationBtn}
@@ -496,7 +497,6 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
                     <Text style={sh.locationBtnText}>≡ Choose from list</Text>
                   </Pressable>
                 </View>
-                <Text style={sh.fieldHint}>Your precise location is never shown publicly.</Text>
               </Field>
 
               <Field label="Home country">
@@ -924,6 +924,7 @@ const sh = StyleSheet.create({
   locationDisplay: { justifyContent: 'center', minHeight: 44 },
   locationText: { ...t.body, color: color.ink },
   locationPlaceholder: { ...t.body, color: color.faint },
+  locationIntro: { ...t.small, color: color.mute, marginTop: 6, lineHeight: 17 },
   locationActions: { flexDirection: 'row', gap: space.sm, marginTop: 6 },
   locationBtn: {
     borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill,

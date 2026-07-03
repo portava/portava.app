@@ -35,7 +35,7 @@ export default function Onboarding() {
       if (!gps.granted) {
         Alert.alert(
           'Location permission is off',
-          'Enable it in Settings or choose a city from the list.',
+          'Enable it in settings or choose a city/place from search.',
           [
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
             { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
@@ -210,7 +210,7 @@ export default function Onboarding() {
                     <Text style={styles.locationBtnText}>≡ Choose from list</Text>
                   </Pressable>
                 </View>
-                <Text style={styles.hint}>Your precise location is never shown publicly.</Text>
+                <Text style={styles.hint}>We'll use GPS to detect your location. Your precise location is never shown publicly.</Text>
               </View>
               <View>
                 <Text style={styles.label}>Country (optional)</Text>
