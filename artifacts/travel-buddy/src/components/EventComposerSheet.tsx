@@ -13,9 +13,10 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Switch,
 } from 'react-native';
-import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye } from 'lucide-react-native';
+import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock } from 'lucide-react-native';
 import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events';
-import { DatePickerField } from './DateTimePickerField';
+import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker';
+import { GlobalTimePicker } from './selectors/GlobalTimePicker';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -40,18 +41,54 @@ const VISIBILITIES: { key: EventVisibility; label: string; desc: string }[] = [
   { key: 'invite_only', label: 'Invite only',  desc: 'Requires your approval to join' },
 ];
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function buildISODateTime(dateISO: string | null, timeHHmm: string | null): string | undefined {
+  if (!dateISO) return undefined;
+  const timePart = timeHHmm ? `${timeHHmm}:00` : '00:00:00';
+  return `${dateISO}T${timePart}`;
+}
+
+function formatDateDisplay(dateISO: string): string {
+  return new Date(dateISO + 'T12:00:00').toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
+function formatTimeDisplay(hhMm: string): string {
+  const [h, m] = hhMm.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateTimeReview(dateISO: string | null, timeHHmm: string | null): string {
+  if (!dateISO) return 'Date TBD';
+  const datePart = formatDateDisplay(dateISO);
+  if (!timeHHmm) return datePart;
+  return `${datePart} · ${formatTimeDisplay(timeHHmm)}`;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const [step, setStep] = useState<Step>('basics');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
-  // Basics
+  // Basics — dates use ISO strings; times use HH:mm
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [startDateStr, setStartDateStr] = useState<string | null>(null);
+  const [startTime,    setStartTime]    = useState<string | null>(null);
+  const [endDateStr,   setEndDateStr]   = useState<string | null>(null);
+  const [endTime,      setEndTime]      = useState<string | null>(null);
   const [category, setCategory] = useState('');
+
+  // Picker visibility
+  const [calPickerFor,  setCalPickerFor]  = useState<'start' | 'end' | null>(null);
+  const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
 
   // Location
   const [locationName, setLocationName] = useState('');
@@ -77,6 +114,14 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   function nextStep() {
     if (step === 'basics') {
       if (!title.trim()) { setError('Title is required'); return; }
+      if (startDateStr && endDateStr) {
+        const startISO = buildISODateTime(startDateStr, startTime);
+        const endISO   = buildISODateTime(endDateStr,   endTime);
+        if (startISO && endISO && endISO <= startISO) {
+          setError('End date must be after start date');
+          return;
+        }
+      }
     }
     setError(null);
     const next = STEPS[stepIndex + 1];
@@ -99,8 +144,8 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
       locationName: locationName.trim() || undefined,
       city: city.trim() || undefined,
       country: country.trim() || undefined,
-      startsAt: startDate?.toISOString(),
-      endsAt: endDate?.toISOString(),
+      startsAt: buildISODateTime(startDateStr, startTime),
+      endsAt:   buildISODateTime(endDateStr,   endTime),
       category: category.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
       ageMin: ageMin ? parseInt(ageMin) : undefined,
@@ -123,6 +168,9 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
     }
     onCreated(res.data);
   }
+
+  // ── Picker: today's ISO date as the minimum ────────────────────────────────
+  const todayISO = new Date().toISOString().slice(0, 10);
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.kav}>
@@ -180,21 +228,45 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                   maxLength={60}
                 />
 
-                <Text style={s.label}>Start date & time</Text>
-                <DatePickerField
-                  value={startDate}
-                  onChange={setStartDate}
-                  minimumDate={new Date()}
-                  placeholder="Pick a start date"
-                />
+                {/* Start date */}
+                <Text style={s.label}>Start date</Text>
+                <Pressable style={[s.input, s.pickerTrigger]} onPress={() => setCalPickerFor('start')}>
+                  <CalendarClock size={14} color={startDateStr ? color.ink : color.faint} />
+                  <Text style={[s.pickerTriggerText, !startDateStr && s.placeholder]}>
+                    {startDateStr ? formatDateDisplay(startDateStr) : 'Pick a start date'}
+                  </Text>
+                  <ChevronRight size={14} color={color.mute} />
+                </Pressable>
 
-                <Text style={s.label}>End date & time (optional)</Text>
-                <DatePickerField
-                  value={endDate}
-                  onChange={setEndDate}
-                  minimumDate={startDate ?? new Date()}
-                  placeholder="Pick an end date"
-                />
+                {/* Start time (optional) */}
+                <Text style={s.label}>Start time (optional)</Text>
+                <Pressable style={[s.input, s.pickerTrigger]} onPress={() => setTimePickerFor('start')}>
+                  <Clock size={14} color={startTime ? color.ink : color.faint} />
+                  <Text style={[s.pickerTriggerText, !startTime && s.placeholder]}>
+                    {startTime ? formatTimeDisplay(startTime) : 'Pick a start time'}
+                  </Text>
+                  <ChevronRight size={14} color={color.mute} />
+                </Pressable>
+
+                {/* End date (optional) */}
+                <Text style={s.label}>End date (optional)</Text>
+                <Pressable style={[s.input, s.pickerTrigger]} onPress={() => setCalPickerFor('end')}>
+                  <CalendarClock size={14} color={endDateStr ? color.ink : color.faint} />
+                  <Text style={[s.pickerTriggerText, !endDateStr && s.placeholder]}>
+                    {endDateStr ? formatDateDisplay(endDateStr) : 'Pick an end date'}
+                  </Text>
+                  <ChevronRight size={14} color={color.mute} />
+                </Pressable>
+
+                {/* End time (optional) */}
+                <Text style={s.label}>End time (optional)</Text>
+                <Pressable style={[s.input, s.pickerTrigger]} onPress={() => setTimePickerFor('end')}>
+                  <Clock size={14} color={endTime ? color.ink : color.faint} />
+                  <Text style={[s.pickerTriggerText, !endTime && s.placeholder]}>
+                    {endTime ? formatTimeDisplay(endTime) : 'Pick an end time'}
+                  </Text>
+                  <ChevronRight size={14} color={color.mute} />
+                </Pressable>
               </>
             )}
 
@@ -374,9 +446,18 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                   <View style={s.reviewRow}>
                     <CalendarClock size={14} color={color.mute} />
                     <Text style={s.reviewMeta}>
-                      {startDate ? startDate.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Date TBD'}
+                      {formatDateTimeReview(startDateStr, startTime)}
                     </Text>
                   </View>
+
+                  {endDateStr ? (
+                    <View style={s.reviewRow}>
+                      <CalendarClock size={14} color={color.mute} />
+                      <Text style={s.reviewMeta}>
+                        {'Ends: ' + formatDateTimeReview(endDateStr, endTime)}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   {locationName ? (
                     <View style={s.reviewRow}>
@@ -437,6 +518,44 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
           </View>
         </View>
       </View>
+
+      {/* ── Date pickers (rendered outside ScrollView to avoid clipping) ── */}
+      <GlobalCalendarPicker
+        visible={calPickerFor === 'start'}
+        mode="single"
+        title="Start date"
+        value={startDateStr ?? undefined}
+        minDate={todayISO}
+        allowPast={false}
+        onConfirm={(iso) => { setStartDateStr(iso as string); setCalPickerFor(null); }}
+        onCancel={() => setCalPickerFor(null)}
+      />
+      <GlobalCalendarPicker
+        visible={calPickerFor === 'end'}
+        mode="single"
+        title="End date"
+        value={endDateStr ?? undefined}
+        minDate={startDateStr ?? todayISO}
+        allowPast={false}
+        onConfirm={(iso) => { setEndDateStr(iso as string); setCalPickerFor(null); }}
+        onCancel={() => setCalPickerFor(null)}
+      />
+      <GlobalTimePicker
+        visible={timePickerFor === 'start'}
+        title="Start time"
+        value={startTime}
+        allowClear
+        onChange={(v) => { setStartTime(v); }}
+        onClose={() => setTimePickerFor(null)}
+      />
+      <GlobalTimePicker
+        visible={timePickerFor === 'end'}
+        title="End time"
+        value={endTime}
+        allowClear
+        onChange={(v) => { setEndTime(v); }}
+        onClose={() => setTimePickerFor(null)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -455,9 +574,11 @@ const s = StyleSheet.create({
   label:      { ...t.small, color: color.mute, fontWeight: '700', marginTop: space.sm },
   input:      { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: 10, ...t.body, color: color.ink },
   textarea:   { height: 90 },
+  pickerTrigger:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pickerTriggerText: { flex: 1, ...t.body, color: color.ink },
+  placeholder:{ color: color.faint },
   locationRow:{ flexDirection: 'row', alignItems: 'center', gap: 8 },
   locationText:{ flex: 1, ...t.body, color: color.ink },
-  placeholder:{ color: color.faint },
   row:        { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   rangeSep:   { ...t.body, color: color.mute },
   toggleRow:  { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },

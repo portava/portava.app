@@ -9,7 +9,8 @@ import {
   View, Text, Modal, ScrollView, Pressable, Switch,
   TextInput, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { X, Plane, Clock, MapPin, AlertCircle } from 'lucide-react-native';
+import { X, Plane, Clock, MapPin, AlertCircle, ChevronRight } from 'lucide-react-native';
+import { GlobalTimePicker } from '../selectors/GlobalTimePicker';
 import {
   createLayoverSession,
   searchAirports,
@@ -59,8 +60,9 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   const [searching, setSearching]           = useState(false);
 
   // Time
-  const [arrivalHour,   setArrivalHour]   = useState('');
-  const [departureHour, setDepartureHour] = useState('');
+  const [arrivalTime,   setArrivalTime]   = useState<string | null>(null);
+  const [departureTime, setDepartureTime] = useState<string | null>(null);
+  const [timePickerFor, setTimePickerFor] = useState<'arrival' | 'departure' | null>(null);
   const [flightType, setFlightType]       = useState<FlightType>('international');
 
   // Options
@@ -91,22 +93,30 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
     }
   };
 
-  const buildDatetime = (hourStr: string, offsetHours = 0): string | null => {
-    const hour = parseInt(hourStr, 10);
-    if (isNaN(hour) || hour < 0 || hour > 23) return null;
+  const buildDatetime = (hhMm: string | null): string | null => {
+    if (!hhMm) return null;
+    const [h, m] = hhMm.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return null;
     const d = new Date();
-    d.setHours(hour, 0, 0, 0);
-    if (offsetHours) d.setTime(d.getTime() + offsetHours * 3_600_000);
+    d.setHours(h, m, 0, 0);
     return d.toISOString();
+  };
+
+  const formatTimeLabel = (hhMm: string | null): string => {
+    if (!hhMm) return '';
+    const [h, m] = hhMm.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   };
 
   const handleCreate = async () => {
     setError(null);
-    const arrival   = buildDatetime(arrivalHour);
-    const departure = buildDatetime(departureHour);
+    const arrival   = buildDatetime(arrivalTime);
+    const departure = buildDatetime(departureTime);
 
     if (!arrival || !departure) {
-      setError('Please enter valid arrival and departure hours (0–23).');
+      setError('Please pick both arrival and departure times.');
       return;
     }
     if (new Date(departure) <= new Date(arrival)) {
@@ -211,24 +221,24 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
           <Text style={styles.sectionLabel}><Clock size={14} color="#666" /> Time window</Text>
           <View style={styles.row}>
             <View style={styles.halfField}>
-              <Text style={styles.fieldLabel}>Arrival hour (0–23)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 14"
-                keyboardType="number-pad"
-                value={arrivalHour}
-                onChangeText={setArrivalHour}
-              />
+              <Text style={styles.fieldLabel}>Arrival time</Text>
+              <Pressable style={styles.timeTrigger} onPress={() => setTimePickerFor('arrival')}>
+                <Clock size={13} color={arrivalTime ? '#1a1a1a' : '#aaa'} />
+                <Text style={[styles.timeTriggerText, !arrivalTime && styles.timeTriggerPlaceholder]}>
+                  {arrivalTime ? formatTimeLabel(arrivalTime) : 'Pick time'}
+                </Text>
+                <ChevronRight size={13} color="#aaa" />
+              </Pressable>
             </View>
             <View style={styles.halfField}>
-              <Text style={styles.fieldLabel}>Departure hour (0–23)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 20"
-                keyboardType="number-pad"
-                value={departureHour}
-                onChangeText={setDepartureHour}
-              />
+              <Text style={styles.fieldLabel}>Departure time</Text>
+              <Pressable style={styles.timeTrigger} onPress={() => setTimePickerFor('departure')}>
+                <Clock size={13} color={departureTime ? '#1a1a1a' : '#aaa'} />
+                <Text style={[styles.timeTriggerText, !departureTime && styles.timeTriggerPlaceholder]}>
+                  {departureTime ? formatTimeLabel(departureTime) : 'Pick time'}
+                </Text>
+                <ChevronRight size={13} color="#aaa" />
+              </Pressable>
             </View>
           </View>
 
@@ -317,6 +327,23 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
           </Pressable>
         </ScrollView>
       </View>
+
+      <GlobalTimePicker
+        visible={timePickerFor === 'arrival'}
+        title="Arrival time"
+        value={arrivalTime}
+        allowClear
+        onChange={(v) => { setArrivalTime(v); }}
+        onClose={() => setTimePickerFor(null)}
+      />
+      <GlobalTimePicker
+        visible={timePickerFor === 'departure'}
+        title="Departure time"
+        value={departureTime}
+        allowClear
+        onChange={(v) => { setDepartureTime(v); }}
+        onClose={() => setTimePickerFor(null)}
+      />
     </Modal>
   );
 }
@@ -334,6 +361,9 @@ const styles = StyleSheet.create({
   halfField:    { flex: 1 },
   fieldLabel:   { fontSize: 12, color: '#888', marginBottom: 4 },
   input:        { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, fontSize: 15, backgroundColor: '#fafafa' },
+  timeTrigger:  { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#fafafa' },
+  timeTriggerText:       { flex: 1, fontSize: 15, color: '#1a1a1a' },
+  timeTriggerPlaceholder:{ color: '#aaa' },
   searchBtn:    { backgroundColor: '#2196F3', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
   searchBtnText:{ color: '#fff', fontWeight: '600', fontSize: 14 },
   resultsBox:   { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginTop: 4, overflow: 'hidden' },
