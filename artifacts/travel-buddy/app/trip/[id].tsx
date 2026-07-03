@@ -29,7 +29,9 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
+import { updateTrip } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 
 // RichText surface note: the TripDetail model (`src/types/models.ts: TripDetail`)
 // does not expose a freeform description/notes field for RichText rendering.
@@ -42,6 +44,7 @@ function TripDetailScreen() {
   const insets = useSafeAreaInsets();
   const { configured, isAuthed, userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
+  const { checkForNewStamps } = useStampToast();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const { invites } = usePendingTripInvites();
@@ -59,6 +62,7 @@ function TripDetailScreen() {
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<SafeReturnSession | null>(null);
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
+  const [completingTrip, setCompletingTrip] = useState(false);
   const handleGapDays = useCallback((days: string[], dest: string) => {
     setGapDays(days);
     setGapDestination(dest);
@@ -128,6 +132,30 @@ function TripDetailScreen() {
     } else {
       Alert.alert('Chat unavailable', res.message ?? 'Could not open the trip chat. Make sure you are an accepted trip member.');
     }
+  }
+
+  async function handleMarkComplete() {
+    if (!live || !id || completingTrip) return;
+    Alert.alert(
+      'Mark trip as complete?',
+      'This will update the trip status to completed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark complete',
+          onPress: async () => {
+            setCompletingTrip(true);
+            const updated = await updateTrip(id, { status: 'completed' });
+            setCompletingTrip(false);
+            if (updated) {
+              checkForNewStamps(2000);
+            } else {
+              Alert.alert('Error', 'Could not mark the trip as complete. Try again.');
+            }
+          },
+        },
+      ],
+    );
   }
 
   if (live && loading) {
@@ -319,7 +347,10 @@ function TripDetailScreen() {
         {activeSafeReturnSession ? (
           <ActiveSafeReturnCard
             session={activeSafeReturnSession}
-            onSessionEnded={() => setActiveSafeReturnSession(null)}
+            onSessionEnded={() => {
+              setActiveSafeReturnSession(null);
+              checkForNewStamps(2000);
+            }}
             onSessionUpdated={(s) => setActiveSafeReturnSession(s)}
           />
         ) : (
@@ -333,9 +364,25 @@ function TripDetailScreen() {
             visible={showMissedPrompt}
             session={activeSafeReturnSession}
             onDismiss={() => setShowMissedPrompt(false)}
-            onSafe={() => { setShowMissedPrompt(false); setActiveSafeReturnSession(null); }}
+            onSafe={() => {
+              setShowMissedPrompt(false);
+              setActiveSafeReturnSession(null);
+              checkForNewStamps(2000);
+            }}
             onExtended={(s) => { setShowMissedPrompt(false); setActiveSafeReturnSession(s); }}
           />
+        )}
+        {/* Mark as complete — shown to trip owner when trip is not yet completed */}
+        {live && isAuthed && realTrip?.ownerId === userId && realTrip?.status !== 'completed' && (
+          <Pressable
+            style={[styles.markCompleteBtn, completingTrip && { opacity: 0.6 }]}
+            onPress={handleMarkComplete}
+            disabled={completingTrip}
+          >
+            {completingTrip
+              ? <ActivityIndicator size="small" color={color.success} />
+              : <Text style={styles.markCompleteBtnText}>Mark trip as complete</Text>}
+          </Pressable>
         )}
         <SafeReturnSetupSheet
           visible={safeReturnSetupOpen}
@@ -458,6 +505,8 @@ const styles = StyleSheet.create({
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
   safeSetupBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   safeSetupBtnText: { ...t.body, color: color.deep, fontWeight: '600' },
+  markCompleteBtn: { marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.success, backgroundColor: '#F0FDF4', alignItems: 'center' },
+  markCompleteBtnText: { ...t.body, color: color.success, fontWeight: '700' },
 });
 
 function formatGapLabel(dateStr: string): string {

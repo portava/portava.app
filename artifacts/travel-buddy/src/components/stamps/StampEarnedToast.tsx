@@ -1,10 +1,11 @@
 /**
  * StampEarnedToast — bottom-slide celebration toast shown when
- * a new stamp has been earned. Polls /stamps/recent every 30 s
- * and deduplicates seen stamp IDs via AsyncStorage so the toast
- * only fires once per stamp per device.
+ * a new stamp has been earned. Deduplicates seen stamp IDs via
+ * AsyncStorage so the toast only fires once per stamp per device.
  *
  * Wrap your root layout in <StampEarnedToastProvider> to activate it.
+ * Trigger checks via checkForNewStamps() after stamp-awarding actions
+ * (trip creation, safe-return completion, etc.).
  */
 import React, {
   createContext, useContext, useCallback, useEffect, useRef, useState,
@@ -20,7 +21,8 @@ import type { PassportStampNew } from '../../services/passportStamps';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
 const SEEN_KEY = 'stamp_earned_seen_ids';
-const POLL_MS  = 30_000;
+/** Only surface stamps earned within this window of the triggering action. */
+const RECENT_WINDOW_MS = 30_000;
 
 const SOURCE_LABELS: Record<string, string> = {
   trip:        'Completed a trip',
@@ -33,6 +35,22 @@ const SOURCE_LABELS: Record<string, string> = {
   manual:      'Manually awarded',
   event:       'Attended an event',
   rent_buddy:  'Rent a Buddy activity',
+};
+
+const RARITY_LABELS: Record<string, string> = {
+  common:    'Common',
+  uncommon:  'Uncommon',
+  rare:      'Rare',
+  epic:      'Epic',
+  legendary: 'Legendary',
+};
+
+const RARITY_COLORS: Record<string, string> = {
+  common:    '#9CA3AF',
+  uncommon:  '#34D399',
+  rare:      '#60A5FA',
+  epic:      '#A78BFA',
+  legendary: '#FBBF24',
 };
 
 async function getSeenIds(): Promise<Set<string>> {
@@ -54,9 +72,18 @@ async function markSeen(id: string): Promise<void> {
 
 interface ToastCtx {
   showStampToast: (stamp: PassportStampNew) => void;
+  /**
+   * Poll /stamps/me immediately and surface any newly earned stamps as toasts.
+   * Pass delayMs (default 2000) to wait before polling — useful right after a
+   * server action that awards stamps, giving the server time to finish.
+   */
+  checkForNewStamps: (delayMs?: number) => void;
 }
 
-const StampToastContext = createContext<ToastCtx>({ showStampToast: () => {} });
+const StampToastContext = createContext<ToastCtx>({
+  showStampToast: () => {},
+  checkForNewStamps: () => {},
+});
 
 export function useStampToast() {
   return useContext(StampToastContext);
@@ -99,24 +126,36 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
     setQueue((q) => [...q, stamp]);
   }, []);
 
-  // Poll /stamps/recent
-  useEffect(() => {
-    let alive = true;
-
-    async function poll() {
+  const checkForNewStamps = useCallback((delayMs = 2000) => {
+    // Capture the action timestamp BEFORE the delay so recency is measured from
+    // when the triggering action occurred, not when the poll fires.
+    const triggeredAt = Date.now();
+    const run = async () => {
       const res = await getMyRecentStamps().catch(() => null);
-      if (!res?.ok || !alive) return;
-
+      if (!res?.ok) return;
       const seen = await getSeenIds();
       for (const stamp of res.data) {
-        if (!seen.has(stamp.id)) {
-          await markSeen(stamp.id);
+        if (seen.has(stamp.id)) continue;
+        // Always mark as seen to prevent stale awards surfacing in future checks.
+        await markSeen(stamp.id);
+        // Only show a toast if the stamp was earned within ~30s of the action.
+        const earnedMs = stamp.earnedAt ? new Date(stamp.earnedAt).getTime() : 0;
+        if (triggeredAt - earnedMs <= RECENT_WINDOW_MS) {
           showStampToast(stamp);
         }
       }
+    };
+    if (delayMs > 0) {
+      setTimeout(run, delayMs);
+    } else {
+      run();
     }
+  }, [showStampToast]);
 
-    // Seed seen IDs on first load (mark existing stamps as seen without showing toasts)
+  // Seed seen IDs on first load so existing stamps don't fire toasts on mount.
+  // No background interval — stamp checks run only after explicit triggering actions.
+  useEffect(() => {
+    let alive = true;
     getMyRecentStamps()
       .then(async (res) => {
         if (!res.ok || !alive) return;
@@ -125,10 +164,8 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
         await AsyncStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
       })
       .catch(() => {});
-
-    const id = setInterval(poll, POLL_MS);
-    return () => { alive = false; clearInterval(id); };
-  }, [showStampToast]);
+    return () => { alive = false; };
+  }, []);
 
   const stampName = current
     ? (current.titleOverride ?? current.definition?.name ?? current.city ?? 'New stamp')
@@ -136,9 +173,17 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
   const reason = current
     ? (SOURCE_LABELS[current.sourceType] ?? current.sourceType.replace(/_/g, ' '))
     : '';
+  const rarity = current?.definition?.rarity ?? null;
+  const rarityLabel = rarity ? (RARITY_LABELS[rarity] ?? rarity) : null;
+  const rarityColor = rarity ? (RARITY_COLORS[rarity] ?? '#9CA3AF') : '#9CA3AF';
+
+  const subText = [rarityLabel, stampName, reason ? `— ${reason}` : '']
+    .filter(Boolean)
+    .join(' · ')
+    .replace(' · —', ' —');
 
   return (
-    <StampToastContext.Provider value={{ showStampToast }}>
+    <StampToastContext.Provider value={{ showStampToast, checkForNewStamps }}>
       {children}
 
       {current && (
@@ -147,14 +192,14 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
           pointerEvents="box-none"
         >
           <View style={styles.inner}>
-            <View style={styles.iconWrap}>
+            <View style={[styles.iconWrap, { backgroundColor: rarityColor }]}>
               <Award size={20} color="#fff" />
             </View>
 
             <View style={styles.textWrap}>
               <Text style={styles.title}>Passport Stamp Earned 🌍</Text>
               <Text style={styles.sub} numberOfLines={1}>
-                {stampName}{reason ? ` — ${reason}` : ''}
+                {subText}
               </Text>
             </View>
 

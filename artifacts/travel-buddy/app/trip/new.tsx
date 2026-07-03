@@ -10,10 +10,12 @@ import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePic
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 
 export default function NewTrip() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
+  const { checkForNewStamps } = useStampToast();
 
   const [title, setTitle] = useState('');
   const [place, setPlace] = useState<Place | null>(null);
@@ -42,6 +44,7 @@ export default function NewTrip() {
         visibility: 'private',
       });
       if (!trip) { setError('Could not create the trip. Try again.'); return; }
+      checkForNewStamps(2000);
       router.replace(`/trip/${trip.id}`);
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
