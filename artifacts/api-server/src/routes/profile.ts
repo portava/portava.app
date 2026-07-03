@@ -845,6 +845,111 @@ router.post("/me/delete-request", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /me/delete-request — check whether a pending deletion request exists
+ * ===========================================================================
+ * Returns { pending: true, scheduledAt } if a pending request exists,
+ * or { pending: false, scheduledAt: null } otherwise.
+ */
+router.get("/me/delete-request", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data, error } = await sc
+    .from("user_deletion_requests")
+    .select("status, scheduled_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "delete-request GET: failed to query");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const pending = (data as any)?.status === "pending";
+  res.status(200).json({
+    pending,
+    scheduledAt: pending ? (data as any).scheduled_at : null,
+  });
+});
+
+/* ===========================================================================
+ * DELETE /me/delete-request — cancel a pending account deletion
+ * ===========================================================================
+ * Sets user_deletion_requests.status = 'cancelled', cancelled_at = now().
+ * Restores profiles.account_status = 'active' and
+ * user_account_states.state = 'active'.
+ * Returns { cancelled: true }.
+ */
+router.delete("/me/delete-request", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Verify there is actually a pending deletion request to cancel
+  const { data: existing, error: fetchErr } = await sc
+    .from("user_deletion_requests")
+    .select("status")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (fetchErr) {
+    req.log.error({ err: fetchErr }, "delete-request DELETE: failed to fetch request");
+    sendError(res, "db_error", fetchErr.message);
+    return;
+  }
+
+  if (!existing || (existing as any).status !== "pending") {
+    sendError(res, "not_found", "No pending deletion request found");
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  // Mark the deletion request as cancelled
+  const { error: cancelErr } = await sc
+    .from("user_deletion_requests")
+    .update({ status: "cancelled", cancelled_at: now })
+    .eq("user_id", user.id);
+
+  if (cancelErr) {
+    req.log.error({ err: cancelErr }, "delete-request DELETE: failed to cancel");
+    sendError(res, "db_error", cancelErr.message);
+    return;
+  }
+
+  // Restore profile account_status to active (primary write — fail closed)
+  const { error: profileErr } = await sc
+    .from("profiles")
+    .update({ account_status: "active" })
+    .eq("id", user.id);
+
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "delete-request DELETE: failed to restore profile status");
+    sendError(res, "db_error", "Failed to restore account status");
+    return;
+  }
+
+  // Secondary writes are best-effort after the primary write succeeds
+  sc.from("user_account_states")
+    .upsert({ user_id: user.id, state: "active", updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  sc.from("profile_privacy_settings")
+    .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
+    .then(undefined, () => {});
+
+  res.status(200).json({ cancelled: true });
+});
+
+/* ===========================================================================
  * GET /me/privacy — fetch caller's privacy settings
  * ===========================================================================
  * Returns the profile_privacy_settings row, or defaults if none exists yet.
