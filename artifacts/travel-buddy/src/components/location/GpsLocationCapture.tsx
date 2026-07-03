@@ -1,5 +1,6 @@
 /**
- * GpsLocationCapture — one-tap GPS capture for forms.
+ * GpsLocationCapture — one-tap GPS capture for forms, with an alternate
+ * "Pick on map" flow so users can pin any location (not just their current one).
  *
  * Coordinate Input Matrix (as of initial implementation):
  *   - gems/submit.tsx (LocationStep): replaced with this component
@@ -13,7 +14,7 @@
  *   initialLabel — optional label to pre-populate (e.g. when editing a draft).
  *
  * States:
- *   idle    — "Use my current location" button
+ *   idle    — "Use my current location" + "Pick on map" buttons
  *   loading — spinner while permission is requested and GPS fix is running
  *   success — confirmation label + "Change" button
  *   denied  — permission was refused; shows settings link copy
@@ -29,6 +30,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../services/location';
 import { runGpsCapture } from './GpsLocationCapture.machine';
+import { MapLocationPicker } from './MapLocationPicker';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -37,13 +39,18 @@ export type { GpsCaptureResult } from './GpsLocationCapture.machine';
 interface Props {
   onCapture: (result: import('./GpsLocationCapture.machine').GpsCaptureResult | null) => void;
   initialLabel?: string;
+  initialLat?: number;
+  initialLng?: number;
 }
 
 type CaptureState = 'idle' | 'loading' | 'success' | 'denied' | 'error';
 
-export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
+export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initialLng }: Props) {
   const [state, setState] = useState<CaptureState>(initialLabel ? 'success' : 'idle');
   const [label, setLabel] = useState<string>(initialLabel ?? '');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickedLat, setPickedLat] = useState<number | undefined>(initialLat);
+  const [pickedLng, setPickedLng] = useState<number | undefined>(initialLng);
 
   const capture = useCallback(async () => {
     setState('loading');
@@ -56,6 +63,8 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
 
       if (outcome.nextState === 'success') {
         setLabel(outcome.result.label);
+        setPickedLat(outcome.result.lat);
+        setPickedLng(outcome.result.lng);
         setState('success');
         onCapture(outcome.result);
       } else {
@@ -68,9 +77,23 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
 
   const reset = useCallback(() => {
     setLabel('');
+    setPickedLat(undefined);
+    setPickedLng(undefined);
     setState('idle');
     onCapture(null);
   }, [onCapture]);
+
+  const handleMapConfirm = useCallback(
+    (result: import('./GpsLocationCapture.machine').GpsCaptureResult) => {
+      setPickerOpen(false);
+      setLabel(result.label);
+      setPickedLat(result.lat);
+      setPickedLng(result.lng);
+      setState('success');
+      onCapture(result);
+    },
+    [onCapture],
+  );
 
   if (state === 'loading') {
     return (
@@ -86,7 +109,7 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
       <View style={s.successBox}>
         <Ionicons name="location" size={18} color="#4C8BF5" />
         <View style={{ flex: 1 }}>
-          <Text style={s.successLabel}>Location detected</Text>
+          <Text style={s.successLabel}>Location pinned</Text>
           <Text style={s.successValue} numberOfLines={2}>{label}</Text>
         </View>
         <TouchableOpacity onPress={reset} hitSlop={8}>
@@ -102,12 +125,24 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
         <Ionicons name="location-outline" size={18} color="#8A9BB5" />
         <View style={{ flex: 1 }}>
           <Text style={s.messageText}>
-            Location permission is off. Enable it in device Settings, or skip — GPS verification is optional for gem submissions.
+            Location permission is off. Enable it in device Settings, or pick on the map instead.
           </Text>
-          <TouchableOpacity onPress={() => Linking.openSettings()} hitSlop={4}>
-            <Text style={s.settingsLink}>Open Settings</Text>
-          </TouchableOpacity>
+          <View style={s.deniedActions}>
+            <TouchableOpacity onPress={() => Linking.openSettings()} hitSlop={4}>
+              <Text style={s.settingsLink}>Open Settings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setPickerOpen(true)} hitSlop={4}>
+              <Text style={s.settingsLink}>Pick on map</Text>
+            </TouchableOpacity>
+          </View>
         </View>
+        <MapLocationPicker
+          visible={pickerOpen}
+          initialLat={pickedLat}
+          initialLng={pickedLng}
+          onConfirm={handleMapConfirm}
+          onCancel={() => setPickerOpen(false)}
+        />
       </View>
     );
   }
@@ -118,21 +153,48 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
         <Ionicons name="warning-outline" size={18} color="#8A9BB5" />
         <View style={{ flex: 1 }}>
           <Text style={s.messageText}>
-            Couldn't get your location. Check that GPS is enabled and try again.
+            Couldn't get your location. Check that GPS is enabled and try again, or pick on the map.
           </Text>
-          <TouchableOpacity onPress={capture} hitSlop={4}>
-            <Text style={s.retryLink}>Try again</Text>
-          </TouchableOpacity>
+          <View style={s.deniedActions}>
+            <TouchableOpacity onPress={capture} hitSlop={4}>
+              <Text style={s.retryLink}>Try again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setPickerOpen(true)} hitSlop={4}>
+              <Text style={s.retryLink}>Pick on map</Text>
+            </TouchableOpacity>
+          </View>
         </View>
+        <MapLocationPicker
+          visible={pickerOpen}
+          initialLat={pickedLat}
+          initialLng={pickedLng}
+          onConfirm={handleMapConfirm}
+          onCancel={() => setPickerOpen(false)}
+        />
       </View>
     );
   }
 
   return (
-    <TouchableOpacity style={s.captureBtn} onPress={capture} activeOpacity={0.75}>
-      <Ionicons name="location-outline" size={18} color="#4C8BF5" />
-      <Text style={s.captureBtnText}>Use my current location</Text>
-    </TouchableOpacity>
+    <View style={s.idleWrap}>
+      <TouchableOpacity style={s.captureBtn} onPress={capture} activeOpacity={0.75}>
+        <Ionicons name="location-outline" size={18} color="#4C8BF5" />
+        <Text style={s.captureBtnText}>Use my current location</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={s.mapBtn} onPress={() => setPickerOpen(true)} activeOpacity={0.75}>
+        <Ionicons name="map-outline" size={18} color="#8A9BB5" />
+        <Text style={s.mapBtnText}>Pick on map</Text>
+      </TouchableOpacity>
+
+      <MapLocationPicker
+        visible={pickerOpen}
+        initialLat={pickedLat}
+        initialLng={pickedLng}
+        onConfirm={handleMapConfirm}
+        onCancel={() => setPickerOpen(false)}
+      />
+    </View>
   );
 }
 
@@ -143,6 +205,9 @@ const s = StyleSheet.create({
   },
   loadingText: { color: '#8A9BB5', fontSize: 14 },
 
+  idleWrap: {
+    gap: 10,
+  },
   captureBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: '#13213A',
@@ -150,6 +215,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 13,
   },
   captureBtnText: { color: '#4C8BF5', fontWeight: '600', fontSize: 15 },
+
+  mapBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#13213A',
+    borderRadius: 12, borderWidth: 1, borderColor: '#2A3D5E',
+    paddingHorizontal: 16, paddingVertical: 13,
+  },
+  mapBtnText: { color: '#8A9BB5', fontWeight: '600', fontSize: 15 },
 
   successBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 10,
@@ -168,6 +241,7 @@ const s = StyleSheet.create({
     padding: 14,
   },
   messageText: { color: '#8A9BB5', fontSize: 13, lineHeight: 19, marginBottom: 6 },
+  deniedActions: { flexDirection: 'row', gap: 16 },
   settingsLink: { color: '#4C8BF5', fontSize: 13, fontWeight: '600' },
   retryLink: { color: '#4C8BF5', fontSize: 13, fontWeight: '600' },
 });
