@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import type { PostRow } from '../services/posts';
+import { formatRelativeTime } from '../lib/dateTime/formatters';
 
 /**
  * Real-posts list — renders ACTUAL backend posts from GET /api/posts (via
@@ -11,19 +12,6 @@ import type { PostRow } from '../services/posts';
  * Pass data/loading/error/reload from useGlobalFeed() in the parent so refetch
  * can be triggered on screen focus (after the composer creates a post).
  */
-
-function timeAgo(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
 
 function RealPostCard({ post }: { post: PostRow }) {
   return (
@@ -39,7 +27,7 @@ function RealPostCard({ post }: { post: PostRow }) {
       <View style={s.footRow}>
         {post.tripId ? <Text style={s.trip}>· trip post</Text> : null}
         <View style={{ flex: 1 }} />
-        <Text style={s.time}>{timeAgo(post.createdAt)}</Text>
+        <Text style={s.time}>{formatRelativeTime(post.createdAt)}</Text>
       </View>
     </View>
   );

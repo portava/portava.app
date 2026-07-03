@@ -6,7 +6,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Shield, CheckCircle, Info, ChevronDown, ChevronUp,
-  AlertTriangle, MapPin, CalendarCheck,
+  AlertTriangle, MapPin, CalendarCheck, Calendar, Clock,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
@@ -16,6 +16,12 @@ import {
   type BuddyProfile, type BuddyPackage, type BuddyCategory,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
+import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
+import { DurationPicker, type DurationOption } from '../../src/components/selectors/DurationPicker';
+import {
+  fromISODate, fromHHmm, formatDisplayDate, formatDisplayTime,
+} from '../../src/lib/dateTime/formatters';
 
 const CATEGORIES: { key: BuddyCategory; label: string }[] = [
   { key: 'city', label: 'City Explorer' },
@@ -36,6 +42,17 @@ const PUBLIC_ZONES = [
   'Airport arrivals hall',
   'Museum / gallery main entrance',
   'Public park main gate',
+];
+
+const BUDDY_DURATION_OPTIONS: DurationOption[] = [
+  { label: '1 h', seconds: 3600 },
+  { label: '2 h', seconds: 7200 },
+  { label: '3 h', seconds: 10800 },
+  { label: '4 h', seconds: 14400 },
+  { label: '6 h', seconds: 21600 },
+  { label: '8 h', seconds: 28800 },
+  { label: '10 h', seconds: 36000 },
+  { label: '12 h', seconds: 43200 },
 ];
 
 const SAFETY_PREFS = [
@@ -86,7 +103,9 @@ export default function RentABuddyCheckout() {
   const [category, setCategory] = useState<BuddyCategory>('city');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
-  const [duration, setDuration] = useState(2);
+  const [duration, setDuration] = useState(2 * 3600);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [groupSize, setGroupSize] = useState(1);
   const [zoneIndex, setZoneIndex] = useState<number | null>(null);
   const [customZone, setCustomZone] = useState('');
@@ -108,7 +127,7 @@ export default function RentABuddyCheckout() {
     setPackages(res.data.packages);
     if (params.packageId) {
       const pkg = res.data.packages.find(p => p.id === params.packageId);
-      if (pkg) { setSelectedPackage(pkg); setDuration(pkg.durationH); setCategory(pkg.category as BuddyCategory); }
+      if (pkg) { setSelectedPackage(pkg); setDuration(pkg.durationH * 3600); setCategory(pkg.category as BuddyCategory); }
     }
   }, [buddyId, params.packageId]);
 
@@ -118,16 +137,17 @@ export default function RentABuddyCheckout() {
 
   const handleBook = async () => {
     if (!buddy || !policyAccepted) return;
-    if (!date.trim()) { Alert.alert('Missing date', 'Please enter a booking date.'); return; }
+    if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
     if (!location.trim()) { Alert.alert('Missing location', 'Please enter a meetup location.'); return; }
 
+    const durationH = Math.max(1, Math.round(duration / 3600));
     setSubmitting(true);
     const res = await createBooking({
       buddyId: buddy.id,
       packageId: selectedPackage?.id,
       bookingDate: date,
       startTime: time || undefined,
-      durationH: duration,
+      durationH,
       groupSize,
       city: buddy.city,
       countryCode: (buddy as any).country_code ?? (buddy as any).country ?? undefined,
@@ -189,7 +209,7 @@ export default function RentABuddyCheckout() {
                 <Pressable
                   key={pkg.id}
                   style={[styles.pkgOption, selectedPackage?.id === pkg.id && styles.pkgOptionActive]}
-                  onPress={() => { setSelectedPackage(pkg); setDuration(pkg.durationH); setCategory(pkg.category as BuddyCategory); }}
+                  onPress={() => { setSelectedPackage(pkg); setDuration(pkg.durationH * 3600); setCategory(pkg.category as BuddyCategory); }}
                 >
                   <Text style={[styles.pkgOptionText, selectedPackage?.id === pkg.id && styles.pkgOptionTextActive]}>
                     {pkg.title} · ${pkg.priceUsd} · {pkg.durationH}h
@@ -222,23 +242,27 @@ export default function RentABuddyCheckout() {
           <View style={styles.row}>
             <View style={[styles.inputWrap, { flex: 1 }]}>
               <Text style={styles.inputLabel}>Date</Text>
-              <TextInput
-                style={styles.input}
-                value={date}
-                onChangeText={setDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={color.haze}
-              />
+              <Pressable
+                style={[styles.input, styles.inputTrigger]}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Calendar size={14} color={date ? color.ink : color.haze} />
+                <Text style={date ? styles.inputTriggerText : styles.inputPlaceholder} numberOfLines={1}>
+                  {date ? formatDisplayDate(fromISODate(date) ?? new Date()) : 'Select date'}
+                </Text>
+              </Pressable>
             </View>
             <View style={[styles.inputWrap, { flex: 1 }]}>
               <Text style={styles.inputLabel}>Start time (optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={time}
-                onChangeText={setTime}
-                placeholder="HH:MM"
-                placeholderTextColor={color.haze}
-              />
+              <Pressable
+                style={[styles.input, styles.inputTrigger]}
+                onPress={() => setShowTimePicker(true)}
+              >
+                <Clock size={14} color={time ? color.ink : color.haze} />
+                <Text style={time ? styles.inputTriggerText : styles.inputPlaceholder} numberOfLines={1}>
+                  {time ? (fromHHmm(time) ? formatDisplayTime(fromHHmm(time)!) : time) : 'Select (optional)'}
+                </Text>
+              </Pressable>
             </View>
           </View>
         </Section>
@@ -246,21 +270,14 @@ export default function RentABuddyCheckout() {
         {/* Duration */}
         {!selectedPackage && (
           <Section title="Duration">
-            <View style={styles.stepper}>
-              <Pressable
-                style={styles.stepBtn}
-                onPress={() => setDuration(d => Math.max(1, d - 1))}
-              >
-                <Text style={styles.stepBtnText}>−</Text>
-              </Pressable>
-              <Text style={styles.stepValue}>{duration} hour{duration !== 1 ? 's' : ''}</Text>
-              <Pressable
-                style={styles.stepBtn}
-                onPress={() => setDuration(d => Math.min(12, d + 1))}
-              >
-                <Text style={styles.stepBtnText}>+</Text>
-              </Pressable>
-            </View>
+            <DurationPicker
+              showChips
+              visible={true}
+              value={duration}
+              onChange={(s) => { if (s != null) setDuration(s); }}
+              onClose={() => {}}
+              options={BUDDY_DURATION_OPTIONS}
+            />
           </Section>
         )}
 
@@ -407,6 +424,24 @@ export default function RentABuddyCheckout() {
           </Text>
         </Pressable>
       </View>
+
+      <GlobalCalendarPicker
+        visible={showDatePicker}
+        mode="single"
+        value={date || null}
+        allowPast={false}
+        onConfirm={(v) => { setDate(v ?? ''); setShowDatePicker(false); }}
+        onCancel={() => setShowDatePicker(false)}
+        title="Select booking date"
+      />
+      <GlobalTimePicker
+        visible={showTimePicker}
+        value={time || null}
+        allowClear
+        onChange={(v) => { setTime(v ?? ''); setShowTimePicker(false); }}
+        onClose={() => setShowTimePicker(false)}
+        title="Select start time"
+      />
     </View>
   );
 }
@@ -457,6 +492,9 @@ const styles = StyleSheet.create({
     ...t.body, color: color.ink,
   },
   notesInput: { height: 80, textAlignVertical: 'top' },
+  inputTrigger: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 44 },
+  inputTriggerText: { ...t.body, color: color.ink, flex: 1 },
+  inputPlaceholder: { ...t.body, color: color.haze, flex: 1 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   stepBtn: {
     width: 40, height: 40, borderRadius: 20,

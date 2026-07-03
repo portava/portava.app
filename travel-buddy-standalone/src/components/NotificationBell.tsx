@@ -16,15 +16,7 @@ import { color, space, type as t, radius, shadow } from '../theme/tokens';
 import { useRecentNotifications, useUnreadNotificationCount } from '../hooks/useNotifications';
 import { markAllNotificationsRead, type AppNotification } from '../services/notifications';
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(diff / 3600000);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(diff / 86400000)}d`;
-}
+import { formatRelativeTime } from '../lib/dateTime/formatters';
 
 const CATEGORY_ICONS: Record<string, string> = {
   plans:       '📋',
@@ -71,7 +63,7 @@ function PopoverItem({ notification, onPress }: PopoverItemProps) {
         </View>
         <Text style={styles.popoverBody} numberOfLines={2}>{notification.body}</Text>
       </View>
-      <Text style={styles.popoverTime}>{relativeTime(notification.createdAt)}</Text>
+      <Text style={styles.popoverTime}>{formatRelativeTime(notification.createdAt)}</Text>
     </Pressable>
   );
 }

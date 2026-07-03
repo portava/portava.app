@@ -880,23 +880,30 @@ export default function MeetupScreen() {
         )}
 
         {/* Add to Calendar — confirmed meetups with a known start time */}
-        {meetup.status === 'confirmed' && !!meetup.startsAt && Platform.OS !== 'web' && (
-          <Pressable
-            style={[s.calBtn, calendarAdded && s.calBtnAdded]}
-            onPress={handleAddToCalendar}
-            disabled={calendarAdded || calendarActioning}
-          >
-            {calendarActioning ? (
-              <ActivityIndicator size="small" color={calendarAdded ? color.onInk : color.signal} />
-            ) : calendarAdded ? (
-              <Check size={16} color={color.onInk} />
-            ) : (
-              <CalendarDays size={16} color={color.signal} />
-            )}
-            <Text style={[s.calBtnText, calendarAdded && s.calBtnTextAdded]}>
-              {calendarAdded ? 'Added ✓' : 'Add to Calendar'}
-            </Text>
-          </Pressable>
+        {meetup.status === 'confirmed' && !!meetup.startsAt && (
+          Platform.OS === 'web' ? (
+            <View style={[s.calBtn, s.calBtnDisabled]}>
+              <CalendarDays size={16} color={color.haze} />
+              <Text style={[s.calBtnText, s.calBtnTextDisabled]}>Not available on web</Text>
+            </View>
+          ) : (
+            <Pressable
+              style={[s.calBtn, calendarAdded && s.calBtnAdded]}
+              onPress={handleAddToCalendar}
+              disabled={calendarAdded || calendarActioning}
+            >
+              {calendarActioning ? (
+                <ActivityIndicator size="small" color={calendarAdded ? color.onInk : color.signal} />
+              ) : calendarAdded ? (
+                <Check size={16} color={color.onInk} />
+              ) : (
+                <CalendarDays size={16} color={color.signal} />
+              )}
+              <Text style={[s.calBtnText, calendarAdded && s.calBtnTextAdded]}>
+                {calendarAdded ? 'Added ✓' : 'Add to Calendar'}
+              </Text>
+            </Pressable>
+          )
         )}
 
         {/* View trip */}
@@ -1036,6 +1043,8 @@ const s = StyleSheet.create({
   calBtnAdded: { backgroundColor: color.signal, borderColor: color.signal },
   calBtnText: { ...t.bodyStrong, color: color.signal },
   calBtnTextAdded: { color: color.onInk },
+  calBtnDisabled: { borderColor: color.haze, opacity: 0.55 },
+  calBtnTextDisabled: { color: color.haze },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   modalSheet: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.xl, gap: space.md, ...shadow.card },

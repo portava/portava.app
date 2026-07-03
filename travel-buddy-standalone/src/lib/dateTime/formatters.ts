@@ -105,3 +105,20 @@ const MONTHS = [
   'July','August','September','October','November','December',
 ];
 export function monthName(month: number): string { return MONTHS[month] ?? ''; }
+
+/**
+ * Format an ISO timestamp as a short relative label for use in feeds and
+ * message lists: "just now", "5m", "3h", "2d".
+ * Use absolute formatting (formatDisplayDate / formatDisplayTime) in detail
+ * screens instead.
+ */
+export function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!isFinite(diff) || diff < 0) return '';
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
