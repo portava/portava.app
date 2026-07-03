@@ -121,7 +121,7 @@ const pt = StyleSheet.create({
 
   wall: { flexDirection: 'row', gap: space.md, paddingHorizontal: space.md, maxWidth: 600, alignSelf: 'center', width: '100%' },
   col: { flex: 1, gap: space.md },
-  empty: { marginHorizontal: space.lg, padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze, alignItems: 'center', gap: 4 },
+  empty: { maxWidth: 600, alignSelf: 'center', width: '100%', marginHorizontal: space.lg, padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze, alignItems: 'center', gap: 4 },
   emptyTitle: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, textAlign: 'center' },
 });
