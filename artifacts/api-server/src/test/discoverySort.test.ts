@@ -411,6 +411,67 @@ describe("GET /discovery?sortBy=popular", () => {
       `when savedCount is equal, higher-rated place (idx ${wellIdx}) must appear above lower-rated (idx ${poorIdx})`,
     );
   });
+
+  it("OSM cached place with higher savedCount ranks above DB place with lower savedCount when merged", async () => {
+    // This test exercises the production merge path:
+    // OSM results come from the in-memory cache (simulating a warmed cache);
+    // DB results come from _setTestDbPlacesOverride (simulating a DB query).
+    // The popular sort must order by savedCount across BOTH sources.
+    const OSM_PLACE_NAME = "OSM High Save Spot";
+    const DB_PLACE_NAME  = "DB Low Save Spot";
+
+    const osmPlace: DiscoveryPlace = {
+      id:           "node/merge-osm-1",  // OSM-style ID, not db/... prefix
+      name:         OSM_PLACE_NAME,
+      category:     "for_you",
+      type:         "traveler_pick",
+      description:  "A popular OSM venue",
+      distanceKm:   1.2,
+      lat:          25.80,
+      lng:          -80.20,
+      tags:         [],
+      address:      "Miami, FL",
+      website:      null,
+      phone:        null,
+      openingHours: null,
+      rating:       3.5,
+      isOpenNow:    null,
+      savedCount:   15,   // high — should rank first
+    };
+
+    const dbPlace: DiscoveryPlace = placeWithCount({
+      id:        "merge-db-1",
+      name:      DB_PLACE_NAME,
+      savedCount: 3,      // low — should rank second
+      rating:    4.9,     // rating is higher but savedCount wins
+    });
+
+    // Inject a fresh OSM cache entry for the destination used in the request.
+    // Cache key: "${destination.toLowerCase()}:${category}:${radiusKm}"
+    // Request uses destination=MergeCity, category=for_you (default), radiusKm=10
+    const cacheKey = "mergecity:for_you:10";
+    _injectTestCacheEntry(cacheKey, [osmPlace]);
+    _setTestDbPlacesOverride(async () => [dbPlace]);
+
+    const r = await get(
+      server,
+      "/discovery?destination=MergeCity&lat=25.77&lng=-80.19&sortBy=popular&radiusKm=10",
+    );
+    assert.equal(r.status, 200, "should return 200");
+    const places: any[] = r.body.places;
+
+    const osmIdx = places.findIndex((p: any) => p.name === OSM_PLACE_NAME);
+    const dbIdx  = places.findIndex((p: any) => p.name === DB_PLACE_NAME);
+
+    assert.ok(osmIdx !== -1, "OSM cached place must appear in merged results");
+    assert.ok(dbIdx  !== -1, "DB place must appear in merged results");
+    assert.ok(
+      osmIdx < dbIdx,
+      `OSM place with savedCount=15 (idx ${osmIdx}) must rank above DB place with savedCount=3 (idx ${dbIdx}) in the popular sort`,
+    );
+
+    _clearTestCacheEntry(cacheKey);
+  });
 });
 
 // ── Suite 3: patchOsmSavedCount — in-memory cache update ─────────────────────
