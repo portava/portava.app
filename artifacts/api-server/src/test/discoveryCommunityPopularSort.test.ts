@@ -62,13 +62,22 @@ const RATING_NULL_A = { ...BASE_ROW, id: "place-rating-null-a", name: "Rating Nu
 const RATING_NULL_B = { ...BASE_ROW, id: "place-rating-null-b", name: "Rating Null B", created_at: "2025-05-01T00:00:00.000Z" };
 const RATING_NULL_C = { ...BASE_ROW, id: "place-rating-null-c", name: "Rating Null C", created_at: "2025-01-01T00:00:00.000Z" };
 
+// Rows for testing numeric rating values
+const RATING_HIGH = { ...BASE_ROW, id: "place-rating-high", name: "Rating High", rating: 4.5, created_at: "2025-01-01T00:00:00.000Z" };
+const RATING_MID  = { ...BASE_ROW, id: "place-rating-mid",  name: "Rating Mid",  rating: 3.0, created_at: "2025-02-01T00:00:00.000Z" };
+const RATING_LOW  = { ...BASE_ROW, id: "place-rating-low",  name: "Rating Low",  rating: 1.2, created_at: "2025-03-01T00:00:00.000Z" };
+
+// Rows for testing mixed NULL + numeric rating (nullsFirst: false → NULLs appear after numeric values)
+const RATING_MIX_NUM  = { ...BASE_ROW, id: "place-mix-num",  name: "Mix Numeric", rating: 4.5, created_at: "2025-06-01T00:00:00.000Z" };
+const RATING_MIX_NULL = { ...BASE_ROW, id: "place-mix-null", name: "Mix Null",    rating: null, created_at: "2025-07-01T00:00:00.000Z" };
+
 // ── Fake client (tracks .order() and applies real sorting) ─────────────────────
 
 function makeFakeClient(allRows: Record<string, unknown>[]) {
   function chain(table: string) {
     const eqFilters: Array<{ col: string; val: unknown }> = [];
     // Tracks multiple sort keys in declaration order (first = highest priority).
-    const orderKeys: Array<{ col: string; asc: boolean }> = [];
+    const orderKeys: Array<{ col: string; asc: boolean; nullsFirst: boolean }> = [];
 
     const obj: any = {
       select()         { return obj; },
@@ -82,8 +91,9 @@ function makeFakeClient(allRows: Record<string, unknown>[]) {
         eqFilters.push({ col, val });
         return obj;
       },
-      order(col: string, opts?: { ascending?: boolean }) {
-        orderKeys.push({ col, asc: opts?.ascending ?? true });
+      order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
+        const asc = opts?.ascending ?? true;
+        orderKeys.push({ col, asc, nullsFirst: opts?.nullsFirst ?? asc });
         return obj;
       },
       then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
@@ -101,12 +111,12 @@ function makeFakeClient(allRows: Record<string, unknown>[]) {
 
         if (orderKeys.length > 0) {
           rows.sort((a, b) => {
-            for (const { col, asc } of orderKeys) {
-              const av = a[col] ?? null;
-              const bv = b[col] ?? null;
+            for (const { col, asc, nullsFirst } of orderKeys) {
+              const av = a[col] as number | null ?? null;
+              const bv = b[col] as number | null ?? null;
               if (av === null && bv === null) continue;
-              if (av === null) return asc ? 1 : -1;
-              if (bv === null) return asc ? -1 : 1;
+              if (av === null) return nullsFirst ? -1 : 1;
+              if (bv === null) return nullsFirst ? 1 : -1;
               if (av < bv) return asc ? -1 : 1;
               if (av > bv) return asc ? 1 : -1;
             }
@@ -438,6 +448,151 @@ describe("GET /api/discovery/community — sortBy=rating with all-NULL rating", 
       r.items[2].id,
       RATING_NULL_C.id,
       `expected oldest place (${RATING_NULL_C.id}) last, got ${r.items[2].id}`,
+    );
+  });
+});
+
+// ── Tests — sortBy=rating with real numeric values ─────────────────────────────
+
+describe("GET /api/discovery/community — sortBy=rating with numeric values sorts highest-rated first", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    // Seed in low→high order so we confirm the sort is applied (not just seed order preserved)
+    _setTestClient(makeFakeClient([RATING_LOW, RATING_MID, RATING_HIGH]), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns HTTP 200 for sortBy=rating with numeric values", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  });
+
+  it("returns all three places", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.total, 3, `expected total=3, got ${r.total}`);
+    assert.equal(r.items.length, 3, `expected 3 items, got ${r.items.length}`);
+  });
+
+  it("first item has the highest rating (4.5)", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.ok(r.items.length > 0, "expected at least one item");
+    assert.equal(
+      r.items[0].id,
+      RATING_HIGH.id,
+      `expected ${RATING_HIGH.id} first (rating=4.5), got ${r.items[0].id} (rating=${r.items[0].rating})`,
+    );
+    assert.equal(r.items[0].rating, 4.5, `expected first item rating=4.5, got ${r.items[0].rating}`);
+  });
+
+  it("last item has the lowest rating (1.2)", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    const last = r.items[r.items.length - 1];
+    assert.equal(
+      last.id,
+      RATING_LOW.id,
+      `expected ${RATING_LOW.id} last (rating=1.2), got ${last.id} (rating=${last.rating})`,
+    );
+    assert.equal(last.rating, 1.2, `expected last item rating=1.2, got ${last.rating}`);
+  });
+
+  it("items are in non-ascending rating order", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    for (let i = 0; i < r.items.length - 1; i++) {
+      const curr = r.items[i].rating as number;
+      const next = r.items[i + 1].rating as number;
+      assert.ok(
+        curr >= next,
+        `order violated at index ${i}: rating=${curr} < ${next}`,
+      );
+    }
+  });
+
+  it("middle item has rating=3.0", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.items.length, 3, "expected 3 items");
+    assert.equal(
+      r.items[1].id,
+      RATING_MID.id,
+      `expected ${RATING_MID.id} in the middle (rating=3.0), got ${r.items[1].id}`,
+    );
+    assert.equal(r.items[1].rating, 3.0, `expected middle item rating=3.0, got ${r.items[1].rating}`);
+  });
+});
+
+// ── Tests — sortBy=rating with mixed NULL + numeric (nullsFirst: false) ─────────
+
+describe("GET /api/discovery/community — sortBy=rating mixed NULL + numeric puts NULLs last", () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    // RATING_MIX_NULL has a newer created_at (2025-07-01) but rating=null;
+    // RATING_MIX_NUM has rating=4.5. The numeric row must still appear first
+    // because nullsFirst: false pushes NULLs to the end regardless of created_at.
+    _setTestClient(makeFakeClient([RATING_MIX_NULL, RATING_MIX_NUM]), true);
+  });
+
+  afterEach(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  it("returns HTTP 200 for sortBy=rating with mixed NULL and numeric ratings", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  });
+
+  it("returns both places", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.total, 2, `expected total=2, got ${r.total}`);
+    assert.equal(r.items.length, 2, `expected 2 items, got ${r.items.length}`);
+  });
+
+  it("numeric-rated place appears before the NULL-rated place", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    assert.equal(r.items.length, 2, "expected 2 items");
+    assert.equal(
+      r.items[0].id,
+      RATING_MIX_NUM.id,
+      `expected numeric-rated place (${RATING_MIX_NUM.id}, rating=4.5) first, got ${r.items[0].id} (rating=${r.items[0].rating})`,
+    );
+  });
+
+  it("NULL-rated place appears last (nullsFirst: false)", async () => {
+    const r = await getItems(url, "sortBy=rating");
+    const last = r.items[r.items.length - 1];
+    assert.equal(
+      last.id,
+      RATING_MIX_NULL.id,
+      `expected null-rated place (${RATING_MIX_NULL.id}) last, got ${last.id} (rating=${last.rating})`,
+    );
+    assert.equal(
+      last.rating,
+      null,
+      `expected last item rating=null, got ${JSON.stringify(last.rating)}`,
+    );
+  });
+
+  it("NULL-rated place is last even though its created_at is newer", async () => {
+    // RATING_MIX_NULL has created_at=2025-07-01, RATING_MIX_NUM has 2025-06-01.
+    // Without nullsFirst:false enforcement, the NULL row could incorrectly float
+    // to the top via the created_at tie-breaker. The numeric row must still win.
+    const r = await getItems(url, "sortBy=rating");
+    const numericPos  = r.items.findIndex((i) => i.id === RATING_MIX_NUM.id);
+    const nullRatedPos = r.items.findIndex((i) => i.id === RATING_MIX_NULL.id);
+    assert.ok(numericPos !== -1, "numeric-rated place not found in results");
+    assert.ok(nullRatedPos !== -1, "null-rated place not found in results");
+    assert.ok(
+      numericPos < nullRatedPos,
+      `numeric-rated place (pos=${numericPos}) must rank before null-rated place (pos=${nullRatedPos}), even though null place has a newer created_at`,
     );
   });
 });
