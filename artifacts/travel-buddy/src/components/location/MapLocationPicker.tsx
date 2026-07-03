@@ -24,6 +24,7 @@ import type { ViewStateChangeEvent } from '@maplibre/maplibre-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { reverseGeocodeDetailed } from '../../services/location';
 import type { GpsCaptureResult } from './GpsLocationCapture.machine';
+import { resolveMapPickerResult } from './MapLocationPicker.machine';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
@@ -85,33 +86,12 @@ export function MapLocationPicker({
     setGeocodeError(false);
     setConfirming(true);
     try {
-      const [lng, lat] = centerRef.current;
-
-      let label: string | null = null;
-
-      try {
-        const res = await fetch(`${API_BASE}/api/places/reverse?lat=${lat}&lng=${lng}`);
-        if (res.ok) {
-          const body = await res.json() as any;
-          const p = body?.place;
-          if (p) {
-            const city = p.city ?? p.displayName ?? null;
-            const country = p.country ?? null;
-            label = [city, country].filter(Boolean).join(', ') || null;
-          }
-        }
-      } catch {
-        // fall through to expo geocoder
-      }
-
-      if (!label) {
-        const place = await reverseGeocodeDetailed(lat, lng);
-        const city = place.city ?? place.district ?? null;
-        const country = place.country ?? null;
-        label = [city, country].filter(Boolean).join(', ') || null;
-      }
-
-      onConfirm({ lat, lng, label: label ?? 'Selected location' });
+      const result = await resolveMapPickerResult({
+        center: centerRef.current,
+        apiBase: API_BASE,
+        reverseGeocodeDetailed,
+      });
+      onConfirm(result);
     } catch {
       setGeocodeError(true);
     } finally {
