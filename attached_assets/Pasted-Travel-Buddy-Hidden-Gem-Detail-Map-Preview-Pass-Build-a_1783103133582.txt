@@ -1,0 +1,152 @@
+Travel Buddy — Hidden Gem Detail Map Preview Pass
+
+Build and verify the gem detail map preview that Replit started.
+
+Scope:
+Only work on the Hidden Gems / Discovery gem detail page and the minimum shared map/location helpers needed for that page.
+
+Do not redesign Discovery.
+Do not rebuild maps globally.
+Do not touch trips/events/RAB/profile unless a direct dependency is broken.
+Do not expose protected/private coordinates.
+Do not fake map data.
+
+Context:
+The previous profile/privacy/lifecycle passes are closed:
+- Profile UI + GPS input replacement passed
+- Privacy/lifecycle smoke tests passed
+- Private/blocked/deactivated profile leak tests added
+- Admin role guard tests added
+- GPS privacy code verified
+- No raw coordinate user inputs
+
+Goal:
+Show a safe map preview on the gem detail page so viewers can understand where the gem is located.
+
+Part 1 — Survey first
+
+Inspect:
+- gem detail page/screen
+- hidden gems API response shape
+- hidden gems privacy/redaction logic
+- any existing map component
+- MapLibre/native map availability
+- fallback map placeholder behavior
+- hidden gem sensitivity levels:
+  - public
+  - approximate
+  - protected/private
+- existing coordinates fields:
+  - latitude / longitude
+  - approximate_latitude / approximate_longitude
+  - lat / lng
+- tests for hidden gem detail response
+
+Build a short matrix before editing:
+
+Gem Map Preview Matrix:
+- Surface
+- Available coordinates
+- Sensitivity/privacy state
+- Current UI
+- Required UI
+- Status
+- Fix needed
+
+Part 2 — Coordinate privacy rules
+
+Enforce these rules:
+
+1. Public gem:
+   - map preview may use exact public venue/place coordinates.
+   - show label like city/neighborhood/place name.
+
+2. Approximate gem:
+   - map preview may use approximate coordinates only.
+   - do not expose exact coordinates.
+   - label should say approximate area.
+
+3. Protected/private gem:
+   - do not show map pin.
+   - do not expose exact or approximate coordinates.
+   - show privacy-safe placeholder:
+     “Location protected”
+     “This hidden gem’s exact location is hidden until it is approved or shared by the host.”
+
+4. Missing coordinates:
+   - no crash.
+   - show:
+     “Map unavailable”
+     “We don’t have enough location data for this gem yet.”
+
+Part 3 — UI behavior
+
+On gem detail page:
+- add a map preview section below the main gem info or location card
+- show safe static/preview map if map component exists
+- if live map dependency is unavailable, show an honest styled map placeholder, not a fake interactive map
+- show place/city/neighborhood label
+- show sensitivity/privacy label if approximate/protected
+- show “Open in Maps” only if safe coordinates are available
+- “Open in Maps” should use safe coordinates only:
+  - public exact coords for public gems
+  - approximate coords for approximate gems
+  - hidden/disabled for protected/private/missing
+
+Part 4 — API/response safety
+
+Verify the API sends only safe coordinates to the client:
+- public gem returns safe lat/lng
+- approximate gem returns approximate lat/lng only
+- protected gem returns null lat/lng
+- raw latitude/longitude must not be leaked under alternative keys
+- tests should assert protected response does not include:
+  - latitude
+  - longitude
+  - approximate_latitude
+  - approximate_longitude
+  - rawLocation
+  - exactLocation
+
+Part 5 — Tests
+
+Add/update tests for:
+- public gem detail response includes safe coords
+- approximate gem detail response includes approximate coords only
+- protected gem detail response has null/no coords
+- gem detail UI renders map preview when safe coords exist
+- gem detail UI renders protected placeholder when coords are hidden
+- missing coords does not crash
+
+Part 6 — Validation
+
+Run:
+- hidden gems tests
+- relevant mobile/component tests if available
+- pnpm --filter @workspace/api-server run typecheck
+- cd travel-buddy-standalone && pnpm typecheck
+- pnpm run typecheck if practical
+- bash scripts/sync-standalone.sh --fix-source if artifacts changed
+- bash scripts/sync-standalone.sh --check-source
+- bash scripts/sync-standalone.sh --check-deps
+- pnpm --filter @workspace/scripts run test:routes-guard if available
+- bash scripts/test-sync-standalone.sh if practical
+
+Final report must include:
+1. Executive summary
+2. Gem Map Preview Matrix
+3. Coordinate privacy findings
+4. UI changes completed
+5. API/response safety findings
+6. Tests added/updated
+7. Files changed
+8. Remaining blockers
+9. Honest-disabled items
+10. Validation table
+11. Commit message
+
+Important:
+No fake map.
+No protected/private coordinate leak.
+No exact coordinates for approximate gems.
+No crash when coords are missing.
