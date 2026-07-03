@@ -18,6 +18,9 @@
  *   success — confirmation label + "Change" button
  *   denied  — permission was refused; shows settings link copy
  *   error   — GPS timed out or failed; shows retry button
+ *
+ * State-transition logic lives in GpsLocationCapture.machine.ts so it can be
+ * tested with jest (node:test) without a React Native renderer.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -25,17 +28,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../services/location';
+import { runGpsCapture } from './GpsLocationCapture.machine';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
-export interface GpsCaptureResult {
-  lat: number;
-  lng: number;
-  label: string;
-}
+export type { GpsCaptureResult } from './GpsLocationCapture.machine';
 
 interface Props {
-  onCapture: (result: GpsCaptureResult | null) => void;
+  onCapture: (result: import('./GpsLocationCapture.machine').GpsCaptureResult | null) => void;
   initialLabel?: string;
 }
 
@@ -48,52 +48,19 @@ export function GpsLocationCapture({ onCapture, initialLabel }: Props) {
   const capture = useCallback(async () => {
     setState('loading');
     try {
-      const gps = await getCurrentGps();
+      const outcome = await runGpsCapture({
+        getCurrentGps,
+        reverseGeocodeDetailed,
+        apiBase: API_BASE,
+      });
 
-      if (!gps.granted) {
-        setState(gps.error === 'permission_denied' ? 'denied' : 'error');
-        return;
+      if (outcome.nextState === 'success') {
+        setLabel(outcome.result.label);
+        setState('success');
+        onCapture(outcome.result);
+      } else {
+        setState(outcome.nextState);
       }
-
-      if (gps.lat === null || gps.lng === null) {
-        setState('error');
-        return;
-      }
-
-      const lat = gps.lat;
-      const lng = gps.lng;
-
-      // Reverse geocode: try backend endpoint first, fall back to expo built-in.
-      let resolvedLabel: string | null = null;
-
-      try {
-        const res = await fetch(`${API_BASE}/api/places/reverse?lat=${lat}&lng=${lng}`);
-        if (res.ok) {
-          const body = await res.json();
-          const p = body.place;
-          if (p) {
-            const parts = [p.district ?? p.city, p.city !== (p.district ?? p.city) ? p.city : null, p.country].filter(Boolean);
-            const city = p.city ?? p.displayName ?? null;
-            const country = p.country ?? null;
-            resolvedLabel = [city, country].filter(Boolean).join(', ') || null;
-          }
-        }
-      } catch {
-        // Backend call failed — fall through to expo geocoder.
-      }
-
-      if (!resolvedLabel) {
-        const place = await reverseGeocodeDetailed(lat, lng);
-        const city = place.city ?? place.district ?? null;
-        const country = place.country ?? null;
-        resolvedLabel = [city, country].filter(Boolean).join(', ') || null;
-      }
-
-      const finalLabel = resolvedLabel ?? 'Location detected';
-
-      setLabel(finalLabel);
-      setState('success');
-      onCapture({ lat, lng, label: finalLabel });
     } catch {
       setState('error');
     }

@@ -13,7 +13,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
-import { GpsLocationCapture, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture';
+import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
+import { mapCaptureToFormCoords, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture.machine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,9 +87,10 @@ const STEPS = ['Location', 'Details', 'Privacy', 'Review'];
 
 function LocationStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
   const handleCapture = useCallback((result: GpsCaptureResult | null) => {
-    update('gpsLat', result?.lat ?? undefined);
-    update('gpsLng', result?.lng ?? undefined);
-    update('gpsLabel', result?.label ?? undefined);
+    const coords = mapCaptureToFormCoords(result);
+    update('gpsLat', coords.gpsLat);
+    update('gpsLng', coords.gpsLng);
+    update('gpsLabel', coords.gpsLabel);
   }, [update]);
 
   return (
