@@ -478,3 +478,52 @@ describe('upload-result — upload fails with unauthenticated error', () => {
     assert.equal(errorCalls, 0, 'setError must NOT be called on unauthenticated failure');
   });
 });
+
+// ── Upload-result — ok: true but url missing (API 200 with no url field) ──────
+//
+// handleUploadResult succeeds only when BOTH ok is true AND url is non-null.
+// If the API returns HTTP 200 but omits the url field, the result shape is
+// { ok: true, url: null, mediaType: null }. This case falls through to the
+// setError branch so the composer stays open with a clear error — the post
+// is never submitted with a null media URL.
+//
+// This test pins that contract so the guard at line 193 of PulseCreate.machine.ts
+//   `if (result.ok && result.url)`
+// cannot be weakened to `if (result.ok)` without a test failure.
+
+describe('upload-result — ok: true but url is null (API 200 with no url field)', () => {
+  it('returns continue: false — the compose flow must not proceed', async () => {
+    const outcome = await handleUploadResult(
+      { ok: true, url: null, mediaType: null },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(outcome.continue, false, 'continue must be false when url is absent despite ok: true');
+  });
+
+  it('calls setError with the fallback message — composer stays open with feedback', async () => {
+    let errorMsg = '';
+    await handleUploadResult(
+      { ok: true, url: null, mediaType: null },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: (msg) => { errorMsg = msg; } },
+    );
+    assert.equal(errorMsg, 'Media upload failed.', 'setError must surface the fallback message');
+  });
+
+  it('does NOT call onClose — composer stays open so the user can retry', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: true, url: null, mediaType: null },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 0, 'onClose must NOT be called when url is absent');
+  });
+
+  it('uses result.message when provided alongside the missing url', async () => {
+    let errorMsg = '';
+    await handleUploadResult(
+      { ok: true, url: null, mediaType: null, message: 'Upload succeeded but no URL returned' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: (msg) => { errorMsg = msg; } },
+    );
+    assert.equal(errorMsg, 'Upload succeeded but no URL returned');
+  });
+});
