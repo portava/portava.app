@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
-import { usePlanPicker } from '../../src/components/PlanPickerController';
+import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
@@ -226,24 +226,26 @@ export default function GemDetailScreen() {
 
   const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
 
-  const { open: openPlanPicker } = usePlanPicker();
-
   const [showCheckin,     setShowCheckin]     = useState(false);
   const [showReport,      setShowReport]      = useState(false);
   const [sharing,         setSharing]         = useState(false);
   const [builderVisible,  setBuilderVisible]  = useState(false);
+  const [pickerVisible,   setPickerVisible]   = useState(false);
+
+  const gemPickerPayload: AddToTripPayload | null = gem ? {
+    id:       gem.id,
+    name:     gem.name,
+    category: gem.category ?? 'place',
+    type:     'hidden_gem',
+    address:  [gem.neighborhood, gem.city, gem.country].filter(Boolean).join(', ') || null,
+    lat:      (gem as any).coordsPrecision === 'exact' ? (gem as any).lat : null,
+    lng:      (gem as any).coordsPrecision === 'exact' ? (gem as any).lng : null,
+  } : null;
 
   const handleAddToPlan = useCallback(() => {
     if (!gem) return;
-    openPlanPicker({
-      id: gem.id,
-      type: 'hidden_gem',
-      title: gem.name,
-      category: gem.category ?? 'place',
-      city: gem.city ?? undefined,
-      locationName: [gem.neighborhood, gem.city, gem.country].filter(Boolean).join(', ') || undefined,
-    });
-  }, [gem, openPlanPicker]);
+    setPickerVisible(true);
+  }, [gem]);
 
   const handleShare = useCallback(async () => {
     if (!gem) return;
@@ -496,6 +498,11 @@ export default function GemDetailScreen() {
           sourceId:   gem.id,
           category:   (gem as any).category ?? undefined,
         }] : undefined}
+      />
+      <TripWishlistPicker
+        payload={gemPickerPayload}
+        visible={pickerVisible && !!gem}
+        onClose={() => setPickerVisible(false)}
       />
     </SafeAreaView>
   );

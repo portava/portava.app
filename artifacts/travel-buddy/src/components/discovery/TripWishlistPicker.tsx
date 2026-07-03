@@ -1,13 +1,19 @@
 /**
  * TripWishlistPicker
  *
- * Bottom-sheet modal that lets the user pick one of their trips to add a
- * Discovery place to. Calls toggleSave(place, tripId) from discoveryBookmarks
- * so the trip-scoped list and its category-filter key are kept in sync.
+ * Bottom-sheet modal that lets the user pick one of their trips to add any
+ * bookmarkable place to (Discovery places, Hidden Gems, Pulse posts, Compass
+ * recommendations, etc.).  Calls toggleSave(bookmark, tripId) from
+ * discoveryBookmarks so the trip-scoped wishlist list and its category-filter
+ * key are kept in sync.
  *
- * On open the picker reads discoveryBookmarks.getSavedListIds(place.id) to
+ * On open the picker reads discoveryBookmarks.getSavedListIds(payload.id) to
  * pre-populate which trips already contain the place. Those rows show an
  * "Already saved" chip and tapping them removes the place (full toggle).
+ *
+ * Accepts an AddToTripPayload — a minimal, privacy-safe representation that
+ * works for all source types.  Callers are responsible for omitting exact
+ * lat/lng for protected or approximate-location sources.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -19,35 +25,63 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { X, MapPin, Check, ListPlus, AlertCircle } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { X, MapPin, Check, ListPlus, AlertCircle, Plus } from 'lucide-react-native';
 import { listMyTrips, type TripRow } from '../../services/trips';
 import {
   toggleSave,
   getSavedListIds,
   type BookmarkedPlace,
 } from '../../services/discoveryBookmarks';
-import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
+
+// ── Shared payload type ────────────────────────────────────────────────────────
+
+/**
+ * Minimal, source-agnostic representation of a place that can be saved to a
+ * trip wishlist.  All callers must map their domain type to this shape before
+ * opening the picker.
+ *
+ * Privacy rule: callers MUST set lat/lng to null for any source whose
+ * coordinates are protected or approximate (e.g. hidden gems with
+ * coordsPrecision !== 'exact', delayed-location Pulse posts).
+ */
+export interface AddToTripPayload {
+  /** Stable unique identifier for the place (OSM ID, DB UUID, or stable slug). */
+  id: string;
+  /** Display name shown in the picker header and persisted in place_data. */
+  name: string;
+  /** Primary category label (food, hidden_gem, activity, …). */
+  category: string;
+  /** Subtype label, if available. */
+  type?: string | null;
+  /** Human-readable location string (address or "Neighbourhood, City, Country"). */
+  address?: string | null;
+  /** Exact latitude — set to null when coordinates are private or approximate. */
+  lat?: number | null;
+  /** Exact longitude — set to null when coordinates are private or approximate. */
+  lng?: number | null;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function placeToBookmark(place: DiscoveryPlace): BookmarkedPlace {
+function payloadToBookmark(p: AddToTripPayload): BookmarkedPlace {
   return {
-    id:       place.id,
-    name:     place.name,
-    category: place.category,
-    type:     place.type,
-    address:  place.address,
+    id:       p.id,
+    name:     p.name,
+    category: p.category,
+    type:     p.type ?? null,
+    address:  p.address ?? null,
     savedAt:  Date.now(),
-    lat:      place.lat,
-    lng:      place.lng,
+    lat:      p.lat,
+    lng:      p.lng,
   };
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
 interface TripWishlistPickerProps {
-  place: DiscoveryPlace | null;
+  payload: AddToTripPayload | null;
   visible: boolean;
   onClose: () => void;
   /** Called after a successful save with the trip that received the place. */
@@ -55,7 +89,7 @@ interface TripWishlistPickerProps {
 }
 
 export function TripWishlistPicker({
-  place,
+  payload,
   visible,
   onClose,
   onSaved,
@@ -68,17 +102,17 @@ export function TripWishlistPicker({
   const [errorIds, setErrorIds]   = useState<Set<string>>(new Set());
 
   const load = useCallback(() => {
-    if (!place) return;
+    if (!payload) return;
     setLoading(true);
     setLoadError(false);
-    Promise.all([listMyTrips(), getSavedListIds(place.id)])
+    Promise.all([listMyTrips(), getSavedListIds(payload.id)])
       .then(([rows, alreadySaved]) => {
         setTrips(rows);
         setSavedIds(alreadySaved);
         setLoading(false);
       })
       .catch(() => { setLoadError(true); setLoading(false); });
-  }, [place]);
+  }, [payload]);
 
   useEffect(() => {
     if (visible) {
@@ -91,7 +125,7 @@ export function TripWishlistPicker({
   }, [visible, load]);
 
   const handlePick = useCallback(async (trip: TripRow) => {
-    if (!place || saving) return;
+    if (!payload || saving) return;
     setSaving(trip.id);
     setErrorIds((prev) => {
       const next = new Set(prev);
@@ -99,7 +133,7 @@ export function TripWishlistPicker({
       return next;
     });
     try {
-      const bookmark = placeToBookmark(place);
+      const bookmark = payloadToBookmark(payload);
       const { added: nowSaved } = await toggleSave(bookmark, trip.id);
       setSavedIds((prev) => {
         const next = new Set(prev);
@@ -118,7 +152,7 @@ export function TripWishlistPicker({
     } finally {
       setSaving(null);
     }
-  }, [place, saving, onSaved]);
+  }, [payload, saving, onSaved]);
 
   const renderTrip = ({ item }: { item: TripRow }) => {
     const isSaved  = savedIds.has(item.id);
@@ -186,8 +220,8 @@ export function TripWishlistPicker({
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Save to Trip</Text>
-            {place && (
-              <Text style={styles.placeName} numberOfLines={1}>{place.name}</Text>
+            {payload && (
+              <Text style={styles.placeName} numberOfLines={1}>{payload.name}</Text>
             )}
           </View>
           <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
@@ -214,6 +248,16 @@ export function TripWishlistPicker({
             <Text style={styles.emptyDesc}>
               Create a trip first, then save places to its wishlist.
             </Text>
+            <Pressable
+              style={styles.createTripBtn}
+              onPress={() => {
+                onClose();
+                router.push('/trip/new' as any);
+              }}
+            >
+              <Plus size={15} color={color.onInk} />
+              <Text style={styles.createTripText}>Create a trip</Text>
+            </Pressable>
           </View>
         ) : (
           <FlatList
@@ -300,6 +344,21 @@ const styles = StyleSheet.create({
     color: color.mute,
     textAlign: 'center',
     lineHeight: 19,
+  },
+  createTripBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    marginTop: space.sm,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.sm,
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+  },
+  createTripText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+    fontSize: 13,
   },
   retryBtn: {
     marginTop: space.xs,

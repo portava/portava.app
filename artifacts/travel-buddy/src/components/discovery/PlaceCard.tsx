@@ -216,7 +216,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
       </View>
 
       <TripWishlistPicker
-        place={place}
+        payload={place}
         visible={pickerVisible}
         onClose={() => {
           setPickerVisible(false);

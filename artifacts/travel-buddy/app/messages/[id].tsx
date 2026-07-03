@@ -46,7 +46,7 @@ import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/tele
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
 import { reportContent, type ReasonCode } from '../../src/services/reports';
-import { usePlanPicker } from '../../src/components/PlanPickerController';
+import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
 import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
@@ -679,7 +679,7 @@ function MessageBubble({
   onRetryTranslation?: () => void;
   currentUserId?: string;
 }) {
-  const { open: openPlanPicker } = usePlanPicker();
+  const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
   // Brief highlight when a pending translation resolves to 'translated'
@@ -738,17 +738,19 @@ function MessageBubble({
     const recPayload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
     if (recPayload?.title) {
       return (
-        <Pressable onLongPress={onLongPress} delayLongPress={300}>
-          <TelegraphRecommendationCard
-            rec={recPayload}
-            onAddToTrip={() => openPlanPicker({
-                id: recPayload.id ?? recPayload.title,
-                type: recPayload.category ?? 'compass_suggestion',
-                title: recPayload.title,
-                category: recPayload.category,
-                city: recPayload.city,
-              })}
-            onSave={() => {
+        <>
+          <Pressable onLongPress={onLongPress} delayLongPress={300}>
+            <TelegraphRecommendationCard
+              rec={recPayload}
+              onAddToTrip={() => setPickerPayload({
+                  id:       recPayload.id ?? recPayload.title,
+                  name:     recPayload.title,
+                  category: recPayload.category ?? 'place',
+                  type:     recPayload.category ?? null,
+                  lat:      null,
+                  lng:      null,
+                })}
+              onSave={() => {
               sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'save').catch(() => {});
               Alert.alert('Saved', `"${recPayload.title}" saved to your ideas.`);
             }}
@@ -761,7 +763,13 @@ function MessageBubble({
               onDismissAiCard?.(item.id);
             }}
           />
-        </Pressable>
+          </Pressable>
+          <TripWishlistPicker
+            payload={pickerPayload}
+            visible={pickerPayload !== null}
+            onClose={() => setPickerPayload(null)}
+          />
+        </>
       );
     }
   }
