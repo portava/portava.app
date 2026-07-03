@@ -3,8 +3,8 @@
  * for the current city. Calls POST /api/discovery/community via submitCommunityPlace().
  *
  * Coordinates: the server auto-geocodes the place name + city via Nominatim when
- * no lat/lng are supplied. Users can also enter exact coordinates manually in the
- * "Set exact location" section (e.g. copied from Google Maps) to override.
+ * no lat/lng are supplied. Users can optionally tap "Set exact location" to use
+ * GpsLocationCapture (GPS tap or map picker) to override auto-geocoding.
  * Either way, a place with coordinates becomes a gold star pin on the map after
  * the next pull-to-refresh.
  */

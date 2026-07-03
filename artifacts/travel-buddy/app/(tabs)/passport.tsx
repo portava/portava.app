@@ -277,6 +277,7 @@ function PassportContent({
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [coverError, setCoverError] = useState(false);
 
   useFocusEffect(useCallback(() => {
     reload();
@@ -292,12 +293,15 @@ function PassportContent({
         contentContainerStyle={{ paddingTop: insets.top, paddingBottom: space.xxxl }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Cover photo band — full-width above the hero card; fallback prevents blank area */}
-        {profile.coverPhotoUrl ? (
+        {/* Cover photo band — full-width above the hero card.
+            Fallback (haze) shown when coverPhotoUrl is absent or the URL fails to load,
+            preventing any blank/white area regardless of URL validity. */}
+        {profile.coverPhotoUrl && !coverError ? (
           <Image
             source={{ uri: profile.coverPhotoUrl }}
             style={{ width: '100%', height: 140 }}
             resizeMode="cover"
+            onError={() => setCoverError(true)}
           />
         ) : (
           <View style={{ width: '100%', height: 140, backgroundColor: color.haze }} />
