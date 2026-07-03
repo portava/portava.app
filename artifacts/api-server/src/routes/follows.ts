@@ -65,6 +65,71 @@ router.post("/users/:userId/follow", async (req, res) => {
     return;
   }
   res.status(201).json({ following: true, userId: target });
+
+  // Fire-and-forget: award social follow-count stamps (non-fatal).
+  // community_connector → caller follows 10+ people.
+  // popular_traveler → target reaches 50 followers.
+  // travel_influencer → target reaches 500 followers.
+  void (async () => {
+    try {
+      const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
+      const { getServiceClient } = await import("../lib/supabase.js");
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+      const sc = getServiceClient();
+      if (!sc) return;
+
+      const [followingRes, followersRes] = await Promise.all([
+        sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id),
+        sc.from("user_follows").select("following_id", { count: "exact", head: true }).eq("following_id", target),
+      ]);
+
+      const followingCount  = followingRes.count  ?? 0;
+      const followersCount  = followersRes.count  ?? 0;
+
+      const callerAwards: Array<{ slug: string }> = [];
+      if (followingCount >= 10) callerAwards.push({ slug: "community_connector" });
+
+      const targetAwards: Array<{ slug: string }> = [];
+      if (followersCount >= 50)  targetAwards.push({ slug: "popular_traveler" });
+      if (followersCount >= 500) targetAwards.push({ slug: "travel_influencer" });
+
+      const all = await Promise.allSettled([
+        ...callerAwards.map(({ slug }) =>
+          awardStamp(sc, { userId: user.id, definitionSlug: slug, sourceType: "follows", sourceId: target })
+            .then((r) => ({ userId: user.id, slug, ...r })),
+        ),
+        ...targetAwards.map(({ slug }) =>
+          awardStamp(sc, { userId: target, definitionSlug: slug, sourceType: "follows", sourceId: user.id })
+            .then((r) => ({ userId: target, slug, ...r })),
+        ),
+      ]);
+
+      // Batch one notification per user for any newly awarded stamps
+      const byUser = new Map<string, string[]>();
+      for (const r of all) {
+        if (r.status === "fulfilled" && (r as any).value.awarded) {
+          const { userId: uid, slug } = (r as any).value;
+          if (!byUser.has(uid)) byUser.set(uid, []);
+          byUser.get(uid)!.push(slug);
+        }
+      }
+      await Promise.allSettled(
+        [...byUser.entries()].map(async ([uid, slugs]) => {
+          const notifSvc    = new NotificationService(sc);
+          const notifRouter = new NotificationRouter(sc);
+          const row = await notifSvc.create({
+            userId:     uid,
+            eventType:  "passport.stamp_earned",
+            sourceType: "follows",
+            sourceId:   uid === user.id ? target : user.id,
+            params: { stamps: slugs.join(","), count: String(slugs.length) },
+          });
+          if (row) await notifRouter.route(row);
+        }),
+      );
+    } catch {}
+  })();
 });
 
 /* ===========================================================================

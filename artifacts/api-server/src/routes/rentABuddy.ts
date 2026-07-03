@@ -1325,13 +1325,35 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
       }
 
       if (buddyUserId) {
-        const buddyResult = await awardStamp(sc, {
-          userId:        buddyUserId,
-          definitionSlug: "first_buddy_hosted",
-          sourceType:    "rent_buddy",
-          sourceId:      bookingId,
-        });
-        if (buddyResult.awarded) {
+        const bookingCategory: string = (booking as any).category ?? "";
+
+        // Build all buddy stamp candidates for this completion
+        const buddyAwards: Array<{ slug: string }> = [
+          { slug: "first_buddy_hosted" },
+        ];
+        // buddy_veteran: 5+ completed sessions
+        if ((currentCount + 1) >= 5) buddyAwards.push({ slug: "buddy_veteran" });
+        // nightlife_guide: completed a nightlife session
+        if (bookingCategory === "nightlife") buddyAwards.push({ slug: "nightlife_guide" });
+        // food_guide: completed a food & dining session
+        if (bookingCategory === "food" || bookingCategory === "food_dining") buddyAwards.push({ slug: "food_guide" });
+
+        const buddySettled = await Promise.allSettled(
+          buddyAwards.map(({ slug }) =>
+            awardStamp(sc, {
+              userId:        buddyUserId,
+              definitionSlug: slug,
+              sourceType:    "rent_buddy",
+              sourceId:      bookingId,
+            }).then((r) => ({ slug, ...r })),
+          ),
+        );
+
+        const awardedBuddySlugs = buddySettled
+          .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+          .map((r) => (r as any).value.slug as string);
+
+        if (awardedBuddySlugs.length > 0) {
           const notifSvc    = new NotificationService(sc);
           const notifRouter = new NotificationRouter(sc);
           const row = await notifSvc.create({
@@ -1339,7 +1361,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
             eventType:  "passport.stamp_earned",
             sourceType: "rent_buddy",
             sourceId:   bookingId,
-            params:     { location: "Rent a Buddy" },
+            params: { stamps: awardedBuddySlugs.join(","), count: String(awardedBuddySlugs.length) },
           });
           if (row) await notifRouter.route(row);
         }
@@ -1892,6 +1914,53 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   }
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_review_requested", "Review submitted — helping build trust in the community.");
+
+  // Fire-and-forget: award top_rated_buddy when buddy's average rating hits 4.8+
+  // Only check when the reviewer is the traveler (rating is for the buddy).
+  if (isTraveler && buddyUserId) {
+    void (async () => {
+      try {
+        const { awardStamp: _awardStamp } = await import("../services/passport/StampAwardEngine.js");
+        const { NotificationService: NS } = await import("../services/notifications/NotificationService.js");
+        const { NotificationRouter: NR }  = await import("../services/notifications/NotificationRouter.js");
+        const stampSc = getServiceClient();
+        if (!stampSc) return;
+
+        // Read fresh average_rating from the profile (may be updated by a DB trigger)
+        const { data: profileRow } = await stampSc
+          .from("rent_buddy_profiles")
+          .select("average_rating, review_count")
+          .eq("user_id", buddyUserId)
+          .maybeSingle();
+
+        const avgRating = Number((profileRow as any)?.average_rating ?? 0);
+        const reviewCount = Number((profileRow as any)?.review_count ?? 0);
+
+        // Require at least 3 reviews to be eligible to avoid gaming with 1 review
+        if (avgRating >= 4.8 && reviewCount >= 3) {
+          const result = await _awardStamp(stampSc, {
+            userId:         buddyUserId,
+            definitionSlug: "top_rated_buddy",
+            sourceType:     "rent_buddy",
+            sourceId:       bookingId,
+          });
+          if (result.awarded) {
+            const notifSvc    = new NS(stampSc);
+            const notifRouter = new NR(stampSc);
+            const row = await notifSvc.create({
+              userId:     buddyUserId,
+              eventType:  "passport.stamp_earned",
+              sourceType: "rent_buddy",
+              sourceId:   bookingId,
+              params:     { stamps: "top_rated_buddy", count: "1" },
+            });
+            if (row) await notifRouter.route(row);
+          }
+        }
+      } catch {}
+    })();
+  }
+
   return res.status(201).json({ review, unblinded });
 });
 

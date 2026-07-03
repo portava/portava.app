@@ -3728,7 +3728,7 @@ router.post("/events/:id/complete", async (req, res) => {
   await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
   await logEventActivity(sc, id, user.id, "completed", {});
 
-  // Fire-and-forget: award trust signals + send review-prompt push notifications
+  // Fire-and-forget: award trust signals + send review-prompt push notifications + stamps
   void (async () => {
     try {
       const evData = ev as any;
@@ -3782,6 +3782,55 @@ router.post("/events/:id/complete", async (req, res) => {
           }
         }
       }
+
+      // ── Stamp awards ────────────────────────────────────────────────────────
+      // event_host: awarded to the host for completing the event.
+      // event_participant: awarded to every checked-in attendee (excluding host).
+      const { awardStamp: _awardStamp } = await import("../services/passport/StampAwardEngine.js");
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+
+      const stampAwards: Array<{ userId: string; slug: string }> = [
+        { userId: evData.host_id, slug: "event_host" },
+        ...checkinUserIds
+          .filter((uid) => uid !== evData.host_id)
+          .map((uid) => ({ userId: uid, slug: "event_participant" })),
+      ];
+
+      const stampSettled = await Promise.allSettled(
+        stampAwards.map(({ userId, slug }) =>
+          _awardStamp(sc, {
+            userId,
+            definitionSlug: slug,
+            sourceType: "events",
+            sourceId: id,
+          }).then((r) => ({ userId, slug, ...r })),
+        ),
+      );
+
+      // Batch one notification per user for any stamps awarded
+      const stampsByUser = new Map<string, string[]>();
+      for (const r of stampSettled) {
+        if (r.status === "fulfilled" && (r as any).value.awarded) {
+          const { userId, slug } = (r as any).value;
+          if (!stampsByUser.has(userId)) stampsByUser.set(userId, []);
+          stampsByUser.get(userId)!.push(slug);
+        }
+      }
+      await Promise.allSettled(
+        [...stampsByUser.entries()].map(async ([uid, slugs]) => {
+          const notifSvc    = new NotificationService(sc);
+          const notifRouter = new NotificationRouter(sc);
+          const row = await notifSvc.create({
+            userId:     uid,
+            eventType:  "passport.stamp_earned",
+            sourceType: "events",
+            sourceId:   id,
+            params: { stamps: slugs.join(","), count: String(slugs.length) },
+          });
+          if (row) await notifRouter.route(row);
+        }),
+      );
     } catch { /* non-fatal */ }
   })();
 

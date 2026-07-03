@@ -305,6 +305,66 @@ router.post("/posts", async (req, res) => {
             locationCountry: locationCountry ?? null,
             postcardId: postcard.id,
           }, req.log);
+
+          // Fire-and-forget: location milestone stamps based on GPS-verified cities/countries.
+          // city_explorer → first verified city; globe_trotter → 5 countries; world_citizen → 20 countries.
+          void (async () => {
+            try {
+              const stampSc = getServiceClient();
+              if (!stampSc) return;
+
+              const { data: postcardRows } = await stampSc
+                .from("passport_postcards")
+                .select("location_city, location_country")
+                .eq("user_id", user.id)
+                .eq("stamp_eligible", true);
+
+              const rows = (postcardRows ?? []) as any[];
+              const distinctCities = new Set(rows.map((r: any) => (r.location_city ?? "").toLowerCase().trim()).filter(Boolean)).size;
+              const distinctCountries = new Set(rows.map((r: any) => (r.location_country ?? "").toLowerCase().trim()).filter(Boolean)).size;
+
+              const locationAwards: Array<{ slug: string }> = [];
+              if (distinctCities >= 1)  locationAwards.push({ slug: "city_explorer" });
+              if (distinctCountries >= 5)  locationAwards.push({ slug: "globe_trotter" });
+              if (distinctCountries >= 20) locationAwards.push({ slug: "world_citizen" });
+
+              const settled = await Promise.allSettled(
+                locationAwards.map(({ slug }) =>
+                  awardStamp(stampSc, {
+                    userId:         user.id,
+                    definitionSlug: slug,
+                    sourceType:     "posts",
+                    sourceId:       (data as any).id,
+                    city:           locationCity ?? undefined,
+                    country:        locationCountry ?? undefined,
+                  }).then((r) => ({ slug, ...r })),
+                ),
+              );
+
+              const awardedSlugs = settled
+                .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+                .map((r) => (r as any).value.slug as string);
+
+              if (awardedSlugs.length > 0) {
+                const { NotificationService: NS } = await import("../services/notifications/NotificationService.js");
+                const { NotificationRouter: NR }  = await import("../services/notifications/NotificationRouter.js");
+                const notifSvc    = new NS(stampSc);
+                const notifRouter = new NR(stampSc);
+                const row = await notifSvc.create({
+                  userId:     user.id,
+                  eventType:  "passport.stamp_earned",
+                  sourceType: "posts",
+                  sourceId:   (data as any).id,
+                  params: {
+                    location: locationCity ?? locationCountry ?? "your travels",
+                    stamps:   awardedSlugs.join(","),
+                    count:    String(awardedSlugs.length),
+                  },
+                });
+                if (row) await notifRouter.route(row);
+              }
+            } catch {}
+          })();
         }
       }
 
@@ -452,6 +512,61 @@ router.post("/posts", async (req, res) => {
     sourceId: (data as any).id,
     dedupWindowHours: 2,
   });
+
+  // Fire-and-forget: social post-count stamps.
+  // first_post → 1st published post; storyteller → 10 posts; photographer → 25 posts with photos.
+  void (async () => {
+    try {
+      const stampSc = getServiceClient();
+      if (!stampSc) return;
+      const postId = (data as any).id as string;
+      const hasPhoto = ((data as any).media_urls as string[] ?? []).length > 0;
+
+      const [totalRes, photoRes] = await Promise.all([
+        stampSc.from("posts").select("id", { count: "exact", head: true })
+          .eq("author_id", user.id).eq("status", "active"),
+        stampSc.from("posts").select("id", { count: "exact", head: true })
+          .eq("author_id", user.id).eq("status", "active")
+          .not("media_urls", "eq", "{}"),
+      ]);
+
+      const totalPosts = totalRes.count ?? 0;
+      const photoPosts = photoRes.count ?? 0;
+
+      const socialAwards: Array<{ slug: string }> = [];
+      if (totalPosts >= 1)  socialAwards.push({ slug: "first_post" });
+      if (totalPosts >= 10) socialAwards.push({ slug: "storyteller" });
+      if (hasPhoto && photoPosts >= 25) socialAwards.push({ slug: "photographer" });
+
+      const settled = await Promise.allSettled(
+        socialAwards.map(({ slug }) =>
+          awardStamp(stampSc, {
+            userId:         user.id,
+            definitionSlug: slug,
+            sourceType:     "posts",
+            sourceId:       postId,
+          }).then((r) => ({ slug, ...r })),
+        ),
+      );
+
+      const awardedSlugs = settled
+        .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+        .map((r) => (r as any).value.slug as string);
+
+      if (awardedSlugs.length > 0) {
+        const notifSvc    = new NotificationService(stampSc);
+        const notifRouter = new NotificationRouter(stampSc);
+        const row = await notifSvc.create({
+          userId:     user.id,
+          eventType:  "passport.stamp_earned",
+          sourceType: "posts",
+          sourceId:   postId,
+          params: { stamps: awardedSlugs.join(","), count: String(awardedSlugs.length) },
+        });
+        if (row) await notifRouter.route(row);
+      }
+    } catch {}
+  })();
 });
 
 // Safe public location labels (no GPS coordinates). Same privacy contract as POST_COLUMNS.

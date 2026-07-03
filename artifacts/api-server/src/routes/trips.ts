@@ -130,6 +130,8 @@ async function awardTripCompletionStamps(
   // ── Owner-only stamps ──────────────────────────────────────────────────────
   if (memberCount === 1) awards.push({ userId: ownerId, slug: "solo_traveler" });
   if (memberCount >= 3)  awards.push({ userId: ownerId, slug: "group_tripper" });
+  // good_host: owner hosted a trip that completed with at least one other participant
+  if (memberCount >= 2)  awards.push({ userId: ownerId, slug: "good_host" });
 
   // Milestone stamps — count owner's completed trips (patch has already committed)
   const { count: completedCount } = await sc
@@ -264,22 +266,39 @@ router.post("/trips", async (req, res) => {
     syncTripChatMembers(newTripId, client).catch(() => {});
   }
 
-  // Fire-and-forget: award first_trip_created stamp when a user creates their very
-  // first non-draft trip. Fully idempotent via awardStamp's (user:def:source) key.
+  // Fire-and-forget: award first_trip_created + trip_planner stamps when a user creates
+  // their first non-draft trip. Fully idempotent via awardStamp's (user:def:source) key.
   if (newTripId && computedStatus !== "draft") {
     void (async () => {
       try {
-        const result = await awardStamp(client, {
-          userId: user.id,
-          definitionSlug: "first_trip_created",
-          sourceType: "trips",
-          sourceId: newTripId,
-          city: destinationCity ?? undefined,
-          country: destinationCountry ?? undefined,
-        });
-        if (result.awarded) {
-          const { NotificationService } = await import("../services/notifications/NotificationService.js");
-          const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+        const { NotificationService } = await import("../services/notifications/NotificationService.js");
+        const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+
+        const settled = await Promise.allSettled([
+          awardStamp(client, {
+            userId: user.id,
+            definitionSlug: "first_trip_created",
+            sourceType: "trips",
+            sourceId: newTripId,
+            city: destinationCity ?? undefined,
+            country: destinationCountry ?? undefined,
+          }).then((r) => ({ slug: "first_trip_created", ...r })),
+          // trip_planner: awarded for creating and publishing any trip plan
+          awardStamp(client, {
+            userId: user.id,
+            definitionSlug: "trip_planner",
+            sourceType: "trips",
+            sourceId: newTripId,
+            city: destinationCity ?? undefined,
+            country: destinationCountry ?? undefined,
+          }).then((r) => ({ slug: "trip_planner", ...r })),
+        ]);
+
+        const awardedSlugs = settled
+          .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+          .map((r) => (r as any).value.slug as string);
+
+        if (awardedSlugs.length > 0) {
           const notifSvc    = new NotificationService(client);
           const notifRouter = new NotificationRouter(client);
           const row = await notifSvc.create({
@@ -287,7 +306,11 @@ router.post("/trips", async (req, res) => {
             eventType:  "passport.stamp_earned",
             sourceType: "trips",
             sourceId:   newTripId,
-            params:     { location: destinationCity ?? destinationCountry ?? "your journey" },
+            params: {
+              location: destinationCity ?? destinationCountry ?? "your journey",
+              stamps:   awardedSlugs.join(","),
+              count:    String(awardedSlugs.length),
+            },
           });
           if (row) await notifRouter.route(row);
         }
