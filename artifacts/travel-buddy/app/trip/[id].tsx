@@ -22,7 +22,6 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
-import { mockTripDetail } from '../../src/data/tripDetail';
 import type { TripDetail } from '../../src/types/models';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
@@ -93,41 +92,14 @@ function TripDetailScreen() {
     return () => { cancelled = true; clearInterval(iv); };
   }, [live, id]);
 
-  const trip: TripDetail = (live && realTrip)
-    ? {
-        id: realTrip.id,
-        title: realTrip.title,
-        destinationCity: realTrip.destinationCity,
-        destinationCountry: realTrip.destinationCountry ?? '',
-        neighborhoods: realTrip.neighborhoods,
-        startDate: realTrip.startDate ?? '',
-        endDate: realTrip.endDate ?? '',
-        nights: (realTrip.startDate && realTrip.endDate)
-          ? Math.max(0, Math.round(
-              (new Date(realTrip.endDate).getTime() - new Date(realTrip.startDate).getTime()) / 86_400_000,
-            ))
-          : 0,
-        status: realTrip.status,
-        visibility: realTrip.visibility,
-        travelStyle: realTrip.travelStyle ?? '',
-        openToMeet: realTrip.openToMeet,
-        coverUrl: realTrip.coverUrl ?? '',
-        progress: realTrip.progress,
-        progressSteps: [],
-        timeline: [],
-        savedIdeas: [],
-        safetyStatus: 'unknown',
-      }
-    : mockTripDetail;
-
   async function handleOpenChat() {
-    if (!trip.id || chatLoading) return;
+    if (!id || chatLoading) return;
     setChatLoading(true);
-    const res = await openTripChat(trip.id);
+    const res = await openTripChat(id);
     setChatLoading(false);
     if (res.ok && res.data) {
       const { threadId, title } = res.data;
-      const params = new URLSearchParams({ title: title ?? trip.title ?? 'Trip Chat', threadType: 'trip', contextId: trip.id });
+      const params = new URLSearchParams({ title: title ?? realTrip?.title ?? 'Trip Chat', threadType: 'trip', contextId: id });
       router.push(`/messages/${threadId}?${params.toString()}`);
     } else {
       Alert.alert('Chat unavailable', res.message ?? 'Could not open the trip chat. Make sure you are an accepted trip member.');
@@ -158,11 +130,32 @@ function TripDetailScreen() {
     );
   }
 
-  if (live && loading) {
+  if (!configured) {
     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
   }
 
-  if (live && !loading && !realTrip) {
+  if (!isAuthed) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+        <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Sign in to view trips</Text>
+        <Text style={{ ...t.small, color: color.mute, textAlign: 'center', marginBottom: space.lg }}>
+          You need to be signed in to view trip details.
+        </Text>
+        <Pressable
+          style={{ paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal }}
+          onPress={() => router.back()}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Go back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
+  }
+
+  if (!realTrip) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
         <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Trip not found</Text>
@@ -176,6 +169,31 @@ function TripDetailScreen() {
       </View>
     );
   }
+
+  const trip: TripDetail = {
+    id: realTrip.id,
+    title: realTrip.title,
+    destinationCity: realTrip.destinationCity,
+    destinationCountry: realTrip.destinationCountry ?? '',
+    neighborhoods: realTrip.neighborhoods,
+    startDate: realTrip.startDate ?? '',
+    endDate: realTrip.endDate ?? '',
+    nights: (realTrip.startDate && realTrip.endDate)
+      ? Math.max(0, Math.round(
+          (new Date(realTrip.endDate).getTime() - new Date(realTrip.startDate).getTime()) / 86_400_000,
+        ))
+      : 0,
+    status: realTrip.status,
+    visibility: realTrip.visibility,
+    travelStyle: realTrip.travelStyle ?? '',
+    openToMeet: realTrip.openToMeet,
+    coverUrl: realTrip.coverUrl ?? '',
+    progress: realTrip.progress,
+    progressSteps: [],
+    timeline: [],
+    savedIdeas: [],
+    safetyStatus: 'unknown',
+  };
 
   const todayDate = new Date().toISOString().slice(0, 10);
 
