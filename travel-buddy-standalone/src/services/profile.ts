@@ -93,7 +93,7 @@ export interface UpdateProfileInput {
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
-  if (!isSupabaseConfigured || !apiBase()) {
+  if (!_testAuthToken && (!isSupabaseConfigured || !apiBase())) {
     return { ok: false, data: null, errorKind: 'config_error' };
   }
   const token = await freshToken();

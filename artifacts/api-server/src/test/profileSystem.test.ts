@@ -138,6 +138,10 @@ function makeClient(state: FakeState) {
         if (pendingInsert || isUpsert) {
           return Promise.resolve({ data: upsertRow ?? pendingInsert ?? null, error: null });
         }
+        if (pendingUpdate) {
+          const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
+          return Promise.resolve({ data: rows[0] ? { ...rows[0], ...pendingUpdate } : null, error: null });
+        }
         const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
         return Promise.resolve({ data: rows[0] ?? null, error: null });
       },
@@ -541,7 +545,74 @@ describe("Username rules — PATCH /api/me/profile", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 3. POST /me/deactivate
+// 3. PATCH /me/profile — homeCity / homeCountry persistence
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("PATCH /api/me/profile — homeCity / homeCountry persistence", () => {
+  it("persists homeCity and homeCountry and returns them in the response", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_city: null, home_country: null } : p
+    );
+    setup(state);
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { homeCity: "Cebu", homeCountry: "Philippines" },
+    });
+    assert.equal(r.status, 200, "PATCH must return 200");
+    const body = await r.json() as any;
+    assert.equal(body.homeCity, "Cebu", "homeCity must be returned in profile response");
+    assert.equal(body.homeCountry, "Philippines", "homeCountry must be returned in profile response");
+  });
+
+  it("persists homeCity alone without homeCountry", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_city: null, home_country: "SomeOldCountry" } : p
+    );
+    setup(state);
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { homeCity: "Manila" },
+    });
+    assert.equal(r.status, 200, "PATCH must return 200");
+    const body = await r.json() as any;
+    assert.equal(body.homeCity, "Manila", "homeCity must be updated");
+  });
+
+  it("rejects homeCity longer than 100 characters", async () => {
+    setup(baseState());
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { homeCity: "A".repeat(101) },
+    });
+    assert.equal(r.status, 400, "homeCity >100 chars must be rejected as invalid_payload");
+  });
+
+  it("returns 400 when body has no updatable fields (only updated_by in row)", async () => {
+    setup(baseState());
+    const r = await req("/me/profile", { method: "PATCH", body: {} });
+    assert.equal(r.status, 400, "empty PATCH body must be rejected");
+  });
+
+  it("homeCity and homeCountry appear in the passport response after being set", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME
+        ? { ...p, home_city: "Cebu", home_country: "Philippines", passport_visibility: "public" }
+        : p
+    );
+    setup(state);
+    const r = await req("/users/me_user/passport");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.homeCity, "Cebu", "homeCity must be visible on own passport after being set");
+    assert.equal(body.homeCountry, "Philippines", "homeCountry must be visible on own passport after being set");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. POST /me/deactivate
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/me/deactivate", () => {

@@ -5,6 +5,7 @@ import { Stamp, Chip } from '../../src/components/ui';
 import type { Interest, TravelStyle } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { updateMyProfile, getMyProfile } from '../../src/services/profile';
+import { buildOnboardingPatch } from '../../src/services/profilePatchBuilder';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
@@ -76,19 +77,7 @@ export default function Onboarding() {
 
   async function handleFinish() {
     setSaving(true);
-    const patch: Parameters<typeof updateMyProfile>[0] = {
-      interests: picked,
-      travelStyle: style,
-    };
-    const trimmedName = displayName.trim();
-    const trimmedHandle = handle.trim().replace(/^@/, '');
-    const trimmedCity = homeCity.trim();
-    const trimmedCountry = homeCountry.trim();
-    if (trimmedName) patch.displayName = trimmedName;
-    if (trimmedHandle) patch.username = trimmedHandle;
-    if (trimmedCity) patch.homeCity = trimmedCity;
-    if (trimmedCountry) patch.homeCountry = trimmedCountry;
-
+    const patch = buildOnboardingPatch({ displayName, handle, homeCity, homeCountry, travelStyle: style, interests: picked });
     const result = await updateMyProfile(patch);
     setSaving(false);
     if (!result.ok && result.errorKind !== 'config_error' && result.errorKind !== 'unauthenticated') {

@@ -33,6 +33,7 @@ import { getUserReviews, type Review } from '../../src/services/reviews';
 import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -772,8 +773,8 @@ export default function PublicPassportScreen() {
       return (
         <View style={styles.center}>
           <Text style={styles.stateIcon}>👤</Text>
-          <Text style={styles.stateTitle}>Profile not available</Text>
-          <Text style={styles.stateSub}>This profile is no longer available.</Text>
+          <Text style={styles.stateTitle}>{PROFILE_NOT_FOUND_TITLE}</Text>
+          <Text style={styles.stateSub}>{PROFILE_NOT_FOUND_SUB}</Text>
         </View>
       );
     }

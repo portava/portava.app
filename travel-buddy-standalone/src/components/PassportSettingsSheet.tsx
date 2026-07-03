@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import type { OwnProfile } from '../types/models';
 import { updateMyProfile, checkUsername, uploadAvatar } from '../services/profile';
+import { buildPassportSettingsPatch } from '../services/profilePatchBuilder';
 import { getCurrentGps, reverseGeocodeDetailed } from '../services/location';
 import { ManualCityPicker } from './ManualCityPicker';
 import { color, space, radius, type as t } from '../theme/tokens';
@@ -325,28 +326,28 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       finalAvatarUrl = uploadRes.data.url;
     }
 
-    const patch: Record<string, unknown> = {
-      displayName: displayName.trim() || undefined,
-      bio: bio.trim() || undefined,
-      homeCity: homeCity.trim() || undefined,
-      homeCountry: homeCountry.trim() || undefined,
+    const patch = buildPassportSettingsPatch({
+      displayName,
+      bio,
+      homeCity,
+      homeCountry,
+      passportPublic,
       interests,
-      passportVisibility: passportPublic ? 'public' : 'private',
       spokenLanguages,
-      defaultLanguage: defaultLanguage.trim() || null,
+      defaultLanguage,
       travelStyles,
-      travelPace: travelPace ?? null,
-      budgetStyle: budgetStyle ?? null,
+      travelPace,
+      budgetStyle,
       travelGroupStyle,
       lookingFor,
-      comfortLevel: comfortLevel ?? null,
+      comfortLevel,
       availabilityTags,
-      planningStyle: planningStyle ?? null,
-    };
+      planningStyle,
+      currentUsername: profile.username ?? '',
+      newUsername: username,
+      usernameStatus,
+    });
     if (finalAvatarUrl !== profile.avatarUrl) patch.avatarUrl = finalAvatarUrl;
-    if (username && username !== profile.username && usernameStatus !== 'unavailable') {
-      patch.username = username;
-    }
 
     const res = await updateMyProfile(patch as any);
     if (!res.ok || !res.data) {
