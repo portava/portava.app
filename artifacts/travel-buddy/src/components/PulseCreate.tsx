@@ -24,6 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { createComposerDismissHandlers } from './PulseCreate.machine';
 
 /* ── Types ── */
 
@@ -368,13 +369,16 @@ export function UnifiedPostComposer({
     !DEDICATED_COMPOSERS[selectedType as PostTypeId] &&
     validate(selectedType, text, placeName, media) === null;
 
+  const dismiss = createComposerDismissHandlers(onClose);
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={dismiss.onRequestClose}>
       {/* Backdrop — absolutely positioned so it doesn't compete with the
           sheet in the flex layout. Tap dismisses the sheet. */}
       <Pressable
+        testID="post-composer-backdrop"
         style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17,17,15,0.45)' }]}
-        onPress={onClose}
+        onPress={dismiss.onBackdropPress}
       />
 
       {/* KAV anchored to the bottom of the screen. Positioning it absolutely
@@ -390,7 +394,7 @@ export function UnifiedPostComposer({
           <View style={uc.grab} />
           <View style={uc.head}>
             <Text style={uc.headTitle}>What are you sharing?</Text>
-            <Pressable onPress={onClose} hitSlop={8} style={uc.closeBtn}>
+            <Pressable testID="post-composer-close-btn" onPress={dismiss.onCloseButtonPress} hitSlop={8} style={uc.closeBtn}>
               <X size={18} color={color.ink} />
             </Pressable>
           </View>
