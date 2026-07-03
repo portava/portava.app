@@ -130,18 +130,7 @@ export async function trackOsmPlaceUnsave(
       .maybeSingle();
     if (!dpRow) return;
 
-    // Step 2: Confirm this user has a save record.  This is the primary
-    // guard against manipulation: if no record exists (user never saved, or
-    // already decremented) we return immediately without touching counts.
-    const { data: saveRecord } = await svc
-      .from("discovery_place_saves")
-      .select("place_id")
-      .eq("user_id", userId)
-      .eq("place_id", (dpRow as any).id)
-      .maybeSingle();
-    if (!saveRecord) return;
-
-    // Step 3: Check whether any other wishlist entries remain for this user
+    // Step 2: Check whether any other wishlist entries remain for this user
     // and place (the DELETE route already removed the targeted list entry).
     // If other lists/trips still hold the place, the user still wants it
     // saved — no decrement yet.
@@ -153,17 +142,27 @@ export async function trackOsmPlaceUnsave(
       .limit(1);
     if (Array.isArray(remaining) && remaining.length > 0) return;
 
-    // Step 4: Remove the per-user save record.  If this delete fails for any
-    // reason (concurrent call already removed it) we skip the count update.
-    const { error: delErr } = await svc
+    // Step 3 (atomic): Delete the per-user save record and return the deleted
+    // row.  PostgreSQL guarantees that for any given (user_id, place_id) row,
+    // exactly one concurrent DELETE will return a non-empty result — the
+    // "winner" owns the decrement; all other concurrent calls see an empty
+    // array and skip the count update.  This eliminates the race where two
+    // concurrent same-user unsave calls both see the record, both attempt to
+    // delete (one silently deletes 0 rows with no error), and both decrement.
+    //
+    // If the user never saved this place (no save record exists), the DELETE
+    // returns empty — safely guarding against count manipulation without a
+    // separate pre-flight SELECT.
+    const { data: deletedRows } = await svc
       .from("discovery_place_saves")
       .delete()
       .eq("user_id", userId)
-      .eq("place_id", (dpRow as any).id);
+      .eq("place_id", (dpRow as any).id)
+      .select("place_id");
 
-    if (!delErr) {
-      // .gt("saved_count", 0) ensures a concurrent unsave cannot push the
-      // count negative — the UPDATE becomes a no-op if the race is lost.
+    if (deletedRows && deletedRows.length > 0) {
+      // .gt("saved_count", 0) is a belt-and-suspenders guard: the UPDATE
+      // becomes a no-op if saved_count is somehow already 0.
       const newCount = Math.max(0, ((dpRow as any).saved_count ?? 1) - 1);
       await svc
         .from("discovery_places")

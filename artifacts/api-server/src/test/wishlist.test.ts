@@ -368,9 +368,10 @@ function makeOsmFakeClient(opts: {
     let _selectAfterWrite = false;
     const obj: any = {
       select()  {
-        // When chained after upsert/update, select() requests the row back
-        // rather than switching the operation to a plain SELECT.
-        if (_op === "upsert" || _op === "update") { _selectAfterWrite = true; }
+        // When chained after upsert/update/delete, select() requests the
+        // affected rows back rather than switching the operation to a plain
+        // SELECT.
+        if (_op === "upsert" || _op === "update" || _op === "delete") { _selectAfterWrite = true; }
         else { _op = "select"; }
         return obj;
       },
@@ -411,9 +412,11 @@ function makeOsmFakeClient(opts: {
           return resolve({ data: null, error: null });
         }
         if (_op === "delete") {
-          const toRemove = new Set(tableRows.filter((r) => filters.every((f) => f(r))));
-          tableRows.splice(0, tableRows.length, ...tableRows.filter((r) => !toRemove.has(r)));
-          return resolve({ data: null, error: null });
+          const toRemove = tableRows.filter((r) => filters.every((f) => f(r)));
+          const toRemoveSet = new Set(toRemove);
+          tableRows.splice(0, tableRows.length, ...tableRows.filter((r) => !toRemoveSet.has(r)));
+          // Return deleted rows when .select() was chained (mirrors .delete().select() PostgREST behaviour)
+          return resolve({ data: _selectAfterWrite ? toRemove : null, error: null });
         }
         const matched = tableRows.filter((r) => filters.every((f) => f(r)));
         return resolve({ data: matched, error: null });
@@ -550,5 +553,70 @@ describe("OSM save-count deduplication — trackOsmPlaceUnsave", () => {
 
     const dpsRows = fake.getDps();
     assert.equal(dpsRows.length, 1, "other user's discovery_place_saves record should be untouched");
+  });
+
+  it("same user sends two concurrent unsave calls: saved_count decrements exactly once (no double-decrement, no negative)", async () => {
+    // This test simulates the race where two concurrent requests from the
+    // same user both reach Step 3 before either DELETE commits.  With the
+    // atomic .delete().select() pattern, exactly one call sees a non-empty
+    // deleted-rows array and decrements; the other sees [] and skips.
+    //
+    // We run both calls via Promise.all so their awaits interleave on the
+    // shared fake client — the in-memory DELETE is non-reentrant: the first
+    // call to resolve removes the row; the second call finds no matching row
+    // and returns an empty array, skipping the UPDATE.
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 1, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: USER_ID, place_id: DP_UUID }],
+      wlRows:  [],
+    });
+    _setTestClient(fake, true);
+
+    await Promise.all([
+      trackOsmPlaceUnsave(USER_ID, OSM_ID),
+      trackOsmPlaceUnsave(USER_ID, OSM_ID),
+    ]);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows[0].saved_count, 0, "saved_count must decrement exactly once — not double-decrement");
+    assert.ok(dpRows[0].saved_count >= 0, "saved_count must never go negative");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 0, "discovery_place_saves record should be removed exactly once");
+  });
+
+  it("two different users unsave the same place concurrently: saved_count stays non-negative", async () => {
+    // Both users have a save record; saved_count=2.  Two concurrent unsaves
+    // from different users should never push the count below 0.
+    // Each DELETE targets a different row so both succeed; the .gt guard on
+    // the UPDATE ensures neither can SET the count below 0 even if both
+    // compute newCount from a stale snapshot.
+    //
+    // NOTE: With the current absolute-value UPDATE, both concurrent calls can
+    // compute newCount=1 from the shared dpRow snapshot and write saved_count=1
+    // instead of 0 — this is a known limitation of the stale-snapshot pattern
+    // for multi-user concurrent unsaves.  A full fix would require a DB-side
+    // atomic decrement (GREATEST(0, saved_count - 1)) which is out of scope
+    // here.  This test documents and enforces the non-negative contract.
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 2, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [
+        { user_id: USER_ID,  place_id: DP_UUID },
+        { user_id: OTHER_ID, place_id: DP_UUID },
+      ],
+      wlRows: [],
+    });
+    _setTestClient(fake, true);
+
+    await Promise.all([
+      trackOsmPlaceUnsave(USER_ID,  OSM_ID),
+      trackOsmPlaceUnsave(OTHER_ID, OSM_ID),
+    ]);
+
+    const dpRows = fake.getDp();
+    assert.ok(dpRows[0].saved_count >= 0, "saved_count must never go negative regardless of concurrency");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 0, "both users' discovery_place_saves records should be removed");
   });
 });
