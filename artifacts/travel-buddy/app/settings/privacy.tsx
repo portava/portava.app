@@ -11,6 +11,7 @@ import {
   updatePrivacySettings,
   type PrivacySettings,
 } from '../../src/services/profile';
+import { applyPrivacyChange } from '../../src/services/privacySettingsLogic';
 import { useSession } from '../../src/context/SessionContext';
 
 export default function PrivacySettingsScreen() {
@@ -34,17 +35,12 @@ export default function PrivacySettingsScreen() {
   }, [live]);
 
   const handleChange = useCallback(
-    async <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
-      if (!privacy) return;
-      const previous = privacy;
-      setPrivacy({ ...privacy, [key]: value });
-      setSaving(true);
-      const res = await updatePrivacySettings({ [key]: value } as Partial<PrivacySettings>);
-      setSaving(false);
-      if (!res.ok) {
-        setPrivacy(previous);
-        Alert.alert('Error', res.message ?? 'Could not update setting. Try again.');
-      }
+    <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
+      void applyPrivacyChange(privacy, key, value, {
+        setPrivacy,
+        setSaving,
+        onError: (msg) => Alert.alert('Error', msg),
+      }, updatePrivacySettings);
     },
     [privacy],
   );
