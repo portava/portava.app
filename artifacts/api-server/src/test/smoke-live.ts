@@ -325,6 +325,93 @@ async function run() {
     console.warn("No eventId — skipping event sub-resource tests\n");
   }
 
+  // ── Trip budget + documents (migrations 0079) ──────────────────────────────
+
+  if (tripId) {
+    // 18. Budget GET (owner is also a member)
+    {
+      const r = await hit("GET", `/trips/${tripId}/budget`, token);
+      if (r.status === 200) pass("GET  /trips/:id/budget", 200);
+      else fail("GET  /trips/:id/budget", r.status, r.json?.message ?? r.json?.error);
+    }
+
+    // 19. Budget PUT (create/upsert)
+    {
+      const r = await hit("PUT", `/trips/${tripId}/budget`, token, {
+        currency: "USD",
+        totalBudget: 3000,
+        breakdown: { flights: 1500, hotel: 1500 },
+      });
+      if (r.status === 200) pass("PUT  /trips/:id/budget", 200);
+      else fail("PUT  /trips/:id/budget", r.status, r.json?.message ?? r.json?.error);
+    }
+
+    // 20. Documents GET (owner is a member)
+    {
+      const r = await hit("GET", `/trips/${tripId}/documents`, token);
+      if (r.status === 200) pass("GET  /trips/:id/documents", 200);
+      else fail("GET  /trips/:id/documents", r.status, r.json?.message ?? r.json?.error);
+    }
+
+    // 21. Documents POST (create)
+    {
+      const r = await hit("POST", `/trips/${tripId}/documents`, token, {
+        title: "Visa requirements",
+        content: "Need a valid passport.",
+        documentType: "visa",
+        isPrivate: false,
+      });
+      if (r.status === 201) pass("POST /trips/:id/documents", 201);
+      else fail("POST /trips/:id/documents", r.status, r.json?.message ?? r.json?.error);
+    }
+  }
+
+  // ── Join-request flow (second trip owned by co-host) ───────────────────────
+
+  // Insert a trip owned by coHostUserId with allow_join_requests=true so the
+  // main smoke user (userId) can POST a join-request without being the owner.
+  let joinTripId: string | null = null;
+  if (coHostUserId) {
+    const { data: jt } = await admin.from("trips").insert({
+      owner_id: coHostUserId,
+      title:    "Smoke Join-Request Trip",
+      destination_city: "Berlin",
+      status:   "upcoming",
+      visibility: "public",
+      allow_join_requests: true,
+    }).select("id").single();
+    joinTripId = (jt as any)?.id ?? null;
+
+    // co-host must have a trip_members owner row so the route can resolve their role
+    if (joinTripId) {
+      await admin.from("trip_members").insert({
+        trip_id: joinTripId,
+        user_id: coHostUserId,
+        role:    "owner",
+        status:  "accepted",
+      }).then(undefined, () => {});
+    }
+  }
+
+  // 22. POST /trips/:id/join-request
+  if (joinTripId) {
+    const r = await hit("POST", `/trips/${joinTripId}/join-request`, token, {
+      message: "Smoke test join request",
+    });
+    if (r.status === 201) pass("POST /trips/:id/join-request", 201);
+    else fail("POST /trips/:id/join-request", r.status, r.json?.message ?? r.json?.error);
+  }
+
+  // ── Events invites (global pending-invites endpoint) ───────────────────────
+
+  // 23. GET /events/invites — returns pending invites for the authenticated user
+  //     (our smoke user has none, but the DB table exists so it returns 200 + empty array)
+  {
+    const r = await hit("GET", "/events/invites", token);
+    if (r.status === 200) pass("GET  /events/invites", 200);
+    else fail("GET  /events/invites", r.status, r.json?.message ?? r.json?.error);
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.ok).length;
@@ -342,6 +429,9 @@ async function run() {
 
   if (tripId) {
     await admin.from("trips").delete().eq("id", tripId).then(undefined, () => {});
+  }
+  if (joinTripId) {
+    await admin.from("trips").delete().eq("id", joinTripId).then(undefined, () => {});
   }
   if (eventId) {
     await admin.from("events").delete().eq("id", eventId).then(undefined, () => {});
