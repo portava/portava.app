@@ -1,95 +1,110 @@
 /**
- * Map + location services. Backend contract for migration 0002. Privacy is enforced
- * by RLS in the DB; these wrappers never bypass it. This pass scaffolds the calls;
- * the Live Map UI does NOT render live locations yet.
+ * Map + location services.
+ *
+ * Location privacy reads/writes go through the API server
+ * (GET/PATCH /api/me/location-preferences) because the `location_preferences`
+ * table is managed server-side (migration 0032 renamed user_location_privacy
+ * to location_preferences).
+ *
+ * map_pins and user_locations tables do not exist in the DB; those functions
+ * have been removed pending proper migrations.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-export type LocationSharing = 'private' | 'circle' | 'public';
+const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
-export interface MapPin {
-  id: string;
-  ownerId: string;
-  tripId: string | null;
-  title: string;
-  category: string | null;
-  lat: number | null;
-  lng: number | null;
-  city: string | null;
-  isPrivate: boolean;
+async function authToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
 }
 
-function mapPin(r: any): MapPin {
-  return {
-    id: r.id, ownerId: r.owner_id, tripId: r.trip_id, title: r.title,
-    category: r.category, lat: r.lat, lng: r.lng, city: r.city, isPrivate: r.is_private,
-  };
-}
+/* ---------- Location privacy ------------------------------------------------ */
 
-/** Pins the viewer is allowed to see (RLS: own pins + non-private pins on visible trips). */
-export async function listMapPins(tripId?: string): Promise<MapPin[]> {
-  if (!isSupabaseConfigured) return [];
-  let q = supabase.from('map_pins').select('*');
-  if (tripId) q = q.eq('trip_id', tripId);
-  const { data, error } = await q;
-  if (error || !data) return [];
-  return data.map(mapPin);
-}
+export type LocationMode =
+  | 'off'
+  | 'city_only'
+  | 'nearby'
+  | 'live_during_activity'
+  | 'trusted_circle_live';
 
-export async function createMapPin(input: {
-  title: string; tripId?: string; category?: string; lat?: number; lng?: number; city?: string; isPrivate?: boolean;
-}): Promise<MapPin | null> {
-  if (!isSupabaseConfigured) return null;
-  const { data: s } = await supabase.auth.getSession();
-  const uid = s.session?.user?.id;
-  if (!uid) return null;
-  const { data, error } = await supabase.from('map_pins').insert({
-    owner_id: uid,
-    trip_id: input.tripId ?? null,
-    title: input.title,
-    category: input.category ?? null,
-    lat: input.lat ?? null,
-    lng: input.lng ?? null,
-    city: input.city ?? null,
-    is_private: input.isPrivate ?? true,   // private by default
-  }).select('*').single();
-  if (error || !data) return null;
-  return mapPin(data);
-}
+export type LocationVisibility =
+  | 'city_only'
+  | 'neighborhood'
+  | 'venue_tagged'
+  | 'exact_hidden'
+  | 'no_location';
 
-/* ---------- Location privacy (default private; ghost mode) ---------- */
 export interface LocationPrivacy {
-  sharing: LocationSharing;
-  ghostMode: boolean;
-  staleMinutes: number;
+  locationMode: LocationMode;
+  sharingPaused: boolean;
+  pulseVisibility: LocationVisibility | null;
+  discoveryVisibility: LocationVisibility | null;
+  safeReturnEnabled: boolean;
+  trustedCircleShare: boolean;
+  hotelBlurEnabled: boolean;
 }
 
+const LOCATION_PRIVACY_FALLBACK: LocationPrivacy = {
+  locationMode: 'city_only',
+  sharingPaused: false,
+  pulseVisibility: null,
+  discoveryVisibility: null,
+  safeReturnEnabled: true,
+  trustedCircleShare: false,
+  hotelBlurEnabled: true,
+};
+
+/** Loads the viewer's location-privacy settings from the API. */
 export async function getMyLocationPrivacy(): Promise<LocationPrivacy> {
-  const fallback: LocationPrivacy = { sharing: 'private', ghostMode: false, staleMinutes: 30 };
-  if (!isSupabaseConfigured) return fallback;
-  const { data: s } = await supabase.auth.getSession();
-  const uid = s.session?.user?.id;
-  if (!uid) return fallback;
-  const { data } = await supabase.from('user_location_privacy').select('*').eq('user_id', uid).single();
-  if (!data) return fallback;
-  return { sharing: data.sharing, ghostMode: data.ghost_mode, staleMinutes: data.stale_minutes };
+  if (!isSupabaseConfigured) return LOCATION_PRIVACY_FALLBACK;
+  const token = await authToken();
+  if (!token) return LOCATION_PRIVACY_FALLBACK;
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/location-preferences`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return LOCATION_PRIVACY_FALLBACK;
+    const json = await res.json();
+    return {
+      locationMode:        json.locationMode        ?? LOCATION_PRIVACY_FALLBACK.locationMode,
+      sharingPaused:       Boolean(json.sharingPaused),
+      pulseVisibility:     json.pulseVisibility     ?? null,
+      discoveryVisibility: json.discoveryVisibility ?? null,
+      safeReturnEnabled:   json.safeReturnEnabled   !== false,
+      trustedCircleShare:  Boolean(json.trustedCircleShare),
+      hotelBlurEnabled:    json.hotelBlurEnabled    !== false,
+    };
+  } catch {
+    return LOCATION_PRIVACY_FALLBACK;
+  }
 }
 
-/** PATCH /me/location-privacy. Upserts; defaults stay private until user opts in. */
-export async function updateMyLocationPrivacy(patch: Partial<LocationPrivacy>): Promise<boolean> {
+/** Partially updates the viewer's location-privacy settings via the API. */
+export async function updateMyLocationPrivacy(
+  patch: Partial<LocationPrivacy>,
+): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
-  const { data: s } = await supabase.auth.getSession();
-  const uid = s.session?.user?.id;
-  if (!uid) return false;
-  const row: any = { user_id: uid };
-  if (patch.sharing !== undefined) row.sharing = patch.sharing;
-  if (patch.ghostMode !== undefined) row.ghost_mode = patch.ghostMode;
-  if (patch.staleMinutes !== undefined) row.stale_minutes = patch.staleMinutes;
-  const { error } = await supabase.from('user_location_privacy').upsert(row, { onConflict: 'user_id' });
-  return !error;
+  const token = await authToken();
+  if (!token) return false;
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/location-preferences`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /* ---------- Nearby users --------------------------------------------------- */
+
 export interface NearbyUser {
   id: string;
   name: string;
@@ -97,9 +112,9 @@ export interface NearbyUser {
 }
 
 /**
- * Profiles of other non-private users who have `current_city` matching the given
- * city string (case-insensitive). Excludes the requesting user and private profiles.
- * Returns up to 20 results; empty array on any error.
+ * Profiles of other non-private users who have `current_city` matching the
+ * given city string (case-insensitive). Excludes the requesting user and
+ * private profiles. Returns up to 20 results; empty array on any error.
  */
 export async function listNearbyUsers(city: string, excludeUserId: string): Promise<NearbyUser[]> {
   if (!isSupabaseConfigured || !city.trim()) return [];
@@ -116,18 +131,4 @@ export async function listNearbyUsers(city: string, excludeUserId: string): Prom
     name: (r.name as string | null) ?? 'Traveler',
     avatarUrl: (r.avatar_url as string | null) ?? null,
   }));
-}
-
-/**
- * Circle members whose location the viewer is allowed to see. RLS does the gating;
- * this returns only rows the DB permits. UI does NOT render these yet (placeholder pass).
- */
-export async function listVisibleCircleLocations(): Promise<{ userId: string; lat: number; lng: number; city: string | null }[]> {
-  if (!isSupabaseConfigured) return [];
-  const { data, error } = await supabase.from('user_locations').select('user_id, approx_lat, approx_lng, city');
-  if (error || !data) return [];
-  // RLS already filtered to visible rows; map shape.
-  return data
-    .filter((r: any) => r.approx_lat != null && r.approx_lng != null)
-    .map((r: any) => ({ userId: r.user_id, lat: r.approx_lat, lng: r.approx_lng, city: r.city }));
 }
