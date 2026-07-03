@@ -65,7 +65,9 @@ function makeClient(state: FakeState = {}) {
     stamp_collection_items: state.stampCollectionItems ?? [],
     stamp_campaigns:        state.stampCampaigns ?? [],
     blocks:                 state.blocks ?? [],
-    feature_flags:          state.featureFlags ?? [],
+    feature_flags:          state.featureFlags ?? [
+      { flag: "stamp_system_v2_enabled", key: "stamp_system_v2_enabled", enabled: true },
+    ],
     user_friendships:       state.userFriendships ?? [],
     trips:                  state.trips ?? [],
     posts:                  state.posts ?? [],
@@ -561,8 +563,18 @@ describe("Stamp system v2 — smoke tests", async () => {
     before(() => {
       // Set up auth client (so requireUser can authenticate the request)...
       _setTestClient(makeClient({ currentUserId: ALICE_ID }), true);
-      // ...then null out only the service client slot so getServiceClient() → null
-      _setTestServiceClient(null);
+      // ...then replace the service client with a broken fake that throws on every
+      // DB call. Setting _testServiceClient to null does NOT work when
+      // SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY are present in the environment —
+      // getServiceClient() falls back to the real client instead.
+      const brokenClient: any = {
+        auth: { getUser: async () => ({ data: { user: { id: ALICE_ID } }, error: null }) },
+        from: () => {
+          throw new Error("service client simulated failure");
+        },
+        rpc: async () => ({ data: null, error: { message: "service client simulated failure" } }),
+      };
+      _setTestServiceClient(brokenClient);
     });
 
     after(() => {
@@ -570,7 +582,7 @@ describe("Stamp system v2 — smoke tests", async () => {
       _setTestClient(makeClient({ currentUserId: ALICE_ID }), true);
     });
 
-    it("GET /stamps/me returns a structured error (not a crash) when service client is null", async () => {
+    it("GET /stamps/me returns a structured error (not a crash) when service client is broken", async () => {
       const res = await fetch(`${base()}/stamps/me`, {
         headers: authHeaders(ALICE_ID),
       });

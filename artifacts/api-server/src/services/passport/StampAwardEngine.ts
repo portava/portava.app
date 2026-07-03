@@ -102,7 +102,26 @@ export async function awardStamp(
   sc: SupabaseClient,
   input: AwardInput,
 ): Promise<AwardResult> {
-  // 0. Global kill-switch: passport_stamps_enabled
+  // 0a. Fail-closed: stamp_system_v2_enabled must be explicitly true.
+  // An absent row (migration not yet applied) is treated as disabled to avoid
+  // crashing against non-existent tables. This mirrors the HTTP-router guard in
+  // stamps.ts so that direct engine calls (e.g. awardTripCompletionStamps) are
+  // also protected and cannot silently skip stamps.
+  try {
+    const { data: v2Flag } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "stamp_system_v2_enabled")
+      .maybeSingle();
+    if (v2Flag?.enabled !== true) {
+      return { awarded: false, reason: "feature_disabled" };
+    }
+  } catch {
+    // DB unavailable — fail-closed: do not award
+    return { awarded: false, reason: "feature_disabled" };
+  }
+
+  // 0b. Global kill-switch: passport_stamps_enabled
   // Fail-open: if the feature_flags table is missing (dev / unmigrated) or the
   // row doesn't exist, the award proceeds so stamps work out-of-box without any
   // DB setup. Only an explicit `enabled = false` row suppresses all awards.
