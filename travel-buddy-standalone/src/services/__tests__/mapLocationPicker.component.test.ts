@@ -356,7 +356,7 @@ describe('map-picker onConfirm round-trip — coordinates passed unchanged', () 
     expect(payload.longitude).toBe(BUENOS_AIRES_LNG);
   });
 
-  it('multiple distinct map-center picks produce independent results (no shared state)', async () => {
+  it('sequential picks produce independent results (no shared state)', async () => {
     const LONDON_CENTER: [number, number] = [-0.1276, 51.5074];
     const NAIROBI_CENTER: [number, number] = [36.8219, -1.2921];
 
@@ -382,5 +382,125 @@ describe('map-picker onConfirm round-trip — coordinates passed unchanged', () 
 
     expect(londonResult.lat).not.toBe(nairobiResult.lat);
     expect(londonResult.lng).not.toBe(nairobiResult.lng);
+  });
+});
+
+// ── 5. Initial-props isolation — pre-filled location does not leak into result
+//
+// These tests verify the contract between MapLocationPicker's `initialLat`/
+// `initialLng` props and the coordinate that is ultimately confirmed.
+//
+// How the component wires this:
+//   centerRef = useRef([initialLng, initialLat])   ← initialised once on mount
+//   handleRegionDidChange → overwrites centerRef.current on every pan
+//   handleConfirm → resolveMapPickerResult({ center: centerRef.current })
+//   initialCenter → passed ONLY to Camera's initialViewState (read-only viewport)
+//
+// The pure function `resolveMapPickerResult` has no module-level state, so
+// it always returns whatever `center` it is given.  These tests pin that
+// contract explicitly so that any future refactor which accidentally routes
+// `initialCenter` into `resolveMapPickerResult` instead of `centerRef.current`
+// is caught immediately.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PARIS_LNG = 2.3522;
+const PARIS_LAT = 48.8566;
+const PARIS_CENTER: [number, number] = [PARIS_LNG, PARIS_LAT];
+
+describe('initial-props isolation — pre-filled location does not leak into confirmed result', () => {
+  it('result uses the panned center, not the initial pre-fill, when the user moves the map', async () => {
+    // Scenario: picker opened pre-filled at Kyoto (initialLat=35.0116, initialLng=135.7681)
+    // but the user pans to Paris before tapping Confirm.
+    // centerRef.current at Confirm time holds Paris — that is what must come back.
+    const result = await resolveMapPickerResult({
+      center: PARIS_CENTER,          // ← what centerRef.current holds after the pan
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Paris', 'France'),
+      fetchFn: failingFetch(),
+    });
+
+    expect(result.lat).toBe(PARIS_LAT);
+    expect(result.lng).toBe(PARIS_LNG);
+
+    // Initial pre-fill coords (Kyoto) must NOT appear in the result
+    expect(result.lat).not.toBe(KYOTO_LAT);
+    expect(result.lng).not.toBe(KYOTO_LNG);
+  });
+
+  it('confirming without panning returns the pre-filled initial coords (no silent discard)', async () => {
+    // Scenario: picker opened pre-filled at Kyoto and the user immediately taps
+    // Confirm without panning.  centerRef.current is still Kyoto — the result
+    // must be Kyoto.
+    const result = await resolveMapPickerResult({
+      center: KYOTO_CENTER,          // ← centerRef.current was never overwritten
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Kyoto', 'Japan'),
+      fetchFn: failingFetch(),
+    });
+
+    expect(result.lat).toBe(KYOTO_LAT);
+    expect(result.lng).toBe(KYOTO_LNG);
+  });
+
+  it('two sequential re-opens with different pre-fills each confirm their own panned position', async () => {
+    // First open: pre-filled at Kyoto, user pans to Paris, confirms
+    const firstResult = await resolveMapPickerResult({
+      center: PARIS_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Paris', 'France'),
+      fetchFn: failingFetch(),
+    });
+
+    // Second open: pre-filled at Buenos Aires, user pans to London, confirms
+    const LONDON_CENTER: [number, number] = [-0.1276, 51.5074];
+    const secondResult = await resolveMapPickerResult({
+      center: LONDON_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('London', 'United Kingdom'),
+      fetchFn: failingFetch(),
+    });
+
+    // First confirm — Paris
+    expect(firstResult.lat).toBe(PARIS_LAT);
+    expect(firstResult.lng).toBe(PARIS_LNG);
+
+    // Second confirm — London
+    expect(secondResult.lat).toBe(51.5074);
+    expect(secondResult.lng).toBe(-0.1276);
+
+    // The two results are fully independent
+    expect(firstResult.lat).not.toBe(secondResult.lat);
+    expect(firstResult.lng).not.toBe(secondResult.lng);
+  });
+
+  it('label in the result reflects the panned location, not the pre-filled one', async () => {
+    // Scenario: picker pre-filled at Kyoto; user pans to Paris and confirms.
+    // The geocoded label must describe Paris, not Kyoto.
+    const result = await resolveMapPickerResult({
+      center: PARIS_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Paris', 'France'),
+      fetchFn: failingFetch(),
+    });
+
+    expect(result.label).toContain('Paris');
+    expect(result.label).toContain('France');
+    expect(result.label).not.toContain('Kyoto');
+    expect(result.label).not.toContain('Japan');
+  });
+
+  it('re-opening with null initial props (no pre-fill) and panning to a location confirms that location', async () => {
+    // Scenario: first submission had no GPS location; centerRef was DEFAULT_CENTER;
+    // user pans to Buenos Aires before confirming.
+    const result = await resolveMapPickerResult({
+      center: BUENOS_AIRES_CENTER,
+      apiBase: 'https://api.test',
+      reverseGeocodeDetailed: okGeocode('Buenos Aires', 'Argentina'),
+      fetchFn: failingFetch(),
+    });
+
+    expect(result.lat).toBe(BUENOS_AIRES_LAT);
+    expect(result.lng).toBe(BUENOS_AIRES_LNG);
+    expect(result.label).toContain('Buenos Aires');
   });
 });

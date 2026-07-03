@@ -62,7 +62,19 @@ export function MapLocationPicker({
 }: MapLocationPickerProps) {
   const hasInitial = initialLat != null && initialLng != null;
 
-  // [lng, lat] — LngLat order for MapLibre
+  // [lng, lat] — LngLat order for MapLibre.
+  //
+  // Initialised from props once (useRef initialiser runs only on mount).
+  // handleRegionDidChange overwrites centerRef.current on every pan, so by
+  // the time the user taps Confirm, it holds the current map centre — not
+  // the original initialLat/initialLng props.
+  //
+  // initialCenter (below) is a separate const used ONLY for the Camera's
+  // initialViewState (one-time MapLibre viewport setup).  It is never
+  // written back into centerRef, so there is no shared mutable state between
+  // the two.  Audit: resolveMapPickerResult always receives centerRef.current;
+  // the initialLat/initialLng props cannot leak into the confirmed result once
+  // the user has panned.
   const centerRef = useRef<[number, number]>(
     hasInitial
       ? [initialLng as number, initialLat as number]
