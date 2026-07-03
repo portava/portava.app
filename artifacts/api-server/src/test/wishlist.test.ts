@@ -11,6 +11,7 @@
  * - DELETE /api/wishlist clears all places for the user
  * - Unauthenticated requests return 401
  * - DB errors surface as 500
+ * - OSM save-count deduplication (trackOsmPlaceSave / trackOsmPlaceUnsave)
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -18,6 +19,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
+import { trackOsmPlaceSave, trackOsmPlaceUnsave } from "../routes/wishlist.js";
 
 type Row = Record<string, any>;
 
@@ -325,5 +327,217 @@ describe("DB error propagation", () => {
   it("DELETE /:placeId returns 500 on DB error", async () => {
     const { status } = await req(server, "DELETE", "/api/wishlist/p1", { token: "valid-token" });
     assert.equal(status, 500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OSM save-count deduplication
+// ---------------------------------------------------------------------------
+// These tests call trackOsmPlaceSave / trackOsmPlaceUnsave directly so they
+// can inspect the discovery_places / discovery_place_saves state without
+// needing to encode slashes in HTTP route params.
+// ---------------------------------------------------------------------------
+
+const OSM_ID   = "node/12345678";
+const DP_UUID  = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const PLACE_DATA: Record<string, unknown> = { name: "Test Café", category: "food", lat: 51.5, lng: -0.1 };
+
+/**
+ * Minimal fake Supabase client that tracks discovery_places (dp),
+ * discovery_place_saves (dps), and wishlist_places (wl) in memory.
+ *
+ * Each table is a live JS array; mutations (upsert / update / delete) are
+ * applied in-place so callers can inspect state after each operation.
+ */
+function makeOsmFakeClient(opts: {
+  dpRows?:  Row[];
+  dpsRows?: Row[];
+  wlRows?:  Row[];
+  supportOtherUser?: boolean;
+} = {}) {
+  const dp:  Row[] = opts.dpRows  ? [...opts.dpRows]  : [];
+  const dps: Row[] = opts.dpsRows ? [...opts.dpsRows] : [];
+  const wl:  Row[] = opts.wlRows  ? [...opts.wlRows]  : [];
+
+  function tableChain(tableRows: Row[]) {
+    const filters: Array<(r: Row) => boolean> = [];
+    let _op: "select" | "upsert" | "update" | "delete" | null = null;
+    let _data: Row | null = null;
+    let _upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
+
+    const obj: any = {
+      select()  { _op = "select"; return obj; },
+      upsert(d: Row, o?: any) { _op = "upsert"; _data = d; _upsertOpts = o ?? {}; return obj; },
+      update(d: Row)          { _op = "update"; _data = d; return obj; },
+      delete()                { _op = "delete"; return obj; },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return obj; },
+      gt(col: string, val: any) { filters.push((r) => r[col] > val);   return obj; },
+      order()  { return obj; },
+      limit()  { return obj; },
+      maybeSingle() {
+        const matched = tableRows.filter((r) => filters.every((f) => f(r)));
+        return Promise.resolve({ data: matched[0] ?? null, error: null });
+      },
+      then(resolve: any) {
+        if (_op === "upsert" && _data) {
+          const conflictCols = (_upsertOpts.onConflict ?? "id").split(",").map((s) => s.trim());
+          const idx = tableRows.findIndex((r) =>
+            conflictCols.every((col) => r[col] !== undefined && r[col] === _data![col]),
+          );
+          if (idx >= 0) {
+            if (!_upsertOpts.ignoreDuplicates) {
+              tableRows[idx] = { ...tableRows[idx], ..._data };
+            }
+          } else {
+            tableRows.push({ id: DP_UUID, ..._data });
+          }
+          return resolve({ data: null, error: null });
+        }
+        if (_op === "update" && _data) {
+          tableRows
+            .filter((r) => filters.every((f) => f(r)))
+            .forEach((r) => Object.assign(r, _data));
+          return resolve({ data: null, error: null });
+        }
+        if (_op === "delete") {
+          const toRemove = new Set(tableRows.filter((r) => filters.every((f) => f(r))));
+          tableRows.splice(0, tableRows.length, ...tableRows.filter((r) => !toRemove.has(r)));
+          return resolve({ data: null, error: null });
+        }
+        const matched = tableRows.filter((r) => filters.every((f) => f(r)));
+        return resolve({ data: matched, error: null });
+      },
+    };
+    return obj;
+  }
+
+  return {
+    getDp:  () => dp,
+    getDps: () => dps,
+    from(table: string) {
+      if (table === "discovery_places")      return tableChain(dp);
+      if (table === "discovery_place_saves") return tableChain(dps);
+      if (table === "wishlist_places")       return tableChain(wl);
+      return tableChain([]);
+    },
+    auth: {
+      getUser(token: string) {
+        if (token === "valid-token") return Promise.resolve({ data: { user: { id: USER_ID } }, error: null });
+        if (token === "other-token" && opts.supportOtherUser)
+          return Promise.resolve({ data: { user: { id: OTHER_ID } }, error: null });
+        return Promise.resolve({ data: { user: null }, error: { message: "invalid" } });
+      },
+    },
+  };
+}
+
+describe("OSM save-count deduplication — trackOsmPlaceSave", () => {
+  afterEach(() => { _clearTestClient(); });
+
+  it("first save: creates a discovery_places row with saved_count=1", async () => {
+    const fake = makeOsmFakeClient();
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceSave(USER_ID, OSM_ID, PLACE_DATA);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows.length, 1, "discovery_places should have one row");
+    assert.equal(dpRows[0].saved_count, 1, "saved_count should be 1 after first save");
+    assert.equal(dpRows[0].osm_id, OSM_ID, "osm_id should match");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 1, "discovery_place_saves should record the user");
+    assert.equal(dpsRows[0].user_id, USER_ID);
+  });
+
+  it("same user saves same OSM place to a second trip: saved_count stays at 1", async () => {
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 1, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: USER_ID, place_id: DP_UUID }],
+    });
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceSave(USER_ID, OSM_ID, PLACE_DATA);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows.length, 1, "no duplicate discovery_places row should be created");
+    assert.equal(dpRows[0].saved_count, 1, "saved_count must not increase for the same user");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 1, "no duplicate discovery_place_saves row should be created");
+  });
+
+  it("different user saves same OSM place: saved_count becomes 2", async () => {
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 1, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: USER_ID, place_id: DP_UUID }],
+    });
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceSave(OTHER_ID, OSM_ID, PLACE_DATA);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows[0].saved_count, 2, "saved_count should increment for a new unique user");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 2, "both users should have discovery_place_saves records");
+    const userIds = dpsRows.map((r) => r.user_id);
+    assert.ok(userIds.includes(USER_ID));
+    assert.ok(userIds.includes(OTHER_ID));
+  });
+});
+
+describe("OSM save-count deduplication — trackOsmPlaceUnsave", () => {
+  afterEach(() => { _clearTestClient(); });
+
+  it("unsave when no other lists remain: saved_count decrements to previous value", async () => {
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 1, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: USER_ID, place_id: DP_UUID }],
+      wlRows:  [],
+    });
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceUnsave(USER_ID, OSM_ID);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows[0].saved_count, 0, "saved_count should decrement to 0");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 0, "discovery_place_saves record should be removed");
+  });
+
+  it("unsave when other lists still hold the place: saved_count unchanged", async () => {
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 1, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: USER_ID, place_id: DP_UUID }],
+      wlRows:  [{ user_id: USER_ID, place_id: OSM_ID, list_id: "trip-abc", place_data: {} }],
+    });
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceUnsave(USER_ID, OSM_ID);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows[0].saved_count, 1, "saved_count must not change while another list still holds the place");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 1, "discovery_place_saves record should remain");
+  });
+
+  it("unsave by a user who never saved the place: saved_count unchanged", async () => {
+    const fake = makeOsmFakeClient({
+      dpRows:  [{ id: DP_UUID, osm_id: OSM_ID, saved_count: 2, name: "Test Café", city: "", place_type: "place", category: "food", source: "osm", status: "active" }],
+      dpsRows: [{ user_id: OTHER_ID, place_id: DP_UUID }],
+      wlRows:  [],
+    });
+    _setTestClient(fake, true);
+
+    await trackOsmPlaceUnsave(USER_ID, OSM_ID);
+
+    const dpRows = fake.getDp();
+    assert.equal(dpRows[0].saved_count, 2, "saved_count must not change when user has no save record");
+
+    const dpsRows = fake.getDps();
+    assert.equal(dpsRows.length, 1, "other user's discovery_place_saves record should be untouched");
   });
 });

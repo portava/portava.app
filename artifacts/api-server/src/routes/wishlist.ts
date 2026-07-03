@@ -24,7 +24,7 @@ const OSM_ID_RE = /^(node|way|relation)\/\d+$/;
  * Failures are non-blocking — the wishlist upsert already succeeded when this
  * is called, so we log and return without surfacing an error to the client.
  */
-async function trackOsmPlaceSave(
+export async function trackOsmPlaceSave(
   userId: string,
   osmId: string,
   placeData: Record<string, unknown>,
@@ -114,7 +114,7 @@ async function trackOsmPlaceSave(
  * 3. The UPDATE uses .gt("saved_count", 0) so a race between concurrent
  *    unsave calls cannot push the count below zero.
  */
-async function trackOsmPlaceUnsave(
+export async function trackOsmPlaceUnsave(
   userId: string,
   osmId: string,
 ): Promise<void> {
