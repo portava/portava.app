@@ -362,9 +362,11 @@ function CommentItem({
 interface SectionProps {
   postId: string;
   onCountChange: (n: number) => void;
+  /** Called when the comment input receives focus. Use to scroll it into view. */
+  onInputFocus?: () => void;
 }
 
-export function CommentsSection({ postId, onCountChange }: SectionProps) {
+export function CommentsSection({ postId, onCountChange, onInputFocus }: SectionProps) {
   const [comments, setComments] = useState<EngagementComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
@@ -587,6 +589,7 @@ export function CommentsSection({ postId, onCountChange }: SectionProps) {
               returnKeyType="default"
               blurOnSubmit={false}
               surface="comment"
+              onFocus={onInputFocus}
               onSuggestionsChange={(items, isLoading, trigger) => {
                 setMentionSuggestions(items);
                 setMentionLoading(isLoading);

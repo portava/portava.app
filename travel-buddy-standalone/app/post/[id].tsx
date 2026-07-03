@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
   Image, ActivityIndicator, useWindowDimensions,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -162,6 +163,13 @@ export default function PostDetail() {
   const [reported, setReported]           = useState(false);
   const [undoAvailable, setUndoAvailable] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+
+  const handleInputFocus = useCallback(() => {
+    // Delay matches the iOS keyboard animation (~250 ms) so the scroll
+    // fires after the view has already shrunk to its new height.
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+  }, []);
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -232,33 +240,43 @@ export default function PostDetail() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Post" back right={headerRight} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
-        {loading ? (
-          <View style={{ paddingVertical: space.xxl, alignItems: 'center' }}>
-            <ActivityIndicator color={color.signal} />
-          </View>
-        ) : fetchError ? (
-          <Text style={{ ...t.body, color: color.mute }}>{fetchError}</Text>
-        ) : post ? (
-          reported
-            ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
-            : <PostDetailCard post={post} commentCount={commentCount} />
-        ) : null}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={{ padding: space.lg, gap: space.lg }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {loading ? (
+            <View style={{ paddingVertical: space.xxl, alignItems: 'center' }}>
+              <ActivityIndicator color={color.signal} />
+            </View>
+          ) : fetchError ? (
+            <Text style={{ ...t.body, color: color.mute }}>{fetchError}</Text>
+          ) : post ? (
+            reported
+              ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
+              : <PostDetailCard post={post} commentCount={commentCount} />
+          ) : null}
 
-        {post && !reported && (
-          <View style={{ gap: space.md }}>
-            <Text style={{ ...t.heading, color: color.ink }}>
-              {commentCount > 0
-                ? `${commentCount} Comment${commentCount !== 1 ? 's' : ''}`
-                : 'Comments'}
-            </Text>
-            <CommentsSection
-              postId={post.id}
-              onCountChange={setCommentCount}
-            />
-          </View>
-        )}
-      </ScrollView>
+          {post && !reported && (
+            <View style={{ gap: space.md }}>
+              <Text style={{ ...t.heading, color: color.ink }}>
+                {commentCount > 0
+                  ? `${commentCount} Comment${commentCount !== 1 ? 's' : ''}`
+                  : 'Comments'}
+              </Text>
+              <CommentsSection
+                postId={post.id}
+                onCountChange={setCommentCount}
+                onInputFocus={handleInputFocus}
+              />
+            </View>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       {post && !isOwnPost && (
         <>
