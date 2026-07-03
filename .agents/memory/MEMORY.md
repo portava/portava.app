@@ -38,3 +38,4 @@
 - [Trip detail fixture pollution pattern](trip-detail-fixture-pattern.md) — TripDetail built from TripRow only (no fixture spread); savedIdeas/stamps/timeline are empty until dedicated API endpoints exist; toggleSave returns ToggleSaveResult {added,synced} not plain boolean
 - [Stamp v2 guard pattern](stamp-v2-guard-pattern.md) — stamps.ts uses fail-closed middleware (data?.enabled !== true); isFlagEnabled is fail-open and wrong when flag is seeded by the same pending migration as the tables
 - [Fake-client must return row copies not references](fake-client-row-copies.md) — select path must shallow-copy results; returning references lets later mutations silently change values the handler already captured
+- [hiddenGems admin guard](hidden-gems-admin-guard.md) — was reading profiles.is_admin (never existed); correct column is profiles.role === "admin"

@@ -1,0 +1,414 @@
+Travel Buddy — Database Audit for User Profile + GPS/Location System
+
+Run a focused database audit for ONLY:
+1. User profile / Passport profile data
+2. GPS / location / city / place data
+
+Do not rebuild the app.
+Do not audit unrelated systems except where they directly depend on profile or GPS/location data.
+Do not add product features.
+Do not make UI changes.
+Only fix proven database/backend blockers, missing schema, wrong columns, unsafe RLS, fake success risks, privacy leaks, or production mismatch.
+
+Goal:
+Confirm the database is complete and production-ready for:
+- user profiles
+- own Passport
+- public profile
+- profile edit
+- avatar/cover upload metadata
+- blocked/private/deleted profile safety
+- profile search cards
+- GPS capture
+- current location
+- assisted city/place inputs
+- reverse geocoding
+- geotagged posts/memories/stamps
+- location privacy
+- delayed posting location safety
+- Safe Return GPS fields
+- place/community/hidden gem coordinates
+
+Critical known production context:
+Recent production verification found:
+- `profiles.cover_photo_url` was missing because 0087 was not applied.
+- `profiles.role` was missing even though admin guards may expect it.
+- Some location/wishlist/discovery migrations were applied later and must be verified, not assumed.
+- Users should not be asked to manually enter coordinates. GPS-required features must use captured device GPS, not typed lat/lng.
+
+PHASE 1 — Migration inventory for profile + GPS/location
+
+Inventory all migration files related to:
+- profiles
+- avatar_url
+- cover_photo_url
+- home_city
+- home_country
+- default_language
+- spoken_languages
+- interests
+- travel_style
+- privacy fields
+- role/admin source if profile-based
+- blocks
+- mutes/restrictions
+- reports/content reports
+- passport stamps
+- memories/postcards
+- location/geotag tables
+- discovery_places
+- community_places
+- hidden_gems
+- saved_places / wishlist_places
+- osm_id/source/source_id fields
+- latitude/longitude fields
+- timezone fields
+- Safe Return location fields
+- RAB provider/service-area location fields only if user profile/location schema overlaps
+
+For each relevant migration:
+- migration number
+- file name
+- table/columns added
+- constraints/indexes added
+- RLS policies added
+- SQL functions/triggers added
+- production status: applied / missing / unknown
+- feature dependency
+- beta blocker? yes/no
+- verification SQL
+
+Special migrations to verify:
+- 0087 `profiles.cover_photo_url`
+- profile role/admin migration if one exists
+- discovery/wishlist/location migrations:
+  - 0086 `discovery_places.osm_id`
+  - 0088 `wishlist_places`
+  - 0089 `decrement_discovery_place_saved_count`
+- stamp/location migrations:
+  - 0081
+  - 0082
+  - 0085
+
+PHASE 2 — Production database verification
+
+Run production verification queries if credentials/tooling allow. If not, produce exact SQL for manual verification.
+
+Verify profile columns:
+- `profiles.id`
+- `profiles.username`
+- `profiles.display_name`
+- `profiles.bio`
+- `profiles.avatar_url`
+- `profiles.cover_photo_url`
+- `profiles.home_city`
+- `profiles.home_country`
+- `profiles.default_language`
+- `profiles.spoken_languages`
+- `profiles.interests`
+- `profiles.travel_style`
+- `profiles.profile_visibility` or equivalent privacy field
+- `profiles.trust_score` or actual trust source
+- `profiles.verification_status` / verified field if present
+- `profiles.role` only if backend expects it
+- deleted/deactivated fields if present
+
+Verify profile-related tables:
+- blocks
+- follows/friends/circles if profile display depends on them
+- content_reports / reports
+- passport_stamps
+- memories
+- memory_items
+- profile/media related columns
+- notification/profile search support tables if relevant
+
+Verify GPS/location columns:
+- latitude
+- longitude
+- lat/lng aliases if used
+- city
+- region/state
+- country
+- country_code
+- address
+- venue_name
+- timezone
+- source
+- source_id
+- osm_id
+- place_id
+- geohash if present
+- precision/privacy fields
+- published_at/delayed posting fields if tied to location privacy
+
+Verify location tables:
+- discovery_places
+- community_places
+- hidden_gems
+- saved_places / wishlist_places
+- passport stamp location tables
+- memory/post geotag fields
+- Safe Return sessions/checkins location columns
+- event/trip location fields only where profile/GPS location system depends on them
+
+PHASE 3 — Backend/schema compatibility audit
+
+Search backend routes/services for all profile + location DB references.
+
+Profile backend audit:
+- profile.ts
+- passport routes
+- auth/profile creation
+- avatar upload
+- cover upload
+- profile update
+- public profile lookup
+- username lookup
+- block/unblock
+- report profile
+- profile search
+- SessionContext role/profile loading
+
+Location backend audit:
+- discovery routes
+- community place routes
+- hidden gem routes
+- wishlist routes
+- media/geotag routes
+- passport stamp routes
+- Safe Return routes
+- any reverse geocode/place search/location routes
+- any route that accepts lat/lng
+- any route that returns public location data
+
+Check every `.select`, `.insert`, `.update`, `.upsert`, `.eq`, `.order`, `.rpc` reference:
+- table exists
+- column exists
+- enum/status values match constraints
+- field names match frontend services
+- JSON fields are compatible
+- public projections hide private fields
+- precise GPS is not returned publicly
+- blocked/private/deleted profile responses are safe
+
+PHASE 4 — Frontend direct Supabase risk audit
+
+Search mobile/frontend code for profile/location direct Supabase access:
+- `supabase.from('profiles')`
+- `supabase.from("profiles")`
+- profile update direct writes
+- avatar_url direct writes
+- cover_photo_url direct writes
+- home_city/home_country direct writes
+- blocks direct writes
+- report direct writes
+- lat/lng direct writes
+- geotag direct writes
+- stamp/location credit direct writes
+- community place direct writes
+- hidden gem direct writes
+- wishlist direct writes
+- `rpc(` calls for location/profile systems
+
+Given the known JWT/RLS risk:
+- Treat live direct frontend mutations as risky unless proven safe.
+- If an API route already exists, flag mutation for routing through API server.
+- If it is unused legacy code, document as non-blocking.
+- If GPS/stamp/location-credit can be spoofed by manual DB write, flag as blocker.
+
+PHASE 5 — Profile privacy and blocked data database audit
+
+Confirm database supports safe blocked/private profile behavior:
+- block edge table exists
+- unique block pair constraint exists
+- self-block prevented if intended
+- indexes exist for blocker_id/blocked_id
+- public profile query checks both:
+  - I blocked them
+  - they blocked me
+- blocked profile response does not include private columns
+- message threads/posts/memories from blocked users can be filtered
+- deleted/deactivated users can be represented safely
+
+Check whether profile privacy fields exist:
+- profile visibility
+- show city/country
+- show languages
+- show interests
+- show stamps/posts/memories if implemented
+
+If visible privacy toggles exist but DB fields are missing:
+- classify as blocker if visible/live
+- otherwise document as non-blocking/honest-disabled
+
+PHASE 6 — GPS/location privacy database audit
+
+Confirm database design protects precise location:
+- Public post/feed/profile/event/trip projections should not expose raw lat/lng unless intended.
+- Delayed posting should store private precise location separately from public label.
+- Stamp/location-credit may store verification location privately.
+- Safe Return may store live GPS but should only expose to owner/trusted contacts.
+- RAB nearby/provider availability should not expose exact provider coordinates publicly.
+- Discovery/community/hidden gem places may expose place coordinates because they are public places, not user live location.
+
+For each table with lat/lng:
+- Table name
+- Column names
+- Is it user live/private location or public place location?
+- Who can read it?
+- RLS policy or backend guard
+- Public API projection behavior
+- Privacy risk
+- Fix needed
+
+PHASE 7 — Assisted city/place input database readiness
+
+Confirm database supports assisted location input:
+- city/name fields exist
+- country/country_code fields exist
+- source/source_id/osm_id fields exist for dedupe
+- indexes for city/search/status/source
+- saved/recent/popular locations support if implemented
+- discovery/community places can prefill results
+- wishlist/saved place identity is unique enough
+- duplicate community place checks use normalized source/osm/coordinates safely
+
+Check whether any location field expects manual text only:
+- home_city/home_country
+- trip destination
+- event city/venue
+- community place city/address
+- hidden gem location
+- memory/post geotag
+- RAB service area
+- Safe Return destination
+
+This pass is database/backend only:
+- Do not implement UI autocomplete here.
+- Just confirm whether schema/backend can support it and list missing fields/routes.
+
+PHASE 8 — SQL functions/RPC/triggers for profile + GPS
+
+Inventory SQL functions/RPCs/triggers related to profile/location:
+- updated_at triggers on profiles/location tables
+- discovery place saved count increment/decrement
+- stamp award functions
+- city/place stamp functions
+- counters
+- duplicate prevention
+- notification/location triggers if any
+
+For each:
+- function name
+- migration source
+- deployed? verified/unknown
+- caller
+- parameters match backend `rpc()` call
+- permissions/grants
+- SECURITY DEFINER if needed
+- beta blocker? yes/no
+- verification SQL
+
+Special check:
+- `decrement_discovery_place_saved_count(p_id uuid)` exists
+- parameter matches backend caller
+- SECURITY DEFINER
+- service_role has EXECUTE
+- cannot decrement below zero
+
+PHASE 9 — Constraints and indexes
+
+Profile constraints/indexes:
+- username unique
+- username lowercase/format if enforced
+- one profile per auth user
+- role default if role exists
+- block uniqueness
+- report uniqueness if intended
+- profile search indexes
+
+Location constraints/indexes:
+- valid latitude/longitude ranges
+- non-null city/country where required
+- unique source/source_id or osm_id where intended
+- wishlist unique user/place/list constraint
+- saved place unique constraint
+- community place duplicate prevention
+- discovery place indexes for city/status/source/osm_id
+- hidden gems indexes
+- Safe Return indexes for user/status/trip/location if applicable
+- stamp indexes for user/location/date if applicable
+
+Flag:
+- missing constraints causing duplicates
+- missing indexes causing slow beta-critical queries
+- missing lat/lng range checks if live endpoints accept coordinates
+- constraints that reject valid app input
+
+PHASE 10 — Required fixes
+
+Fix only proven database/backend blockers:
+- missing profile column used by live code
+- missing cover_photo_url migration
+- missing role/admin source if backend requires it
+- live route references missing profile/location column
+- public route leaks private profile/GPS fields
+- direct frontend live profile/location mutation that should use API
+- missing RLS/guard for private profile/location table
+- missing RPC/function used by live backend
+- wrong RPC parameter name
+- missing unique constraint causing live duplicates
+- invalid coordinate constraints or no validation on GPS routes
+- fake success after DB failure
+
+Do not fix:
+- UI autocomplete
+- map redesign
+- public web Passport
+- unrelated trip/event/RAB features
+- future location features not live
+- cosmetic schema names
+
+PHASE 11 — Validation
+
+After any fixes, run:
+- production verification query if SQL applied
+- `pnpm --filter @workspace/api-server run typecheck`
+- `cd travel-buddy-standalone && pnpm typecheck`
+- `pnpm run typecheck` if practical
+- `bash scripts/sync-standalone.sh --fix-source` if artifacts changed
+- `bash scripts/sync-standalone.sh --check-source`
+- `bash scripts/sync-standalone.sh --check-deps`
+- `pnpm --filter @workspace/scripts run test:routes-guard` if available
+- relevant backend/schema tests if existing
+
+Final report must include:
+1. Executive summary
+2. Profile Migration Matrix
+3. GPS/Location Migration Matrix
+4. Production verification results
+5. Profile Schema Matrix
+6. GPS/Location Schema Matrix
+7. Backend/schema compatibility findings
+8. Direct Supabase risk findings
+9. Profile privacy/blocking database findings
+10. GPS/location privacy database findings
+11. SQL functions/RPC/triggers inventory
+12. Constraints/indexes findings
+13. Fixes completed
+14. Exact SQL applied or required
+15. Files/migrations changed
+16. Remaining real blockers
+17. Manual production actions still required
+18. Non-blocking gaps
+19. Validation table
+20. Commit message
+
+Important:
+This is a database/backend audit only for profile and GPS/location.
+Do not implement UI pickers/autocomplete in this pass.
+Do not claim production columns/functions exist unless verified.
+Precise user GPS must be private by default.
+Public place coordinates are okay; live user coordinates are not.
+Users should not be asked to manually enter coordinates in later UI work; database should support captured GPS + privacy-safe labels.

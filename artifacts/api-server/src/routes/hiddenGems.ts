@@ -93,10 +93,10 @@ async function isFlagEnabled(db: any, flag: string): Promise<boolean> {
 async function requireAdmin(sc: any, userId: string): Promise<boolean> {
   const { data } = await sc
     .from("profiles")
-    .select("is_admin")
+    .select("role")
     .eq("id", userId)
     .maybeSingle();
-  return !!(data as any)?.is_admin;
+  return (data as any)?.role === "admin";
 }
 
 // ── Validation schemas ─────────────────────────────────────────────────────────
