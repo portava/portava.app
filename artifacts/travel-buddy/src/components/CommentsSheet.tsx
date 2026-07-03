@@ -345,6 +345,268 @@ function CommentItem({
   );
 }
 
+// ── Inline comments section (for embedding in a ScrollView, e.g. post detail) ─
+
+interface SectionProps {
+  postId: string;
+  onCountChange: (n: number) => void;
+}
+
+export function CommentsSection({ postId, onCountChange }: SectionProps) {
+  const [comments, setComments] = useState<EngagementComment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [commentsDisabled, setCommentsDisabled] = useState(false);
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; authorName: string } | null>(null);
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
+
+  const [repliesMap, setRepliesMap] = useState<Record<string, EngagementReply[]>>({});
+  const [repliesLoaded, setRepliesLoaded] = useState<Set<string>>(new Set());
+  const [repliesOpen, setRepliesOpen] = useState<Set<string>>(new Set());
+  const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
+
+  const [previewHandle, setPreviewHandle] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const data = await listComments(postId);
+    setComments(data);
+    setLoading(false);
+  }, [postId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleLoadReplies = useCallback(async (commentId: string) => {
+    setRepliesLoading((prev) => new Set(prev).add(commentId));
+    const data = await listReplies(postId, commentId);
+    setRepliesMap((prev) => ({ ...prev, [commentId]: data }));
+    setRepliesLoaded((prev) => new Set(prev).add(commentId));
+    setRepliesOpen((prev) => new Set(prev).add(commentId));
+    setRepliesLoading((prev) => { const s = new Set(prev); s.delete(commentId); return s; });
+  }, [postId]);
+
+  const handleToggleReplies = useCallback((commentId: string) => {
+    setRepliesOpen((prev) => {
+      const s = new Set(prev);
+      if (s.has(commentId)) s.delete(commentId);
+      else s.add(commentId);
+      return s;
+    });
+  }, []);
+
+  const handleReplyDelete = useCallback(async (commentId: string, replyId: string) => {
+    setRepliesMap((prev) => ({
+      ...prev,
+      [commentId]: (prev[commentId] ?? []).filter((r) => r.id !== replyId),
+    }));
+    const result = await deleteComment(postId, replyId);
+    if (!result) {
+      handleLoadReplies(commentId);
+      Alert.alert('Error', 'Could not delete reply. Please try again.');
+    }
+  }, [postId, handleLoadReplies]);
+
+  const handleReplyLikeChange = useCallback(
+    (commentId: string, replyId: string, likedByMe: boolean, likeCount: number) => {
+      setRepliesMap((prev) => ({
+        ...prev,
+        [commentId]: (prev[commentId] ?? []).map((r) =>
+          r.id === replyId ? { ...r, likedByMe, likeCount } : r,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const handleReply = useCallback((commentId: string, authorName: string) => {
+    setReplyingTo({ id: commentId, authorName });
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || submitting) return;
+    if (trimmed.length > 1000) {
+      Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
+      return;
+    }
+    setSubmitting(true);
+
+    if (replyingTo) {
+      const result = await addReply(postId, replyingTo.id, trimmed);
+      if (result && 'reply' in result) {
+        setText('');
+        const parentId = replyingTo.id;
+        setReplyingTo(null);
+        setRepliesMap((prev) => ({
+          ...prev,
+          [parentId]: [...(prev[parentId] ?? []), result.reply],
+        }));
+        setRepliesLoaded((prev) => new Set(prev).add(parentId));
+        setRepliesOpen((prev) => new Set(prev).add(parentId));
+      } else if (result && 'error' in result) {
+        if (result.error === 'comments_disabled') {
+          setCommentsDisabled(true);
+          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+        } else {
+          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+        }
+      } else {
+        Alert.alert('Could not post reply', 'Please try again.');
+      }
+    } else {
+      const result = await addComment(postId, trimmed);
+      if (result && 'comment' in result) {
+        setText('');
+        setComments((prev) => [...prev, result.comment]);
+        onCountChange(result.commentCount);
+      } else if (result && 'error' in result) {
+        if (result.error === 'comments_disabled') {
+          setCommentsDisabled(true);
+          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+        } else {
+          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+        }
+      } else {
+        Alert.alert('Could not post comment', 'Please try again.');
+      }
+    }
+
+    setSubmitting(false);
+  }, [text, submitting, postId, replyingTo, onCountChange]);
+
+  const handleDelete = useCallback(
+    async (commentId: string) => {
+      const result = await deleteComment(postId, commentId);
+      if (result) {
+        setComments((prev) => prev.filter((c) => c.id !== commentId));
+        onCountChange(result.commentCount);
+      }
+    },
+    [postId, onCountChange],
+  );
+
+  const handleLikeChange = useCallback(
+    (id: string, likedByMe: boolean, likeCount: number) => {
+      setComments((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, likedByMe, likeCount } : c)),
+      );
+    },
+    [],
+  );
+
+  const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
+
+  return (
+    <AuthorPressCtx.Provider value={setPreviewHandle}>
+      <View style={sec.wrap}>
+        {loading ? (
+          <View style={sec.center}>
+            <ActivityIndicator color={color.signal} />
+          </View>
+        ) : comments.length === 0 ? (
+          <View style={sec.center}>
+            <Text style={sec.empty}>No comments yet. Start the conversation.</Text>
+          </View>
+        ) : (
+          <View style={sec.list}>
+            {comments.map((item) => (
+              <CommentItem
+                key={item.id}
+                comment={item}
+                postId={postId}
+                replies={repliesMap[item.id] ?? []}
+                repliesLoaded={repliesLoaded.has(item.id)}
+                repliesOpen={repliesOpen.has(item.id)}
+                repliesLoading={repliesLoading.has(item.id)}
+                onDelete={handleDelete}
+                onLikeChange={handleLikeChange}
+                onReply={handleReply}
+                onLoadReplies={handleLoadReplies}
+                onToggleReplies={handleToggleReplies}
+                onReplyDelete={handleReplyDelete}
+                onReplyLikeChange={handleReplyLikeChange}
+              />
+            ))}
+          </View>
+        )}
+
+        {commentsDisabled && (
+          <View style={s.disabledBanner}>
+            <Text style={s.disabledText}>Comments have been turned off.</Text>
+          </View>
+        )}
+
+        {replyingTo && (
+          <View style={s.replyContext}>
+            <Text style={s.replyContextText} numberOfLines={1}>
+              Replying to {replyingTo.authorName}
+            </Text>
+            <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
+              <X size={14} color={color.faint} />
+            </Pressable>
+          </View>
+        )}
+
+        <MentionSuggestionList
+          suggestions={mentionSuggestions}
+          loading={mentionLoading}
+          visible={mentionVisible}
+          onSelect={(sg) => mentionRef.current?.insertTag(sg)}
+        />
+
+        {!commentsDisabled && (
+          <View style={s.inputRow}>
+            <MentionInput
+              ref={mentionRef}
+              style={s.input}
+              value={text}
+              onChangeText={setText}
+              placeholder={inputPlaceholder}
+              placeholderTextColor={color.faint}
+              multiline
+              maxLength={1000}
+              returnKeyType="default"
+              blurOnSubmit={false}
+              surface="comment"
+              onSuggestionsChange={(items, isLoading, trigger) => {
+                setMentionSuggestions(items);
+                setMentionLoading(isLoading);
+                setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+              }}
+            />
+            <Pressable
+              style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
+              onPress={handleSubmit}
+              disabled={!text.trim() || submitting}
+              hitSlop={8}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color={color.onInk} />
+              ) : (
+                <SendHorizonal size={18} color={color.onInk} />
+              )}
+            </Pressable>
+          </View>
+        )}
+      </View>
+
+      <ProfilePreviewCard
+        username={previewHandle}
+        visible={previewHandle !== null}
+        onClose={() => setPreviewHandle(null)}
+      />
+    </AuthorPressCtx.Provider>
+  );
+}
+
+// ── Modal sheet wrapper ───────────────────────────────────────────────────────
+
 export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props) {
   const insets = useSafeAreaInsets();
   const [comments, setComments] = useState<EngagementComment[]>([]);
@@ -645,6 +907,13 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     </AuthorPressCtx.Provider>
   );
 }
+
+const sec = StyleSheet.create({
+  wrap: { gap: space.md },
+  center: { alignItems: 'center', paddingVertical: space.xl },
+  empty: { fontSize: 14, color: color.faint, textAlign: 'center' },
+  list: { gap: space.lg },
+});
 
 const s = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(17,17,15,0.45)' },

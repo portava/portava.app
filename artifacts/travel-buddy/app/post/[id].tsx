@@ -11,6 +11,7 @@ import {
 } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { ReportPostSheet } from '../../src/components/ReportPostSheet';
+import { CommentsSection } from '../../src/components/CommentsSheet';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -78,7 +79,7 @@ function ReportedBanner({
 
 // ── Minimal post detail card (renders a live PostRow) ────────────────────────
 
-function PostDetailCard({ post }: { post: PostRow }) {
+function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
   const { width } = useWindowDimensions();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
   const firstMedia = post.mediaUrls[0] ?? null;
@@ -137,7 +138,7 @@ function PostDetailCard({ post }: { post: PostRow }) {
         </View>
         <View style={card.engItem}>
           <MessageCircle size={14} color={color.mute} />
-          <Text style={card.engText}>{post.commentCount}</Text>
+          <Text style={card.engText}>{commentCount}</Text>
         </View>
       </View>
     </View>
@@ -153,6 +154,7 @@ export default function PostDetail() {
   const [post, setPost]             = useState<PostRow | null>(null);
   const [loading, setLoading]       = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [commentCount, setCommentCount] = useState(0);
 
   const [overflowOpen, setOverflowOpen]   = useState(false);
   const [reportOpen, setReportOpen]       = useState(false);
@@ -168,6 +170,7 @@ export default function PostDetail() {
       .then((result) => {
         if (result.ok && result.data) {
           setPost(result.data);
+          setCommentCount(result.data.commentCount);
         } else {
           setFetchError(
             result.errorKind === 'not_found'
@@ -229,17 +232,20 @@ export default function PostDetail() {
         ) : post ? (
           reported
             ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
-            : <PostDetailCard post={post} />
+            : <PostDetailCard post={post} commentCount={commentCount} />
         ) : null}
 
         {post && !reported && (
-          <View style={{ gap: space.sm }}>
-            <Text style={{ ...t.heading, color: color.ink }}>Comments</Text>
-            <Text style={{ ...t.body, color: color.mute }}>
-              {post.commentCount > 0
-                ? `${post.commentCount} comment${post.commentCount !== 1 ? 's' : ''} — thread coming soon.`
-                : 'No comments yet.'}
+          <View style={{ gap: space.md }}>
+            <Text style={{ ...t.heading, color: color.ink }}>
+              {commentCount > 0
+                ? `${commentCount} Comment${commentCount !== 1 ? 's' : ''}`
+                : 'Comments'}
             </Text>
+            <CommentsSection
+              postId={post.id}
+              onCountChange={setCommentCount}
+            />
           </View>
         )}
       </ScrollView>
