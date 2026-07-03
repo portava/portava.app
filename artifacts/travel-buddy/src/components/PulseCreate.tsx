@@ -25,6 +25,7 @@ import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createComposerDismissHandlers, handleSubmitResult } from './PulseCreate.machine';
+import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 
 /* ── Types ── */
 
@@ -110,9 +111,10 @@ export function PulseFilterSheet({
   onClear: () => void;
   onClose: () => void;
 }) {
+  const dismiss = createFilterDismissHandlers(onClose);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={fs.backdrop} onPress={onClose} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={dismiss.onRequestClose}>
+      <Pressable testID="filter-sheet-backdrop" style={fs.backdrop} onPress={dismiss.onBackdropPress} />
       <View style={fs.sheet}>
         <View style={fs.grab} />
         <View style={fs.head}>
@@ -121,7 +123,7 @@ export function PulseFilterSheet({
           {active.length > 0 && (
             <Pressable onPress={onClear} hitSlop={layout.hitSlop}><Text style={fs.clear}>Clear ({active.length})</Text></Pressable>
           )}
-          <Pressable onPress={onClose} hitSlop={layout.hitSlop} style={fs.x}><X size={18} color={color.ink} /></Pressable>
+          <Pressable testID="filter-sheet-close-btn" onPress={dismiss.onCloseButtonPress} hitSlop={layout.hitSlop} style={fs.x}><X size={18} color={color.ink} /></Pressable>
         </View>
         <ScrollView contentContainerStyle={fs.chips}>
           {PULSE_FILTERS.map((f) => {
@@ -134,7 +136,7 @@ export function PulseFilterSheet({
             );
           })}
         </ScrollView>
-        <Pressable style={fs.apply} onPress={onClose}>
+        <Pressable testID="filter-sheet-apply" style={fs.apply} onPress={dismiss.onApplyPress}>
           <Text style={fs.applyText}>Show results</Text>
         </Pressable>
       </View>
