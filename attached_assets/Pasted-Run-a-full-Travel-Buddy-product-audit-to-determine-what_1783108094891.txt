@@ -1,0 +1,706 @@
+Run a full Travel Buddy product audit to determine what is actually done, what is missing, what is partially built, what is disconnected, what is dead UI, what has backend but no UI, what has UI but no backend, what has database gaps, and what errors are unresolved.
+
+Goal:
+Produce a brutally honest full-system audit of the current Travel Buddy app. Do not rebuild the app. Do not start adding new features yet. First inspect the real codebase, routes, services, screens, database/schema/migrations, tests, and current wiring. Then fix only small confirmed blockers if they are safe, isolated, and necessary to make the audit accurate. Anything larger should be reported as a follow-up task.
+
+This audit must separate:
+- Fully working features
+- Partially working features
+- Shell/demo/mock features
+- Dead UI
+- Backend-only features with no UI
+- UI-only features with no backend
+- Database/schema gaps
+- Missing API routes
+- Missing service wiring
+- Broken navigation
+- Broken buttons
+- Missing tests
+- Known errors not resolved
+- Errors caught in code but not surfaced properly to users
+- Features not connected to the central app brain/recommendation system
+- Features that are simulated, fake, placeholder, or misleading
+
+Important rules:
+- Be honest. Do not mark anything as done unless verified through code and, where possible, tests.
+- Do not assume a feature works just because a screen exists.
+- Do not assume a backend route works just because a file exists.
+- Do not assume a database field exists unless schema/migrations/types confirm it.
+- Do not assume a button works unless the handler leads to real behavior.
+- Do not assume a service is connected unless the screen calls it.
+- Do not assume data persists unless persistence is verified.
+- Do not rebuild the app during the audit.
+- Do not make risky changes.
+- Do not hide bad news.
+- Do not report old artifact/stub code as current if standalone/current app files differ.
+- Clearly distinguish current active code from stale artifacts.
+
+Audit coverage:
+
+1. App navigation and route audit
+Inspect:
+- Tab layout
+- Auth guards
+- Public/private screens
+- Deep links
+- Dynamic routes
+- Modal routes
+- Empty/error/loading states
+- Back navigation
+- Protected route behavior after session expiry
+
+Report:
+- Screens reachable from UI
+- Screens only reachable by direct route
+- Dead routes
+- Broken routes
+- Duplicate/stale routes
+- Routes that load mock data
+- Routes that crash on missing params
+- Routes that do not handle deleted/missing records
+- Routes that are not protected but should be
+- Routes that are protected incorrectly
+
+2. Bottom tabs and main app areas
+Audit each main tab:
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+- Any hidden/secondary messaging or Telegraph route
+- Any map/live-map route
+- Any Rent a Buddy route
+- Any admin/debug route
+
+For each tab, report:
+- What is fully working
+- What is partially wired
+- What is placeholder
+- What buttons are dead
+- What data source it uses
+- Whether data is real, mock, fixture, local-only, or backend persisted
+- What backend routes it depends on
+- Whether errors are surfaced honestly
+
+3. Pulse / Postcards / Memories audit
+Inspect:
+- Pulse feed
+- PostCard/PulseFeedCard components
+- Post creation flow
+- Post detail
+- Comments
+- Likes
+- Saves/bookmarks
+- Shares
+- User tagging
+- Hashtags
+- Media upload/display
+- Video support
+- Postcard sizing/layout
+- Delayed posting
+- Location privacy
+- Privacy controls for comments/likes
+- Post visibility settings
+- Moderation/reporting/blocking integration
+- Profile navigation from posts
+- Trip/place linking from posts
+- Backend API routes
+- DB tables/migrations/types
+- Tests
+
+Report:
+- Which post types actually work
+- Which post types are visual-only
+- Whether posts persist
+- Whether comments persist
+- Whether likes persist
+- Whether saves persist
+- Whether media persists
+- Whether delayed posting is truly enforced
+- Whether privacy rules are enforced backend-side or only UI-side
+- Whether hashtags/tags are searchable/clickable
+- Whether Pulse uses real personalized data or static/general data
+- Any missing database fields
+- Any UI controls not wired to backend
+- Any backend functions without UI
+
+4. Discovery audit
+Inspect:
+- Discovery feed/wall
+- Hidden Gems
+- Neighborhoods/areas
+- Traveler picks
+- Saved places
+- Compass recommendations
+- Search/filter chips
+- Map previews
+- Save/unsave
+- Popularity counts
+- Detail screens
+- Add to trip/plan if present
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Which Discovery cards are real
+- Which are mock/static
+- Which cards navigate correctly
+- Which cards have dead buttons
+- Whether save counts are real
+- Whether saves persist
+- Whether Hidden Gem privacy works in list and detail
+- Whether Compass recommendations are real or placeholder
+- Whether location data is exact/approx/private and safe
+- Whether any protected coordinates leak
+- Whether Discovery is connected to trip city, user interests, availability, and saved behavior
+- Missing backend/UI/database pieces
+
+5. Hidden Gems audit
+Inspect:
+- Hidden gem list
+- Hidden gem detail
+- GemMapPreview
+- Create/edit gem if present
+- Privacy/sensitivity logic
+- Reveal-after-approval logic
+- Approximate location handling
+- Exact location handling
+- Save/unsave
+- Community counts
+- API response stripping
+- DB fields and migrations
+- Tests
+
+Report:
+- Fully working pieces
+- Missing UI
+- Missing backend routes
+- Missing database fields
+- Partial privacy logic
+- Any fake/demo behavior
+- Any map/open-in-maps leak risk
+- Whether create/edit/moderation exists or is missing
+- Whether admin approval exists or is missing
+
+6. Trips / Plans / Add-to-Trip audit
+Inspect:
+- Trips tab
+- Trip detail
+- Create trip
+- Edit trip
+- Delete/cancel trip
+- Trip timeline
+- Saved ideas
+- Plans
+- Events
+- Join/leave plan
+- Invite flow
+- Trip Crew
+- Group chat creation
+- Add to Trip / Add to Plan from Pulse, Discovery, Hidden Gems, Compass, Postcards
+- Calendar/availability integration if present
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What trip functions actually persist
+- What trip screens are UI-only
+- What buttons are dead
+- Whether Add-to-Trip exists globally or only in some places
+- Whether saved ideas show up inside trips
+- Whether trip memories connect to posts/postcards
+- Whether Trip Crew is real or shell
+- Whether group chats are auto-created
+- Whether invites/RSVPs work
+- Missing backend/UI/database pieces
+
+7. Events audit
+Inspect:
+- Event creation
+- Event detail
+- Event discovery
+- Join/leave/maybe
+- Host controls
+- Age/language/gender/group-size filters
+- Minimum trust thresholds
+- Event chat
+- Event recommendations
+- Calendar/availability filtering
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Fully working event features
+- UI-only event features
+- Backend-only event functions
+- Missing DB fields
+- Dead buttons
+- Missing host controls
+- Missing safety/trust rules
+- Whether events are connected to Pulse, Discovery, Trips, and Telegraph
+- Whether event recommendations are real or placeholder
+
+8. Passport / Profile audit
+Inspect:
+- Passport profile screen
+- Edit profile
+- User stats
+- Stamps
+- Postcards grid
+- Plans tab
+- Friends/followers/buddies
+- Trust score display
+- Verification badge
+- Home country lock
+- Languages
+- Travel style/interests
+- Profile navigation from avatars across app
+- Public vs private profile view
+- Blocking/reporting entry points
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What profile data persists
+- What is mock/static
+- What fields are missing from onboarding/profile edit
+- Whether stamps are real or visual only
+- Whether trust score is computed or displayed only
+- Whether verified status is enforced correctly
+- Whether profile privacy works
+- Whether clicking profile pictures anywhere opens the correct passport
+- Missing backend/UI/database pieces
+
+9. Passport Stamps audit
+Inspect:
+- Stamp earning logic
+- GPS/location rules
+- Manual/admin awards
+- Stamp artwork/design function
+- Stamp display
+- Stamp detail
+- Stamp history
+- Trip/place/postcard connection
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Which stamp flows actually work
+- Which are visual only
+- Whether GPS rules are enforced
+- Whether duplicate stamp prevention exists
+- Whether stamp artwork customization exists
+- Whether stamps connect to trips/postcards/places
+- Missing backend/UI/database pieces
+
+10. Telegraph messaging audit
+Inspect:
+- Message list
+- Conversation detail
+- New message request flow
+- Unknown user request flow
+- Accept/decline message requests
+- One-on-one chat
+- Group chat
+- Trip chat
+- Event chat
+- Circle chat if present
+- Auto-translation
+- Default language handling
+- Read receipts
+- Typing indicators
+- Blocking/reporting integration
+- AI activity recommendations into Telegraph
+- Backend/realtime routes
+- DB schema/types
+- Tests
+
+Report:
+- What messaging works
+- What is UI-only
+- What is backend-only
+- Whether message requests work
+- Whether unknown users are gated correctly
+- Whether auto-translation is implemented or only planned
+- Whether group chats auto-create from Trips/Events/Circles
+- Whether AI recommendations into Telegraph are implemented
+- Whether realtime is real or polling/mock
+- Missing backend/UI/database pieces
+
+11. Compass AI / central brain audit
+Inspect:
+- Compass/AI service files
+- Recommendation routes
+- User preference inputs
+- Travel history inputs
+- Saved places inputs
+- Trip city inputs
+- Availability inputs
+- Hidden Gems inputs
+- Events inputs
+- Pulse/Postcard inputs
+- Telegraph suggestion outputs
+- Discovery recommendation outputs
+- Trip planning outputs
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What Compass actually uses
+- What it claims to use but does not
+- Which features are connected to Compass
+- Which features are isolated and not connected to the central brain
+- Whether recommendations are personalized or generic
+- Whether explanations are real or static
+- Whether Compass can write actions or only display suggestions
+- Missing backend/UI/database pieces
+
+12. Map / location / GPS audit
+Inspect:
+- Live map
+- Gem maps
+- Trip maps
+- Discovery maps
+- Route optimization
+- Location permission handling
+- GPS capture
+- Delayed posting geofence logic
+- Safe Return location logic
+- Stamp location logic
+- Map providers/components
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Which maps are real
+- Which are placeholders
+- Which use mock coordinates
+- Whether location permission errors are handled
+- Whether exact/private/approx location rules are enforced
+- Whether route optimization exists
+- Whether GPS credit/stamps work
+- Whether live location sharing exists
+- Missing backend/UI/database pieces
+
+13. Safe Return / safety audit
+Inspect:
+- Safe Return check-ins
+- Missed prompt escalation
+- Emergency/SOS buttons
+- Trusted contacts if present
+- Rent a Buddy SOS
+- Blocking/reporting
+- Trust score penalties
+- Moderation hooks
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What safety functions are real
+- What is placeholder
+- Whether SOS opens phone dialer or shows fake UI
+- Whether missed check-ins escalate
+- Whether blocking prevents interaction across app
+- Whether reporting creates a real backend record
+- Whether trust penalties are real
+- Missing backend/UI/database pieces
+
+14. Rent a Buddy audit
+Inspect:
+- RAB marketplace/listing
+- Buddy profile
+- Booking flow
+- Active booking
+- SOS
+- Payment/deposit placeholders
+- Reviews
+- Safety boundaries/non-dating copy
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Fully working RAB pieces
+- Shell/demo pieces
+- Dead buttons
+- Missing booking persistence
+- Missing payment/deposit backend
+- Missing review system
+- Missing safety enforcement
+- Whether SOS is working
+- Missing UI/backend/database pieces
+
+15. Onboarding/auth/account audit
+Inspect:
+- Sign up
+- Sign in
+- Forgot password
+- Session handling
+- Onboarding fields
+- Profile creation
+- Language defaults
+- Home country
+- City
+- Interests
+- Travel style
+- Avatar/photo
+- Verification flow
+- Account deactivation/delete
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- Which onboarding fields save
+- Which are dropped
+- Whether user profile is complete after onboarding
+- Whether session expiry redirects correctly
+- Whether forgot password works
+- Whether verification is real or placeholder
+- Whether account deactivation/delete exists
+- Missing backend/UI/database pieces
+
+16. Admin/moderation audit
+Inspect:
+- Admin routes/screens
+- User moderation
+- Content moderation
+- Hidden Gem approval
+- Reports
+- Verification review
+- Trust score adjustment
+- Feature flags
+- Metrics/dashboard
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What admin tools exist
+- What admin tools are backend-only
+- What admin tools are UI-only
+- Whether role checks are enforced
+- Whether non-admin errors show honest UI
+- Missing backend/UI/database pieces
+
+17. Notifications/activity center audit
+Inspect:
+- Notifications screen
+- Activity feed
+- Push notification setup
+- In-app notifications
+- Trip/event/message/post notifications
+- Backend routes
+- DB schema/types
+- Tests
+
+Report:
+- What notifications work
+- What is placeholder
+- Whether notification records are created
+- Whether push tokens exist
+- Whether unread counts work
+- Whether notification actions navigate correctly
+- Missing backend/UI/database pieces
+
+18. Database/schema audit
+Inspect:
+- Migrations
+- Supabase types
+- API models
+- Seed data
+- Local fixtures
+- Service assumptions
+- Missing columns/tables
+- Unused tables
+- Tables with no UI
+- UI needing tables that do not exist
+- RLS/policy assumptions if present
+- Tests
+
+Report:
+- Missing tables
+- Missing fields
+- Fields used by frontend but not in schema
+- Fields returned by API but not typed
+- Tables with no active UI
+- UI features with no tables
+- Migrations that do not match service code
+- Any privacy/security-sensitive DB gaps
+
+19. API/backend audit
+Inspect every API route/service:
+- Auth-required routes
+- Public routes
+- Admin routes
+- CRUD routes
+- Recommendation routes
+- Upload/media routes
+- Notification routes
+- Messaging/realtime routes
+- Safety routes
+- Error handling
+- Tests
+
+Report:
+- Routes used by UI
+- Routes unused by UI
+- UI calls to missing routes
+- Routes returning mock data
+- Routes missing validation
+- Routes missing auth
+- Routes missing role checks
+- Routes missing privacy filters
+- Routes with incomplete error handling
+- Routes with tests
+- Routes without tests
+
+20. Error handling audit
+Inspect:
+- try/catch blocks
+- silent failures
+- console-only errors
+- generic alerts
+- missing loading states
+- missing empty states
+- failed API states
+- offline fallback behavior
+- optimistic update rollback
+- validation errors
+- permission errors
+- auth errors
+
+Report:
+- Errors caught but not surfaced
+- Errors surfaced incorrectly
+- Errors that can crash the screen
+- Errors that lie to the user
+- Optimistic actions without rollback
+- Offline states that lose user data
+- Missing validation messages
+
+21. Tests audit
+Inspect:
+- Unit tests
+- API tests
+- Component tests
+- Integration tests
+- E2E if present
+- Test fixtures
+- Mock data
+
+Report:
+- What systems have good tests
+- What systems have weak tests
+- What critical flows have no tests
+- Tests that only verify placeholder behavior
+- Tests that are stale
+- Tests that pass while feature is still fake
+- Recommended next tests
+
+22. Dead UI / missed wiring / hidden functions checklist
+For every major feature, explicitly list:
+- Button visible but no handler
+- Button handler only shows alert/toast
+- Button navigates to placeholder
+- Screen exists but is unreachable
+- Backend function exists but no UI calls it
+- UI calls service that is stubbed
+- Service calls API route that does not exist
+- API route exists but no frontend uses it
+- DB table exists but no code uses it
+- DB field used in code but missing from schema
+- Test exists but does not cover real behavior
+
+23. Feature status matrix
+Produce a table with columns:
+- Feature/System
+- UI status: Done / Partial / Shell / Missing
+- Backend status: Done / Partial / Shell / Missing
+- Database status: Done / Partial / Missing / Unknown
+- Wiring status: Connected / Partially connected / Not connected
+- Data truth: Real / Mock / Fixture / Local-only / Unknown
+- Tests: Good / Weak / Missing
+- Risk level: Low / Medium / High / Critical
+- Recommended next action
+
+24. Priority ranking
+Create a ranked list:
+- Critical blockers that break user trust or safety
+- High-priority broken flows
+- Missing backend for visible UI
+- Missing UI for useful backend
+- Database/schema blockers
+- Privacy/security risks
+- Dead UI to hide/subdue temporarily
+- Features to finish next
+- Features to postpone
+
+25. Safe fixes during audit
+Only apply small safe fixes if all are true:
+- The bug is confirmed
+- The fix is isolated
+- The fix does not require schema redesign
+- The fix does not change product direction
+- The fix has low regression risk
+- Validation can be run afterward
+
+Examples of allowed safe fixes:
+- Dead button with existing working route/service can be wired
+- Missing loading/error state can be added
+- Wrong route path can be corrected
+- UI-only placeholder can be clearly labeled or hidden if misleading
+- Backend-only function can be exposed only if existing UI already intended it
+- Obvious type error can be fixed
+
+Do not apply large fixes in this audit:
+- No major feature rebuilds
+- No new large systems
+- No database redesign unless required to make app compile
+- No payment system build
+- No full Compass rebuild
+- No messaging architecture rewrite
+- No new dependencies unless absolutely necessary
+
+26. Validation required
+Run:
+- Standalone typecheck
+- API server typecheck
+- Existing unit/API/component tests where feasible
+- Source drift check
+- Dependency drift check
+- Any specific test suite related to files touched
+
+27. Final deliverable
+Produce a clear audit report with these sections:
+A. Executive summary
+B. Fully working systems
+C. Partially working systems
+D. Shell/demo/mock systems
+E. Dead UI and broken buttons
+F. Backend functions with no UI
+G. UI features with no backend
+H. Missing database/schema pieces
+I. Missing API routes
+J. Privacy/security risks
+K. Error handling gaps
+L. Tests missing or weak
+M. Features not connected to Compass/central brain
+N. Safe fixes applied during audit
+O. Files changed, if any
+P. Validation results
+Q. Ranked next 10 tasks
+R. What should be hidden/subdued temporarily until finished
+S. What should be built next to make the app feel connected
+
+Tone:
+Be direct and honest. Do not sugarcoat. Do not call anything complete unless proven. The goal is to know exactly what is real, what is fake, what is missing, and what to fix next.
