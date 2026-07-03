@@ -166,7 +166,7 @@ router.get("/trips/me", async (req, res) => {
     .from("trip_members")
     .select("trip_id, role")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host", "viewer"]);
+    .neq("role", "invited");
 
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
   if (!memberRows || memberRows.length === 0) { res.json({ trips: [] }); return; }
@@ -200,7 +200,7 @@ router.get("/trips/upcoming", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host", "viewer"]);
+    .neq("role", "invited");
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -234,7 +234,7 @@ router.get("/trips/active", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host", "viewer"]);
+    .neq("role", "invited");
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -269,7 +269,7 @@ router.get("/trips/past", async (req, res) => {
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member", "co_host", "viewer"]);
+    .neq("role", "invited");
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
