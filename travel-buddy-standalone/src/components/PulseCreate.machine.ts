@@ -101,6 +101,21 @@ const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
  * Usage in PulseCreate.tsx:
  *   const res = await create({ ... });
  *   await handleSubmitResult(res, { onSuccess, onClose, signOut, navigate: router.replace, setError });
+ *
+ * ## Double-invocation responsibility
+ *
+ * This function is intentionally stateless — it has no internal guard against
+ * being called more than once. If called twice with ok: true, onClose() will
+ * fire twice, which can silently corrupt navigation state.
+ *
+ * The caller is responsible for preventing this. PulseCreate.tsx guards against
+ * double-submission at the top of handleSubmit():
+ *
+ *   if (!selectedType || submitting) return;
+ *
+ * The `submitting` flag from usePostActions() is set to true before create() is
+ * awaited, so a second tap will always bail out before reaching handleSubmitResult.
+ * Any future call site must apply the same caller-side guard.
  */
 export async function handleSubmitResult(
   result: CreateResult,

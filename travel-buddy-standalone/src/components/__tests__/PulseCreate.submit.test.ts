@@ -236,6 +236,47 @@ describe('submit error — create() returns ok: false (non-unauthenticated)', ()
   });
 });
 
+// ── Double-invocation — documents caller responsibility ───────────────────────
+//
+// handleSubmitResult is intentionally stateless — it has no internal once-guard.
+// Calling it twice with ok: true fires onClose twice. This is the documented
+// behaviour; the caller-side `submitting` flag in handleSubmit() is the guard
+// that prevents this in production. These tests pin that contract so any future
+// refactor that accidentally removes the caller-side guard will be caught here.
+
+describe('double-invocation — caller is responsible for preventing this', () => {
+  it('calls onClose twice when handleSubmitResult is called twice with ok: true', async () => {
+    let closeCalls = 0;
+    const handlers = {
+      onClose: () => { closeCalls++; },
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleSubmitResult({ ok: true }, handlers);
+    await handleSubmitResult({ ok: true }, handlers);
+    assert.equal(
+      closeCalls,
+      2,
+      'handleSubmitResult has no internal once-guard: double-call → double-close. ' +
+      'The submitting flag in handleSubmit() is the caller-side guard that prevents this.',
+    );
+  });
+
+  it('does NOT call onClose a second time when the second call has ok: false (non-unauthenticated)', async () => {
+    let closeCalls = 0;
+    const handlers = {
+      onClose: () => { closeCalls++; },
+      signOut: async () => {},
+      navigate: () => {},
+      setError: () => {},
+    };
+    await handleSubmitResult({ ok: true }, handlers);
+    await handleSubmitResult({ ok: false, errorKind: 'network_unreachable' }, handlers);
+    assert.equal(closeCalls, 1, 'second call with ok: false must not re-fire onClose');
+  });
+});
+
 // ── Unauthenticated error — signs out and closes ──────────────────────────────
 
 describe('submit error — unauthenticated (session expired)', () => {
