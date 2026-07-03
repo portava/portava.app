@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import {
   MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
@@ -154,7 +155,11 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
           <PostMediaPlaceholder city={item.city} />
         )}
         {/* Bottom scrim for AuthorRow readability */}
-        <View style={s.postScrim} pointerEvents="none" />
+        <LinearGradient
+          colors={['rgba(17,17,15,0)', 'rgba(17,17,15,0.75)']}
+          style={s.postScrim}
+          pointerEvents="none"
+        />
         {/* Passport-stamp label — city name top-left */}
         <View style={s.postcardLabel}>
           <MapPin size={9} color={color.onInk} />
@@ -592,7 +597,7 @@ const s = StyleSheet.create({
   postCard: { backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
   postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%' },
   postMedia: { overflow: 'hidden', backgroundColor: color.deep },
-  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 110, backgroundColor: 'rgba(17,17,15,0.62)' },
+  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%' },
   postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.md },
   postcardLabel: {
     position: 'absolute', top: 10, left: 10,
