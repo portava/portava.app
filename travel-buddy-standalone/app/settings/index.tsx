@@ -8,7 +8,7 @@ import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
-import { deactivateAccount, requestAccountDeletion } from '../../src/services/profile';
+import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
@@ -16,14 +16,16 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       const userId = data.session?.user?.id;
       if (!userId) return;
-      supabase.from('profiles').select('role').eq('id', userId).maybeSingle().then(({ data: p }) => {
+      supabase.from('profiles').select('role, account_status').eq('id', userId).maybeSingle().then(({ data: p }) => {
         if ((p as any)?.role === 'admin') setIsAdmin(true);
+        setAccountStatus((p as any)?.account_status ?? null);
       });
     });
   }, []);
@@ -81,6 +83,31 @@ export default function Settings() {
               router.replace('/(auth)/sign-in');
             } else {
               Alert.alert('Error', res.message ?? 'Could not deactivate. Try again.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleReactivate() {
+    Alert.alert(
+      'Reactivate account?',
+      'Your profile will become visible to other users again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reactivate',
+          onPress: async () => {
+            const res = await reactivateAccount();
+            if (res.ok) {
+              setAccountStatus('active');
+              Alert.alert('Account reactivated', 'Your profile is now visible to other users.');
+            } else {
+              const msg = res.errorKind === 'forbidden'
+                ? 'This account cannot be self-reactivated. Please contact support.'
+                : (res.message ?? 'Could not reactivate. Try again.');
+              Alert.alert('Error', msg);
             }
           },
         },
@@ -525,12 +552,22 @@ export default function Settings() {
 
           {(configured && isAuthed) && (
             <>
-              <Pressable
-                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-                onPress={handleDeactivate}
-              >
-                <Text style={[styles.item, { color: color.mute }]}>Deactivate account</Text>
-              </Pressable>
+              {accountStatus === 'deactivated' && (
+                <Pressable
+                  style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={handleReactivate}
+                >
+                  <Text style={[styles.item, { color: color.success }]}>Reactivate account</Text>
+                </Pressable>
+              )}
+              {accountStatus !== 'deactivated' && (
+                <Pressable
+                  style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={handleDeactivate}
+                >
+                  <Text style={[styles.item, { color: color.mute }]}>Deactivate account</Text>
+                </Pressable>
+              )}
               <Pressable
                 style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                 onPress={handleRequestDeletion}

@@ -467,6 +467,27 @@ export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: 
   }
 }
 
+export async function reactivateAccount(): Promise<ProfileResult<{ reactivated: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/reactivate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 export async function requestAccountDeletion(): Promise<ProfileResult<{ requested: boolean }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
