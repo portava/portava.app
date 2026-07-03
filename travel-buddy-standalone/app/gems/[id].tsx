@@ -16,7 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
-import { verificationBadge, sensitivityLabel, addGemToPlan, shareGemToTelegraph } from '../../src/services/hiddenGems';
+import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
+import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
@@ -225,31 +226,24 @@ export default function GemDetailScreen() {
 
   const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
 
+  const { open: openPlanPicker } = usePlanPicker();
+
   const [showCheckin,     setShowCheckin]     = useState(false);
   const [showReport,      setShowReport]      = useState(false);
-  const [addingPlan,      setAddingPlan]      = useState(false);
   const [sharing,         setSharing]         = useState(false);
   const [builderVisible,  setBuilderVisible]  = useState(false);
 
-  const handleAddToPlan = useCallback(async () => {
-    Alert.prompt(
-      'Add to Trip Plan',
-      'Enter your Trip ID:',
-      async (tripId) => {
-        if (!tripId || !gem) return;
-        setAddingPlan(true);
-        try {
-          await addGemToPlan(gem.id, tripId);
-          Alert.alert('Added!', 'Gem added to your trip plan.');
-        } catch (e: any) {
-          Alert.alert('Error', e.message ?? 'Failed to add to plan');
-        } finally {
-          setAddingPlan(false);
-        }
-      },
-      'plain-text',
-    );
-  }, [gem]);
+  const handleAddToPlan = useCallback(() => {
+    if (!gem) return;
+    openPlanPicker({
+      id: gem.id,
+      type: 'hidden_gem',
+      title: gem.name,
+      category: gem.category ?? 'place',
+      city: gem.city ?? undefined,
+      locationName: [gem.neighborhood, gem.city, gem.country].filter(Boolean).join(', ') || undefined,
+    });
+  }, [gem, openPlanPicker]);
 
   const handleShare = useCallback(async () => {
     if (!gem) return;
@@ -456,7 +450,7 @@ export default function GemDetailScreen() {
             <Ionicons name="location" size={20} color="#4C8BF5" />
             <Text style={styles.actionBtnText}>Check In</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlan} disabled={addingPlan}>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlan}>
             <Ionicons name="calendar-outline" size={20} color="#4CAF7D" />
             <Text style={[styles.actionBtnText, { color: '#4CAF7D' }]}>Add to Plan</Text>
           </TouchableOpacity>

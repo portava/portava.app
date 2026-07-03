@@ -46,6 +46,7 @@ import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/tele
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
 import { reportContent, type ReasonCode } from '../../src/services/reports';
+import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
 import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
@@ -678,6 +679,7 @@ function MessageBubble({
   onRetryTranslation?: () => void;
   currentUserId?: string;
 }) {
+  const { open: openPlanPicker } = usePlanPicker();
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
   // Brief highlight when a pending translation resolves to 'translated'
@@ -739,7 +741,13 @@ function MessageBubble({
         <Pressable onLongPress={onLongPress} delayLongPress={300}>
           <TelegraphRecommendationCard
             rec={recPayload}
-            onAddToTrip={() => Alert.alert('Add to Trip', `Add "${recPayload.title}" to a trip plan.`)}
+            onAddToTrip={() => openPlanPicker({
+                id: recPayload.id ?? recPayload.title,
+                type: recPayload.category ?? 'compass_suggestion',
+                title: recPayload.title,
+                category: recPayload.category,
+                city: recPayload.city,
+              })}
             onSave={() => {
               sendFeedback(recPayload.id ?? '', recPayload.category ?? '', 'save').catch(() => {});
               Alert.alert('Saved', `"${recPayload.title}" saved to your ideas.`);

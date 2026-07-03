@@ -7,18 +7,19 @@
  * - Blurb snippet
  * - Action row: View / Add to Plan / Save
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   Pressable,
   StyleSheet,
-  Alert,
   Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { usePlanPicker } from './PlanPickerController';
+import { toggleSave } from '../services/collections';
 
 export interface DiscoveryCardPayload {
   sourceId: string;
@@ -60,6 +61,8 @@ interface Props {
 
 export function DiscoveryCardMessage({ body, mine }: Props) {
   const payload = parsePayload(body);
+  const { open: openPlanPicker } = usePlanPicker();
+  const [saved, setSaved] = useState(false);
 
   if (!payload) {
     return (
@@ -70,6 +73,14 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
   }
 
   const accentColor = CATEGORY_COLORS[payload.category.toLowerCase()] ?? CATEGORY_COLORS.place;
+
+  const handleSave = () => {
+    const next = !saved;
+    setSaved(next);
+    toggleSave('place', payload.sourceId, !next)
+      .then(setSaved)
+      .catch(() => setSaved((s) => !s));
+  };
 
   return (
     <View style={[card.wrap, mine && card.wrapMine]}>
@@ -139,7 +150,13 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
         <View style={[card.divider, mine && card.dividerMine]} />
         <Pressable
           style={[card.actionBtn, mine && card.actionBtnMine]}
-          onPress={() => Alert.alert('Add to Plan', `Add "${payload.title}" to a trip plan?`)}
+          onPress={() => openPlanPicker({
+            id: payload.sourceId,
+            type: payload.sourceType || 'place',
+            title: payload.title,
+            category: payload.category,
+            city: payload.city,
+          })}
         >
           <CalendarPlus size={11} color={mine ? color.onInk : color.signal} />
           <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Add to Plan</Text>
@@ -147,10 +164,16 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
         <View style={[card.divider, mine && card.dividerMine]} />
         <Pressable
           style={[card.actionBtn, mine && card.actionBtnMine]}
-          onPress={() => Alert.alert('Saved', `"${payload.title}" saved to your Discovery.`)}
+          onPress={handleSave}
         >
-          <Bookmark size={11} color={mine ? color.onInk : color.signal} />
-          <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
+          <Bookmark
+            size={11}
+            color={mine ? color.onInk : (saved ? color.signal : color.mute)}
+            fill={saved ? (mine ? color.onInk : color.signal) : 'none'}
+          />
+          <Text style={[card.actionLabel, mine && card.actionLabelMine]}>
+            {saved ? 'Saved' : 'Save'}
+          </Text>
         </Pressable>
       </View>
     </View>
