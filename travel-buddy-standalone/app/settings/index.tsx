@@ -8,7 +8,7 @@ import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
-import { getPrivacySettings, updatePrivacySettings, deactivateAccount, requestAccountDeletion, type PrivacySettings } from '../../src/services/profile';
+import { deactivateAccount, requestAccountDeletion } from '../../src/services/profile';
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
@@ -47,9 +47,6 @@ export default function Settings() {
 
   const live = configured && isAuthed;
 
-  const [privacyLoading, setPrivacyLoading] = useState(false);
-  const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
-
   const loadPrefs = useCallback(async () => {
     if (!live) return;
     setPrefLoading(true);
@@ -68,26 +65,6 @@ export default function Settings() {
   }, [live]);
 
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
-
-  useEffect(() => {
-    if (!live) return;
-    setPrivacyLoading(true);
-    getPrivacySettings().then((res) => {
-      setPrivacyLoading(false);
-      if (res.ok && res.data) setPrivacy(res.data);
-    }).catch(() => setPrivacyLoading(false));
-  }, [live]);
-
-  async function handlePrivacyChange<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {
-    if (!privacy) return;
-    const previous = privacy;
-    setPrivacy({ ...privacy, [key]: value });
-    const res = await updatePrivacySettings({ [key]: value } as Partial<PrivacySettings>);
-    if (!res.ok) {
-      setPrivacy(previous);
-      Alert.alert('Error', res.message ?? 'Could not update setting. Try again.');
-    }
-  }
 
   async function handleDeactivate() {
     Alert.alert(
@@ -222,18 +199,8 @@ export default function Settings() {
       router.push('/settings/location' as any);
     } else if (label === 'Nearby visibility') {
       router.push('/settings/location' as any);
-    } else if (label === 'Private account') {
-      await handlePrivacyChange(
-        'profile_visibility',
-        privacy?.profile_visibility === 'private' ? 'public' : 'private',
-      );
-    } else if (label === 'Hide upcoming trips') {
-      await handlePrivacyChange('show_upcoming_trips', !(privacy?.show_upcoming_trips ?? true));
-    } else if (label === 'Message permissions') {
-      const order = ['everyone', 'friends', 'followers', 'nobody'] as const;
-      const current = privacy?.allow_messages_from ?? 'everyone';
-      const next = order[(order.indexOf(current) + 1) % order.length];
-      await handlePrivacyChange('allow_messages_from', next);
+    } else if (label === 'Private account' || label === 'Hide upcoming trips' || label === 'Message permissions') {
+      router.push('/settings/privacy' as any);
     } else if (label === 'Safe Return history') {
       router.push('/safety-history' as any);
     } else if (label === 'Emergency Contacts') {
@@ -521,85 +488,11 @@ export default function Settings() {
         {/* Privacy section */}
         <View style={{ gap: space.sm }}>
           <Text style={styles.h}>Privacy</Text>
-
-          {privacyLoading && (
-            <View style={styles.loadRow}><ActivityIndicator size="small" color={color.mute} /></View>
-          )}
-
-          {privacy && (
-            <>
-              {/* Profile visibility */}
-              <View style={{ gap: 6 }}>
-                <Text style={styles.prefLabel}>Who can see your profile</Text>
-                {[
-                  { value: 'public', label: 'Public', sub: 'Anyone can view your profile' },
-                  { value: 'followers_only', label: 'Followers only', sub: 'Only followers can view' },
-                  { value: 'private', label: 'Private', sub: 'Only you can view' },
-                ].map((opt) => (
-                  <Pressable
-                    key={opt.value}
-                    style={[styles.radioRow, privacy.profile_visibility === opt.value && styles.radioRowActive]}
-                    onPress={() => handlePrivacyChange('profile_visibility', opt.value as PrivacySettings['profile_visibility'])}
-                  >
-                    <View style={[styles.radio, privacy.profile_visibility === opt.value && styles.radioChecked]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.radioLabel}>{opt.label}</Text>
-                      <Text style={styles.radioSub}>{opt.sub}</Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </View>
-
-              {/* Boolean visibility toggles */}
-              {([
-                { key: 'show_stamps' as const, label: 'Show stamps', sub: 'Others can see your collected stamps' },
-                { key: 'show_current_city' as const, label: 'Show current city', sub: 'Display your current city on your profile' },
-                { key: 'show_upcoming_trips' as const, label: 'Show upcoming trips', sub: 'Others can see your travel plans' },
-                { key: 'show_friends' as const, label: 'Show friends list', sub: 'Others can see who you are friends with' },
-                { key: 'allow_friend_requests' as const, label: 'Allow friend requests', sub: 'People can send you friend requests' },
-                { key: 'allow_follow' as const, label: 'Allow follows', sub: 'People can follow you' },
-                { key: 'allow_tagging' as const, label: 'Allow tagging', sub: 'Others can @mention you in posts' },
-                { key: 'allow_profile_discovery' as const, label: 'Discoverable', sub: 'Appear in search and suggestions' },
-              ] as Array<{ key: keyof PrivacySettings; label: string; sub: string }>).map((toggle) => (
-                <View key={String(toggle.key)} style={styles.toggleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.toggleLabel}>{toggle.label}</Text>
-                    <Text style={styles.toggleSub}>{toggle.sub}</Text>
-                  </View>
-                  <Switch
-                    value={privacy[toggle.key] as boolean}
-                    onValueChange={(v) => handlePrivacyChange(toggle.key, v as any)}
-                    trackColor={{ true: color.deep }}
-                    thumbColor={color.onInk}
-                  />
-                </View>
-              ))}
-
-              {/* Who can message you */}
-              <View style={{ gap: 6 }}>
-                <Text style={styles.prefLabel}>Who can message you</Text>
-                {(['everyone', 'friends', 'followers', 'nobody'] as const).map((opt) => (
-                  <Pressable
-                    key={opt}
-                    style={[styles.radioRow, privacy.allow_messages_from === opt && styles.radioRowActive]}
-                    onPress={() => handlePrivacyChange('allow_messages_from', opt)}
-                  >
-                    <View style={[styles.radio, privacy.allow_messages_from === opt && styles.radioChecked]} />
-                    <Text style={styles.radioLabel}>
-                      {opt === 'everyone' ? 'Everyone' : opt === 'friends' ? 'Friends only' : opt === 'followers' ? 'Followers only' : 'Nobody'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* Close Friends nav link */}
           <Pressable
             style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => onItem('Close Friends')}
+            onPress={() => router.push('/settings/privacy' as any)}
           >
-            <Text style={styles.item}>Close Friends</Text>
+            <Text style={styles.item}>Privacy settings</Text>
           </Pressable>
         </View>
 
