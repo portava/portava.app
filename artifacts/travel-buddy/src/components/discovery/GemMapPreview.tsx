@@ -1,0 +1,201 @@
+/**
+ * GemMapPreview — safe map preview card for a Hidden Gem detail page.
+ *
+ * Coordinate privacy rules are enforced server-side; this component simply
+ * renders what the server sends via `coordsPrecision` and `lat`/`lng`:
+ *
+ *   coordsPrecision = 'exact'       → MapLibre map, single pin, Open in Maps (exact coords)
+ *   coordsPrecision = 'approximate' → MapLibre map, pin at approx area,
+ *                                     Open in Maps (approx coords), "Approximate area" label
+ *   coordsPrecision = 'hidden'      → privacy placeholder, no map, no pin, no coords
+ *   lat/lng both null               → "Map unavailable" placeholder
+ *
+ * Metro automatically selects GemMapPreview.web.tsx on web — this file is
+ * native-only (iOS / Android). Do NOT import MapLibre in the web file.
+ */
+import React from 'react';
+import { View, Text, Pressable, Linking, StyleSheet } from 'react-native';
+import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+import { MapPin, Lock, Map as MapIcon } from 'lucide-react-native';
+
+export interface GemMapPreviewProps {
+  lat: number | null;
+  lng: number | null;
+  coordsPrecision: 'exact' | 'approximate' | 'hidden';
+  locationLabel?: string | null;
+}
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
+const MAP_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
+
+function openInMaps(lat: number, lng: number): void {
+  Linking.openURL(`geo:${lat},${lng}`).catch(() => {
+    Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {});
+  });
+}
+
+export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemMapPreviewProps) {
+  if (coordsPrecision === 'hidden') {
+    return (
+      <View style={s.placeholder}>
+        <View style={[s.iconCircle, s.iconProtected]}>
+          <Lock size={22} color="#FF6B6B" />
+        </View>
+        <Text style={s.placeholderTitle}>Location protected</Text>
+        <Text style={s.placeholderBody}>
+          This hidden gem's exact location is hidden until it is approved or shared by the host.
+        </Text>
+      </View>
+    );
+  }
+
+  if (lat == null || lng == null) {
+    return (
+      <View style={s.placeholder}>
+        <View style={[s.iconCircle, s.iconMissing]}>
+          <MapIcon size={22} color="#8A9BB5" />
+        </View>
+        <Text style={s.placeholderTitle}>Map unavailable</Text>
+        <Text style={s.placeholderBody}>
+          We don't have enough location data for this gem yet.
+        </Text>
+      </View>
+    );
+  }
+
+  const isApprox = coordsPrecision === 'approximate';
+  const zoom = isApprox ? 12 : 14;
+  const pinColor = isApprox ? '#FF8F00' : '#4C8BF5';
+
+  return (
+    <View>
+      <View style={s.mapContainer}>
+        <Map
+          style={StyleSheet.absoluteFill}
+          mapStyle={MAP_STYLE}
+          logo={false}
+          attribution={false}
+        >
+          <Camera
+            initialViewState={{ center: [lng, lat], zoom }}
+          />
+          <Marker lngLat={[lng, lat]}>
+            <View style={[s.pin, { backgroundColor: pinColor }]}>
+              <MapPin size={14} color="#fff" />
+            </View>
+          </Marker>
+        </Map>
+      </View>
+
+      <View style={s.footer}>
+        <View style={s.footerLeft}>
+          {locationLabel ? (
+            <Text style={s.locationLabel} numberOfLines={1}>{locationLabel}</Text>
+          ) : null}
+          {isApprox ? (
+            <Text style={s.approxNotice}>Approximate area — exact location protected</Text>
+          ) : null}
+        </View>
+        <Pressable
+          style={s.openMapsBtn}
+          onPress={() => openInMaps(lat, lng)}
+          hitSlop={8}
+        >
+          <MapPin size={12} color="#4C8BF5" />
+          <Text style={s.openMapsText}>Open in Maps</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  placeholder: {
+    backgroundColor: '#13213A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1E2D45',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  iconProtected: { backgroundColor: 'rgba(255,107,107,0.12)' },
+  iconMissing:   { backgroundColor: 'rgba(138,155,181,0.12)' },
+  placeholderTitle: {
+    color: '#E8F0FE',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  placeholderBody: {
+    color: '#8A9BB5',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  mapContainer: {
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#13213A',
+  },
+  pin: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 8,
+  },
+  footerLeft: { flex: 1, gap: 2 },
+  locationLabel: {
+    color: '#E8F0FE',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  approxNotice: {
+    color: '#FF8F00',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  openMapsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#1E2D45',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  openMapsText: {
+    color: '#4C8BF5',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});

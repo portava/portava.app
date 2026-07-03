@@ -947,3 +947,105 @@ describe("Hidden Gems — plan-from-gem reveal logic", () => {
     assert.notEqual(coords.coordsPrecision, "exact", "non-member should NOT get exact coords");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. Detail endpoint — coordinate safety (HTTP-level)
+//
+// These tests hit GET /api/hidden-gems/:id and assert that:
+//   • public gems  → exact lat/lng present, coordsPrecision = 'exact'
+//   • approximate  → approx lat/lng, coordsPrecision = 'approximate'
+//   • protected    → null lat/lng, coordsPrecision = 'hidden'
+//
+// All three also assert that raw DB fields (latitude, longitude,
+// approx_latitude, approx_longitude, rawLocation, exactLocation) are ABSENT
+// from the response body — preventing any accidental coordinate leak.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Detail endpoint — coordinate safety", () => {
+  it("public gem: exact coords present, no raw fields in response", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem({ sensitivity_level: "public" })],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/${GEM_ID}`);
+    assert.equal(r.status, 200, `expected 200, got: ${JSON.stringify(r.body)}`);
+
+    const gem = r.body.gem;
+    assert.equal(gem.lat,            35.6762,  "public gem must expose exact lat");
+    assert.equal(gem.lng,            139.6503, "public gem must expose exact lng");
+    assert.equal(gem.coordsPrecision, "exact");
+
+    // Raw DB coordinate fields must never appear on the response
+    assert.equal(gem.latitude,          undefined, "raw latitude must be absent");
+    assert.equal(gem.longitude,         undefined, "raw longitude must be absent");
+    assert.equal(gem.approx_latitude,   undefined, "raw approx_latitude must be absent");
+    assert.equal(gem.approx_longitude,  undefined, "raw approx_longitude must be absent");
+    assert.equal(gem.rawLocation,       undefined, "rawLocation must be absent");
+    assert.equal(gem.exactLocation,     undefined, "exactLocation must be absent");
+  });
+
+  it("approximate gem: approx coords present, exact coords absent, no raw fields", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem({ sensitivity_level: "approximate", submitted_by: OTHER_ID })],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/${GEM_ID}`);
+    assert.equal(r.status, 200, `expected 200, got: ${JSON.stringify(r.body)}`);
+
+    const gem = r.body.gem;
+    assert.equal(gem.lat,            35.68,   "approximate gem must expose approx lat");
+    assert.equal(gem.lng,            139.65,  "approximate gem must expose approx lng");
+    assert.equal(gem.coordsPrecision, "approximate");
+
+    // Exact raw coordinates must be absent
+    assert.equal(gem.latitude,         undefined, "raw latitude must be absent");
+    assert.equal(gem.longitude,        undefined, "raw longitude must be absent");
+    assert.equal(gem.approx_latitude,  undefined, "raw approx_latitude must be absent");
+    assert.equal(gem.approx_longitude, undefined, "raw approx_longitude must be absent");
+    assert.equal(gem.rawLocation,      undefined, "rawLocation must be absent");
+    assert.equal(gem.exactLocation,    undefined, "exactLocation must be absent");
+  });
+
+  it("protected gem: null coords, coordsPrecision=hidden, no raw coord fields in response", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem({ sensitivity_level: "protected", submitted_by: OTHER_ID })],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/${GEM_ID}`);
+    assert.equal(r.status, 200, `expected 200, got: ${JSON.stringify(r.body)}`);
+
+    const gem = r.body.gem;
+    assert.equal(gem.lat,             null,     "protected gem must have null lat");
+    assert.equal(gem.lng,             null,     "protected gem must have null lng");
+    assert.equal(gem.coordsPrecision, "hidden", "protected gem must have coordsPrecision=hidden");
+
+    // None of the raw or alternative coordinate keys may appear
+    assert.equal(gem.latitude,         undefined, "raw latitude must be absent");
+    assert.equal(gem.longitude,        undefined, "raw longitude must be absent");
+    assert.equal(gem.approx_latitude,  undefined, "raw approx_latitude must be absent");
+    assert.equal(gem.approx_longitude, undefined, "raw approx_longitude must be absent");
+    assert.equal(gem.rawLocation,      undefined, "rawLocation must be absent");
+    assert.equal(gem.exactLocation,    undefined, "exactLocation must be absent");
+  });
+});

@@ -18,6 +18,7 @@ import * as Location from 'expo-location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, addGemToPlan, shareGemToTelegraph } from '../../src/services/hiddenGems';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
@@ -334,6 +335,17 @@ export default function GemDetailScreen() {
             <Ionicons name="shield-checkmark-outline" size={16} color="#4CAF7D" />
             <Text style={styles.verificationText}>{verificationBadge(gem.verificationLevel)}</Text>
           </View>
+        </View>
+
+        {/* Map preview — privacy-safe; shows placeholder for hidden/missing coords */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Location</Text>
+          <GemMapPreview
+            lat={gem.lat}
+            lng={gem.lng}
+            coordsPrecision={gem.coordsPrecision}
+            locationLabel={[gem.neighborhood, gem.city, gem.country].filter(Boolean).join(', ') || null}
+          />
         </View>
 
         {/* Description */}
