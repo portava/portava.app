@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
+import { GpsLocationCapture, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,8 +24,9 @@ interface FormState {
   country: string;
   neighborhood: string;
   description: string;
-  latitude: string;
-  longitude: string;
+  gpsLat: number | undefined;
+  gpsLng: number | undefined;
+  gpsLabel: string | undefined;
   vibeTags: string;
   priceRange: string;
   safetyNotes: string;
@@ -41,8 +43,9 @@ const INITIAL: FormState = {
   country: '',
   neighborhood: '',
   description: '',
-  latitude: '',
-  longitude: '',
+  gpsLat: undefined,
+  gpsLng: undefined,
+  gpsLabel: undefined,
   vibeTags: '',
   priceRange: '',
   safetyNotes: '',
@@ -82,6 +85,12 @@ const STEPS = ['Location', 'Details', 'Privacy', 'Review'];
 // ── Step components ────────────────────────────────────────────────────────────
 
 function LocationStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
+  const handleCapture = useCallback((result: GpsCaptureResult | null) => {
+    update('gpsLat', result?.lat ?? undefined);
+    update('gpsLng', result?.lng ?? undefined);
+    update('gpsLabel', result?.label ?? undefined);
+  }, [update]);
+
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Where is it?</Text>
@@ -117,25 +126,12 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
         />
       </Field>
 
-      <Text style={styles.gpsLabel}>GPS Coordinates (optional — helps with GPS verification)</Text>
-      <View style={styles.coordRow}>
-        <TextInput
-          style={[styles.input, { flex: 1 }]}
-          value={form.latitude}
-          onChangeText={(v) => update('latitude', v)}
-          placeholder="Lat"
-          placeholderTextColor="#8A9BB5"
-          keyboardType="numeric"
+      <Field label="GPS Location (optional — helps with GPS verification)">
+        <GpsLocationCapture
+          onCapture={handleCapture}
+          initialLabel={form.gpsLabel}
         />
-        <TextInput
-          style={[styles.input, { flex: 1 }]}
-          value={form.longitude}
-          onChangeText={(v) => update('longitude', v)}
-          placeholder="Lng"
-          placeholderTextColor="#8A9BB5"
-          keyboardType="numeric"
-        />
-      </View>
+      </Field>
     </ScrollView>
   );
 }
@@ -300,8 +296,7 @@ function ReviewStep({ form }: { form: FormState }) {
         <ReviewRow label="Name"        value={form.name} />
         <ReviewRow label="Category"    value={form.category} />
         <ReviewRow label="City"        value={[form.neighborhood, form.city, form.country].filter(Boolean).join(', ')} />
-        {form.latitude  && <ReviewRow label="GPS Lat"   value={form.latitude} />}
-        {form.longitude && <ReviewRow label="GPS Lng"   value={form.longitude} />}
+        {form.gpsLabel && <ReviewRow label="Location detected" value={form.gpsLabel} />}
         {form.description    && <ReviewRow label="Description"  value={form.description} />}
         {form.bestTimeToGo   && <ReviewRow label="Best Time"    value={form.bestTimeToGo} />}
         {form.safetyNotes    && <ReviewRow label="Safety Notes" value={form.safetyNotes} />}
@@ -379,8 +374,8 @@ export default function SubmitGemScreen() {
           country:               form.country.trim() || undefined,
           neighborhood:          form.neighborhood.trim() || undefined,
           description:           form.description.trim() || undefined,
-          latitude:              form.latitude ? parseFloat(form.latitude) : undefined,
-          longitude:             form.longitude ? parseFloat(form.longitude) : undefined,
+          latitude:              form.gpsLat,
+          longitude:             form.gpsLng,
           vibeTags:              tags.length > 0 ? tags : undefined,
           priceRange:            form.priceRange || undefined,
           safetyNotes:           form.safetyNotes.trim() || undefined,
@@ -500,9 +495,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   textArea: { minHeight: 90, textAlignVertical: 'top', paddingTop: 12 },
-
-  coordRow: { flexDirection: 'row', gap: 10 },
-  gpsLabel: { color: '#8A9BB5', fontSize: 13, fontWeight: '600', marginBottom: 8 },
 
   categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   catBtn: {
