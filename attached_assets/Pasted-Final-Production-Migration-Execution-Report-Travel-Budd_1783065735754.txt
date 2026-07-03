@@ -1,0 +1,94 @@
+Final Production Migration Execution Report — Travel Buddy
+
+Do not apply any more migrations.
+Do not change app code.
+Do not change runbooks unless a factual error is found.
+
+Produce the final production migration execution report based on the actual production checks and committed evidence.
+
+Report must clearly separate:
+
+1. Production migrations already applied before this task
+   - 0077
+   - 0078
+   - 0079
+   - 0080
+   - 0081
+   - 0082
+   - 0083
+   - 0084
+   - 0085
+   - 0087
+   Include verification evidence for each.
+
+2. Production migrations applied during this task
+   - 0086
+   - 0088
+   - 0089
+   Include:
+   - exact SQL/file source
+   - execution result
+   - verification query result
+   - production object created/changed
+
+3. Confirm current production database state:
+   - trips expansion columns exist
+   - trip_members roles/status exist
+   - 11 trip sub-tables exist with RLS
+   - 11 event extension tables exist, including event_drafts
+   - discovery_places.osm_id exists
+   - wishlist_places exists with RLS/index/trigger/function
+   - decrement_discovery_place_saved_count(p_id uuid) exists
+   - function is SECURITY DEFINER
+   - service_role has EXECUTE
+   - stamp system v2 feature flags are enabled
+
+4. Confirm feature blocker status:
+   - Trips expansion routes
+   - Event extension routes
+   - Stamp system v2 endpoints
+   - Wishlist routes
+   For each:
+   - Previously blocked?
+   - Current schema status
+   - Expected route behavior now
+   - Any smoke test result
+
+5. Storage and env status:
+   - profile-media bucket
+   - post-media bucket
+   - memories bucket
+   - SUPABASE_SERVICE_ROLE_KEY on deployed API
+   - admin bootstrap status
+   Clearly state verified / not verified / manual check still required.
+
+6. Documents changed:
+   - docs/migrations.md
+   - docs/production-migration-runbook.md
+   - any migration execution record file
+   Include exact reason for each.
+
+7. Remaining production blockers:
+   - List only real blockers still proven after production verification.
+   - If none, say none.
+   - If storage/env/admin are not verified, classify them as manual production checks, not database migration blockers.
+
+8. Non-blocking deferred items:
+   - RAB payment/dispute 501 stubs
+   - any gated/future stamp items
+   - any non-live SQL functions/RPCs
+   - any future backend jobs
+
+9. Validation table:
+   - production verification queries
+   - route smoke checks
+   - typechecks if run
+   - sync checks if run
+   - routes guard if run
+
+10. Commit message.
+
+Important:
+Do not claim a bucket/env/admin check passed unless it was actually verified.
+Do not say migrations are pending if production verification proves they are applied.
+If 0081/0082 are applied but still gated by flags or app logic, say that clearly instead of calling them pending.
