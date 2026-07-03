@@ -63,6 +63,12 @@ interface FilterStripProps {
    * user must re-enable location in device Settings.
    */
   locationPermissionDenied?: boolean;
+  /**
+   * True while GPS is resolving after the user tapped Nearest without coords.
+   * Renders the chip in a "Locating…" pending state so users know the app is
+   * working, instead of showing the chip as locked/greyed.
+   */
+  nearestLocating?: boolean;
 }
 
 export function FilterStrip({
@@ -71,6 +77,7 @@ export function FilterStrip({
   hasUserLocation = true,
   onNearestUnavailable,
   locationPermissionDenied = false,
+  nearestLocating = false,
 }: FilterStripProps) {
   return (
     <View style={fs.wrap}>
@@ -126,13 +133,15 @@ export function FilterStrip({
         {Object.entries(SORT_LABELS).map(([key, label]) => {
           const isActive = filters.sortBy === key;
           const isNearest = key === 'nearest';
-          const nearestLocked = isNearest && !hasUserLocation;
+          const nearestPending = isNearest && nearestLocating && !hasUserLocation;
+          const nearestLocked = isNearest && !hasUserLocation && !nearestLocating;
           return (
             <Pressable
               key={key}
               style={[
                 fs.chip,
                 isActive && fs.chipActive,
+                nearestPending && fs.chipPending,
                 nearestLocked && fs.chipLocked,
               ]}
               onPress={() => {
@@ -146,9 +155,10 @@ export function FilterStrip({
               <Text style={[
                 fs.chipText,
                 isActive && fs.chipTextActive,
+                nearestPending && fs.chipTextPending,
                 nearestLocked && fs.chipTextLocked,
               ]}>
-                {label}
+                {nearestPending ? '📍 Locating…' : label}
               </Text>
               {nearestLocked && (
                 <Text style={fs.chipLockIcon}> 🔒</Text>
@@ -227,6 +237,14 @@ const fs = StyleSheet.create({
   chipTextActive: {
     color: color.signal,
     fontWeight: '700',
+  },
+  chipPending: {
+    borderColor: color.signal + '60',
+    backgroundColor: color.signal + '0D',
+  },
+  chipTextPending: {
+    color: color.signal,
+    opacity: 0.75,
   },
   chipLocked: {
     borderColor: color.faint,

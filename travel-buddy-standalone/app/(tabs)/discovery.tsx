@@ -232,6 +232,12 @@ export default function DiscoveryHub() {
     nearestMsgTimerRef.current = setTimeout(() => setNearestGpsMessage(null), 5_000);
   }, []);
 
+  /**
+   * Mirrors nearestIntentPending as React state so the FilterStrip chip can
+   * render a "Locating…" pending visual while GPS is resolving.
+   */
+  const [nearestLocating, setNearestLocating] = useState(false);
+
   const handleNearestUnavailable = useCallback(() => {
     if (locationState.permissionStatus === 'denied') {
       return;
@@ -240,6 +246,7 @@ export default function DiscoveryHub() {
     if (nearestTimeoutRef.current) clearTimeout(nearestTimeoutRef.current);
 
     nearestIntentPending.current = true;
+    setNearestLocating(true);
     requestLocation();
 
     // Guard: if GPS hasn't resolved within the timeout, clear the intent and
@@ -247,6 +254,7 @@ export default function DiscoveryHub() {
     nearestTimeoutRef.current = setTimeout(() => {
       if (!nearestIntentPending.current) return; // already resolved
       nearestIntentPending.current = false;
+      setNearestLocating(false);
       showNearestGpsMessage("Couldn't get your location — try again or move to an open area.");
     }, NEAREST_GPS_TIMEOUT_MS);
   }, [locationState.permissionStatus, requestLocation, showNearestGpsMessage]);
@@ -274,6 +282,7 @@ export default function DiscoveryHub() {
       clearTimeout(nearestTimeoutRef.current);
       nearestTimeoutRef.current = null;
     }
+    setNearestLocating(false);
     handleFiltersChange({ ...activeFilters, sortBy: 'nearest' });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasUserLocation]);
@@ -675,6 +684,7 @@ export default function DiscoveryHub() {
                 hasUserLocation={hasUserLocation}
                 onNearestUnavailable={handleNearestUnavailable}
                 locationPermissionDenied={locationState.permissionStatus === 'denied'}
+                nearestLocating={nearestLocating}
               />
               {(activeFilters.radiusKm !== 10 || activeFilters.openNow || activeFilters.minRating !== null || activeFilters.sortBy != null) && (
                 <Pressable style={styles.resetFiltersBtn} onPress={handleResetFilters}>
