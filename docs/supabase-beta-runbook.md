@@ -15,7 +15,7 @@ Before running any SQL, confirm every item below. Do not proceed until all are c
 | ☐ 3 | Last applied migration in production is **0087** | `SELECT MAX(name) FROM schema_migrations;` — or manually confirm `profiles.cover_photo_url` exists |
 | ☐ 4 | No active writes to the database during migration window | Schedule a low-traffic window or put the API server in maintenance mode |
 | ☐ 5 | You have read through each migration SQL below before executing it | — |
-| ☐ 6 | All migration files are present in `artifacts/api-server/src/migrations/` | `ls artifacts/api-server/src/migrations/` shows 0077–0088 |
+| ☐ 6 | All migration files are present in `artifacts/api-server/src/migrations/` | `ls artifacts/api-server/src/migrations/` shows 0077–0089 |
 
 ---
 
@@ -38,7 +38,7 @@ Before running any SQL, confirm every item below. Do not proceed until all are c
 Apply in exactly this order. Do not skip steps. Apply and verify one at a time.
 
 ```
-0077 → 0078 → 0079 → 0080 → 0086 → 0088 → 0089 (inline) → 0085
+0077 → 0078 → 0079 → 0080 → 0086 → 0088 → 0089 → 0085
 ```
 
 ---
@@ -233,6 +233,7 @@ Extends the `events` table with new columns and creates 10 new event sub-tables:
 | `event_activity_log` | Append-only event audit log |
 | `event_share_links` | Shareable event links |
 | `event_reminders` | Per-user event reminders |
+| `event_drafts` | Draft events saved by the host before publishing |
 
 Also seeds event-related feature flags in `feature_flags`.
 
@@ -257,17 +258,17 @@ WHERE table_name = 'events'
 ORDER BY column_name;
 -- Expected: 5 rows
 
--- Confirm all 10 new event tables
+-- Confirm all 11 new event tables
 SELECT table_name
 FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
     'event_attendees', 'event_saves', 'event_invites', 'event_cohosts',
     'event_posts', 'event_media', 'event_reports', 'event_activity_log',
-    'event_share_links', 'event_reminders'
+    'event_share_links', 'event_reminders', 'event_drafts'
   )
 ORDER BY table_name;
--- Expected: 10 rows
+-- Expected: 11 rows
 
 -- Confirm feature flag seeds from 0080
 SELECT flag, enabled
@@ -277,7 +278,7 @@ ORDER BY flag;
 -- Expected: at least 1 row (event-specific feature flags)
 ```
 
-> **Stop if:** Fewer than 5 columns on `events`, or fewer than 10 new event tables. Check SQL Editor error output for the specific failing statement.
+> **Stop if:** Fewer than 5 columns on `events`, or fewer than 11 new event tables. Check SQL Editor error output for the specific failing statement.
 
 ---
 
@@ -400,11 +401,13 @@ WHERE routine_name = 'prevent_wishlist_places_truncate';
 
 ---
 
-## Migration 7 of 8 — `decrement_discovery_place_saved_count` function (inline SQL)
+## Migration 7 of 8 — `0089_decrement_discovery_place_saved_count.sql`
 
 ### What it does
 Creates the `decrement_discovery_place_saved_count(p_id uuid)` PostgreSQL function.
 This function atomically decrements `discovery_places.saved_count` for a given place row ID, floors at 0, and returns the new count.
+
+The function is created with `SECURITY DEFINER` and `SET search_path = public`, and explicitly revokes the default `PUBLIC` execute grant so only the `service_role` backend account can invoke it via RPC.
 
 ### Why beta needs it
 `wishlist.ts` DELETE route calls:
@@ -414,47 +417,33 @@ svc.rpc("decrement_discovery_place_saved_count", { p_id: <discovery_places.id> }
 Without this function, unwishlisting any DB-sourced place returns:
 `ERROR: function decrement_discovery_place_saved_count(uuid) does not exist`
 
-### Note on file status
-**There is no `0089_*.sql` file in `artifacts/api-server/src/migrations/`.** This function must be applied manually using the inline SQL below. This is a known gap in the migration file inventory — the function is referenced in code but its creation SQL was never committed to a migration file.
-
 ### SQL to apply
-Copy and paste this SQL directly into **Supabase SQL Editor → Run**:
+Paste the full contents of `artifacts/api-server/src/migrations/0089_decrement_discovery_place_saved_count.sql` into Supabase SQL Editor.
 
-```sql
-CREATE OR REPLACE FUNCTION decrement_discovery_place_saved_count(p_id uuid)
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  new_count integer;
-BEGIN
-  UPDATE discovery_places
-  SET saved_count = GREATEST(0, COALESCE(saved_count, 0) - 1)
-  WHERE id = p_id
-  RETURNING saved_count INTO new_count;
-
-  RETURN COALESCE(new_count, 0);
-END;
-$$;
-```
+> **Important:** Use the full migration file — do not use an abbreviated version. The file includes `SET search_path = public`, `REVOKE ALL FROM PUBLIC, anon, authenticated`, and `GRANT EXECUTE TO service_role` statements that are required for correct security posture. Omitting them would leave the function callable by any authenticated PostgREST user.
 
 ### Verification SQL — run after applying
 ```sql
--- Confirm function exists with correct signature
-SELECT routine_name, data_type AS return_type
+-- Confirm function exists with correct return type
+SELECT routine_name, data_type AS return_type, security_type
 FROM information_schema.routines
 WHERE routine_name = 'decrement_discovery_place_saved_count'
   AND routine_schema = 'public';
--- Expected: 1 row, return_type = integer
+-- Expected: 1 row, return_type = integer, security_type = DEFINER
 
--- Smoke test (does not change any real row — replace with a real discovery_places.id if available)
--- This is safe to run: GREATEST(0,...) means no row goes negative
--- If you have a real place row:
+-- Confirm service_role EXECUTE grant (and only service_role)
+SELECT grantee, privilege_type
+FROM information_schema.role_routine_grants
+WHERE routine_name = 'decrement_discovery_place_saved_count'
+  AND grantee = 'service_role';
+-- Expected: 1 row — grantee = service_role, privilege_type = EXECUTE
+
+-- Smoke test (safe to run — GREATEST(0,...) prevents negative values)
+-- Replace with a real discovery_places.id if available:
 -- SELECT decrement_discovery_place_saved_count('<real-uuid-here>');
 ```
 
-> **Stop if:** The function does not appear in `information_schema.routines`. Do not proceed to 0085 until the wishlist unsave path is fully unblocked.
+> **Stop if:** The function does not appear in `information_schema.routines`, `security_type` is not `DEFINER`, or the `service_role` grant row is missing. Do not proceed to 0085 until the wishlist unsave path is fully unblocked.
 
 ---
 
@@ -701,9 +690,9 @@ WHERE table_schema = 'public'
   AND table_name IN (
     'event_attendees', 'event_saves', 'event_invites', 'event_cohosts',
     'event_posts', 'event_media', 'event_reports', 'event_activity_log',
-    'event_share_links', 'event_reminders'
+    'event_share_links', 'event_reminders', 'event_drafts'
   );
--- Expected: 10
+-- Expected: 11
 
 -- ── 3. Wishlist table (0088) ───────────────────────────────────────────────────
 SELECT table_name FROM information_schema.tables
@@ -715,10 +704,11 @@ SELECT column_name FROM information_schema.columns
 WHERE table_name = 'discovery_places' AND column_name = 'osm_id';
 -- Expected: 1 row
 
--- ── 5. Decrement RPC (inline) ─────────────────────────────────────────────────
-SELECT routine_name FROM information_schema.routines
-WHERE routine_name = 'decrement_discovery_place_saved_count';
--- Expected: 1 row
+-- ── 5. Decrement RPC (0089) ───────────────────────────────────────────────────
+SELECT routine_name, security_type FROM information_schema.routines
+WHERE routine_name = 'decrement_discovery_place_saved_count'
+  AND routine_schema = 'public';
+-- Expected: 1 row, security_type = DEFINER
 
 -- ── 6. Passport feature flags (0085) ──────────────────────────────────────────
 SELECT flag, enabled FROM feature_flags

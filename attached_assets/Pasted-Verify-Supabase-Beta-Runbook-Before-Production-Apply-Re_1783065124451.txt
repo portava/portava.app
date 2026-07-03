@@ -1,0 +1,79 @@
+Verify Supabase Beta Runbook Before Production Apply
+
+Review docs/supabase-beta-runbook.md for correctness, consistency, and copy/paste safety.
+
+Do not apply production SQL.
+Do not add app features.
+Do not change migrations unless a real runbook/schema error is proven.
+
+Check:
+
+1. Migration order
+   - Confirm 0077 → 0078 → 0079 → 0080 → 0086 → 0088 → inline 0089 SQL → 0085 is correct.
+   - Confirm no dependency requires 0085 earlier.
+   - Confirm no missing dependency between 0080 and 0086.
+   - Confirm 0089 inline function depends on 0088 wishlist_places and discovery_places existing.
+
+2. SQL copy/paste safety
+   - Every SQL block is complete.
+   - No placeholder values inside migration SQL except admin bootstrap.
+   - Every CREATE TABLE / ALTER TABLE / CREATE INDEX statement is valid.
+   - Every DO $$ block is valid.
+   - Every enum alteration is safe/idempotent if run once.
+   - Every trigger/function references an existing table/column.
+   - Every RLS policy references existing columns.
+   - Every verification query can run in Supabase SQL Editor.
+
+3. 0089 inline function
+   - Confirm function name matches backend RPC call.
+   - Confirm parameter name matches backend RPC call: p_id.
+   - Confirm return type matches backend expectations.
+   - Confirm function updates the correct saved-count column.
+   - Confirm function cannot decrement below 0 if that is expected.
+   - Confirm permissions/grants if needed.
+
+4. Verification SQL
+   - Confirm every verification query checks the right table/column/index/policy/function.
+   - Confirm verification queries do not mutate data.
+   - Confirm "stop if this fails" notes are present after each critical section.
+   - Confirm final 10-query verification block covers all beta blockers.
+
+5. Storage buckets
+   - Confirm bucket names match backend upload code exactly:
+     - profile-media
+     - post-media
+     - memories
+   - Confirm bucket public/private expectation matches how the app displays media.
+   - Confirm verification steps are possible from Supabase dashboard or SQL.
+
+6. Environment variables
+   - Confirm env var names match deployed API/backend code.
+   - Confirm SUPABASE_SERVICE_ROLE_KEY is clearly marked critical.
+   - Confirm optional vs required variables are separated.
+
+7. Admin bootstrap
+   - Confirm SQL is safe and uses explicit user/profile lookup.
+   - Confirm the runbook does not hardcode the wrong user ID.
+   - Confirm verification query proves profiles.role = 'admin'.
+
+8. Smoke tests
+   - Confirm smoke tests map to actual app flows.
+   - Confirm each migration has at least one smoke test linked to it.
+
+9. "Do not apply yet" section
+   - Confirm 0081/0082, RAB payment/dispute stubs, and unlocated RPCs are classified correctly.
+   - Confirm nothing beta-critical is accidentally listed as do-not-apply.
+
+Final output:
+- Runbook verification result: pass/fail
+- Issues found
+- Corrections made, if any
+- Final migration apply order
+- Final manual SQL steps
+- Final stop-if-fails checklist
+- Validation table
+- Commit message if docs changed
+
+Important:
+If docs/beta-closeout-report.md and docs/supabase-beta-runbook.md disagree, identify which one is correct by reading the actual migration/backend files.
+Do not guess.
