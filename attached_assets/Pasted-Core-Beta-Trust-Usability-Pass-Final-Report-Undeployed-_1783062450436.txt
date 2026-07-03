@@ -1,0 +1,329 @@
+Core Beta Trust + Usability Pass — Final Report + Undeployed SQL/Backend Inventory
+
+Finalize the Core Beta Trust + Usability Pass and then produce a complete inventory of every SQL/database/backend item that is not done, not deployed, or still required before beta/production.
+
+Do not add new features.
+Do not widen into UI polish.
+Do not make more code changes unless validation fails or a real ship-blocking backend/database gap is proven.
+This is a closeout + inventory pass.
+
+Part 1 — Final completion report for Core Beta Trust + Usability Pass
+
+Cover:
+#118 — Blocked profile placeholder
+#119 — Hide threads from blocked users
+#124 — Badge on Trips tab for pending invites
+#125 / #150 — Preview a trip before accepting
+#216 — Trip editing screen
+#217 — Post reporting and hiding
+#226 — Fix My Circle visibility
+
+Report:
+1. Core Beta Matrix
+   - Task #
+   - User flow
+   - Previous state
+   - Fix completed
+   - Files changed
+   - Backend route/service used
+   - Status
+
+2. Validation table:
+   - pnpm --filter @workspace/api-server run typecheck
+   - cd travel-buddy-standalone && pnpm typecheck
+   - pnpm run typecheck if run
+   - bash scripts/sync-standalone.sh --fix-source if run
+   - bash scripts/sync-standalone.sh --check-source
+   - bash scripts/sync-standalone.sh --check-deps
+   - pnpm --filter @workspace/scripts run test:routes-guard if run
+   - any related tests that ran
+
+3. Remaining issues:
+   - Real blockers
+   - Honest-disabled items
+   - Non-blocking polish
+   - Reviewer/process-only complaints, if any
+
+4. Commit message.
+
+Part 2 — Full Undeployed SQL + Backend Inventory
+
+Create a complete list of every SQL/database/backend item that still needs to be done or deployed.
+
+Audit these categories:
+
+A. SQL migrations not deployed
+Find every migration that exists locally but may not be applied to production.
+
+For each:
+- Migration number
+- File name
+- What it creates/changes
+- Tables affected
+- Columns affected
+- Indexes affected
+- Policies affected
+- Functions/triggers affected
+- Which app features depend on it
+- Whether it is required before beta
+- Whether it is required before production
+- Whether manual Supabase SQL Editor action is required
+- Verification SQL after applying
+- Risk notes
+
+Pay special attention to:
+- #120 blocking
+- #128 push tokens
+- #137 thread reads
+- #147 meetups
+- #172 highlights
+- #175 filters
+- #214 filters / production dependency
+- #223 production dependency
+- #235 production dependency
+- migrations 0080–0085
+- any migration after the last known production-applied migration
+
+B. SQL functions / RPCs not deployed or not verified
+Search all SQL migration files and backend code for:
+- CREATE FUNCTION
+- CREATE OR REPLACE FUNCTION
+- rpc(
+- triggers calling functions
+- scheduled/cron SQL functions
+- Supabase RPC usage
+
+For each SQL function/RPC:
+- Function name
+- File/migration source
+- Parameters
+- Return type
+- Tables touched
+- Feature depending on it
+- Backend/frontend caller
+- Deployment status: deployed / local only / unknown / missing / unused
+- Required before beta?
+- Verification SQL:
+  - function exists
+  - can be called with expected params
+  - permissions are correct
+- Risk if not deployed
+
+C. SQL triggers not deployed or not verified
+Search migrations for:
+- CREATE TRIGGER
+- trigger function
+- updated_at triggers
+- notification triggers
+- trust score triggers
+- badge/stamp triggers
+- invite/thread/message triggers
+- safe return triggers if any
+
+For each trigger:
+- Trigger name
+- Table
+- Event: INSERT / UPDATE / DELETE
+- Function called
+- Feature depending on it
+- Deployment status
+- Required before beta?
+- Verification SQL
+- Risk if missing
+
+D. RLS policies not deployed or not verified
+Search migrations for:
+- ENABLE ROW LEVEL SECURITY
+- CREATE POLICY
+- ALTER POLICY
+- DROP POLICY
+
+For each live table:
+- Table name
+- Policies expected
+- Direct frontend access? yes/no
+- API server service-role access? yes/no
+- If direct frontend access exists, confirm policy supports it
+- If service-role access exists, confirm backend route has app-level guards
+- Deployment status
+- Required before beta?
+- Risk if missing
+
+E. Storage buckets / policies not deployed
+Audit storage setup for:
+- avatars
+- covers
+- posts
+- memories
+- stories
+- highlights
+- event covers
+- trip covers
+- RAB provider photos
+- Telegraph attachments if visible
+
+For each:
+- Bucket name expected by code
+- Where bucket is created/documented
+- Public/private policy
+- Upload route using it
+- File size/type rules
+- Deployment status
+- Required before beta?
+- Manual Supabase action needed
+- Verification steps
+
+F. Backend routes not done / partial / 501
+Inventory every backend route that is:
+- missing but called by frontend
+- present but returns 501
+- present but TODO
+- present but fake success
+- present but not mounted
+- present but missing auth guard
+- present but missing owner/member/admin guard
+- present but not backed by deployed schema
+- unused but intended for live features
+
+For each:
+- Route
+- Method
+- File
+- Current status
+- Frontend caller
+- Feature
+- Required before beta?
+- Required before production?
+- Fix needed
+- Risk if left as-is
+
+G. Backend jobs / cron / scheduled workers not done
+Search for:
+- cron
+- schedule
+- job
+- worker
+- setInterval
+- queue
+- delayed posting
+- Safe Return escalation
+- notification delivery
+- push delivery
+- meetup reminders
+- highlight badge cleanup
+- trip invite expiry
+- message translation retry
+- media cleanup
+
+For each:
+- Job name/purpose
+- Where referenced
+- Whether implemented
+- Whether deployed
+- Trigger mechanism
+- Required before beta?
+- Risk if missing
+- Manual deployment needed
+
+H. Environment variables / secrets not deployed
+Inventory required env vars for backend/database:
+- Supabase URL
+- anon key
+- service role key
+- storage config
+- push notification credentials
+- AI/translation provider keys if used
+- maps/place APIs if backend uses them
+- media limits
+- allowed origins/CORS
+- app URL/deep link base
+- any RAB/payment-related env vars if present
+
+For each:
+- Env var name
+- Required by file/function
+- Required before beta?
+- Required before production?
+- Safe fallback exists?
+- Risk if missing
+
+I. Feature flags / seed data not deployed
+Inventory:
+- feature_flags
+- admin role bootstrap
+- default notification preferences
+- default trust settings
+- default filters
+- default categories
+- hidden gems/community place seed assumptions
+- RAB category/package defaults
+- report reason/status defaults
+
+For each:
+- Table/key
+- Migration or seed source
+- Feature depending on it
+- Deployment status
+- Required before beta?
+- Verification SQL
+- Manual action needed
+
+J. Direct Supabase frontend/backend risks still remaining
+Search all frontend/mobile code for:
+- supabase.from(
+- insert
+- update
+- delete
+- upsert
+- rpc
+
+For each direct mutation:
+- File
+- Function
+- Table
+- Is it called from live UI?
+- Is there an API route alternative?
+- Risk under P-256 JWT/RLS issue
+- Required fix before beta?
+- If unused legacy/test-only, document as non-blocking
+
+K. Production readiness final blocker list
+Create a final table:
+- Blocker name
+- Category: migration / SQL function / trigger / policy / storage / backend route / job / env / seed / direct Supabase
+- Feature affected
+- Required before beta?
+- Required before production?
+- Exact action needed
+- Owner/manual step
+- Verification command/query
+
+Required final output:
+
+1. Executive summary
+2. Core Beta Trust + Usability final report
+3. Undeployed SQL migration inventory
+4. SQL functions/RPC inventory
+5. SQL triggers inventory
+6. RLS policy inventory
+7. Storage deployment inventory
+8. Backend route not-done/partial/501 inventory
+9. Backend jobs/cron inventory
+10. Environment variable inventory
+11. Feature flag/seed inventory
+12. Direct Supabase risk inventory
+13. Final beta/production blocker list
+14. Required manual Supabase SQL actions
+15. Verification SQL checklist
+16. Files changed, if any
+17. Validation table
+18. Commit message, if any
+
+Important:
+Do not claim a SQL function, migration, trigger, policy, bucket, env var, or backend job is deployed unless verified.
+If local files exist but production status is unknown, mark it as "local exists; production verification required."
+If a visible live feature depends on an undeployed SQL/backend item, mark it as a ship-blocker.
+If backend returns 501 honestly and no visible live UI depends on it, mark it non-blocking.
+No fake success.
+No private data leaks.
+No hidden production assumptions.
