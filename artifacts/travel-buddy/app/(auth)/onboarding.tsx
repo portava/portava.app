@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndicator, Alert, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { Stamp, Chip } from '../../src/components/ui';
 import type { Interest, TravelStyle } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { updateMyProfile, getMyProfile } from '../../src/services/profile';
+import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
+import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
@@ -21,8 +23,37 @@ export default function Onboarding() {
   const [style, setStyle] = useState<TravelStyle>('solo');
   const [picked, setPicked] = useState<Interest[]>([]);
   const [saving, setSaving] = useState(false);
+  const [gpsLoadingHome, setGpsLoadingHome] = useState(false);
+  const [showHomePicker, setShowHomePicker] = useState(false);
 
   const toggle = (i: Interest) => setPicked((p) => p.includes(i) ? p.filter((x) => x !== i) : [...p, i]);
+
+  const fillHomeFromGps = useCallback(async () => {
+    setGpsLoadingHome(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps.granted) {
+        Alert.alert(
+          'Location permission is off',
+          'Enable it in Settings or choose a city from the list.',
+          [
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+      if (gps.lat == null || gps.lng == null) return;
+      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      if (place.city) setHomeCity(place.city);
+      if (place.country) setHomeCountry(place.country);
+    } catch {
+      // silent — user can still type or choose from list
+    } finally {
+      setGpsLoadingHome(false);
+    }
+  }, []);
 
   useEffect(() => {
     getMyProfile().then((res) => {
@@ -156,28 +187,39 @@ export default function Onboarding() {
             <View style={{ gap: space.md }}>
               <View>
                 <Text style={styles.label}>Home city (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={homeCity}
-                  onChangeText={setHomeCity}
-                  placeholder="e.g. Manila"
-                  placeholderTextColor={color.faint}
-                  autoCapitalize="words"
-                  autoFocus
-                  returnKeyType="next"
-                />
+                <Pressable
+                  style={[styles.input, styles.locationDisplay]}
+                  onPress={() => setShowHomePicker(true)}
+                >
+                  <Text style={homeCity ? styles.locationText : styles.locationPlaceholder}>
+                    {homeCity || 'Tap to select — or use GPS below'}
+                  </Text>
+                </Pressable>
+                <View style={styles.locationActions}>
+                  <Pressable
+                    style={styles.locationBtn}
+                    onPress={fillHomeFromGps}
+                    disabled={gpsLoadingHome}
+                  >
+                    {gpsLoadingHome
+                      ? <ActivityIndicator size="small" color={color.signal} />
+                      : <Text style={styles.locationBtnText}>⊕ Use my current location</Text>
+                    }
+                  </Pressable>
+                  <Pressable style={styles.locationBtn} onPress={() => setShowHomePicker(true)}>
+                    <Text style={styles.locationBtnText}>≡ Choose from list</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.hint}>Your precise location is never shown publicly.</Text>
               </View>
               <View>
                 <Text style={styles.label}>Country (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={homeCountry}
-                  onChangeText={setHomeCountry}
-                  placeholder="e.g. Philippines"
-                  placeholderTextColor={color.faint}
-                  autoCapitalize="words"
-                  returnKeyType="done"
-                />
+                <View style={[styles.input, styles.locationDisplay]}>
+                  <Text style={homeCountry ? styles.locationText : styles.locationPlaceholder}>
+                    {homeCountry || 'Auto-filled from city selection above'}
+                  </Text>
+                </View>
+                <Text style={styles.hint}>Set automatically when you pick a home city.</Text>
               </View>
             </View>
           </View>
@@ -229,6 +271,16 @@ export default function Onboarding() {
           }
         </Pressable>
       </View>
+
+      <ManualCityPicker
+        visible={showHomePicker}
+        onClose={() => setShowHomePicker(false)}
+        onSelect={(city, country) => {
+          setHomeCity(city);
+          setHomeCountry(country);
+          setShowHomePicker(false);
+        }}
+      />
     </View>
   );
 }
@@ -279,6 +331,15 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
   },
   backBtnText: { ...t.heading, color: color.deep },
+  locationDisplay: { justifyContent: 'center', minHeight: 44 },
+  locationText: { ...t.body, color: color.ink },
+  locationPlaceholder: { ...t.body, color: color.faint },
+  locationActions: { flexDirection: 'row', gap: space.sm, marginTop: 6 },
+  locationBtn: {
+    borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 7,
+  },
+  locationBtnText: { ...t.small, color: color.deep, fontWeight: '600' },
   nextBtn: {
     flex: 2,
     backgroundColor: color.signal,

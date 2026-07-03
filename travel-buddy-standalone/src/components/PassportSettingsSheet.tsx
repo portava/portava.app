@@ -2,13 +2,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, Modal, ScrollView,
   ActivityIndicator, Switch, KeyboardAvoidingView, Platform,
-  Image, StyleSheet, Alert,
+  Image, StyleSheet, Alert, Linking,
 } from 'react-native';
 import { X, Camera, Check, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import type { OwnProfile } from '../types/models';
 import { updateMyProfile, checkUsername, uploadAvatar } from '../services/profile';
+import { getCurrentGps, reverseGeocodeDetailed } from '../services/location';
+import { ManualCityPicker } from './ManualCityPicker';
 import { color, space, radius, type as t } from '../theme/tokens';
 
 const ALL_INTERESTS = [
@@ -153,6 +155,10 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   const [usernameReason, setUsernameReason] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // GPS / city picker state
+  const [gpsLoadingHome, setGpsLoadingHome] = useState(false);
+  const [showHomePicker, setShowHomePicker] = useState(false);
+
   // Save state
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -251,6 +257,33 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   const toggleSingle = (setter: React.Dispatch<React.SetStateAction<string | null>>, current: string | null) => (key: string) => {
     setter(current === key ? null : key);
   };
+
+  const fillHomeFromGps = useCallback(async () => {
+    setGpsLoadingHome(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps.granted) {
+        Alert.alert(
+          'Location permission is off',
+          'Enable it in Settings or choose a city from the list.',
+          [
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+      if (gps.lat == null || gps.lng == null) return;
+      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      if (place.city) setHomeCity(place.city);
+      if (place.country) setHomeCountry(place.country);
+    } catch {
+      // silent — user can still choose from list
+    } finally {
+      setGpsLoadingHome(false);
+    }
+  }, []);
 
   const pickAvatar = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -440,11 +473,39 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
               </Field>
 
               <Field label="Home city">
-                <TextInput style={sh.input} value={homeCity} onChangeText={setHomeCity} placeholder="City" placeholderTextColor={color.faint} maxLength={100} />
+                <Pressable
+                  style={[sh.input, sh.locationDisplay]}
+                  onPress={() => setShowHomePicker(true)}
+                >
+                  <Text style={homeCity ? sh.locationText : sh.locationPlaceholder}>
+                    {homeCity || 'Tap to select — or use GPS below'}
+                  </Text>
+                </Pressable>
+                <View style={sh.locationActions}>
+                  <Pressable
+                    style={sh.locationBtn}
+                    onPress={fillHomeFromGps}
+                    disabled={gpsLoadingHome}
+                  >
+                    {gpsLoadingHome
+                      ? <ActivityIndicator size="small" color={color.signal} />
+                      : <Text style={sh.locationBtnText}>⊕ Use my current location</Text>
+                    }
+                  </Pressable>
+                  <Pressable style={sh.locationBtn} onPress={() => setShowHomePicker(true)}>
+                    <Text style={sh.locationBtnText}>≡ Choose from list</Text>
+                  </Pressable>
+                </View>
+                <Text style={sh.fieldHint}>Your precise location is never shown publicly.</Text>
               </Field>
 
               <Field label="Home country">
-                <TextInput style={sh.input} value={homeCountry} onChangeText={setHomeCountry} placeholder="Country" placeholderTextColor={color.faint} maxLength={100} />
+                <View style={[sh.input, sh.locationDisplay]}>
+                  <Text style={homeCountry ? sh.locationText : sh.locationPlaceholder}>
+                    {homeCountry || 'Auto-filled from city selection above'}
+                  </Text>
+                </View>
+                <Text style={sh.fieldHint}>Set automatically when you pick a home city.</Text>
               </Field>
             </View>
           )}
@@ -691,6 +752,16 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ManualCityPicker
+        visible={showHomePicker}
+        onClose={() => setShowHomePicker(false)}
+        onSelect={(city, country) => {
+          setHomeCity(city);
+          setHomeCountry(country);
+          setShowHomePicker(false);
+        }}
+      />
     </Modal>
   );
 }
@@ -849,6 +920,16 @@ const sh = StyleSheet.create({
   chipOn: { backgroundColor: color.ink, borderColor: color.ink },
   chipText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 13 },
   chipTextOn: { color: color.onInk },
+
+  locationDisplay: { justifyContent: 'center', minHeight: 44 },
+  locationText: { ...t.body, color: color.ink },
+  locationPlaceholder: { ...t.body, color: color.faint },
+  locationActions: { flexDirection: 'row', gap: space.sm, marginTop: 6 },
+  locationBtn: {
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 7,
+  },
+  locationBtnText: { ...t.small, color: color.deep, fontWeight: '600' },
 
   saveBar: { borderTopWidth: 1, borderTopColor: color.haze, padding: space.lg, gap: space.sm },
   saveBtn: {

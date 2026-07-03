@@ -768,9 +768,9 @@ export default function PublicPassportScreen() {
     if (notFound) {
       return (
         <View style={styles.center}>
-          <Text style={styles.stateIcon}>🔍</Text>
-          <Text style={styles.stateTitle}>No one here</Text>
-          <Text style={styles.stateSub}>@{username} doesn't exist.</Text>
+          <Text style={styles.stateIcon}>👤</Text>
+          <Text style={styles.stateTitle}>Profile not available</Text>
+          <Text style={styles.stateSub}>This profile is no longer available.</Text>
         </View>
       );
     }
