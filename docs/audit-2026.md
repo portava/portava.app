@@ -87,20 +87,25 @@ Legend: ✅ Applied | ⏳ Pending | ⚠️ File gap
 | 0084 | `0084_reviews_place_entity.sql` | `place` value in `review_entity_type` | Place reviews | ✅ |
 | `20260702` | `20260702_crew_location_flags_reseed.sql` | Re-seeds crew location feature flags (bug fix) | Crew location | ✅ |
 
-### Pending (not yet applied to production)
+### Applied 2026-07-03 (this audit batch)
+
+| # | File | Schema added | Status |
+|---|------|-------------|--------|
+| 0077 | `0077_trips_expansion.sql` | 14 new `trips` columns + `draft`/`archived` enum values | ✅ Applied 2026-07-03 |
+| 0078 | `0078_trip_members_expansion.sql` | `co_host`/`viewer` roles, `status`/`permissions`/`joined_at` on `trip_members` | ✅ Applied 2026-07-03 |
+| 0079 | `0079_trip_sub_tables.sql` | 11 new trip sub-resource tables | ✅ Applied 2026-07-03 |
+| 0080 | `0080_events_extension.sql` | 10 new events tables + 3 columns on `events` | ✅ Applied 2026-07-03 |
+| 0085 | `0085_enable_passport_flags.sql` | Sets `passport_stamps_enabled = true` etc. | ✅ Applied 2026-07-03 |
+| 0086 | `0086_discovery_places_osm_id.sql` | `discovery_places.osm_id`, `DEFAULT ''` on `city` | ✅ Applied 2026-07-03 |
+| 0088 | `0088_wishlist_places.sql` | `wishlist_places` table | ✅ Applied 2026-07-03 |
+| 0089 | `0089_decrement_discovery_place_saved_count.sql` | `decrement_discovery_place_saved_count()` RPC | ✅ Applied 2026-07-03 |
+
+### Still pending (not yet applied to production)
 
 | # | File | Schema added | Dependent live code | Required action |
 |---|------|-------------|---------------------|-----------------|
-| 0077 | `0077_trips_expansion.sql` | 14 new `trips` columns + `draft`/`archived` enum values | `trips-expansion.ts` reads/writes `trip_type`, `destination_lat/lng`, `trip_notes`, privacy columns | **Apply** — trips-expansion route will silently return nulls for these columns until applied; `draft`/`archived` status filters in GET /trips/past and trip lifecycle won't work |
-| 0078 | `0078_trip_members_expansion.sql` | `co_host`/`viewer` roles, `status`/`permissions`/`joined_at` on `trip_members` | `trips-expansion.ts` (now fixed to `.neq("role","invited")`) | **Apply** — after applying, the fixed `.neq("role","invited")` still works; restores co_host/viewer role support |
-| 0079 | `0079_trip_sub_tables.sql` | 11 new trip sub-resource tables: `trip_budget`, `trip_documents`, `trip_notes`, `trip_join_requests`, `trip_invite_links`, `trip_saved_places`, `trip_notes`, `trip_checklists`, `trip_activity_log`, `trip_reminders`, `trip_destinations` | All trips-expansion budget/docs/notes/checklist/join-request/invite-link routes | **BLOCKER** — every one of these routes returns "relation does not exist" in production until 0079 is applied |
-| 0080 | `0080_events_extension.sql` | 10 new events tables: `event_saves`, `event_invites`, `event_cohosts`, `event_posts`, `event_media`, `event_reports`, `event_activity_log`, `event_share_links`, `event_reminders`, `event_drafts` + 3 columns on `events` | `events.ts` invites/cohosts/posts/media/reports/drafts/share-links/reminders routes | **BLOCKER** — all these events sub-routes return "relation does not exist" until 0080 is applied |
 | 0081 | `0081_stamp_system_v2.sql` | `stamp_definitions`, `user_stamps`, `stamp_award_events`, `stamp_progress`, `stamp_collections`, `stamp_campaigns` | `stamps.ts` (gated by `stamp_system_v2_enabled` flag — returns 503 cleanly if not enabled) | **Apply when ready** — guarded cleanly; not a crash blocker |
 | 0082 | `0082_stamp_definitions_v2.sql` | Activates stamp definitions | Same as 0081 | **Apply with 0081** |
-| 0085 | `0085_enable_passport_flags.sql` | Sets `passport_stamps_enabled = true` etc. | Passport stamps/memories UI | **Apply** — without this, passport stamps and memories are globally disabled even though routes exist |
-| 0086 | `0086_discovery_places_osm_id.sql` | `discovery_places.osm_id`, `DEFAULT ''` on `city` | `wishlist.ts` OSM save tracking | **BLOCKER** — `wishlist.ts` calls `trackOsmPlaceSave` which upserts on `osm_id` conflict; this upsert will fail until 0086 is applied |
-| 0088 | `0088_wishlist_places.sql` | `wishlist_places` table | `wishlist.ts` all routes | **BLOCKER** — every wishlist route returns "relation does not exist" until 0088 is applied |
-| 0089 | `0089_decrement_discovery_place_saved_count.sql` | `decrement_discovery_place_saved_count()` RPC | `wishlist.ts` unsave (uses `svc.rpc(...)`) | **BLOCKER** — unwishlist will fail until 0089 is applied |
 
 ### Migration gaps (file numbers with no corresponding .sql in src/migrations)
 
