@@ -138,8 +138,13 @@ function makeCacheFakeClient(opts: {
     let _data: Record<string, unknown> | null = null;
     let _upsertOpts: Record<string, unknown>  = {};
 
+    let _selectAfterWrite = false;
     const obj: any = {
-      select()                      { _op = "select"; return obj; },
+      select() {
+        if (_op === "upsert" || _op === "update") { _selectAfterWrite = true; }
+        else { _op = "select"; }
+        return obj;
+      },
       upsert(d: Record<string, unknown>, o?: Record<string, unknown>) {
         _op = "upsert"; _data = d; _upsertOpts = o ?? {}; return obj;
       },
@@ -160,10 +165,12 @@ function makeCacheFakeClient(opts: {
           const idx = rows.findIndex((r) => conflict.every((c) => r[c] === _data![c]));
           if (idx >= 0) {
             if (!_upsertOpts["ignoreDuplicates"]) Object.assign(rows[idx], _data);
+            return resolve({ data: _selectAfterWrite ? [] : null, error: null });
           } else {
-            rows.push({ id: DP_UUID, ..._data });
+            const newRow = { id: DP_UUID, ..._data };
+            rows.push(newRow);
+            return resolve({ data: _selectAfterWrite ? [newRow] : null, error: null });
           }
-          return resolve({ data: null, error: null });
         }
         if (_op === "update" && _data) {
           rows.filter((r) => filters.every((f) => f(r))).forEach((r) => Object.assign(r, _data));

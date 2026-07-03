@@ -69,31 +69,30 @@ export async function trackOsmPlaceSave(
 
     if (!dpRow) return;
 
-    // Step 3: Check if this user already has a save record for this place.
-    // We do a SELECT before inserting so we only increment once per unique user.
-    const { data: existingSave } = await svc
+    // Step 3 (atomic): Record the per-user save.  The INSERT ... ON CONFLICT
+    // DO NOTHING is evaluated atomically by PostgreSQL — exactly one of any
+    // concurrent requests for the same (user_id, place_id) pair will see a
+    // non-empty return; all others receive an empty array.  We only increment
+    // saved_count when our INSERT actually created a new row, eliminating the
+    // SELECT-then-INSERT race that could double-count concurrent saves.
+    const { data: newSaveRows } = await svc
       .from("discovery_place_saves")
-      .select("place_id")
-      .eq("user_id", userId)
-      .eq("place_id", (dpRow as any).id)
-      .maybeSingle();
+      .upsert(
+        { user_id: userId, place_id: (dpRow as any).id },
+        { onConflict: "user_id,place_id", ignoreDuplicates: true },
+      )
+      .select("place_id");
 
-    if (!existingSave) {
-      // New save: record the user and increment the count.
-      await svc
-        .from("discovery_place_saves")
-        .upsert(
-          { user_id: userId, place_id: (dpRow as any).id },
-          { onConflict: "user_id,place_id", ignoreDuplicates: true },
-        );
-      const currentCount = (dpRow as any).saved_count ?? 0;
+    if (newSaveRows && newSaveRows.length > 0) {
+      // A brand-new row was inserted — safe to increment.
+      const newCount = ((dpRow as any).saved_count ?? 0) + 1;
       await svc
         .from("discovery_places")
-        .update({ saved_count: currentCount + 1 })
+        .update({ saved_count: newCount })
         .eq("id", (dpRow as any).id);
       // Patch the in-memory discovery cache so the popular sort reflects the
-      // new count on the very next request instead of waiting for the 2-hour TTL.
-      patchOsmSavedCount(osmId, currentCount + 1);
+      // new count on the very next request without waiting for the 2-hour TTL.
+      patchOsmSavedCount(osmId, newCount);
     }
   } catch {
     // Non-blocking — wishlist save already committed

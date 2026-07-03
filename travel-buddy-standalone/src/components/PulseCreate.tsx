@@ -370,12 +370,21 @@ export function UnifiedPostComposer({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* Backdrop — absolutely positioned so it doesn't compete with the
+          sheet in the flex layout. Tap dismisses the sheet. */}
+      <Pressable
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17,17,15,0.45)' }]}
+        onPress={onClose}
+      />
+
+      {/* KAV anchored to the bottom of the screen. Positioning it absolutely
+          gives the inner sheet a defined height so the ScrollView (flex: 1)
+          can measure itself — without this the type grid collapses to 0 on
+          Android when the keyboard is not open. */}
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={uc.kav}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <Pressable style={uc.backdrop} onPress={onClose} />
-
         <View style={[uc.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           {/* drag handle + header */}
           <View style={uc.grab} />
@@ -708,11 +717,18 @@ const fs = StyleSheet.create({
 
 const uc = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(17,17,15,0.45)' },
+  kav: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: '88%',
+  },
   sheet: {
     backgroundColor: color.paper,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '88%',
+    flex: 1,
     ...shadow.float,
   },
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze, marginTop: 10, marginBottom: 4 },

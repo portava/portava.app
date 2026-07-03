@@ -365,8 +365,15 @@ function makeOsmFakeClient(opts: {
     let _data: Row | null = null;
     let _upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
+    let _selectAfterWrite = false;
     const obj: any = {
-      select()  { _op = "select"; return obj; },
+      select()  {
+        // When chained after upsert/update, select() requests the row back
+        // rather than switching the operation to a plain SELECT.
+        if (_op === "upsert" || _op === "update") { _selectAfterWrite = true; }
+        else { _op = "select"; }
+        return obj;
+      },
       upsert(d: Row, o?: any) { _op = "upsert"; _data = d; _upsertOpts = o ?? {}; return obj; },
       update(d: Row)          { _op = "update"; _data = d; return obj; },
       delete()                { _op = "delete"; return obj; },
@@ -388,10 +395,14 @@ function makeOsmFakeClient(opts: {
             if (!_upsertOpts.ignoreDuplicates) {
               tableRows[idx] = { ...tableRows[idx], ..._data };
             }
+            // Conflict was hit — return empty so caller knows no new row was inserted.
+            return resolve({ data: _selectAfterWrite ? [] : null, error: null });
           } else {
-            tableRows.push({ id: DP_UUID, ..._data });
+            const newRow = { id: DP_UUID, ..._data };
+            tableRows.push(newRow);
+            // New row inserted — return it when .select() was chained.
+            return resolve({ data: _selectAfterWrite ? [newRow] : null, error: null });
           }
-          return resolve({ data: null, error: null });
         }
         if (_op === "update" && _data) {
           tableRows
