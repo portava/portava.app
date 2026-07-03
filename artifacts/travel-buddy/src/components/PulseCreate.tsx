@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, handleSubmitResult } from './PulseCreate.machine';
+import { createComposerDismissHandlers, handleSubmitResult, handleUploadResult } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 
 /* ── Types ── */
@@ -296,18 +296,15 @@ export function UnifiedPostComposer({
     let mediaType: string | undefined = undefined;
     if (media) {
       const up = await uploadMedia(media);
-      if (!up.ok || !up.url) {
-        if (up.errorKind === 'unauthenticated') {
-          await signOut();
-          router.replace('/(auth)/sign-in');
-          onClose();
-          return;
-        }
-        setError(up.message ?? 'Media upload failed.');
-        return;
-      }
-      mediaUrl = up.url;
-      mediaType = up.mediaType ?? undefined;
+      const outcome = await handleUploadResult(up, {
+        onClose,
+        signOut,
+        navigate: router.replace as (path: string) => void,
+        setError,
+      });
+      if (!outcome.continue) return;
+      mediaUrl = outcome.url;
+      mediaType = outcome.mediaType ?? undefined;
     }
 
     const cat = TYPE_CATEGORY[selectedType];

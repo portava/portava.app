@@ -125,3 +125,67 @@ export async function handleSubmitResult(
     'Could not post.';
   handlers.setError(msg);
 }
+
+// ── Upload-result machine ──────────────────────────────────────────────────────
+
+/** Shape returned by uploadMedia() in PulseCreate.tsx. */
+export interface MediaUploadResult {
+  ok: boolean;
+  url: string | null;
+  mediaType: string | null;
+  errorKind?: string;
+  message?: string;
+}
+
+/** Side-effect handlers injected so handleUploadResult stays testable. */
+export interface UploadResultHandlers {
+  /** Closes the composer sheet. Called only on unauthenticated upload failure. */
+  onClose: () => void;
+  /** Clears the session when the server returns unauthenticated. */
+  signOut: () => Promise<void>;
+  /** Redirects to sign-in after signOut(). */
+  navigate: (path: string) => void;
+  /** Surfaces an inline error message when upload fails (non-unauthenticated). */
+  setError: (msg: string) => void;
+}
+
+/** Discriminated union returned by handleUploadResult. */
+export type UploadOutcome =
+  | { continue: false }
+  | { continue: true; url: string; mediaType: string | null };
+
+/**
+ * Handles the result of an uploadMedia() call inside handleSubmit().
+ *
+ * Three branches mirror the inline block in PulseCreate.tsx:
+ *
+ *   1. ok && url present  → { continue: true, url, mediaType } — caller proceeds
+ *   2. unauthenticated     → signOut() + navigate('/sign-in') + onClose()
+ *                            → { continue: false }  — composer closes
+ *   3. other failure       → setError(msg)
+ *                            → { continue: false }  — composer stays open
+ *
+ * Usage in PulseCreate.tsx:
+ *   const outcome = await handleUploadResult(up, { onClose, signOut, navigate, setError });
+ *   if (!outcome.continue) return;
+ *   mediaUrl = outcome.url;
+ *   mediaType = outcome.mediaType ?? undefined;
+ */
+export async function handleUploadResult(
+  result: MediaUploadResult,
+  handlers: UploadResultHandlers,
+): Promise<UploadOutcome> {
+  if (result.ok && result.url) {
+    return { continue: true, url: result.url, mediaType: result.mediaType };
+  }
+
+  if (result.errorKind === 'unauthenticated') {
+    await handlers.signOut();
+    handlers.navigate('/(auth)/sign-in');
+    handlers.onClose();
+    return { continue: false };
+  }
+
+  handlers.setError(result.message ?? 'Media upload failed.');
+  return { continue: false };
+}

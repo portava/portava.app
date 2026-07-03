@@ -27,7 +27,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleSubmitResult } from '../PulseCreate.machine.ts';
+import { handleSubmitResult, handleUploadResult } from '../PulseCreate.machine.ts';
 
 // ── Success path ──────────────────────────────────────────────────────────────
 
@@ -334,5 +334,147 @@ describe('submit error — unauthenticated (session expired)', () => {
       },
     );
     assert.equal(errorCalls, 0, 'setError must not be called on unauthenticated error');
+  });
+});
+
+// ── Upload-result machine — handleUploadResult ────────────────────────────────
+//
+// The upload-result branch in handleSubmit() was previously an inline block.
+// It is now extracted into handleUploadResult() so this contract can be verified
+// at the machine layer without mounting the component.
+//
+// Three branches:
+//   1. ok: true + url   → { continue: true, url, mediaType }  — caller proceeds
+//   2. unauthenticated  → signOut() + navigate() + onClose()  — composer closes
+//   3. other failure    → setError(msg)                       — composer stays open
+
+describe('upload-result — upload succeeds (ok: true, url present)', () => {
+  it('returns continue: true with the uploaded url and mediaType', async () => {
+    const outcome = await handleUploadResult(
+      { ok: true, url: 'https://cdn.example.com/photo.jpg', mediaType: 'image/jpeg' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(outcome.continue, true);
+    if (outcome.continue) {
+      assert.equal(outcome.url, 'https://cdn.example.com/photo.jpg');
+      assert.equal(outcome.mediaType, 'image/jpeg');
+    }
+  });
+
+  it('does NOT call onClose when upload succeeds', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: true, url: 'https://cdn.example.com/photo.jpg', mediaType: 'image/jpeg' },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 0, 'onClose must NOT be called when upload succeeds');
+  });
+
+  it('does NOT call setError when upload succeeds', async () => {
+    let errorCalls = 0;
+    await handleUploadResult(
+      { ok: true, url: 'https://cdn.example.com/photo.jpg', mediaType: 'image/jpeg' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => { errorCalls++; } },
+    );
+    assert.equal(errorCalls, 0, 'setError must NOT be called when upload succeeds');
+  });
+});
+
+describe('upload-result — upload fails with a non-auth error', () => {
+  it('returns continue: false on a non-auth upload failure', async () => {
+    const outcome = await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Server rejected the file.' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(outcome.continue, false, 'outcome.continue must be false so caller stops');
+  });
+
+  it('does NOT call onClose — composer stays open on non-auth upload failure', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Server rejected the file.' },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 0, 'onClose must NOT be called when upload fails non-auth');
+  });
+
+  it('calls setError with the upload error message', async () => {
+    let errorMsg = '';
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Server rejected the file.' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: (msg) => { errorMsg = msg; } },
+    );
+    assert.equal(errorMsg, 'Server rejected the file.');
+  });
+
+  it('falls back to generic message when upload fails with no message', async () => {
+    let errorMsg = '';
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: (msg) => { errorMsg = msg; } },
+    );
+    assert.equal(errorMsg, 'Media upload failed.');
+  });
+
+  it('does NOT call onClose for read_failed error', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'read_failed', message: 'Could not read file.' },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 0, 'onClose must NOT be called on read_failed');
+  });
+
+  it('does NOT call onClose for config_error', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'Backend not configured' },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 0, 'onClose must NOT be called on config_error');
+  });
+});
+
+describe('upload-result — upload fails with unauthenticated error', () => {
+  it('calls signOut, then navigate, then onClose in order', async () => {
+    const order: string[] = [];
+    let destination = '';
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+      {
+        onClose: () => { order.push('close'); },
+        signOut: async () => { order.push('signOut'); },
+        navigate: (path) => { order.push('navigate'); destination = path; },
+        setError: () => {},
+      },
+    );
+    assert.deepEqual(order, ['signOut', 'navigate', 'close'], 'signOut → navigate → onClose must fire in order');
+    assert.equal(destination, '/(auth)/sign-in');
+  });
+
+  it('calls onClose on unauthenticated upload failure', async () => {
+    let closeCalls = 0;
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+      { onClose: () => { closeCalls++; }, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(closeCalls, 1, 'onClose must be called exactly once on unauthenticated failure');
+  });
+
+  it('returns continue: false on unauthenticated upload failure', async () => {
+    const outcome = await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => {} },
+    );
+    assert.equal(outcome.continue, false);
+  });
+
+  it('does NOT call setError on unauthenticated upload failure', async () => {
+    let errorCalls = 0;
+    await handleUploadResult(
+      { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated' },
+      { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => { errorCalls++; } },
+    );
+    assert.equal(errorCalls, 0, 'setError must NOT be called on unauthenticated failure');
   });
 });
