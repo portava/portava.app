@@ -1206,9 +1206,58 @@ The following validations were run after the code fix (copying 0089 to src/migra
 
 ---
 
+---
+
+## 16. Post-migration Smoke Test (§10) Results — Task #1356
+
+Live smoke test run against real Supabase project (authenticated HTTP requests). Each check creates/reads/deletes data as a real user.
+
+| Route | Expected | Result |
+|-------|----------|--------|
+| `POST /api/trips` (setup) | 201 | ✅ 201 |
+| `GET /api/wishlist` | 200 | ✅ 200 |
+| `POST /api/wishlist` (add) | 201 | ✅ 201 |
+| `DELETE /api/wishlist/:placeId` | 200 | ✅ 200 |
+| `GET /api/trips/:id/destinations` | 200 | ✅ 200 |
+| `POST /api/trips/:id/destinations` | 201 | ✅ 201 |
+| `GET /api/trips/:id/notes` | 200 | ✅ 200 |
+| `POST /api/trips/:id/notes` | 201 | ✅ 201 |
+| `GET /api/trips/:id/checklists` | 200 | ✅ 200 |
+| `POST /api/trips/:id/checklists` | 201 | ✅ 201 |
+| `POST /api/trips/:id/checklists/:id/items` | 201 | ✅ 201 |
+| `POST /api/events/:id/cohosts` | 201 | ✅ 201 |
+| `GET /api/events/:id/cohosts` | 200 | ✅ 200 |
+| `GET /api/events/:id/media` | 200 | ✅ 200 |
+| `POST /api/events/:id/media` | 201 | ✅ 201 |
+
+**15/15 passed.** No `relation not found` or 500 errors.
+
+### Fixes made during smoke testing
+
+| Issue | Fix |
+|-------|-----|
+| `GET/POST /api/trips/:id/destinations` returned 404 — routes were missing | Added `GET` + `POST /trips/:tripId/destinations` handlers in `trips-expansion.ts` |
+| `GET /api/events/:id/cohosts` returned 404 — route was missing | Added `GET /events/:id/cohosts` handler in `events.ts` (staff-only, returns `{ cohosts }`) |
+| `POST /api/trips/:id/checklists/:id/items` returned 400 "Required" | Smoke test was sending `text` field; schema expects `label` — corrected in `smoke-live.ts` |
+| Duplicate `DELETE /trips/:tripId` hard-delete route shadowed soft-archive | Removed duplicate in `trips.ts` (47/47 unit tests now pass) |
+
+### Unit tests
+
+| Suite | Tests | Pass |
+|-------|-------|------|
+| `tripsExpansion.test.ts` | 50 | 50 ✅ |
+| `wishlist.test.ts` | 26 | 26 ✅ |
+| `tripPlan.test.ts` | 36 | 36 ✅ |
+
+---
+
 ## 15. Files Changed
 
 | File | Change | Reason |
 |------|--------|--------|
 | `artifacts/api-server/src/migrations/0089_decrement_discovery_place_saved_count.sql` | **Created** (copied from `artifacts/api-server/migrations/`) | File was missing from canonical source directory; wishlist.ts calls this RPC function |
 | `docs/production-migration-runbook.md` | **Created** | This document |
+| `artifacts/api-server/src/routes/trips-expansion.ts` | **Added** `GET/POST /trips/:tripId/destinations` routes | Routes were missing; `trip_destinations` table created by 0079 but never exposed |
+| `artifacts/api-server/src/routes/trips.ts` | **Removed** duplicate `DELETE /trips/:tripId` hard-delete route | Shadowed the soft-archive route in trips-expansion.ts |
+| `artifacts/api-server/src/test/tripsExpansion.test.ts` | **Added** 3 destinations unit tests (50 total) | Coverage for new destinations CRUD routes |
+| `artifacts/api-server/src/test/smoke-live.ts` | **Created** | Live authenticated smoke test per runbook §10 criteria |

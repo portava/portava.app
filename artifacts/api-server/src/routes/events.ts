@@ -4234,6 +4234,37 @@ router.post("/events/:id/invites/:inviteId/decline", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── GET /api/events/:id/cohosts ───────────────────────────────────────────────
+
+router.get("/events/:id/cohosts", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("host_id, state").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Visible to host, co-hosts, and moderators only
+  const role = await getEventRole(sc, id, user.id);
+  const isStaff = role === "host" || role === "co_host" || role === "moderator";
+  if (!isStaff) { sendError(res, "forbidden", "Only event staff can view co-hosts"); return; }
+
+  const { data: cohosts, error } = await sc
+    .from("event_cohosts")
+    .select("user_id, permissions, added_by, added_at")
+    .eq("event_id", id)
+    .order("added_at", { ascending: true });
+
+  if (error) { req.log.error({ err: error }, "get event cohosts"); sendError(res, "db_error", error.message); return; }
+  res.json({ cohosts: cohosts ?? [] });
+});
+
 // ── POST /api/events/:id/cohosts ──────────────────────────────────────────────
 
 router.post("/events/:id/cohosts", async (req, res) => {

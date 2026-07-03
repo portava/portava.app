@@ -995,6 +995,66 @@ describe("trips-expansion routes", () => {
     });
   });
 
+  // ── Destinations ───────────────────────────────────────────────────────────
+  describe("destinations routes", () => {
+    it("POST adds a destination and GET lists it", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
+        ]},
+        trip_destinations: { rows: [] },
+        trip_activity_log: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const createR = await req(port, "POST", `/trips/${TRIP_ID}/destinations`, {
+        token: "owner-token",
+        body: { city: "London", country: "GB", lat: 51.47, lng: -0.46, position: 0 },
+      });
+      assert.equal(createR.status, 201);
+      assert.equal(createR.body.city, "London");
+
+      const listR = await req(port, "GET", `/trips/${TRIP_ID}/destinations`, { token: "owner-token" });
+      assert.equal(listR.status, 200);
+      assert.equal(listR.body.destinations.length, 1);
+    });
+
+    it("POST returns 400 when city is missing", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
+        ]},
+        trip_destinations: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "POST", `/trips/${TRIP_ID}/destinations`, {
+        token: "owner-token",
+        body: { country: "GB" },
+      });
+      assert.equal(r.status, 400);
+    });
+
+    it("non-member cannot list destinations", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/destinations`, { token: "other-token" });
+      assert.equal(r.status, 403);
+    });
+  });
+
   // ── Checklists ─────────────────────────────────────────────────────────────
   describe("checklist routes", () => {
     it("POST creates a checklist, POST adds item, PATCH toggles item", async () => {

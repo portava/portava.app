@@ -1186,6 +1186,101 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
 });
 
 // ===========================================================================
+// Destinations routes  (trip_destinations table — created by migration 0079)
+// ===========================================================================
+
+// GET /api/trips/:tripId/destinations  — list all destinations for trip members
+router.get("/trips/:tripId/destinations", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!isOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
+  }
+
+  const { data, error } = await sc
+    .from("trip_destinations")
+    .select("id, city, country, lat, lng, place_id, arrival_date, departure_date, position, created_at")
+    .eq("trip_id", tripId)
+    .order("position", { ascending: true });
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ destinations: data ?? [] });
+});
+
+// POST /api/trips/:tripId/destinations  — add a destination (owner + co_host only)
+const DestinationSchema = z.object({
+  city:          z.string().min(1).max(200),
+  country:       z.string().max(100).nullable().optional(),
+  lat:           z.number().nullable().optional(),
+  lng:           z.number().nullable().optional(),
+  placeId:       z.string().max(300).nullable().optional(),
+  arrivalDate:   z.string().nullable().optional(),
+  departureDate: z.string().nullable().optional(),
+  position:      z.number().int().default(0),
+});
+
+router.post("/trips/:tripId/destinations", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const parsed = DestinationSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const b = parsed.data;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!isOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership || !["owner", "co_host"].includes(membership.role)) {
+      sendError(res, "forbidden", "Only the trip owner or co-host can add destinations");
+      return;
+    }
+  }
+
+  const { data, error } = await sc
+    .from("trip_destinations")
+    .insert({
+      trip_id:        tripId,
+      city:           b.city,
+      country:        b.country ?? null,
+      lat:            b.lat ?? null,
+      lng:            b.lng ?? null,
+      place_id:       b.placeId ?? null,
+      arrival_date:   b.arrivalDate ?? null,
+      departure_date: b.departureDate ?? null,
+      position:       b.position,
+    })
+    .select("id, city, country, lat, lng, place_id, arrival_date, departure_date, position, created_at")
+    .single();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  await logActivity(sc, tripId, user.id, "destination_added", { city: b.city });
+  res.status(201).json(data);
+});
+
+// ===========================================================================
 // POST /api/trips/:tripId/destinations/reorder
 // POST /api/trips/:tripId/items/reorder  (alias — same handler)
 // ===========================================================================
