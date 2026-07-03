@@ -24,3 +24,9 @@ id = "I6Aiqk5llOpTmU8vFe4j_"
 uri = "file://travel-buddy-snapshot.tar.gz"
 type = "unspecified"
 title = "travel-buddy-snapshot.tar.gz"
+
+[[outputs]]
+id = "ao2s-oELXtoPGMUl9nMrx"
+uri = "file://docs/beta-closeout-report.md"
+type = "text"
+title = "Core Beta Closeout Report + SQL/Backend Inventory"
