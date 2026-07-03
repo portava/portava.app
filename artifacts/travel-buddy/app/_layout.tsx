@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, type PropsWithChildren } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 // Register the geofence background task at module root — must be imported
@@ -10,7 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform } from 'react-native';
 import { PlanPickerControllerProvider } from '../src/components/PlanPickerController';
 import { AvailabilityProvider } from '../src/context/AvailabilityStore';
-import { SessionProvider } from '../src/context/SessionContext';
+import { SessionProvider, useSession } from '../src/context/SessionContext';
 import { LocationProvider } from '../src/context/LocationContext';
 import { LanguagePreferenceProvider } from '../src/context/LanguagePreferenceContext';
 import { usePushToken } from '../src/hooks/usePushToken';
@@ -25,6 +25,25 @@ import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
+
+/**
+ * Session-aware root crash boundary. Sits inside SessionProvider so it can
+ * attach the current userId to crash reports without exposing any PII.
+ */
+function RootCrashHandler({ children }: PropsWithChildren) {
+  const { userId } = useSession();
+  const handleError = useCallback(
+    (error: Error, stack: string) => {
+      reportCrash(error, stack, { userId: userId ?? undefined });
+    },
+    [userId],
+  );
+  return (
+    <ErrorBoundary onError={handleError}>
+      {children}
+    </ErrorBoundary>
+  );
+}
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
@@ -67,7 +86,7 @@ export default function RootLayout() {
               <PlanPickerControllerProvider>
                 <NotificationToastProvider>
                 <StampEarnedToastProvider>
-                  <ErrorBoundary onError={(error, stack) => reportCrash(error, stack)}>
+                  <RootCrashHandler>
                     <PushSetup />
                     <CompassFrontloadSetup />
                     <StatusBar style="dark" />
@@ -84,7 +103,7 @@ export default function RootLayout() {
                       <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                       <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                     </Stack>
-                  </ErrorBoundary>
+                  </RootCrashHandler>
                 </StampEarnedToastProvider>
                 </NotificationToastProvider>
               </PlanPickerControllerProvider>

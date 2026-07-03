@@ -1,14 +1,14 @@
 /**
  * crashReporter — structured crash capture for ErrorBoundary onError callbacks.
  *
- * This module is the single place to wire in a real crash-reporting service
- * (e.g. Sentry). Until that service is configured, crashes are written to the
- * structured console so they appear in EAS build logs and device log streams.
+ * Crash reports are sent to the API server's POST /api/crash-report endpoint,
+ * where they are written to the structured server log (visible in EAS device
+ * logs and any log aggregator connected to the API server).
  *
- * HOW TO ADD SENTRY:
+ * HOW TO ADD SENTRY (optional enhancement):
  *   1. `pnpm --filter @workspace/travel-buddy add @sentry/react-native`
- *   2. Initialize Sentry once in app/_layout.tsx.
- *   3. Replace the TODO block below with:
+ *   2. Initialize Sentry once in app/_layout.tsx with EXPO_PUBLIC_SENTRY_DSN.
+ *   3. Add alongside the fetch call below:
  *        import * as Sentry from '@sentry/react-native';
  *        Sentry.withScope(scope => {
  *          if (context.userId) scope.setUser({ id: context.userId });
@@ -32,10 +32,9 @@ export interface CrashReport {
 /**
  * Report a React render error captured by an ErrorBoundary.
  *
- * - In development: logs a detailed object to console.error.
- * - In production: writes a JSON-serialised entry to console.error so it
- *   appears in EAS / device log streams, then hits the TODO hook for a real
- *   reporting service.
+ * - In development: logs a detailed object to console.error only.
+ * - In production: POSTs to POST /api/crash-report so the error appears in
+ *   the API server log, then also writes to console.error for device logs.
  *
  * PRIVACY: only userId (not email, name, or any other PII) is included.
  */
@@ -57,9 +56,19 @@ export function reportCrash(
     return;
   }
 
-  // Production: structured log visible in EAS build logs.
+  // Production: write to device log stream.
   console.error('[CrashReporter]', JSON.stringify(report));
 
-  // TODO: replace the console.error above with a real service call.
-  // See the HOW TO ADD SENTRY section at the top of this file.
+  // Production: also POST to the API server so crashes appear in server logs
+  // and any log aggregator / alerting pipeline connected to the API.
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  if (apiBase) {
+    fetch(`${apiBase}/api/crash-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    }).catch(() => {
+      // Fire-and-forget — never let the reporter itself crash.
+    });
+  }
 }
