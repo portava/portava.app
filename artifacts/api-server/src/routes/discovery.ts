@@ -19,7 +19,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { getServiceClient, isServiceClientReady } from "../lib/supabase";
+import { getServiceClient } from "../lib/supabase";
 import { sendError, requireUser } from "../lib/http";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
@@ -599,10 +599,11 @@ router.get("/discovery", async (req, res) => {
   let callerUserId: string | null = null;
 
   const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith("Bearer ") && isServiceClientReady) {
+  const _authSc = getServiceClient();
+  if (authHeader?.startsWith("Bearer ") && _authSc) {
     try {
       const token = authHeader.slice(7).trim();
-      const sc = getServiceClient()!;
+      const sc = _authSc;
       const { data: authData } = await sc.auth.getUser(token);
       if (authData?.user) {
         callerUserId = authData.user.id;
@@ -839,7 +840,7 @@ router.get("/discovery", async (req, res) => {
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
     // instead of the rule-based scoreWithContext to rank OSM places.
-    if (category === "for_you" && callerUserId && isServiceClientReady) {
+    if (category === "for_you" && callerUserId) {
       const compassSc = getServiceClient();
       if (compassSc) {
         try {
@@ -1092,7 +1093,7 @@ router.get("/discovery/community", async (req, res) => {
   // Optional auth — needed only for open_to_me to resolve caller DOB
   let commCallerAge: number | null = null;
   let commCallerDobMissing = false;
-  if (ageFilterComm === "open_to_me" && isServiceClientReady) {
+  if (ageFilterComm === "open_to_me") {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const sc = getServiceClient();
@@ -1235,8 +1236,8 @@ router.get("/discovery/community", async (req, res) => {
     const savedPlaceIds = new Set<string>();
     try {
       const authHeaderComm = req.headers.authorization;
-      if (authHeaderComm?.startsWith("Bearer ") && isServiceClientReady && placeIds.length > 0) {
-        const commSc = getServiceClient()!;
+      const commSc = getServiceClient();
+      if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
         const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
         if (authDataComm?.user) {
           const { data: userCols } = await commSc
