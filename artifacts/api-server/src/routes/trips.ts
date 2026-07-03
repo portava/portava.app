@@ -1435,6 +1435,9 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
+  const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
+  revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
+
   res.status(200).json({ status: "removed", tripId, userId });
 });
 
