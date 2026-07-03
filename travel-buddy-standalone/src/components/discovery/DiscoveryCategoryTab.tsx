@@ -17,7 +17,11 @@ import { DiscoveryMapView } from './DiscoveryMapView';
 import { handleNearestChipPress } from './filterStripNearest';
 import { handleSortChipPress } from './filterStripSort';
 export { handleNearestChipPress };
-import { resolveNearestFetchCoords, shouldBootstrapNearestLoad } from './discoveryCategoryTabNearest';
+import {
+  resolveNearestFetchCoords,
+  shouldBootstrapNearestLoad,
+  shouldRefreshNearestOnMovement,
+} from './discoveryCategoryTabNearest';
 
 // ── Sort labels ───────────────────────────────────────────────────────────────
 
@@ -267,26 +271,6 @@ const fs = StyleSheet.create({
   },
 });
 
-// ── Location distance helper ──────────────────────────────────────────────────
-
-/** Approximate great-circle distance in km between two lat/lng pairs. */
-function approxDistanceKm(
-  lat1: number, lng1: number,
-  lat2: number, lng2: number,
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-const NEAREST_REFRESH_THRESHOLD_KM = 0.1;
-
 // ── Popular destinations fallback ─────────────────────────────────────────────
 
 const POPULAR_CITIES = [
@@ -501,8 +485,7 @@ export function DiscoveryCategoryTab({
     const prev = lastFetchedCoords.current;
     if (!prev) return; // guarded above by shouldBootstrapNearestLoad
 
-    const distKm = approxDistanceKm(prev.lat, prev.lng, userLat, userLng);
-    if (distKm < NEAREST_REFRESH_THRESHOLD_KM) return;
+    if (!shouldRefreshNearestOnMovement(prev, userLat, userLng)) return;
 
     // Movement exceeds 0.1 km — auto-refresh and show a brief nudge.
     if (nudgeTimer.current) clearTimeout(nudgeTimer.current);

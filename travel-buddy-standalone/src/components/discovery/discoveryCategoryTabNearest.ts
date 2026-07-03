@@ -35,6 +35,51 @@ export function shouldBootstrapNearestLoad(opts: {
   return lastFetchedCoords === null;
 }
 
+// ── Movement re-sort helpers ─────────────────────────────────────────────────
+
+/** Approximate great-circle distance in km between two lat/lng pairs (Haversine). */
+export function approxDistanceKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Minimum movement (km) needed to trigger a Nearest re-sort.
+ * The comparison is strict (>) so movement at exactly the threshold is treated
+ * as GPS jitter and does not trigger a re-fetch.
+ */
+export const NEAREST_REFRESH_THRESHOLD_KM = 0.1;
+
+/**
+ * Returns true when the user has moved far enough from the last-fetched position
+ * to warrant a Nearest re-sort.
+ *
+ * The comparison is strictly greater-than: movement at or below
+ * NEAREST_REFRESH_THRESHOLD_KM is treated as GPS jitter and returns false.
+ *
+ * Caller contract: `prev` must be non-null (i.e. a previous Nearest fetch has
+ * already been recorded). When prev is null — the "first coords ever" case —
+ * use `shouldBootstrapNearestLoad` instead; that function owns the cold-start
+ * case and is already covered by its own tests.
+ */
+export function shouldRefreshNearestOnMovement(
+  prev: { lat: number; lng: number },
+  userLat: number,
+  userLng: number,
+): boolean {
+  return approxDistanceKm(prev.lat, prev.lng, userLat, userLng) > NEAREST_REFRESH_THRESHOLD_KM;
+}
+
 // ── Coord resolver ────────────────────────────────────────────────────────────
 
 /**

@@ -25,8 +25,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  shouldBootstrapNearestLoad,
+  approxDistanceKm,
+  NEAREST_REFRESH_THRESHOLD_KM,
   resolveNearestFetchCoords,
+  shouldBootstrapNearestLoad,
+  shouldRefreshNearestOnMovement,
 } from '../discoveryCategoryTabNearest.ts';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -230,5 +233,81 @@ describe('bootstrap flow — shouldBootstrapNearestLoad + resolveNearestFetchCoo
       lastFetchedCoords: { lat: USER_LAT, lng: USER_LNG },
     });
     assert.equal(shouldFire, false, 'no second bootstrap re-fetch once lastFetchedCoords is set');
+  });
+});
+
+// ── shouldRefreshNearestOnMovement — movement re-sort threshold ───────────────
+//
+// The guard uses strict > so that GPS jitter that produces noise at or below
+// NEAREST_REFRESH_THRESHOLD_KM never triggers a visible list re-sort.
+//
+// Reference coordinates: Paris city centre (48.8566°N 2.3522°E).
+// At mid-latitudes, 1° ≈ 111 km, so:
+//   0.00045° lat  ≈ 0.050 km (½ threshold)
+//   0.00090° lat  ≈ 0.100 km (at threshold)
+//   0.00180° lat  ≈ 0.200 km (2× threshold)
+//
+// The "exactly at threshold" test uses a back-calculated equatorial delta
+// (where the Haversine simplifies to a straight arc) to avoid floating-point
+// surprises from cos(lat) scaling at mid-latitudes.
+
+describe('shouldRefreshNearestOnMovement — movement threshold guard', () => {
+  const PARIS = { lat: 48.8566, lng: 2.3522 };
+
+  it('movement < 0.1 km — no re-fetch (GPS jitter guard)', () => {
+    // ~0.05 km north of Paris — half the threshold
+    assert.equal(
+      shouldRefreshNearestOnMovement(PARIS, 48.8566 + 0.00045, 2.3522),
+      false,
+      'sub-threshold movement must not trigger a Nearest re-sort',
+    );
+  });
+
+  it('movement == 0.1 km exactly — no re-fetch (threshold is strict >)', () => {
+    // At the equator, Haversine simplifies: dist = R * Δlat_rad.
+    // Back-calculate the angular delta that gives exactly NEAREST_REFRESH_THRESHOLD_KM:
+    //   Δlat = THRESHOLD / (R * π/180) [in degrees]
+    // The floating-point round-trip through the formula cancels cleanly here.
+    const R = 6371;
+    const dLat = (NEAREST_REFRESH_THRESHOLD_KM * 180) / (R * Math.PI);
+    const computedDist = approxDistanceKm(0, 0, dLat, 0);
+    assert.ok(
+      Math.abs(computedDist - NEAREST_REFRESH_THRESHOLD_KM) < 1e-10,
+      `back-calculated coord should yield distance ≈ threshold; got ${computedDist}`,
+    );
+    // Strict > means exactly-at-threshold returns false.
+    assert.equal(
+      shouldRefreshNearestOnMovement({ lat: 0, lng: 0 }, dLat, 0),
+      false,
+      'movement at exactly the threshold must not trigger a re-fetch',
+    );
+  });
+
+  it('movement > 0.1 km — re-fetch fires', () => {
+    // ~0.2 km north of Paris — double the threshold
+    assert.equal(
+      shouldRefreshNearestOnMovement(PARIS, 48.8566 + 0.00180, 2.3522),
+      true,
+      'movement beyond the threshold must trigger a Nearest re-sort',
+    );
+  });
+
+  it('prev=null is not this function — shouldBootstrapNearestLoad owns the cold-start case', () => {
+    // shouldRefreshNearestOnMovement requires a non-null prev because the
+    // bootstrap guard (shouldBootstrapNearestLoad) already handles the
+    // lastFetchedCoords===null case before the movement check is reached.
+    // This test documents the separation of concerns by verifying
+    // shouldBootstrapNearestLoad correctly returns true when prev is null,
+    // so the movement helper is never called in that scenario.
+    assert.equal(
+      shouldBootstrapNearestLoad({
+        sortBy: 'nearest',
+        userLat: USER_LAT,
+        userLng: USER_LNG,
+        lastFetchedCoords: null,
+      }),
+      true,
+      'shouldBootstrapNearestLoad must handle prev=null so shouldRefreshNearestOnMovement never receives it',
+    );
   });
 });
