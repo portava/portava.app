@@ -192,7 +192,7 @@ router.get("/users/:username/passport", async (req, res) => {
       id: data.id,
       username: data.username ?? null,
       displayName: (data.display_name ?? data.name) ?? null,
-      avatarUrl: data.avatar_url ?? null,
+      avatarUrl: null,
       accountStatus: (data as any).account_status ?? "active",
       visibility: "private",
     });

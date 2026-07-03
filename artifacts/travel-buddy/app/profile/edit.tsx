@@ -677,16 +677,14 @@ export default function EditProfileScreen() {
               {/* Home City */}
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Home City</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={form.homeCity}
-                  onChangeText={(text) => setForm((f) => ({ ...f, homeCity: text }))}
-                  placeholder="e.g. Bangkok"
-                  placeholderTextColor={color.faint}
-                  maxLength={100}
-                  autoCapitalize="words"
-                  returnKeyType="next"
-                />
+                <Pressable
+                  style={[styles.fieldInput, styles.locationDisplay]}
+                  onPress={() => setShowHomePicker(true)}
+                >
+                  <Text style={form.homeCity ? styles.locationDisplayText : styles.locationDisplayPlaceholder}>
+                    {form.homeCity || 'Tap to select — or use GPS below'}
+                  </Text>
+                </Pressable>
                 <View style={styles.locationActions}>
                   <Pressable
                     style={styles.locationBtn}
@@ -702,23 +700,18 @@ export default function EditProfileScreen() {
                     <Text style={styles.locationBtnText}>≡ Choose from list</Text>
                   </Pressable>
                 </View>
-                <Text style={styles.fieldHint}>We'll use GPS to detect your city. Your precise location is never shown publicly.</Text>
+                <Text style={styles.fieldHint}>Your precise location is never shown publicly.</Text>
               </View>
 
               {/* Home Country */}
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Home Country</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={form.homeCountry}
-                  onChangeText={(text) => setForm((f) => ({ ...f, homeCountry: text }))}
-                  placeholder="e.g. Thailand"
-                  placeholderTextColor={color.faint}
-                  maxLength={100}
-                  autoCapitalize="words"
-                  returnKeyType="next"
-                />
-                <Text style={styles.fieldHint}>Auto-filled when using location detection above.</Text>
+                <View style={[styles.fieldInput, styles.locationDisplay]}>
+                  <Text style={form.homeCountry ? styles.locationDisplayText : styles.locationDisplayPlaceholder}>
+                    {form.homeCountry || 'Auto-filled from city selection above'}
+                  </Text>
+                </View>
+                <Text style={styles.fieldHint}>Set automatically when you pick a home city.</Text>
               </View>
 
               {/* Current City */}
@@ -1246,5 +1239,16 @@ const styles = StyleSheet.create({
     color: color.signal,
     fontSize: 12,
     fontWeight: '600',
+  },
+  locationDisplay: {
+    justifyContent: 'center',
+  },
+  locationDisplayText: {
+    ...t.body,
+    color: color.ink,
+  },
+  locationDisplayPlaceholder: {
+    ...t.body,
+    color: color.faint,
   },
 });
