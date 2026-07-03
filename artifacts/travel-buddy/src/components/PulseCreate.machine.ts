@@ -189,3 +189,41 @@ export async function handleUploadResult(
   handlers.setError(result.message ?? 'Media upload failed.');
   return { continue: false };
 }
+
+// ── Filter-apply-result machine ───────────────────────────────────────────────
+
+export interface FilteredMedia {
+  uri: string;
+  [key: string]: unknown;
+}
+
+export type FilterApplyOutcome =
+  | { ok: true; filteredMedia: FilteredMedia; filterId: string; filterIntensity: number }
+  | { ok: false; message?: string };
+
+export interface FilterApplyResultHandlers {
+  setMedia: (m: FilteredMedia) => void;
+  setFilterId: (id: string) => void;
+  setFilterIntensity: (n: number) => void;
+  setFilterEditorPending: (m: null) => void;
+  setFilterEditorOpen: (open: boolean) => void;
+  setError: (msg: string) => void;
+}
+
+export function handleFilterApplyResult(
+  outcome: FilterApplyOutcome,
+  handlers: FilterApplyResultHandlers,
+): { continue: boolean } {
+  handlers.setFilterEditorOpen(false);
+
+  if (!outcome.ok) {
+    handlers.setError(outcome.message ?? 'Filter could not be applied.');
+    return { continue: false };
+  }
+
+  handlers.setMedia(outcome.filteredMedia);
+  handlers.setFilterId(outcome.filterId);
+  handlers.setFilterIntensity(outcome.filterIntensity);
+  handlers.setFilterEditorPending(null);
+  return { continue: true };
+}
