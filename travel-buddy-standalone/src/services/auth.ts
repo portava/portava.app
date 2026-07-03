@@ -63,7 +63,7 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
     throw new Error('ensureProfile: no session token available');
   }
 
-  await fetch(`${apiBase}/api/profile/ensure`, {
+  const res = await fetch(`${apiBase}/api/profile/ensure`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -71,6 +71,13 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
     },
     body: JSON.stringify({ email, name: meta?.name, handle: meta?.handle }),
   });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      `ensureProfile: API returned ${res.status} — ${(body as any)?.message ?? 'unknown error'}`,
+    );
+  }
 }
 
 export async function signIn(email: string, password: string): Promise<AuthResult> {

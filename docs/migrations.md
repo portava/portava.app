@@ -117,11 +117,33 @@ When the idempotency check at step 3 finds an existing `awarded` event but no co
 
 ## Schema verification notes (2026-07-03)
 
+### Verification query
+
+Run the following in the Supabase dashboard SQL editor to confirm both columns exist in production:
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'profiles'
+  AND column_name  IN ('role', 'cover_photo_url')
+ORDER BY column_name;
+```
+
+Expected output (2 rows):
+
+| column_name     | data_type         | is_nullable | column_default |
+|-----------------|-------------------|-------------|----------------|
+| cover_photo_url | text              | YES         | NULL           |
+| role            | text              | NO          | 'user'::text   |
+
+If either row is missing, apply the relevant migration below before deploying.
+
+---
+
 ### `profiles.role` column
 
-The `profiles` table carries a `role TEXT NOT NULL DEFAULT 'user'` column. This column was part of the initial schema and has no standalone numbered migration file — it is present in the baseline `profiles` table DDL.
-
-Verified values: `'user'` (default for all users) and `'admin'`.
+The `profiles` table carries a `role TEXT NOT NULL DEFAULT 'user'` column. This column was part of the initial schema and has no standalone numbered migration file — it is present in the baseline `profiles` table DDL. Verified values: `'user'` (default for all users) and `'admin'`.
 
 **Admin access guard** — `requireAdmin` in `artifacts/api-server/src/routes/admin.ts` reads role exclusively from `profiles.role`:
 
@@ -136,4 +158,4 @@ Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`.
 
 ### `profiles.cover_photo_url` column
 
-Added by migration `0087_profiles_cover_photo_url.sql`. Column definition: `cover_photo_url TEXT` (nullable). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
+Added by migration `0087_profiles_cover_photo_url.sql` (`ADD COLUMN IF NOT EXISTS cover_photo_url TEXT`). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
