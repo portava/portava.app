@@ -1,25 +1,29 @@
 /**
- * Pure dismiss-wiring helpers for UnifiedPostComposer (PulseCreate.tsx).
+ * Pure dismiss-wiring and submit-result helpers for UnifiedPostComposer (PulseCreate.tsx).
  *
- * Extracted here so the dismiss contract can be tested with node:test without
- * a React Native renderer. The component imports `createComposerDismissHandlers`
- * instead of wiring `onClose` to each Pressable inline — the same pattern used
- * by ReportPostSheet.tsx / ReportPostSheet.state.ts.
+ * Extracted here so both contracts can be tested with node:test without a
+ * React Native renderer. The component imports `createComposerDismissHandlers`
+ * and `handleSubmitResult` instead of wiring them inline — the same pattern
+ * used by ReportPostSheet.tsx / ReportPostSheet.state.ts.
  *
- * ## What is under test
- *
- * The layout fix that moved the backdrop to `StyleSheet.absoluteFillObject`
- * preserved the `onPress={onClose}` wiring. A dedicated module makes the
- * contract explicit and testable without RNTL:
+ * ## Dismiss contract (tested in PulseCreate.backdrop.test.ts)
  *
  *   backdrop Pressable  → handlers.onBackdropPress()    → onClose()
  *   X close button      → handlers.onCloseButtonPress() → onClose()
  *   Modal onRequestClose→ handlers.onRequestClose()     → onClose()
  *
- * Tests in PulseCreate.backdrop.test.ts import this module directly and assert
- * that each handler invokes `onClose`. Because the component also imports this
- * module, the tests verify the production code path, not a disconnected fixture.
+ * ## Submit-result contract (tested in PulseCreate.submit.test.ts)
+ *
+ *   create() resolves { ok: true }               → onSuccess?.() + onClose()
+ *   create() resolves { ok: false, errorKind: 'unauthenticated' }
+ *                                                → signOut() + navigate() + onClose()
+ *   create() resolves { ok: false, errorKind: * } → setError(msg)  (onClose NOT called)
+ *
+ * Tests import these functions directly and exercise the production code path
+ * that the component depends on. If either contract changes, the tests catch it.
  */
+
+// ── Dismiss handlers ──────────────────────────────────────────────────────────
 
 export interface ComposerDismissHandlers {
   /** Attached to the dark backdrop Pressable. */
@@ -50,4 +54,74 @@ export function createComposerDismissHandlers(onClose: () => void): ComposerDism
     onCloseButtonPress: onClose,
     onRequestClose: onClose,
   };
+}
+
+// ── Submit-result machine ─────────────────────────────────────────────────────
+
+/** Shape returned by the `create()` service call in handleSubmit(). */
+export interface CreateResult {
+  ok: boolean;
+  errorKind?: string;
+  message?: string;
+}
+
+/**
+ * Side-effect handlers injected by the component so the result machine stays
+ * pure and testable with node:test (no React Native imports required).
+ */
+export interface SubmitResultHandlers {
+  /** Called before onClose() when the post was created successfully. */
+  onSuccess?: () => void;
+  /** Closes the composer sheet. Called on success AND on unauthenticated error. */
+  onClose: () => void;
+  /** Clears the session when the server returns unauthenticated. */
+  signOut: () => Promise<void>;
+  /** Redirects to sign-in after signOut(). */
+  navigate: (path: string) => void;
+  /** Surfaces an inline error message when create() fails (non-unauthenticated). */
+  setError: (msg: string) => void;
+}
+
+/** Error-kind → user-facing message map, kept in sync with handleSubmit(). */
+const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
+  network_unreachable: 'Network unavailable. Try again.',
+  invalid_payload: 'Check your post and try again.',
+  config_error: 'Posting unavailable right now.',
+};
+
+/**
+ * Handles the result of a `create()` call and routes to the correct side effect.
+ *
+ * Three branches mirror the handleSubmit() logic in PulseCreate.tsx:
+ *
+ *   1. ok → onSuccess?.() then onClose()
+ *   2. unauthenticated → signOut() + navigate('/sign-in') + onClose()
+ *   3. other error → setError(message)  — composer stays open
+ *
+ * Usage in PulseCreate.tsx:
+ *   const res = await create({ ... });
+ *   await handleSubmitResult(res, { onSuccess, onClose, signOut, navigate: router.replace, setError });
+ */
+export async function handleSubmitResult(
+  result: CreateResult,
+  handlers: SubmitResultHandlers,
+): Promise<void> {
+  if (result.ok) {
+    handlers.onSuccess?.();
+    handlers.onClose();
+    return;
+  }
+
+  if (result.errorKind === 'unauthenticated') {
+    await handlers.signOut();
+    handlers.navigate('/(auth)/sign-in');
+    handlers.onClose();
+    return;
+  }
+
+  const msg =
+    SUBMIT_ERROR_MESSAGES[result.errorKind ?? ''] ??
+    result.message ??
+    'Could not post.';
+  handlers.setError(msg);
 }

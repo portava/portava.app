@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers } from './PulseCreate.machine';
+import { createComposerDismissHandlers, handleSubmitResult } from './PulseCreate.machine';
 
 /* ── Types ── */
 
@@ -337,23 +337,13 @@ export function UnifiedPostComposer({
       publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
     });
 
-    if (res.ok) {
-      onSuccess?.();
-      onClose();
-      return;
-    }
-    if (res.errorKind === 'unauthenticated') {
-      await signOut();
-      router.replace('/(auth)/sign-in');
-      onClose();
-      return;
-    }
-    const msgs: Record<string, string> = {
-      network_unreachable: 'Network unavailable. Try again.',
-      invalid_payload: 'Check your post and try again.',
-      config_error: 'Posting unavailable right now.',
-    };
-    setError(msgs[res.errorKind ?? ''] ?? res.message ?? 'Could not post.');
+    await handleSubmitResult(res, {
+      onSuccess,
+      onClose,
+      signOut,
+      navigate: router.replace as (path: string) => void,
+      setError,
+    });
   }
 
   // Highlight type: open dedicated composer immediately on type select

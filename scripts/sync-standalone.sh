@@ -139,6 +139,7 @@ STANDALONE_OWNED_FILES=(
   "src/components/discovery/filterStripSort.ts"
   "src/components/PulseCreate.machine.ts"
   "src/components/__tests__/PulseCreate.backdrop.test.ts"
+  "src/components/__tests__/PulseCreate.submit.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
