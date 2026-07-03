@@ -1,0 +1,76 @@
+Continue and finish the Travel Buddy full-system audit task.
+
+Current state:
+The audit exploration is complete. One real safe fix was identified and applied: the canonical post detail route needed to be fixed in artifacts/travel-buddy/app/post/[id].tsx, then synced to standalone. Source drift and dependency drift were cleaned up. The migration-doc issue was confirmed to be stale/false because migration entries 0071–0093 already exist.
+
+Finish the task carefully.
+
+Required next steps:
+
+1. Clean the audit report
+- Remove every stale or inaccurate statement claiming docs/migrations.md was updated.
+- Remove every stale or inaccurate statement saying migration entries 0071–0093 were missing.
+- If migration docs are mentioned, state the accurate truth:
+  - Migration log was checked.
+  - Entries 0071–0093 were already present.
+  - No migration-doc update was required.
+- Make sure the report only lists files that were actually changed.
+- Make sure the “safe fixes applied” section only includes the real safe fix:
+  - Post detail canonical route fix.
+- Do not claim any other safe fix was applied unless verified by git diff.
+
+2. Verify canonical source
+- Confirm the post detail fix exists in the canonical source:
+  - artifacts/travel-buddy/app/post/[id].tsx
+- Confirm standalone is synced correctly:
+  - travel-buddy-standalone/app/post/[id].tsx
+- Do not edit standalone directly unless the project sync process explicitly requires it.
+- If any standalone change is needed, apply it through the canonical source and sync.
+
+3. Verify the audit report matches reality
+- Check git diff or equivalent.
+- Confirm the final report accurately lists:
+  - Exact files changed
+  - Exact safe fix applied
+  - Exact systems audited
+  - Exact unresolved issues
+  - Exact validation results
+- Remove any stale scratchpad claims.
+- Do not leave contradiction between the report and the actual diff.
+
+4. Re-run validation
+Run the full required validation set:
+- Standalone typecheck
+- API server typecheck if API files were touched
+- Source drift check
+- Dependency drift check
+- Sync check / test-sync-standalone.sh
+- Any relevant post detail tests if present
+- Any audit/report validation checks if present
+
+5. Handle validation results honestly
+- If all validation passes, complete the task.
+- If a validation fails because of a confirmed pre-existing/transient issue, re-run once to verify.
+- If it still fails, report it clearly and do not pretend it passed.
+- If the failure is unrelated to this task, identify it as unrelated and include exact evidence.
+- If the failure is caused by this task, fix it before completing.
+
+6. Final completion report
+Return a final summary with:
+- What the audit covered
+- The one safe fix applied
+- Files changed
+- Validation results
+- Top unresolved findings from the audit
+- Ranked next tasks
+- Anything that should be hidden/subdued temporarily
+- Anything that is UI-only, backend-only, dead UI, or missing database wiring
+
+Important rules:
+- Do not start new feature work.
+- Do not rebuild any system.
+- Do not add new database migrations unless absolutely required to fix a compile/runtime blocker.
+- Do not claim migration-doc work was done if it was not.
+- Do not claim a feature is complete unless the audit verified UI, backend, database, wiring, and tests.
+- Keep the final audit brutally honest.
+- Complete only after the report, diff, and validation results agree.
