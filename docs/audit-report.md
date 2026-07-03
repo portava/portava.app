@@ -17,7 +17,7 @@ The honest picture:
 - **Live Map is a placeholder.** The screen displays an explainer card. No real location data is rendered.
 - **AI/Telegraph tab is hidden** (`href: null`) but is actually a real, wired Compass chat interface — just not surfaced to users.
 - **Several fixture data sources still leak into live screens** — most critically, `PulseFits` renders from `cebu.ts` mock users, and the passport hook falls back to `mockPassport` when Supabase is unconfigured.
-- **Migration documentation is drifted** — 23 migrations (0071–0089, 0091–0093) are present in the filesystem but not listed in `docs/migrations.md`.
+- **Migration documentation** — verified current through 0094. All migration files from 0071 to 0093 are properly logged in `docs/migrations.md`.
 - **Post category stamp always shows "travel"** (the `postRowToFeedItem` mapper hardcodes the category field).
 
 Overall the app is ~75% production-ready. The remaining gaps are concentrated in engagement features (likes/comments interaction on detail screens), the live map, and a few visible stubs.
@@ -160,7 +160,7 @@ From migration audit (0010–0093):
 
 1. **`location_intelligence_logs`** — referenced by `LocationIntelligenceEngine.ts` but not found in any 0010–0093 migration. May be pre-0010 or missing.
 2. **`push_tokens` vs `device_tokens` naming** — `pushTokenService.ts` registers to `/api/me/devices`; the migration table name may differ. Needs verification if push delivery is failing.
-3. **Docs drift** — Migrations 0071–0089, 0091–0093 (23 files) are present in `artifacts/api-server/src/migrations/` but NOT listed in `docs/migrations.md`. **Safe fix applied:** See Section N.
+3. **Docs verified** — All migrations 0071–0094 are confirmed present in `docs/migrations.md`. No drift detected.
 
 ---
 
@@ -331,7 +331,7 @@ Priority order — highest impact, most user-visible, lowest risk to existing be
 7. **Full caption on post detail** — `post.content` is truncated in feed cards. Detail screen should show full text. (Task #1479)
 8. **Live Map MVP** — Implement MapLibre with saved pins and trip location markers. Large scope.
 9. **Passport mock-fallback error state** — When Supabase is misconfigured, show an error instead of `mockPassport`. Small scope, safety improvement.
-10. **Docs migration log** — Keep `docs/migrations.md` current (already partially fixed in this audit).
+10. **Docs migration log** — Keep `docs/migrations.md` current as new migrations are applied. Currently verified through 0094.
 
 ---
 
