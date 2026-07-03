@@ -1332,3 +1332,116 @@ describe("POST /api/me/delete-request — duplicate upsert", () => {
     assert.ok(diff > 28 * 24 * 60 * 60 * 1000, "scheduledAt must still be ~30 days in future on duplicate call");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 19. GET /me/profile — completeness score reflects homeCountry correctly
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("GET /api/me/profile — completeness score and homeCountry column", () => {
+
+  it("completeness object is present on GET /me/profile", async () => {
+    setup(baseState());
+    const r = await req("/me/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(body.completeness, "completeness object must be present");
+    assert.equal(typeof body.completeness.score, "number", "completeness.score must be a number");
+    assert.ok(Array.isArray(body.completeness.missing), "completeness.missing must be an array");
+  });
+
+  it("homeCountry appears in missing when home_country is null", async () => {
+    // baseState profile for ME has no home_country field → !!undefined = false
+    setup(baseState());
+    const r = await req("/me/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(
+      body.completeness.missing.includes("homeCountry"),
+      "homeCountry must be in missing[] when home_country column is null/absent",
+    );
+  });
+
+  it("homeCountry is NOT in missing when home_country is set", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_country: "Philippines" } : p,
+    );
+    setup(state);
+    const r = await req("/me/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(
+      !body.completeness.missing.includes("homeCountry"),
+      "homeCountry must NOT be in missing[] when home_country column is set",
+    );
+  });
+
+  it("score is higher when home_country is set vs null", async () => {
+    // Score without homeCountry
+    setup(baseState());
+    const r1 = await req("/me/profile");
+    const scoreWithout = ((await r1.json()) as any).completeness.score as number;
+
+    // Score with homeCountry
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_country: "Philippines" } : p,
+    );
+    setup(state);
+    const r2 = await req("/me/profile");
+    const scoreWith = ((await r2.json()) as any).completeness.score as number;
+
+    assert.ok(
+      scoreWith > scoreWithout,
+      `score must increase when home_country is set (was ${scoreWithout}, now ${scoreWith})`,
+    );
+    // 9 total checks, so each adds Math.round(100/9) ≈ 11 points
+    const diff = scoreWith - scoreWithout;
+    assert.ok(
+      diff >= 10 && diff <= 12,
+      `score increase for homeCountry must be ~11 points (1 of 9 checks), got ${diff}`,
+    );
+  });
+
+  it("completeness uses home_country column, not home_city — setting only home_city does not satisfy it", async () => {
+    const state = baseState();
+    // Set home_city but leave home_country null
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_city: "Cebu", home_country: null } : p,
+    );
+    setup(state);
+    const r = await req("/me/profile");
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    // homeCity must be returned correctly
+    assert.equal(body.homeCity, "Cebu", "homeCity field must reflect home_city column");
+    assert.equal(body.homeCountry, null, "homeCountry must be null when home_country column is null");
+    // But the completeness check for homeCountry must still fail
+    assert.ok(
+      body.completeness.missing.includes("homeCountry"),
+      "homeCountry must still appear in missing when only home_city is set (column mismatch guard)",
+    );
+  });
+
+  it("PATCH /me/profile with homeCountry returns updated homeCountry field", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, home_country: null } : p,
+    );
+    setup(state);
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { homeCountry: "Philippines" },
+    });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    // The PATCH route maps homeCountry → home_country in the DB row,
+    // then mapProfile converts home_country → homeCountry in the response.
+    // If the column mapping were wrong (e.g. home_city), this would be null.
+    assert.equal(
+      body.homeCountry,
+      "Philippines",
+      "PATCH homeCountry must persist via home_country column and be returned as homeCountry",
+    );
+  });
+});
