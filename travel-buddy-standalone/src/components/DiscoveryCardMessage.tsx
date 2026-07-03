@@ -16,6 +16,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
+import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -126,7 +127,11 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
       <View style={card.actions}>
         <Pressable
           style={[card.actionBtn, mine && card.actionBtnMine]}
-          onPress={() => Alert.alert('Discovery', `Open Discovery tab to find "${payload.title}" in ${payload.city}.`)}
+          onPress={() => router.push(
+            payload.sourceId
+              ? (`/(tabs)/discovery?placeId=${encodeURIComponent(payload.sourceId)}` as any)
+              : ('/(tabs)/discovery' as any)
+          )}
         >
           <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
           <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View</Text>

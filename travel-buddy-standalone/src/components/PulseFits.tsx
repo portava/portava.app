@@ -83,7 +83,12 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
         <View style={styles.vibes}>
           <View style={styles.vibe}><Text style={styles.vibeText}>{VIBE[ev.category] ?? ev.category}</Text></View>
         </View>
-        <Pressable style={styles.joinBtn}><Text style={styles.joinText}>{joinLabel}</Text></Pressable>
+        <Pressable
+          style={[styles.joinBtn, joinLabel === 'Full' && styles.joinBtnFull]}
+          onPress={joinLabel !== 'Full' ? () => router.push(`/event/${ev.id}` as any) : undefined}
+        >
+          <Text style={[styles.joinText, joinLabel === 'Full' && styles.joinTextFull]}>{joinLabel}</Text>
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -150,7 +155,9 @@ const styles = StyleSheet.create({
   vibe: { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 3 },
   vibeText: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 11 },
   joinBtn: { marginTop: 4, borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.md, paddingVertical: space.sm, alignItems: 'center' },
+  joinBtnFull: { borderColor: color.haze },
   joinText: { ...t.small, fontWeight: '800', color: color.signal },
+  joinTextFull: { color: color.mute },
 });
 
 const fx = StyleSheet.create({

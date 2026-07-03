@@ -594,7 +594,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
       <View style={styles.quickBar}>
         {type === 'trip' ? (
           <>
-            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('View Trip', 'Trip overview — coming soon.')}>
+            <Pressable style={styles.quickBtn} onPress={() => router.push(`/trip/${id}` as any)}>
               <Globe size={12} color={color.signal} />
               <Text style={styles.quickBtnText}>View Trip</Text>
             </Pressable>

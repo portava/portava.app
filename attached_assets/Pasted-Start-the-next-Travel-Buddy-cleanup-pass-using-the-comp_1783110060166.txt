@@ -1,0 +1,111 @@
+Start the next Travel Buddy cleanup pass using the completed full-system audit report as the source of truth.
+
+Task:
+Fix the highest-priority dead UI, missed wiring, misleading placeholders, and disconnected buttons identified in the audit report. Do not build new major features. Do not rebuild existing systems. This is a focused trust-and-polish pass.
+
+Goal:
+Every visible UI element should either:
+1. Perform the real intended action,
+2. Navigate to a real existing screen,
+3. Show an honest unavailable/empty/error state, or
+4. Be hidden/subdued until the backend or required system exists.
+
+Use the audit report first:
+- Read the completed Travel Buddy audit report.
+- Extract the highest-risk dead UI and missed wiring findings.
+- Prioritize user-facing trust issues, broken navigation, misleading buttons, and visible controls that imply working functionality when they do not.
+- Do not rely on stale artifact files if standalone/current source differs.
+- Confirm each issue in the actual active code before fixing.
+
+Priority order:
+1. Safety-related dead UI
+2. Auth/account/session dead UI
+3. Messaging/Telegraph dead UI
+4. Trips/Add-to-Trip/Plans dead UI
+5. Pulse/Postcards/Memories actions
+6. Discovery/Hidden Gems actions
+7. Passport/Profile actions
+8. Notifications/activity center
+9. Admin/moderation controls
+10. Cosmetic-only placeholders
+
+What to fix:
+- Buttons with no handler
+- Buttons that only show “coming soon,” “not implemented,” or a fake toast
+- Buttons that navigate to missing or placeholder screens
+- UI controls that imply backend persistence but only update local state
+- UI that calls a stubbed service
+- UI that calls the wrong route
+- Screens reachable from UI but not actually functional
+- Error/loading/empty states that lie or leave users stuck
+- Backend functions that already exist but are not wired to the intended UI, only when safe and simple
+- Existing routes that should be used but are currently bypassed
+
+What not to do:
+- Do not build a new messaging system.
+- Do not build a new Compass system.
+- Do not build payment/deposit systems.
+- Do not redesign Pulse.
+- Do not create new database schema unless absolutely required for a tiny safe fix.
+- Do not add new major dependencies.
+- Do not mark a placeholder feature as complete by adding fake behavior.
+- Do not weaken privacy, safety, auth, or location rules.
+- Do not edit standalone directly unless the project workflow explicitly requires it; patch canonical source first, then sync.
+
+Fix strategy:
+For each confirmed issue, choose the safest option:
+
+Option A — Wire it:
+- If a real screen, service, or API already exists, connect the button/control to it.
+- Preserve existing auth, privacy, and error handling.
+- Add loading/error states if needed.
+
+Option B — Hide/subdue it:
+- If no real backend or route exists, hide the misleading button or move it behind “coming soon” copy.
+- Do not leave a fake action in the primary user path.
+
+Option C — Honest state:
+- If the feature is intentionally incomplete, show clear copy such as:
+  “This feature is not available yet.”
+  “This requires a future backend connection.”
+  “No saved items yet.”
+  “Unable to load this right now.”
+- Avoid vague fake-success toasts.
+
+Option D — Report only:
+- If the fix requires a large feature build, do not implement it in this pass.
+- Add it to the follow-up list with exact files and missing pieces.
+
+Required workflow:
+1. Read the audit report.
+2. Create a prioritized checklist from the audit findings.
+3. Verify each selected issue in active source.
+4. Fix only confirmed, safe, isolated issues.
+5. Add or update tests only where existing test patterns make sense.
+6. Sync canonical source to standalone if required.
+7. Run validation.
+8. Report exactly what changed and what remains.
+
+Validation required:
+- Root typecheck
+- Standalone typecheck
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh
+- Relevant tests for any touched areas
+- API server typecheck if backend/API files are touched
+
+Final report required:
+Return a completion report with:
+- Audit findings selected for this pass
+- Issues confirmed in active code
+- Issues fixed
+- Issues hidden/subdued
+- Issues left untouched because they require larger feature work
+- Exact files changed
+- Tests/typechecks/drift checks passed
+- Any validation failures with honest explanation
+- Next recommended task
+
+Acceptance standard:
+This pass is successful only if the app has fewer misleading controls, fewer dead buttons, fewer fake success states, and cleaner routing — without starting a major rebuild or breaking existing working systems.
