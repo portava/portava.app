@@ -52,10 +52,12 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
     try {
       if (action === 'accept') {
         await acceptTripInvite(invite.tripId);
+        onDone();
+        router.push(`/trip/${invite.tripId}` as any);
       } else {
         await declineTripInvite(invite.tripId);
+        onDone();
       }
-      onDone();
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
       setBusy(null);

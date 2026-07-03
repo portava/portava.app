@@ -266,7 +266,12 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
 
   useEffect(() => { void loadBlockList(); }, [loadBlockList]);
 
-  const requestCount = requests.length;
+  const filteredRequests = requests.filter((r) => {
+    const sid = r.sender?.id;
+    if (!sid) return true;
+    return !blockedIds.has(sid) && !blockerIds.has(sid);
+  });
+  const requestCount = filteredRequests.length;
 
   useFocusEffect(useCallback(() => {
     reload();
@@ -363,7 +368,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             </View>
           ) : filter === 'requests' ? (
             <RequestsPane
-              requests={requests}
+              requests={filteredRequests}
               loading={reqLoading}
               onAccept={acceptRequest}
               onDecline={declineRequest}
