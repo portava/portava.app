@@ -1,0 +1,594 @@
+Travel Buddy — Complete User Profile Build Pass
+
+We are working ONLY on the user profile system.
+
+Do not rebuild the whole app.
+Do not redesign unrelated screens.
+Do not touch trips, events, meetups, RAB, notifications, discovery, admin dashboards, or web sharing unless the user profile system directly depends on them.
+Do not add unrelated features.
+Do not widen scope into public web Passport/share pages.
+Do not fake success.
+Do not leave dead buttons.
+Do not leak blocked/private profile data.
+
+Goal:
+Finish the Travel Buddy user profile system completely for beta.
+
+A complete profile system means:
+1. Profile database fields exist and production is verified.
+2. Backend profile routes are guarded and return correct safe data.
+3. Profile edit saves every supported field.
+4. Avatar upload works.
+5. Cover photo upload works.
+6. Own Passport/profile displays real data.
+7. Public profile respects privacy and blocking.
+8. Blocked/deleted/private users never leak data.
+9. Profile actions work: edit, message, block, unblock, report.
+10. Avatar taps route correctly from everywhere.
+11. Stats, trust, badges, and verification are truthful.
+12. No fake success, no dead buttons, no mock profile data.
+
+Critical production context:
+Recent production checks found:
+- `profiles.cover_photo_url` is missing in production because migration 0087 was not applied.
+- `profiles.role` is missing in production, even though admin guards may expect it.
+- Cover photo upload/display will not work correctly until `cover_photo_url` exists.
+- Admin bootstrap using `profiles.role = 'admin'` will fail unless the role source is fixed or verified elsewhere.
+
+Start with schema/profile production readiness.
+
+PHASE 1 — Profile schema and production verification
+
+Audit the `profiles` table locally and in production.
+
+Required fields to verify:
+- id
+- username / handle
+- display_name
+- bio
+- avatar_url
+- cover_photo_url
+- home_city
+- home_country
+- default_language
+- spoken_languages
+- interests
+- travel_style
+- profile_visibility / privacy fields
+- trust_score
+- verified / verification_status
+- role only if admin/profile logic depends on profiles.role
+- created_at
+- updated_at
+- deleted/deactivated fields if present
+
+Tasks:
+1. Confirm `0087_profiles_cover_photo_url.sql` exists locally.
+2. Confirm whether `profiles.cover_photo_url` exists in production.
+3. If missing and production tooling allows, apply the safe SQL:
+   `ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS cover_photo_url TEXT;`
+4. Verify after apply with `information_schema.columns`.
+5. Investigate `profiles.role`:
+   - Search backend for `profiles.role`.
+   - Search backend for `role = 'admin'`.
+   - Search for `requireAdmin`.
+   - Search migrations for role/admin columns.
+   - Search for admin_users, user_roles, auth app_metadata, custom claims, or any other admin source.
+6. Determine the actual intended admin role source:
+   - If backend truly requires `profiles.role` and no migration creates it, prepare or apply the smallest safe migration:
+     `ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';`
+     Add a safe check constraint only if existing code supports exact values.
+   - If admin role comes from another source, do not add `profiles.role`; document and correct the runbook/docs if needed.
+7. Do not run admin bootstrap until the role source is verified.
+
+Deliverable:
+- Profile schema status table.
+- Exact SQL applied or required.
+- Production verification query results.
+- Admin role source conclusion.
+
+PHASE 2 — Backend profile API completion
+
+Audit and complete profile-related backend routes only.
+
+Routes/functions to audit:
+- GET own profile
+- PATCH own profile
+- GET public/other user profile
+- GET profile by username/handle if supported
+- username/handle lookup
+- avatar upload
+- cover upload
+- block user
+- unblock user
+- report profile
+- message-from-profile entry point if already wired
+- profile memories/posts/stamps listing
+- profile stats endpoint/data source if present
+- account deactivation/deleted profile handling if present
+
+Backend rules:
+1. Every write route must use `requireUser`.
+2. Service-role routes must enforce ownership/member/admin permissions before touching private data.
+3. Public profile route must not leak blocked/private/deleted user data.
+4. Blocked profile route must return a safe placeholder/stub.
+5. Private profile route must return only allowed public-safe fields.
+6. PATCH profile must accept exactly the fields the frontend edit profile screen sends.
+7. Avatar upload must write `avatar_url`.
+8. Cover upload must write `cover_photo_url`.
+9. Username/handle uniqueness must be enforced.
+10. Supabase errors must not return fake success.
+11. Backend response shape must match frontend expectations.
+12. Missing-column fallbacks should not hide real production blockers.
+
+Deliverable:
+- Backend route map.
+- Fields accepted by PATCH.
+- Own profile response shape.
+- Public profile response shape.
+- Block/private/deleted profile behavior table.
+- Fixes applied where needed.
+
+PHASE 3 — Frontend profile service layer
+
+Audit profile-related frontend services and remove risky live direct Supabase writes.
+
+Search:
+- profile service
+- passport service
+- upload service
+- block service
+- report service
+- SessionContext/profile context
+- direct `supabase.from('profiles')`
+- direct profile insert/update/delete/upsert/rpc calls
+
+Rules:
+1. Profile updates go through API server.
+2. Avatar upload goes through API server.
+3. Cover upload goes through API server.
+4. Block/unblock goes through API server.
+5. Report profile goes through report service/API.
+6. Live profile mutations must not use risky direct Supabase writes because of the current P-256/RLS issue.
+7. Unused legacy direct Supabase code can be documented as non-blocking if it is not called from UI.
+
+Deliverable:
+- Profile service function map.
+- Direct Supabase risks found/fixed.
+- Frontend/backend route compatibility table.
+
+PHASE 4 — Edit Profile screen completion
+
+Finish the edit profile experience.
+
+Fields to support if schema/backend supports them:
+- display name
+- username/handle
+- bio
+- avatar
+- cover photo
+- home city
+- home country
+- default language
+- spoken languages
+- interests
+- travel style
+- profile privacy settings if already present
+
+Required behavior:
+1. Load existing profile values into the form.
+2. Show avatar fallback.
+3. Show cover fallback.
+4. Pick/change avatar.
+5. Pick/change cover photo.
+6. Validate required fields.
+7. Validate username/handle.
+8. Save through backend API.
+9. Show loading state.
+10. Show backend validation errors honestly.
+11. Show success only after backend confirms.
+12. Refresh own Passport/profile after save.
+13. Return to profile or stay with updated values.
+14. No fields silently dropped.
+15. No fake success.
+
+Username/handle validation:
+- unique
+- allowed characters only
+- min/max length
+- reserved words blocked, including:
+  - admin
+  - support
+  - travelbuddy
+  - api
+  - root
+  - system
+  - moderator
+  - official
+
+Deliverable:
+- Edit profile field checklist.
+- Save behavior checklist.
+- Validation findings/fixes.
+
+PHASE 5 — Own Passport/profile screen completion
+
+Own profile must display real backend data:
+- cover photo
+- avatar
+- display name
+- username/handle
+- bio
+- home city/country
+- default language
+- spoken languages
+- interests
+- travel style
+- trust score
+- verified badge only if backend confirms
+- passport stamps
+- memories/postcards
+- real stats
+- edit profile button
+- settings/privacy action if present
+- profile completion prompt if incomplete
+
+Fix:
+- blank profile states
+- stale data after edit
+- broken avatar fallback
+- broken cover fallback
+- missing empty states
+- incorrect verified badge
+- fake stats
+- dead edit/settings buttons
+
+Profile completion prompt:
+Show gently only on own profile if key info is missing:
+- avatar
+- display name
+- username
+- home city/country
+- default language
+- at least one interest or travel style
+
+Deliverable:
+- Own Passport display checklist.
+- Stats truth table.
+- Verification/trust badge truth table.
+
+PHASE 6 — Public profile completion
+
+Public profile must support:
+- opening from any avatar/user tap
+- displaying safe public fields
+- respecting private profile settings
+- respecting blocked state
+- message user if allowed
+- block user
+- unblock user if I blocked them
+- report user/profile
+- view public posts/memories/stamps only
+- honest deleted/missing-user state
+- network error state
+
+Public profile states to handle:
+1. Normal visible profile.
+2. Private profile.
+3. I blocked this user.
+4. This user blocked me.
+5. Deleted/deactivated user.
+6. Missing user.
+7. Network/API error.
+
+Blocked profile behavior:
+- If I blocked them:
+  - show “Profile unavailable”
+  - show unblock action
+  - hide avatar/cover/bio/posts/memories/private data
+- If they blocked me:
+  - show “Profile unavailable”
+  - no private data
+  - no unblock action unless applicable
+- Do not expose avatar, cover, bio, posts, trip info, memories, or private fields for blocked profiles unless backend intentionally returns a safe stub.
+
+Deleted/deactivated behavior:
+- show “This profile is no longer available.”
+- no crash if deleted user appears in threads/posts/notifications
+- no private data leak
+
+Deliverable:
+- Public profile state matrix.
+- Block/private/deleted data-leak findings.
+- Fixes applied.
+
+PHASE 7 — Profile privacy controls
+
+Audit existing privacy settings only.
+
+Check whether the app already supports:
+- public/private profile
+- show/hide home city
+- show/hide home country
+- show/hide languages
+- show/hide interests
+- show/hide stamps
+- show/hide posts/memories
+- show/hide likes/comments if tied to profile
+
+Rules:
+1. Do not invent a large new privacy system unless fields/routes already exist.
+2. If a privacy toggle is visible but not wired, either wire it to existing backend/schema or hide/disable it honestly.
+3. Public profile must respect privacy settings.
+4. Own profile may show private fields to self.
+
+Deliverable:
+- Privacy control matrix.
+- Visible-but-unwired privacy actions fixed or hidden.
+
+PHASE 8 — Profile actions honesty audit
+
+Every visible profile action must work, be honestly disabled, or be hidden.
+
+Audit actions:
+- Edit profile
+- Change avatar
+- Change cover
+- Message
+- Follow/add/trust/friend if present
+- Block
+- Unblock
+- Report
+- Share profile if visible
+- View stamps
+- View memories/postcards
+- Open settings
+- Open external links if present
+
+Rules:
+- no silent no-op
+- no fake success
+- no broken route
+- no misleading success toast
+- no blocked-user data leak
+- no “coming soon” unless intentionally not live
+
+Report/block aftermath:
+After blocking:
+- hide/remove user from visible profile/feed/message context where appropriate
+- hide thread
+- prevent message button
+- show unblock option only where appropriate
+
+After reporting:
+- show confirmation
+- do not claim moderation action happened
+- do not show fake outcome
+
+Deliverable:
+- Profile action honesty matrix.
+- Broken/fake actions fixed.
+
+PHASE 9 — Avatar navigation and image fallback audit
+
+Search all avatar/profile picture usages:
+- UserAvatarButton
+- posts
+- comments
+- memories
+- Telegraph
+- trip members
+- event attendees
+- notifications
+- profile cards
+- search results
+- TripCircle
+- admin views if applicable
+
+Confirm:
+1. Tapping a user avatar routes to the correct public profile when intended.
+2. Missing avatar uses fallback.
+3. Broken avatar URL uses fallback.
+4. Missing cover uses fallback.
+5. Broken cover URL uses fallback.
+6. Blocked users do not leak profile data through avatar navigation.
+7. No dead avatar buttons.
+8. Profile deep links work from:
+   - posts
+   - comments
+   - messages
+   - notifications
+   - search
+   - TripCircle
+   - event attendees
+
+Deliverable:
+- Avatar navigation matrix.
+- Image fallback findings/fixes.
+
+PHASE 10 — Profile search card consistency
+
+Audit user search/profile cards.
+
+Search results should show only safe public profile fields:
+- avatar fallback
+- display name
+- username
+- home city/country only if public
+- trust/verified badge only if real
+- mutual/circle info only if real
+
+Rules:
+- blocked/private users should not appear, or should show safe placeholder depending on intended backend behavior.
+- no fake stats.
+- no fake verified badges.
+- tap routes to correct public profile.
+
+Deliverable:
+- Search/profile card consistency matrix.
+
+PHASE 11 — Profile stats and badge truth
+
+Audit all visible stats and badges on profile screens.
+
+Stats to verify:
+- trips count
+- posts count
+- memories/postcards count
+- stamps count
+- circles/friends/followers/following if shown
+- reviews/trust if shown
+
+Rules:
+1. Stats must come from backend/real data.
+2. If stat is not wired, hide it or show 0 honestly.
+3. Do not show fake profile strength, fake trust, fake verification, or fake follower counts.
+
+Verification badge logic:
+- Confirm exactly what makes a user verified:
+  - ID verified?
+  - email verified?
+  - admin approved?
+  - verification_status?
+- Show verified badge only when backend confirms.
+
+Trust badge logic:
+- Confirm trust score source.
+- Confirm blocked/private/deleted profiles do not show trust data if hidden.
+- Do not compute fake trust client-side.
+
+Deliverable:
+- Profile stats truth table.
+- Badge/trust truth table.
+
+PHASE 12 — Tests and validation
+
+Add or update tests only where existing patterns are clear and relevant.
+
+Recommended tests:
+- PATCH profile updates allowed fields.
+- PATCH profile rejects invalid username/handle.
+- PATCH profile blocks reserved usernames.
+- cover_photo_url update works.
+- avatar_url update works.
+- public profile blocked state returns safe placeholder.
+- unblock action restores access when viewer initiated block.
+- report profile writes a content report.
+- avatar/cover upload rejects invalid file type/size.
+- edit profile service maps fields correctly.
+- private profile response hides private fields.
+- deleted profile returns unavailable state.
+
+Validation commands:
+- Production verification query if SQL applied.
+- `pnpm --filter @workspace/api-server run typecheck`
+- `cd travel-buddy-standalone && pnpm typecheck`
+- `pnpm run typecheck` if practical.
+- `bash scripts/sync-standalone.sh --fix-source` if artifacts changed.
+- `bash scripts/sync-standalone.sh --check-source`
+- `bash scripts/sync-standalone.sh --check-deps`
+- `pnpm --filter @workspace/scripts run test:routes-guard` if available.
+- Relevant profile/backend tests if existing.
+
+Required process:
+
+1. Survey first.
+   Use targeted greps/reads for:
+   - profiles table migrations
+   - 0087_profiles_cover_photo_url.sql
+   - profile.ts backend routes
+   - passport routes
+   - public profile routes
+   - SessionContext/profile context
+   - Passport/profile screens
+   - profile edit screen/settings sheet
+   - avatar upload code
+   - cover upload code
+   - UserAvatarButton
+   - block/unblock services
+   - reportContent service
+   - profile search cards
+   - direct Supabase profile writes
+   - cover_photo_url references
+   - profiles.role/admin guard references
+   - verified/trust badge logic
+   - profile stats logic
+   - deleted/deactivated account handling
+
+2. Build a User Profile Matrix:
+   Columns:
+   - Area
+   - Current state
+   - Backend/schema dependency
+   - Frontend screen/component
+   - Status: pass / partial / fail / missing / production-blocked
+   - Evidence
+   - Fix needed
+
+3. Fix only proven profile blockers:
+   - missing profile schema used by live code
+   - broken save/edit flow
+   - avatar not persisting/displaying
+   - cover not persisting/displaying
+   - blocked profile leaking data
+   - private profile leaking data
+   - deleted profile crashing/leaking data
+   - report/block/unblock not wired
+   - fake success
+   - direct Supabase mutation risk
+   - missing privacy guard
+   - profile route/response mismatch
+   - broken avatar navigation
+   - fake stats/badges/trust
+   - visible profile action with no handler
+
+4. Do not fix:
+   - cosmetic redesign
+   - public web Passport share page
+   - rich share images
+   - full friend/social graph rebuild
+   - new verification provider integration
+   - trip/event/RAB profile extensions unless they directly use the same user profile bug
+   - unrelated admin dashboard work
+   - payment/identity vendor setup
+
+5. If production SQL is applied:
+   - Record exact SQL applied.
+   - Record verification query output.
+   - Update docs/migrations.md or production report if appropriate.
+   - Do not claim production is fixed without verification.
+
+6. Final report must include:
+   - Executive summary
+   - User Profile Matrix
+   - Production schema status:
+     - cover_photo_url
+     - role/admin source
+   - Exact SQL applied or required
+   - Backend routes changed/completed
+   - Frontend services changed/completed
+   - Screens/components changed/completed
+   - Direct Supabase risks found/fixed
+   - Block/privacy/deleted-profile findings
+   - Avatar navigation findings
+   - Image fallback findings
+   - Profile action honesty matrix
+   - Stats/badge/trust truth findings
+   - Tests added/updated
+   - Remaining real blockers
+   - Honest-disabled profile items
+   - Manual production actions still required
+   - Validation table
+   - Commit message
+
+Important:
+Complete the user profile system as one cohesive vertical flow.
+Start with schema, then backend, then services, then screens.
+Do not make the profile look finished while the database/backend is still missing fields.
+Do not let profile data leak through blocked/private/deleted states.
+Do not show verified/admin/trust badges unless backend data confirms them.
+Do not show fake success on profile save/upload.
+Do not assume production schema exists — verify it.
+No fake profile data.
+No dead profile buttons.
+No private data leaks.
