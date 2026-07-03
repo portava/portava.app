@@ -177,7 +177,7 @@ run_check "bundle-id-placeholder" \
 # If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
 # release never ships without confirming the guards are live.
 run_check "db-triggers" \
-  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076)" \
+  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090)" \
   bash scripts/check-db-triggers.sh
 
 # ── 9. Version / build-number floor guard ────────────────────────────────────
@@ -273,6 +273,9 @@ for entry in "${results[@]}"; do
         printf '            artifacts/api-server/src/migrations/0074_protect_saved_places.sql\n'
         printf '            artifacts/api-server/migrations/0076_profile_emergency_contacts.sql\n'
         printf '          (0076 creates the profile_emergency_contacts table + RLS policies)\n'
+        printf '            artifacts/api-server/src/migrations/0090_rent_buddy_rollout_tables.sql\n'
+        printf '          (0090 creates rent_buddy_global_controls + rent_buddy_city_rollouts tables;\n'
+        printf '           without them every checkRentBuddyAccess call returns city_not_available)\n'
         printf '          Token required to query the Supabase Management API:\n'
         printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
         printf '                             See docs/eas-runbook.md → "DB triggers check in CI"\n'

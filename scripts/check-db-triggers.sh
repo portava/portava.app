@@ -109,6 +109,37 @@ SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
 FROM pg_policies \
 WHERE tablename = 'notification_devices' AND schemaname = 'public'"
 
+# ── rent_buddy rollout tables SQL (migration 0090) ────────────────────────────
+# Checks that rent_buddy_global_controls (singleton kill-switch row, RLS enabled)
+# and rent_buddy_city_rollouts (RLS + rb_rollout_public_read + rb_rollout_svc
+# policies) exist with the correct columns.  Without these tables every call to
+# checkRentBuddyAccess returns city_not_available, disabling rent-a-buddy entirely.
+RENT_BUDDY_ROLLOUT_SQL="SELECT 'table_global_controls' AS check_type, relname AS name, relrowsecurity::text AS detail \
+FROM pg_class \
+WHERE relname = 'rent_buddy_global_controls' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+UNION ALL \
+SELECT 'col_global_controls' AS check_type, attname AS name, atttypid::regtype::text AS detail \
+FROM pg_attribute \
+JOIN pg_class ON pg_class.oid = pg_attribute.attrelid \
+WHERE pg_class.relname = 'rent_buddy_global_controls' \
+AND pg_class.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+AND attnum > 0 AND NOT attisdropped \
+AND attname IN ('all_bookings_paused','applications_paused','cash_balance_paused','nightlife_paused','force_full_in_app','force_public_meetup','force_delayed_posting') \
+UNION ALL \
+SELECT 'table_city_rollouts' AS check_type, relname AS name, relrowsecurity::text AS detail \
+FROM pg_class \
+WHERE relname = 'rent_buddy_city_rollouts' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') \
+UNION ALL \
+SELECT 'policy' AS check_type, policyname AS name, cmd AS detail \
+FROM pg_policies \
+WHERE tablename = 'rent_buddy_city_rollouts' AND schemaname = 'public' \
+UNION ALL \
+SELECT 'feature_flag' AS check_type, flag AS name, enabled::text AS detail \
+FROM feature_flags \
+WHERE flag = 'rent_buddy_enabled'"
+
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   PSQL_URL="${TRIGGER_PSQL_URL:-}"
@@ -177,7 +208,20 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
     node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
   PT_EXIT=$?
 
-  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 ]] && exit 0 || exit 1
+  # ── Rent Buddy rollout tables check (psql) ────────────────────────────────────
+  printf "  ℹ  Checking rent_buddy rollout tables (migration 0090) (psql)\n"
+  RBR_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${RENT_BUDDY_ROLLOUT_SQL}) q"
+  RBR_JSON=$(psql "$PSQL_URL" -t -A -c "$RBR_JSON_SQL" 2>&1)
+  RBR_PSQL_EXIT=$?
+  if [[ $RBR_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql rent_buddy rollout query failed (exit %d):\n" "$RBR_PSQL_EXIT"
+    printf "     %s\n" "$RBR_JSON"
+    exit 1
+  fi
+  RENT_BUDDY_ROLLOUT_RESPONSE="$RBR_JSON" node "${SCRIPT_DIR}/src/verify-db-rent-buddy-rollout.mjs"
+  RBR_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -319,4 +363,24 @@ SCHEMA_RESPONSE="$PT_HTTP_BODY" \
   node "${SCRIPT_DIR}/src/verify-db-schema.mjs"
 PT_EXIT=$?
 
-[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 ]] && exit 0 || exit 1
+# ── Rent Buddy rollout tables check — rent_buddy_global_controls + rent_buddy_city_rollouts (migration 0090) ──
+printf "  ℹ  Checking rent_buddy rollout tables (migration 0090)\n"
+RBR_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${RENT_BUDDY_ROLLOUT_SQL}\"}")
+
+RBR_HTTP_BODY=$(printf "%s" "$RBR_CURL_RESPONSE" | head -n -1)
+RBR_HTTP_CODE=$(printf "%s" "$RBR_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$RBR_HTTP_CODE" != "200" && "$RBR_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for rent_buddy rollout check\n" "$RBR_HTTP_CODE"
+  printf "     Response: %s\n" "$RBR_HTTP_BODY"
+  exit 1
+fi
+
+RENT_BUDDY_ROLLOUT_RESPONSE="$RBR_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-rent-buddy-rollout.mjs"
+RBR_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 ]] && exit 0 || exit 1
