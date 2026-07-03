@@ -204,3 +204,84 @@ export async function handleUploadResult(
   handlers.setError(result.message ?? 'Media upload failed.');
   return { continue: false };
 }
+
+// ── Filter-apply-result machine ───────────────────────────────────────────────
+
+/**
+ * Minimal shape of the processed media written back to composer state on a
+ * successful filter apply. Defined here (not imported from MediaFilterEditor.tsx)
+ * so machine.ts stays free of React Native module imports and is importable
+ * in node:test without a renderer.
+ */
+export interface FilteredMedia {
+  uri: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Outcome of a filter-apply step passed to handleFilterApplyResult.
+ *
+ *   ok: true  — filter rendered / metadata recorded; caller supplies the merged
+ *               media object + resolved filterId / intensity.
+ *   ok: false — renderFilteredImage threw or the editor signalled an error.
+ */
+export type FilterApplyOutcome =
+  | { ok: true; filteredMedia: FilteredMedia; filterId: string; filterIntensity: number }
+  | { ok: false; message?: string };
+
+/**
+ * Side-effect handlers injected so handleFilterApplyResult stays testable.
+ *
+ * `onClose` is intentionally ABSENT. The composer must stay open when the
+ * filter step fails — the type signature is the machine-layer enforcement of
+ * that rule.
+ */
+export interface FilterApplyResultHandlers {
+  /** Called with the merged media object (pending media + new URI) on success. */
+  setMedia: (m: FilteredMedia) => void;
+  setFilterId: (id: string) => void;
+  setFilterIntensity: (n: number) => void;
+  /** Called with null to clear the pending slot after a successful apply. */
+  setFilterEditorPending: (m: null) => void;
+  /** Always called — closes the filter editor modal regardless of outcome. */
+  setFilterEditorOpen: (open: boolean) => void;
+  /** Called ONLY on failure. Composer stays open; onClose is not available here. */
+  setError: (msg: string) => void;
+}
+
+/**
+ * Handles the result of a MediaFilterEditor onApply callback.
+ *
+ * ## Filter-apply contract (tested in PulseCreate.filter.test.ts)
+ *
+ *   ok: true  → setMedia + setFilterId + setFilterIntensity + clear pending
+ *               + close editor → { continue: true }
+ *   ok: false → setError (composer stays open) + close editor
+ *               → { continue: false }
+ *
+ * Usage in PulseCreate.tsx:
+ *   handleFilterApplyResult(
+ *     { ok: true, filteredMedia: { ...pending, uri: applyResult.uri },
+ *       filterId: applyResult.filterId, filterIntensity: applyResult.filterIntensity },
+ *     { setMedia, setFilterId, setFilterIntensity,
+ *       setFilterEditorPending: () => setFilterEditorPending(null),
+ *       setFilterEditorOpen, setError },
+ *   );
+ */
+export function handleFilterApplyResult(
+  outcome: FilterApplyOutcome,
+  handlers: FilterApplyResultHandlers,
+): { continue: boolean } {
+  handlers.setFilterEditorOpen(false);
+
+  if (!outcome.ok) {
+    handlers.setError(outcome.message ?? 'Filter could not be applied.');
+    return { continue: false };
+  }
+
+  handlers.setMedia(outcome.filteredMedia);
+  handlers.setFilterId(outcome.filterId);
+  handlers.setFilterIntensity(outcome.filterIntensity);
+  handlers.setFilterEditorPending(null);
+  return { continue: true };
+}

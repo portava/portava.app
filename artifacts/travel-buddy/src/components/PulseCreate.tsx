@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, handleSubmitResult, handleUploadResult } from './PulseCreate.machine';
+import { createComposerDismissHandlers, handleSubmitResult, handleUploadResult, handleFilterApplyResult } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 
 /* ── Types ── */
@@ -248,16 +248,26 @@ export function UnifiedPostComposer({
   }
 
   const handleFilterApply = useCallback((result: FilterApplyResult) => {
-    setFilterEditorOpen(false);
-    if (filterEditorPending) {
-      setMedia({
-        ...filterEditorPending,
-        uri: result.uri,
-      });
-      setFilterId(result.filterId);
-      setFilterIntensity(result.filterIntensity);
-      setFilterEditorPending(null);
+    if (!filterEditorPending) {
+      setFilterEditorOpen(false);
+      return;
     }
+    handleFilterApplyResult(
+      {
+        ok: true,
+        filteredMedia: { ...filterEditorPending, uri: result.uri },
+        filterId: result.filterId,
+        filterIntensity: result.filterIntensity,
+      },
+      {
+        setMedia: (m) => setMedia(m as PickedMedia),
+        setFilterId,
+        setFilterIntensity,
+        setFilterEditorPending: () => setFilterEditorPending(null),
+        setFilterEditorOpen,
+        setError,
+      },
+    );
   }, [filterEditorPending]);
 
   async function useGps() {
