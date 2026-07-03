@@ -381,6 +381,15 @@ export function DiscoveryCategoryTab({
   /** Stores the coords that were active when the last fetch fired. */
   const lastFetchedCoords           = useRef<{ lat: number; lng: number } | null>(null);
   /**
+   * Set to true synchronously at the start of load() when it will call the
+   * API with real user coords (sortBy=nearest + coords available).
+   * Cleared after the fetch settles.  Prevents the location-change bootstrap
+   * from firing a duplicate request on the same mount cycle — e.g. when the
+   * user switches category tabs and the component re-mounts while Nearest is
+   * active and GPS coords are already available.
+   */
+  const nearestFetchPendingWithCoords = useRef(false);
+  /**
    * Refs for the current user coords — kept in sync every render so `load`
    * can read the latest value without closing over the prop, which would make
    * it recreate on every GPS update and re-trigger the main fetch effect.
@@ -435,7 +444,17 @@ export function DiscoveryCategoryTab({
       currentFilters.sortBy, snapUserLat, snapUserLng,
     );
 
+    // Set the pending flag synchronously before the await so the location-change
+    // bootstrap effect (which fires in the same React batch) sees it and skips
+    // the duplicate request when the user switches category tabs with coords ready.
+    if (nearestUserLat != null && nearestUserLng != null) {
+      nearestFetchPendingWithCoords.current = true;
+    }
+
     const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
+
+    // Always clear — bootstrap guard is only needed during the async window.
+    nearestFetchPendingWithCoords.current = false;
 
     setLoading(false);
     setRefreshing(false);
@@ -471,7 +490,7 @@ export function DiscoveryCategoryTab({
     // the last fetch ran without user coords (e.g. permission was granted after
     // the user tapped the chip). Re-fetch now with the real position.
     // No nudge is needed — this is the initial nearest load completing.
-    if (shouldBootstrapNearestLoad({ sortBy: filters.sortBy, userLat, userLng, lastFetchedCoords: lastFetchedCoords.current })) {
+    if (shouldBootstrapNearestLoad({ sortBy: filters.sortBy, userLat, userLng, lastFetchedCoords: lastFetchedCoords.current, fetchPendingWithCoords: nearestFetchPendingWithCoords.current })) {
       setPlaces([]);
       setPage(1);
       load(1, filters, true);

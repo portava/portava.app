@@ -28,10 +28,23 @@ export function shouldBootstrapNearestLoad(opts: {
   userLat: number | null | undefined;
   userLng: number | null | undefined;
   lastFetchedCoords: { lat: number; lng: number } | null;
+  /**
+   * Set to true when the main fetch already started with real user coords on
+   * this mount cycle (before its async `await`).  When true, the bootstrap
+   * branch must be suppressed — the in-flight fetch will set lastFetchedCoords
+   * once it completes, so firing a second fetch would duplicate the request.
+   *
+   * This prevents a spurious re-fetch when the user switches category tabs:
+   * the component re-mounts (resetting lastFetchedCoords to null), the main
+   * fetch effect fires with real coords (sets this flag), and the location-
+   * change effect fires in the same React batch and must not bootstrap again.
+   */
+  fetchPendingWithCoords?: boolean;
 }): boolean {
-  const { sortBy, userLat, userLng, lastFetchedCoords } = opts;
+  const { sortBy, userLat, userLng, lastFetchedCoords, fetchPendingWithCoords } = opts;
   if (sortBy !== 'nearest') return false;
   if (userLat == null || userLng == null) return false;
+  if (fetchPendingWithCoords) return false;
   return lastFetchedCoords === null;
 }
 

@@ -236,6 +236,85 @@ describe('bootstrap flow — shouldBootstrapNearestLoad + resolveNearestFetchCoo
   });
 });
 
+// ── shouldBootstrapNearestLoad — tab-switch guard (fetchPendingWithCoords) ────
+//
+// When the user switches category tabs while Nearest is active and GPS coords
+// are available, the component re-mounts and lastFetchedCoords resets to null.
+// The main fetch effect fires first and sets fetchPendingWithCoords=true before
+// its await, so the location-change bootstrap must not fire a duplicate request.
+
+describe('shouldBootstrapNearestLoad — tab-switch duplicate-fetch guard', () => {
+  it('returns false when fetchPendingWithCoords=true (main fetch already in flight with real coords)', () => {
+    assert.equal(
+      shouldBootstrapNearestLoad({
+        sortBy: 'nearest',
+        userLat: USER_LAT,
+        userLng: USER_LNG,
+        lastFetchedCoords: null,
+        fetchPendingWithCoords: true,
+      }),
+      false,
+      'bootstrap must not fire when the main fetch is already in flight with real coords',
+    );
+  });
+
+  it('returns true when fetchPendingWithCoords=false (true bootstrap: coords just arrived, no fetch pending)', () => {
+    assert.equal(
+      shouldBootstrapNearestLoad({
+        sortBy: 'nearest',
+        userLat: USER_LAT,
+        userLng: USER_LNG,
+        lastFetchedCoords: null,
+        fetchPendingWithCoords: false,
+      }),
+      true,
+      'bootstrap must fire when coords arrive and no fetch is already pending',
+    );
+  });
+
+  it('returns true when fetchPendingWithCoords is omitted (backward-compatible — defaults to not-pending)', () => {
+    assert.equal(
+      shouldBootstrapNearestLoad({
+        sortBy: 'nearest',
+        userLat: USER_LAT,
+        userLng: USER_LNG,
+        lastFetchedCoords: null,
+      }),
+      true,
+      'omitting fetchPendingWithCoords is treated as false — existing callers unaffected',
+    );
+  });
+
+  it('tab-switch scenario: main fetch fires first, location-change effect must not duplicate it', () => {
+    // Simulates the re-mount sequence when the user switches from Food → Places
+    // tab while Nearest is active and GPS coords are already available:
+    //
+    //  1. Component mounts → lastFetchedCoords = null
+    //  2. Main fetch effect fires → load() starts synchronously, computes
+    //     nearestUserLat/Lng (non-null), sets fetchPendingWithCoords = true,
+    //     then hits `await getDiscoveryPlaces(...)` and suspends.
+    //  3. Location-change effect fires in the same React batch.
+    //     shouldBootstrapNearestLoad must return false to prevent the
+    //     duplicate request.
+
+    // State as seen by the location-change effect in step 3:
+    const lastFetchedCoords = null;      // reset on re-mount
+    const fetchPendingWithCoords = true; // set by load() before its await
+
+    assert.equal(
+      shouldBootstrapNearestLoad({
+        sortBy: 'nearest',
+        userLat: USER_LAT,
+        userLng: USER_LNG,
+        lastFetchedCoords,
+        fetchPendingWithCoords,
+      }),
+      false,
+      'switching tabs must not trigger a second Nearest fetch for the same coords',
+    );
+  });
+});
+
 // ── shouldRefreshNearestOnMovement — movement re-sort threshold ───────────────
 //
 // The guard uses strict > so that GPS jitter that produces noise at or below
