@@ -731,6 +731,9 @@ export default function PublicPassportScreen() {
   const insets = useSafeAreaInsets();
 
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
+  // About tab is only accessible once social checks have resolved and the viewer
+  // is neither blocked nor viewing a private profile they don't follow.
+  const canViewAbout = isOwn || (!socialLoading && !social?.isPrivate && !isBlockedRelation);
   const displayHandle = social?.handle ?? username ?? '';
   const displayName = social?.name ?? (profile && ('displayName' in profile ? profile.displayName : null)) ?? username ?? '';
 
@@ -908,7 +911,10 @@ export default function PublicPassportScreen() {
 
         {/* Tab bar — icon-only pill row */}
         <View style={styles.tabBarWrap}>
-          {TABS.map((tb) => {
+          {TABS.filter((tb) => {
+            if (tb.key === 'about' && !canViewAbout) return false;
+            return true;
+          }).map((tb) => {
             const active = tab === tb.key;
             return (
               <Pressable
@@ -942,44 +948,53 @@ export default function PublicPassportScreen() {
           {tab === 'map' && <MapTab postcards={postcards} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
-              {/* Passport about tab for standard fields */}
-              <AboutTab profile={profile} isOwner={isOwn} />
-
-              {/* Extra social about rows from the social profile */}
-              {social && (
-                <View style={{ gap: space.md, marginTop: space.sm }}>
-                  {((social.travelStyles?.length ?? 0) > 0 || social.travelPace || social.budgetStyle) && (
-                    <AboutRow label="TRAVEL STYLE">
-                      {(social.travelStyles ?? []).map((ts) => <InfoChip key={ts} label={ts} />)}
-                      {social.travelPace && <InfoChip label={`${social.travelPace} pace`} accent />}
-                      {social.budgetStyle && <InfoChip label={social.budgetStyle} />}
-                    </AboutRow>
-                  )}
-                  {(social.spokenLanguages?.length ?? 0) > 0 && (
-                    <AboutRow label="SPEAKS">
-                      {(social.spokenLanguages ?? []).map((lang) => <InfoChip key={lang} label={lang} />)}
-                    </AboutRow>
-                  )}
-                  {(social.lookingFor?.length ?? 0) > 0 && (
-                    <AboutRow label="LOOKING FOR">
-                      {(social.lookingFor ?? []).map((lf) => <InfoChip key={lf} label={lf} />)}
-                    </AboutRow>
-                  )}
-                  {((social.availabilityTags?.length ?? 0) > 0 || social.planningStyle) && (
-                    <AboutRow label="AVAILABILITY">
-                      {(social.availabilityTags ?? []).map((tag) => <InfoChip key={tag} label={tag} />)}
-                      {social.planningStyle && (
-                        <InfoChip label={social.planningStyle.replace(/_/g, ' ')} accent />
-                      )}
-                    </AboutRow>
-                  )}
+              {!canViewAbout ? (
+                <View style={styles.privateNote}>
+                  <Users size={14} color={color.mute} />
+                  <Text style={styles.privateText}>This profile is private. Add as a friend to see more.</Text>
                 </View>
-              )}
-              {profile.id && (
-                <HostReviewsSummary userId={profile.id} />
-              )}
-              {profile.id && (
-                <BuddySection userId={profile.id} />
+              ) : (
+                <>
+                  {/* Passport about tab for standard fields */}
+                  <AboutTab profile={profile} isOwner={isOwn} />
+
+                  {/* Extra social about rows from the social profile */}
+                  {social && (
+                    <View style={{ gap: space.md, marginTop: space.sm }}>
+                      {((social.travelStyles?.length ?? 0) > 0 || social.travelPace || social.budgetStyle) && (
+                        <AboutRow label="TRAVEL STYLE">
+                          {(social.travelStyles ?? []).map((ts) => <InfoChip key={ts} label={ts} />)}
+                          {social.travelPace && <InfoChip label={`${social.travelPace} pace`} accent />}
+                          {social.budgetStyle && <InfoChip label={social.budgetStyle} />}
+                        </AboutRow>
+                      )}
+                      {(social.spokenLanguages?.length ?? 0) > 0 && (
+                        <AboutRow label="SPEAKS">
+                          {(social.spokenLanguages ?? []).map((lang) => <InfoChip key={lang} label={lang} />)}
+                        </AboutRow>
+                      )}
+                      {(social.lookingFor?.length ?? 0) > 0 && (
+                        <AboutRow label="LOOKING FOR">
+                          {(social.lookingFor ?? []).map((lf) => <InfoChip key={lf} label={lf} />)}
+                        </AboutRow>
+                      )}
+                      {((social.availabilityTags?.length ?? 0) > 0 || social.planningStyle) && (
+                        <AboutRow label="AVAILABILITY">
+                          {(social.availabilityTags ?? []).map((tag) => <InfoChip key={tag} label={tag} />)}
+                          {social.planningStyle && (
+                            <InfoChip label={social.planningStyle.replace(/_/g, ' ')} accent />
+                          )}
+                        </AboutRow>
+                      )}
+                    </View>
+                  )}
+                  {profile.id && (
+                    <HostReviewsSummary userId={profile.id} />
+                  )}
+                  {profile.id && (
+                    <BuddySection userId={profile.id} />
+                  )}
+                </>
               )}
             </View>
           )}
