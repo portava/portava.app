@@ -88,6 +88,8 @@ interface FakeState {
   addons?:         Record<string, any>[];
   availability?:   Record<string, any>[];
   launchControls?: any[];
+  globalControls?: any;
+  cityRollouts?:   any[];
 }
 
 let state: FakeState = {};
@@ -415,12 +417,33 @@ function makeClient(userId: string, role = "user") {
           return { data: rows, count: controls.length, error: null };
         }
 
+        if (t === "rent_buddy_global_controls") {
+          const gc = state.globalControls ?? {
+            id: 1,
+            all_bookings_paused: false,
+            applications_paused: false,
+            cash_balance_paused: false,
+            nightlife_paused: false,
+            force_full_in_app: false,
+            force_public_meetup: false,
+            force_delayed_posting: false,
+          };
+          if (this._maybeSingle) return { data: gc, error: null };
+          return { data: [gc], count: 1, error: null };
+        }
+
         if (t === "rent_buddy_city_rollouts") {
-          // Default: all cities are live so unit tests can test business logic
-          // without needing to set up rollout state. rentABuddyRollout.test.ts
-          // tests the rollout logic specifically.
-          if (this._maybeSingle) return { data: { id: "default-rollout", status: "live" }, error: null };
-          return { data: [{ id: "default-rollout", status: "live" }], count: 1, error: null };
+          const rollouts: any[] = state.cityRollouts ?? [];
+          let rows = [...rollouts];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq")    rows = rows.filter((r: any) => r[col] === val);
+            if (op === "ilike") rows = rows.filter((r: any) => typeof r[col] === "string" && r[col].toLowerCase() === String(val).toLowerCase());
+          }
+          // Fall back to a permissive "live" row when no explicit rollout matches,
+          // so business-logic tests don't need to seed every city they touch.
+          const fallback = { id: "default-rollout", city: "default", status: "live" };
+          if (this._maybeSingle) return { data: rows[0] ?? fallback, error: null };
+          return { data: rows.length ? rows : [fallback], count: rows.length || 1, error: null };
         }
 
         if (this._maybeSingle) return { data: null, error: null };
@@ -507,6 +530,19 @@ function setupState(extra: Partial<FakeState> = {}) {
     adminActions: [],
     trustEvents: [],
     reviews: [],
+    globalControls: {
+      id: 1,
+      all_bookings_paused: false,
+      applications_paused: false,
+      cash_balance_paused: false,
+      nightlife_paused: false,
+      force_full_in_app: false,
+      force_public_meetup: false,
+      force_delayed_posting: false,
+    },
+    cityRollouts: [
+      { id: "rollout-tokyo", city: "Tokyo", country: "Japan", status: "live" },
+    ],
     ...restExtra,
   };
 
