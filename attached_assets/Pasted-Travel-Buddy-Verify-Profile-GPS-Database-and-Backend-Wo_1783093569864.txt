@@ -1,0 +1,191 @@
+Travel Buddy — Verify Profile + GPS Database and Backend Work End-to-End
+
+Check whether the profile + GPS/location database/backend work actually works as intended after the SQL deployment steps.
+
+Do not add new features.
+Do not redesign UI.
+Do not widen scope into unrelated systems.
+Do not make code changes unless a real verification failure is proven.
+This is a verification-first pass.
+
+Goal:
+Confirm the profile, privacy, account lifecycle, hidden gems admin, GPS/location, wishlist, and stamp/GPS privacy systems work after the database updates.
+
+Primary items to verify:
+1. `0094_profile_account_status_and_privacy.sql`
+2. `profiles.account_status`
+3. `profile_privacy_settings`
+4. `user_deletion_requests`
+5. hiddenGems admin guard using `profiles.role`
+6. profile cover photo schema
+7. GPS/location schema
+8. wishlist schema/RPC
+9. user stamp lat/lng privacy
+10. no manual coordinate backend requirement
+
+Required process:
+
+1. Verify production schema first.
+   Run or prepare exact production Supabase verification queries for:
+   - profiles.account_status exists
+   - profile_privacy_settings table exists
+   - user_deletion_requests table exists
+   - RLS enabled on both new tables
+   - pps_own / pps_svc policies exist
+   - udr_own / udr_svc policies exist
+   - udr_status_scheduled_idx exists
+   - profiles.cover_photo_url exists
+   - profiles.role exists
+   - discovery_places lat/lng/osm_id/category fields exist
+   - wishlist_places table exists
+   - decrement_discovery_place_saved_count exists
+   - decrement RPC is SECURITY DEFINER
+   - service_role has EXECUTE on decrement RPC
+   - stamp tables exist
+   - anon/authenticated do not have column access to user_stamps.lat/lng
+
+2. Verify backend route behavior.
+   Test or inspect with real route handlers where possible:
+   - GET /api/me/privacy
+     - returns defaults if no row exists
+     - returns saved row if present
+   - PATCH /api/me/privacy
+     - writes to profile_privacy_settings
+     - requires auth
+     - returns updated settings
+   - POST /api/me/deactivate
+     - writes profiles.account_status = deactivated
+     - requires auth
+   - POST /api/me/reactivate
+     - writes profiles.account_status = active
+     - requires auth
+   - POST /api/me/delete-request
+     - upserts user_deletion_requests
+     - sets status pending
+     - schedules future deletion
+     - requires auth
+   - GET /api/admin/users
+     - no longer fails on missing account_status
+     - requires admin
+   - Hidden Gems admin routes
+     - require profiles.role === admin
+     - no longer check nonexistent is_admin
+     - non-admin gets 403
+     - admin gets access
+
+3. Verify profile cover behavior.
+   Confirm:
+   - cover_photo_url column exists
+   - profile GET route can select it
+   - cover upload writes it
+   - public/own profile response includes it when allowed
+   - missing cover uses fallback
+   - no PGRST204 missing-column guard triggers for cover_photo_url anymore
+
+4. Verify profile privacy behavior.
+   Confirm:
+   - profile_privacy_settings can be created/updated
+   - profile visibility values are accepted:
+     - public
+     - followers_only
+     - private
+   - allow_messages_from values are accepted:
+     - everyone
+     - friends
+     - followers
+     - nobody
+   - invalid values are rejected by backend or DB
+   - public profile respects privacy settings if wired
+   - own profile still shows own private fields
+
+5. Verify account lifecycle behavior.
+   Confirm:
+   - account_status defaults to active
+   - deactivated users are represented safely
+   - delete request creates or updates one row per user
+   - cancel/reactivate behavior does not leave inconsistent status if route exists
+   - admin user list can read account_status
+
+6. Verify GPS/location behavior.
+   Confirm:
+   - public place coordinates can exist for discovery/community/hidden gems
+   - private user GPS fields are not exposed publicly
+   - hidden gem privacy redaction path still runs
+   - user_stamps.lat/lng cannot be selected by anon/authenticated roles
+   - location routes validate lat/lng ranges
+   - no backend route requires user-typed raw coordinate strings
+   - GPS-derived coordinates are accepted where intended
+
+7. Verify wishlist behavior.
+   Confirm:
+   - wishlist_places exists
+   - save route can insert wishlist item
+   - unsave route can remove wishlist item
+   - duplicate save does not create duplicates
+   - decrement_discovery_place_saved_count(p_id uuid) is callable by service_role
+   - saved_count cannot decrement below 0
+
+8. Verify frontend/mobile assumptions.
+   Inspect mobile service/screen code for:
+   - no live direct Supabase writes to profile/location tables
+   - profile privacy screen calls API server
+   - delete request/deactivate/reactivate call API server
+   - cover photo upload uses API server
+   - hidden gems admin screen routes to backend
+   - no visible coordinate TextInput remains for GPS-required flows
+   - manual coordinate inputs, if any, are admin/debug-only or honestly disabled
+
+9. Run validation commands:
+   - `pnpm --filter @workspace/api-server run typecheck`
+   - `cd travel-buddy-standalone && pnpm typecheck`
+   - `pnpm run typecheck` if practical
+   - `bash scripts/sync-standalone.sh --check-source`
+   - `bash scripts/sync-standalone.sh --check-deps`
+   - `pnpm --filter @workspace/scripts run test:routes-guard` if available
+   - `bash scripts/test-sync-standalone.sh` if practical
+   - relevant backend/profile/location tests if existing
+
+10. Fix policy:
+   Only fix proven failures:
+   - missing production column/table/policy/index
+   - route still referencing nonexistent column
+   - hiddenGems still checking is_admin
+   - privacy/deletion route hard-failing
+   - fake success after DB error
+   - invalid RLS/policy
+   - public GPS leak
+   - direct live Supabase mutation
+   - broken response shape
+   - missing auth/admin/owner guard
+
+   Do not fix:
+   - cosmetic UI issues
+   - new GPS autocomplete features
+   - future stamp activation 0093
+   - unrelated trip/event/RAB systems
+   - broad refactors
+
+Final report must include:
+1. Executive summary
+2. Production schema verification table
+3. Backend route verification table
+4. Profile cover verification
+5. Profile privacy verification
+6. Account lifecycle verification
+7. GPS/location privacy verification
+8. Wishlist/RPC verification
+9. Frontend/mobile assumption verification
+10. Fixes completed, if any
+11. Files changed, if any
+12. Remaining real blockers
+13. Manual production actions still required
+14. Validation table
+15. Commit message, if changes were made
+
+Important:
+Do not claim production is fixed unless production verification proves it.
+Do not claim GPS privacy is safe unless public projections/RLS/column grants are checked.
+Do not claim hidden gems admin works unless the route uses profiles.role and admin/non-admin behavior is verified.
+No fake success.
+No private GPS leaks.
+No manual coordinate requirement for normal users.
