@@ -113,19 +113,28 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     (async () => {
       onCheckingChange?.(true);
 
-      const { modalShouldOpen } = await runOpenEffect({
-        // Guard with `live` so a stale in-flight effect (cancelled or timed
-        // out before getActiveSession resolved) cannot fire callbacks.
-        onStarted: (id) => { if (live) onStarted?.(id); },
-        onClose: () => { if (live) onClose(); },
-        getActiveSession,
-      });
-
-      clearTimeout(checkTimeoutId);
+      // fail-open default — if runOpenEffect ever throws despite its own
+      // internal try/catch, we still open the form rather than blocking the user.
+      let modalShouldOpen = true;
+      try {
+        ({ modalShouldOpen } = await runOpenEffect({
+          // Guard with `live` so a stale in-flight effect (cancelled or timed
+          // out before getActiveSession resolved) cannot fire callbacks.
+          onStarted: (id) => { if (live) onStarted?.(id); },
+          onClose: () => { if (live) onClose(); },
+          getActiveSession,
+        }));
+      } catch {
+        // runOpenEffect has its own try/catch, but guard defensively so the
+        // overlay cannot get permanently stuck if it ever throws.
+      } finally {
+        clearTimeout(checkTimeoutId);
+        // Always reset the checking indicator while the effect is still live.
+        // The cleanup return () => { … } handles the cancelled path.
+        if (live) onCheckingChange?.(false);
+      }
 
       if (!live) return;
-
-      onCheckingChange?.(false);
 
       if (!modalShouldOpen) return; // redirected to an active session
 

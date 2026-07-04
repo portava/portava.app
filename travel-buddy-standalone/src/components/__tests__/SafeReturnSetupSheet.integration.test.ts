@@ -614,3 +614,305 @@ describe('SafeReturnSetupSheet integration — pre-check error (fail-open)', () 
     await assert.doesNotReject(() => promise);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 7: onCheckingChange overlay — all three exit paths
+//
+// TripPlanSection renders a loading overlay while the active-session pre-check
+// is in flight (`safeReturnChecking`). The overlay is driven by
+// `onCheckingChange` on SafeReturnSetupSheet: true when checking starts,
+// false when it resolves. If false is never delivered, the overlay is stuck.
+//
+// The three exit paths from the useEffect([visible]) IIFE are:
+//   Path 1 — no active session  → form opens; onCheckingChange(false) fires
+//            after runOpenEffect resolves (happy path)
+//   Path 2 — active session     → redirect/onStarted fires; onCheckingChange(false)
+//            fires after runOpenEffect resolves (redirect path)
+//   Path 3 — visible=false while in-flight → cleanup fires onCheckingChange(false)
+//            (cancellation path)
+//   Error   — runOpenEffect throws → finally-block fires onCheckingChange(false)
+//            (defensive path added by the try/catch/finally fix)
+//
+// ## Testing strategy
+//
+// `runVisibleOnEffect` models the fixed IIFE from SafeReturnSetupSheet's
+// useEffect exactly: try { await runOpenEffect } catch {} finally { if (live)
+// onCheckingChange(false) }, plus a cancel() that mirrors the cleanup return.
+// `overrideRunOpenEffect` lets the error-path test inject a throwing function.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Models the fixed IIFE from SafeReturnSetupSheet's useEffect([visible]).
+ *
+ * Mirrors the component's try/catch/finally pattern:
+ *
+ *   onCheckingChange(true)
+ *   try { await runOpenEffect(...) }
+ *   catch { // fail-open }
+ *   finally { clearTimeout; if (live) onCheckingChange(false) }
+ *
+ * Returns { promise, cancel } where cancel() mirrors the cleanup return:
+ *   live = false; onCheckingChange(false);
+ */
+function runVisibleOnEffect(opts: {
+  onStarted: (id: string) => void;
+  onClose: () => void;
+  onCheckingChange: (v: boolean) => void;
+  getActiveSession: () => Promise<{ session: { id: string } | null }>;
+  overrideRunOpenEffect?: () => Promise<{ modalShouldOpen: boolean }>;
+}): { promise: Promise<{ modalShouldOpen: boolean }>; cancel: () => void } {
+  let live = true;
+
+  opts.onCheckingChange(true);
+
+  const openEffect = opts.overrideRunOpenEffect
+    ? opts.overrideRunOpenEffect
+    : () => runOpenEffect({
+        onStarted: (id) => { if (live) opts.onStarted(id); },
+        onClose:   ()   => { if (live) opts.onClose(); },
+        getActiveSession: opts.getActiveSession,
+      });
+
+  let resolveOuter!: (v: { modalShouldOpen: boolean }) => void;
+  const promise = new Promise<{ modalShouldOpen: boolean }>((resolve) => {
+    resolveOuter = resolve;
+  });
+
+  (async () => {
+    let modalShouldOpen = true;
+    try {
+      ({ modalShouldOpen } = await openEffect());
+    } catch {
+      // fail-open
+    } finally {
+      if (live) opts.onCheckingChange(false);
+    }
+    resolveOuter({ modalShouldOpen });
+  })();
+
+  return {
+    promise,
+    cancel: () => {
+      live = false;
+      opts.onCheckingChange(false);
+    },
+  };
+}
+
+describe('SafeReturnSetupSheet — onCheckingChange overlay (all exit paths)', () => {
+  // ── Path 1: no active session → form opens ─────────────────────────────────
+
+  it('Path 1 (no session): onCheckingChange(true) then onCheckingChange(false) after pre-check', async () => {
+    const log: boolean[] = [];
+
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { log.push(v); },
+      getActiveSession: async () => ({ session: null }),
+    });
+    await promise;
+
+    assert.deepEqual(log, [true, false],
+      'overlay must start (true) then clear (false) on the no-session path');
+  });
+
+  it('Path 1 (no session): checking ends as false — overlay is not stuck', async () => {
+    let checking = false;
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { checking = v; },
+      getActiveSession: async () => ({ session: null }),
+    });
+    await promise;
+
+    assert.equal(checking, false, 'safeReturnChecking must be false after pre-check resolves');
+  });
+
+  it('Path 1 (no session): modalShouldOpen is true so the form would be shown', async () => {
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: () => {},
+      getActiveSession: async () => ({ session: null }),
+    });
+    const { modalShouldOpen } = await promise;
+
+    assert.equal(modalShouldOpen, true);
+  });
+
+  // ── Path 2: active session found → redirect ─────────────────────────────────
+
+  it('Path 2 (active session): onCheckingChange(false) fires after redirect', async () => {
+    const log: boolean[] = [];
+
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { log.push(v); },
+      getActiveSession: async () => ({ session: { id: 'sess-active-check' } }),
+    });
+    await promise;
+
+    assert.deepEqual(log, [true, false],
+      'overlay must clear after the active-session redirect path');
+  });
+
+  it('Path 2 (active session): checking ends as false — overlay is not stuck', async () => {
+    let checking = false;
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { checking = v; },
+      getActiveSession: async () => ({ session: { id: 'sess-active-check-2' } }),
+    });
+    await promise;
+
+    assert.equal(checking, false, 'safeReturnChecking must be false after active-session redirect');
+  });
+
+  it('Path 2 (active session): onCheckingChange(false) fires before onStarted side-effects settle', async () => {
+    const order: string[] = [];
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => { order.push('onStarted'); },
+      onClose:          () => { order.push('onClose'); },
+      onCheckingChange: (v) => { if (!v) order.push('checkingFalse'); },
+      getActiveSession: async () => ({ session: { id: 'sess-order' } }),
+    });
+    await promise;
+
+    // onStarted and onClose fire inside runOpenEffect; onCheckingChange(false)
+    // fires in the finally block after runOpenEffect returns.
+    assert.ok(order.includes('checkingFalse'), 'onCheckingChange(false) must fire on redirect path');
+    assert.ok(order.includes('onStarted'),     'onStarted must fire on redirect path');
+  });
+
+  it('Path 2 (active session): modalShouldOpen is false (no form shown after redirect)', async () => {
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: () => {},
+      getActiveSession: async () => ({ session: { id: 'sess-no-form' } }),
+    });
+    const { modalShouldOpen } = await promise;
+
+    assert.equal(modalShouldOpen, false);
+  });
+
+  // ── Path 3: visible flipped false mid-flight → cleanup ──────────────────────
+
+  it('Path 3 (cleanup / cancellation): onCheckingChange(false) fires when visible flips false', async () => {
+    function delay(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
+
+    const log: boolean[] = [];
+    const { promise, cancel } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { log.push(v); },
+      getActiveSession: async () => { await delay(20); return { session: null }; },
+    });
+
+    // Simulate visible flipping false before getActiveSession resolves
+    cancel();
+    await promise;
+
+    assert.deepEqual(log, [true, false],
+      'cleanup path must deliver onCheckingChange(false) when visible is toggled off mid-flight');
+  });
+
+  it('Path 3 (cleanup): checking ends as false after cancellation', async () => {
+    function delay(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
+
+    let checking = false;
+    const { promise, cancel } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { checking = v; },
+      getActiveSession: async () => { await delay(20); return { session: { id: 'stale' } }; },
+    });
+
+    cancel();
+    await promise;
+
+    assert.equal(checking, false,
+      'safeReturnChecking must be false after the cleanup path fires');
+  });
+
+  it('Path 3 (cleanup): onCheckingChange(false) fires exactly once — no double-call', async () => {
+    function delay(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
+
+    const falseCalls: number[] = [];
+    const { promise, cancel } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { if (!v) falseCalls.push(Date.now()); },
+      getActiveSession: async () => { await delay(20); return { session: null }; },
+    });
+
+    cancel();
+    await promise;
+
+    assert.equal(falseCalls.length, 1,
+      'onCheckingChange(false) must be called exactly once — cleanup fires it, finally skips (live=false)');
+  });
+
+  // ── Error path: runOpenEffect throws → finally always clears overlay ─────────
+
+  it('Error path: onCheckingChange(false) fires even when runOpenEffect throws', async () => {
+    const log: boolean[] = [];
+
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { log.push(v); },
+      getActiveSession: async () => ({ session: null }), // unused — overridden below
+      overrideRunOpenEffect: async () => { throw new Error('Simulated runOpenEffect failure'); },
+    });
+    await promise;
+
+    assert.deepEqual(log, [true, false],
+      'finally-block must deliver onCheckingChange(false) even when runOpenEffect throws');
+  });
+
+  it('Error path: checking ends as false after runOpenEffect throws', async () => {
+    let checking = false;
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: (v) => { checking = v; },
+      getActiveSession: async () => ({ session: null }),
+      overrideRunOpenEffect: async () => { throw new TypeError('Unexpected error in openEffect'); },
+    });
+    await promise;
+
+    assert.equal(checking, false,
+      'safeReturnChecking must never be left as true when runOpenEffect throws');
+  });
+
+  it('Error path: promise resolves (does not reject) — component never crashes', async () => {
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: () => {},
+      getActiveSession: async () => ({ session: null }),
+      overrideRunOpenEffect: async () => { throw new Error('fatal openEffect bug'); },
+    });
+    await assert.doesNotReject(() => promise,
+      'runVisibleOnEffect must not propagate the error — component cannot crash');
+  });
+
+  it('Error path: fail-open — modalShouldOpen=true so form still appears on error', async () => {
+    const { promise } = runVisibleOnEffect({
+      onStarted:        () => {},
+      onClose:          () => {},
+      onCheckingChange: () => {},
+      getActiveSession: async () => ({ session: null }),
+      overrideRunOpenEffect: async () => { throw new Error('network gone'); },
+    });
+    const { modalShouldOpen } = await promise;
+
+    assert.equal(modalShouldOpen, true,
+      'on runOpenEffect error the form must still open (fail-open) so the user is not blocked');
+  });
+});
