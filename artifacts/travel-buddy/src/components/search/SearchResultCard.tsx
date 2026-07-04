@@ -83,22 +83,24 @@ function TypeIcon({ type, size = 15 }: { type: string; size?: number }) {
 /**
  * Normalises backend destinationRoute values to actual Expo Router paths.
  *
- * - Travelers: /passport/:handle is valid (app/passport/[username].tsx exists)
- * - Buddies: override to /(rent-a-buddy)/buddy/:id using result.id (the user's DB id)
- *   because the buddy profile page is at app/(rent-a-buddy)/buddy/[id].tsx
- * - Places + hidden gems: /place/:id and /hidden-gem/:id → /gems/:id
- * - Cities + countries: /city/:slug and /country/:slug → /destination/:slug
- * - Stamps: backend emits /stamps/:slug (plural), app file is stamp/[stampId].tsx (singular)
- * - Circles: app has only a singleton /circle screen; no parameterised :id route exists
- * - All other routes (event, trip, plan, hashtag, post, …) pass through verbatim
+ * - Travelers: /passport/:handle is valid — app/passport/[username].tsx exists.
+ * - Buddies: override to /(rent-a-buddy)/buddy/:id (app/(rent-a-buddy)/buddy/[id].tsx).
+ *   Backend emits /passport/:handle for buddies (same searchTravelers fn), but the
+ *   dedicated buddy profile is at /(rent-a-buddy)/buddy/:id.
+ * - Places + hidden gems: /place/:id and /hidden-gem/:id → /gems/:id.
+ * - Cities + countries: /city/:slug and /country/:slug → /destination/:slug.
+ * - Stamps: /stamps/:slug (plural backend) → /stamp/:slug (singular app).
+ * - Circles: app only has a singleton /circle screen (no parameterised :id route,
+ *   see circle.tsx comment line ~128). We pass `ownerId` as a query param to preserve
+ *   entity identity in the URL for future use when a parameterised route is added.
+ * - All other routes (/event/:id, /trip/:id, /plan, /hashtag/:slug, /post/:id, …)
+ *   pass through verbatim.
  */
 function resolveRoute(result: UnifiedSearchResult): string | null {
   const { destinationRoute, type, id } = result;
   if (!destinationRoute) return null;
 
-  // Buddies navigate to the dedicated rent-a-buddy buddy profile page.
-  // The backend emits /passport/:handle for buddies (same searchTravelers function),
-  // but the correct in-app destination is /(rent-a-buddy)/buddy/:id.
+  // Buddies → dedicated rent-a-buddy buddy profile page
   if (type === 'buddies') {
     return `/(rent-a-buddy)/buddy/${id}`;
   }
@@ -117,17 +119,31 @@ function resolveRoute(result: UnifiedSearchResult): string | null {
   const countryMatch = destinationRoute.match(/^\/country\/(.+)$/);
   if (countryMatch) return `/destination/${countryMatch[1]}`;
 
-  // Stamps: /stamps/:slug (plural backend) → /stamp/:stampId (singular app file)
+  // Stamps: /stamps/:slug (plural backend) → /stamp/:slug (singular app file)
   const stampsMatch = destinationRoute.match(/^\/stamps\/(.+)$/);
   if (stampsMatch) return `/stamp/${stampsMatch[1]}`;
 
-  // Circles: app has a singleton /circle screen (no parameterised :id route)
+  // Circles: the app only has a singleton /circle screen (per-user, no :id param).
+  // Pass ownerId as a query param to preserve entity identity; a parameterised
+  // /circle/:id route can read this when it is eventually added.
   if (destinationRoute.startsWith('/circle')) {
-    return '/circle';
+    const circleIdMatch = destinationRoute.match(/^\/circle\/(.+)$/);
+    return circleIdMatch ? `/circle?ownerId=${circleIdMatch[1]}` : '/circle';
   }
 
-  // All others (/passport/:handle, /event/:id, /trip/:id, /hashtag/:slug, /post/:id, …)
+  // All others: /passport/:handle, /event/:id, /trip/:id, /hashtag/:slug, /post/:id, …
   return destinationRoute;
+}
+
+/** Renders an initials pill consistent with the shared avatar style. */
+function InitialsFallback({ initials, size }: { initials: string; size: number }) {
+  return (
+    <View style={[styles.initialsCircle, { width: size, height: size, borderRadius: size / 2 }]}>
+      <Text style={[styles.initialsText, { fontSize: size * 0.36 }]}>
+        {initials}
+      </Text>
+    </View>
+  );
 }
 
 interface Props {
@@ -144,7 +160,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   const [isFollowing, setIsFollowing] = useState(
     (result.actionState?.isFollowing as boolean | undefined) ?? false,
   );
-  // Initialise from backend (e.g. if a previous request was already sent)
+  // Initialised from backend in case a prior request was already sent
   const [isRequestSent, setIsRequestSent] = useState(
     (result.actionState?.isRequestSent as boolean | undefined) ?? false,
   );
@@ -158,6 +174,14 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     (result.actionState?.isWaitlisted as boolean | undefined) ?? false,
   );
   const [rsvpToggling, setRsvpToggling] = useState(false);
+
+  // ── Trip join state ────────────────────────────────────────────────────────
+  // Trips have no server-side join API in the current mobile services layer.
+  // isMember is initialised from backend actionState for future-proofing; the
+  // "Join" button navigates to the trip detail where joining is handled in context.
+  const [isTripMember] = useState(
+    (result.actionState?.isMember as boolean | undefined) ?? false,
+  );
 
   // ── Place / post save state ────────────────────────────────────────────────
   const [isSaved, setIsSaved] = useState(
@@ -185,7 +209,6 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     setFollowToggling(true);
 
     if (isPrivate && !isFollowing) {
-      // Private profile — send a follow request
       const res = await followUser(result.id);
       if (res.ok) {
         setIsRequestSent(true);
@@ -210,7 +233,6 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   async function handleEventJoin() {
     if (rsvpToggling) return;
     if (isAttending || isWaitlisted) {
-      // Already attending/waitlisted — tapping navigates to event detail
       navigate();
       return;
     }
@@ -254,8 +276,16 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     setSaveToggling(false);
   }
 
-  // ── Invite-only / Request Access label ──────────────────────────────────
+  // ── Invite-only: content inaccessible to viewer ────────────────────────
   const showRequestAccess = !canAccess && (isEvent || isTrip);
+
+  // ── Traveler avatar: use UserAvatarButton (shared component) with initials
+  // fallback via the children prop. When avatarUrl is present the component
+  // renders the image normally; when absent we supply an InitialsFallback child
+  // so the shared component renders it instead of the default 👤 icon.
+  const initialsChild = isTraveler && !result.avatarUrl && result.fallbackInitials
+    ? <InitialsFallback initials={result.fallbackInitials} size={AVATAR_SIZE} />
+    : undefined;
 
   return (
     <Pressable style={styles.row} onPress={navigate}>
@@ -268,7 +298,9 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
             avatarUrl={result.avatarUrl}
             size={AVATAR_SIZE}
             disabled
-          />
+          >
+            {initialsChild}
+          </UserAvatarButton>
         </View>
       ) : (
         <View style={styles.avatarSquare}>
@@ -303,7 +335,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         )}
       </View>
 
-      {/* Right — action buttons per type */}
+      {/* Right — type-specific action buttons */}
 
       {/* Public traveler: Follow ↔ Following */}
       {isTraveler && !isPrivate && (
@@ -358,7 +390,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         </Pressable>
       )}
 
-      {/* Event (accessible): Join → RSVP; Attending / Waitlisted → navigates */}
+      {/* Accessible event: Join → RSVP API; Attending / Waitlisted → navigates */}
       {isEvent && !showRequestAccess && (
         <Pressable
           style={[
@@ -370,7 +402,10 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
           hitSlop={8}
         >
           {rsvpToggling ? (
-            <ActivityIndicator size="small" color={(isAttending || isWaitlisted) ? color.mute : color.onInk} />
+            <ActivityIndicator
+              size="small"
+              color={(isAttending || isWaitlisted) ? color.mute : color.onInk}
+            />
           ) : (
             <Text style={(isAttending || isWaitlisted) ? styles.actionBtnActiveText : styles.actionBtnText}>
               {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : 'Join'}
@@ -379,10 +414,18 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         </Pressable>
       )}
 
-      {/* Trip (accessible): Join → navigates to trip detail */}
+      {/* Trip/plan (accessible): Join navigates to trip detail.
+          The mobile services layer has no public requestToJoin endpoint for trips;
+          joining is handled contextually on the trip detail screen. */}
       {isTrip && !showRequestAccess && (
-        <Pressable style={styles.actionBtnOutline} onPress={navigate} hitSlop={8}>
-          <Text style={styles.actionBtnOutlineText}>Join</Text>
+        <Pressable
+          style={[styles.actionBtnOutline, isTripMember && styles.actionBtnActive]}
+          onPress={navigate}
+          hitSlop={8}
+        >
+          <Text style={isTripMember ? styles.actionBtnActiveText : styles.actionBtnOutlineText}>
+            {isTripMember ? 'Joined' : 'Join'}
+          </Text>
         </Pressable>
       )}
 
@@ -436,6 +479,17 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  initialsCircle: {
+    backgroundColor: color.deep,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  initialsText: {
+    color: color.onInk,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
   },
   content: {
     flex: 1,
