@@ -10,6 +10,7 @@ import {
   TravelButton, TravelCard, TravelLoadingState,
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
+import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
@@ -135,12 +136,11 @@ function SuggestSheet({
           <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>
             <View style={{ flex: 1 }}>
               <Text style={modal.fieldLabel}>Start time</Text>
-              <TextInput
-                style={modal.input}
-                value={time}
-                onChangeText={setTime}
-                placeholder="e.g. 14:00"
-                placeholderTextColor={color.haze}
+              <DatePickerField
+                mode="time"
+                value={time ? new Date(`1970-01-01T${time.length === 5 ? time : time.slice(0,5)}:00`) : null}
+                onChange={(d) => setTime(`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`)}
+                placeholder="Select start time"
               />
             </View>
             <View style={{ flex: 1 }}>
