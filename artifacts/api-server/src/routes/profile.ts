@@ -413,7 +413,7 @@ router.patch("/me/profile", async (req, res) => {
     row.username_updated_at = new Date().toISOString();
   }
 
-  if (Object.keys(row).length <= 1) {
+  if (Object.keys(row).length === 0) {
     sendError(res, "invalid_payload", "At least one field must be provided");
     return;
   }

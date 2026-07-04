@@ -382,6 +382,86 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
       "public_social_links column must be written");
   });
 
+  it("avatarUrl survives a round-trip and is written as avatar_url in the DB", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Snapster", display_name: "Snapster", username: "snapster",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const avatarUrl = "https://example.com/avatar.jpg";
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { avatarUrl },
+    });
+    const patchBody = await patchRes.json() as any;
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(patchBody)}`);
+    assert.equal(patchBody.avatarUrl, avatarUrl,
+      "PATCH response must return updated avatarUrl");
+
+    const getRes = await api("/me/profile");
+    const getBody = await getRes.json() as any;
+    assert.equal(getRes.status, 200, `GET failed: ${JSON.stringify(getBody)}`);
+    assert.equal(getBody.avatarUrl, avatarUrl,
+      "GET after PATCH must return the updated avatarUrl");
+
+    assert.equal(profiles[0].avatar_url, avatarUrl,
+      "avatar_url column must be written with the correct DB column name");
+  });
+
+  it("coverUrl survives a round-trip and is written as cover_photo_url in the DB", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Coverer", display_name: "Coverer", username: "coverer",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const coverUrl = "https://example.com/cover.jpg";
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { coverUrl },
+    });
+    const patchBody = await patchRes.json() as any;
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(patchBody)}`);
+    assert.equal(patchBody.coverPhotoUrl, coverUrl,
+      "PATCH response must return updated coverPhotoUrl");
+
+    const getRes = await api("/me/profile");
+    const getBody = await getRes.json() as any;
+    assert.equal(getRes.status, 200, `GET failed: ${JSON.stringify(getBody)}`);
+    assert.equal(getBody.coverPhotoUrl, coverUrl,
+      "GET after PATCH must return the updated coverPhotoUrl");
+
+    assert.equal(profiles[0].cover_photo_url, coverUrl,
+      "cover_photo_url column must be written with the correct DB column name");
+  });
+
   it("PATCH with no fields returns 400 invalid_payload", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "No-Op", display_name: "No-Op", username: "noop",
