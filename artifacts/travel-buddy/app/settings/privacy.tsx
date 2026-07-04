@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, Switch, ActivityIndicator, StyleSheet, Alert,
 } from 'react-native';
@@ -23,6 +23,7 @@ export default function PrivacySettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const saveLock = useRef(false);
 
   const loadSettings = useCallback(() => {
     setLoading(true);
@@ -46,11 +47,15 @@ export default function PrivacySettingsScreen() {
 
   const handleChange = useCallback(
     <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
+      if (saveLock.current) return;
+      saveLock.current = true;
       void applyPrivacyChange(privacy, key, value, {
         setPrivacy,
         setSaving,
         onError: (msg) => Alert.alert('Error', msg),
-      }, updatePrivacySettings);
+      }, updatePrivacySettings).finally(() => {
+        saveLock.current = false;
+      });
     },
     [privacy],
   );

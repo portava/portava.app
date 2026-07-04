@@ -4,7 +4,7 @@
  * List, add, edit, and remove profile-level emergency contacts.
  * These contacts are reused every time you start a Safe Return session.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable,
   TextInput, Alert, ActivityIndicator, Modal,
@@ -268,6 +268,7 @@ export default function EmergencyContactsScreen() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]   = useState<EmergencyContact | null>(null);
   const [saving, setSaving]     = useState(false);
+  const saveLock = useRef(false);
 
   const load = useCallback(async () => {
     const result = await listEmergencyContacts();
@@ -311,38 +312,44 @@ export default function EmergencyContactsScreen() {
   }
 
   async function handleSave(form: FormState) {
+    if (saveLock.current) return;
+    saveLock.current = true;
     setSaving(true);
-    if (editing) {
-      const res = await updateEmergencyContact(editing.id, {
-        name:          form.name.trim(),
-        label:         form.label.trim(),
-        phone:         form.phone.trim() || null,
-        email:         form.email.trim() || null,
-        notifyMethod:  form.notifyMethod,
-      });
-      if (res.ok && res.contact) {
-        setContacts((prev) => prev.map((c) => c.id === editing.id ? res.contact! : c));
-        setModalOpen(false);
+    try {
+      if (editing) {
+        const res = await updateEmergencyContact(editing.id, {
+          name:          form.name.trim(),
+          label:         form.label.trim(),
+          phone:         form.phone.trim() || null,
+          email:         form.email.trim() || null,
+          notifyMethod:  form.notifyMethod,
+        });
+        if (res.ok && res.contact) {
+          setContacts((prev) => prev.map((c) => c.id === editing.id ? res.contact! : c));
+          setModalOpen(false);
+        } else {
+          Alert.alert('Error', res.error ?? 'Could not save contact. Try again.');
+        }
       } else {
-        Alert.alert('Error', res.error ?? 'Could not save contact. Try again.');
+        const res = await addEmergencyContact({
+          name:          form.name.trim(),
+          label:         form.label.trim(),
+          phone:         form.phone.trim() || null,
+          email:         form.email.trim() || null,
+          notifyMethod:  form.notifyMethod,
+          sortOrder:     contacts.length,
+        });
+        if (res.ok && res.contact) {
+          setContacts((prev) => [...prev, res.contact!]);
+          setModalOpen(false);
+        } else {
+          Alert.alert('Error', res.error ?? 'Could not add contact. Try again.');
+        }
       }
-    } else {
-      const res = await addEmergencyContact({
-        name:          form.name.trim(),
-        label:         form.label.trim(),
-        phone:         form.phone.trim() || null,
-        email:         form.email.trim() || null,
-        notifyMethod:  form.notifyMethod,
-        sortOrder:     contacts.length,
-      });
-      if (res.ok && res.contact) {
-        setContacts((prev) => [...prev, res.contact!]);
-        setModalOpen(false);
-      } else {
-        Alert.alert('Error', res.error ?? 'Could not add contact. Try again.');
-      }
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   return (

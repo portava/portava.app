@@ -5,7 +5,7 @@
  * Uses getMyLocationPrivacy / updateMyLocationPrivacy from the map service,
  * which call GET/PATCH /api/me/location-preferences.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, Switch, ActivityIndicator, StyleSheet, Alert,
 } from 'react-native';
@@ -66,6 +66,7 @@ function useLocationPrefs() {
   const [prefs, setPrefs] = useState<LocationPrivacy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -77,6 +78,8 @@ function useLocationPrefs() {
 
   const save = useCallback(async (patch: Partial<LocationPrivacy>) => {
     if (!prefs) return;
+    if (saveLock.current) return;
+    saveLock.current = true;
     const previous = prefs;
     setPrefs({ ...prefs, ...patch });
     setSaving(true);
@@ -87,6 +90,7 @@ function useLocationPrefs() {
       setPrefs(previous);
       Alert.alert('Save failed', 'Could not save preferences. Please try again.');
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }, [prefs]);
