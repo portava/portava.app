@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import {
   UserPlus, UserCheck, Calendar, MapPin, Hash, PlaneTakeoff,
   Sparkles, Users, FileText, Globe, Award, Bookmark, BookmarkCheck,
-  Clock,
+  Clock, Lock,
 } from 'lucide-react-native';
 import { UserAvatarButton } from '../interaction/UserAvatarButton';
 import { followUser, unfollowUser } from '../../services/follows';
@@ -81,17 +81,27 @@ function TypeIcon({ type, size = 15 }: { type: string; size?: number }) {
 }
 
 /**
- * Normalises backend destinationRoute values to actual in-app route paths.
+ * Normalises backend destinationRoute values to actual Expo Router paths.
  *
- * The backend emits paths from its own domain model which don't always match
- * the Expo Router file layout.  This is the single authoritative mapping table.
+ * - Travelers: /passport/:handle is valid (app/passport/[username].tsx exists)
+ * - Buddies: override to /(rent-a-buddy)/buddy/:id using result.id (the user's DB id)
+ *   because the buddy profile page is at app/(rent-a-buddy)/buddy/[id].tsx
+ * - Places + hidden gems: /place/:id and /hidden-gem/:id → /gems/:id
+ * - Cities + countries: /city/:slug and /country/:slug → /destination/:slug
+ * - Stamps: backend emits /stamps/:slug (plural), app file is stamp/[stampId].tsx (singular)
+ * - Circles: app has only a singleton /circle screen; no parameterised :id route exists
+ * - All other routes (event, trip, plan, hashtag, post, …) pass through verbatim
  */
-function resolveRoute(destinationRoute: string | null, type: string): string | null {
+function resolveRoute(result: UnifiedSearchResult): string | null {
+  const { destinationRoute, type, id } = result;
   if (!destinationRoute) return null;
 
-  // Travelers & buddies: backend emits /passport/:handle — app uses /u/:handle
-  const passportMatch = destinationRoute.match(/^\/passport\/(.+)$/);
-  if (passportMatch) return `/u/${passportMatch[1]}`;
+  // Buddies navigate to the dedicated rent-a-buddy buddy profile page.
+  // The backend emits /passport/:handle for buddies (same searchTravelers function),
+  // but the correct in-app destination is /(rent-a-buddy)/buddy/:id.
+  if (type === 'buddies') {
+    return `/(rent-a-buddy)/buddy/${id}`;
+  }
 
   // Places and hidden gems both land on /gems/:id
   const hiddenGemMatch = destinationRoute.match(/^\/hidden-gem\/(.+)$/);
@@ -107,22 +117,16 @@ function resolveRoute(destinationRoute: string | null, type: string): string | n
   const countryMatch = destinationRoute.match(/^\/country\/(.+)$/);
   if (countryMatch) return `/destination/${countryMatch[1]}`;
 
-  // Stamps: /stamps/:slug (plural backend) → /stamp/:stampId (singular app)
+  // Stamps: /stamps/:slug (plural backend) → /stamp/:stampId (singular app file)
   const stampsMatch = destinationRoute.match(/^\/stamps\/(.+)$/);
   if (stampsMatch) return `/stamp/${stampsMatch[1]}`;
 
-  // Circles: app has a singleton /circle screen with no parameterised route
-  if (destinationRoute.startsWith('/circle/') || destinationRoute === '/circle') {
+  // Circles: app has a singleton /circle screen (no parameterised :id route)
+  if (destinationRoute.startsWith('/circle')) {
     return '/circle';
   }
 
-  // Buddies with an un-normalised path: derive from id segment
-  if (type === 'buddies' && !destinationRoute.startsWith('/u/')) {
-    const seg = destinationRoute.match(/\/([^/]+)$/);
-    if (seg) return `/u/${seg[1]}`;
-  }
-
-  // All other routes pass through verbatim (event, trip, plan, hashtag, post …)
+  // All others (/passport/:handle, /event/:id, /trip/:id, /hashtag/:slug, /post/:id, …)
   return destinationRoute;
 }
 
@@ -132,19 +136,26 @@ interface Props {
 }
 
 export function SearchResultCard({ result, onActionStateChange }: Props) {
-  const route = resolveRoute(result.destinationRoute, result.type);
+  const route = resolveRoute(result);
   const isPrivate = result.privacyState?.isPrivate ?? false;
+  const canAccess = result.accessState?.canAccess ?? true;
 
   // ── Traveler follow state ──────────────────────────────────────────────────
   const [isFollowing, setIsFollowing] = useState(
     (result.actionState?.isFollowing as boolean | undefined) ?? false,
   );
-  const [isRequestSent, setIsRequestSent] = useState(false);
+  // Initialise from backend (e.g. if a previous request was already sent)
+  const [isRequestSent, setIsRequestSent] = useState(
+    (result.actionState?.isRequestSent as boolean | undefined) ?? false,
+  );
   const [followToggling, setFollowToggling] = useState(false);
 
   // ── Event RSVP state ───────────────────────────────────────────────────────
   const [isAttending, setIsAttending] = useState(
     (result.actionState?.isAttending as boolean | undefined) ?? false,
+  );
+  const [isWaitlisted, setIsWaitlisted] = useState(
+    (result.actionState?.isWaitlisted as boolean | undefined) ?? false,
   );
   const [rsvpToggling, setRsvpToggling] = useState(false);
 
@@ -156,6 +167,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
   const isTraveler = result.type === 'travelers' || result.type === 'buddies';
   const isEvent = result.type === 'events';
+  const isTrip = result.type === 'trips' || result.type === 'plans';
   const isSaveable = result.type === 'places' || result.type === 'hidden_gems' || result.type === 'posts';
 
   const label = TYPE_LABELS[result.type] ?? result.type;
@@ -195,9 +207,10 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   }
 
   // ── Event RSVP ──────────────────────────────────────────────────────────
-  async function handleEventRsvp() {
-    if (rsvpToggling || isAttending) {
-      // Already attending — tap navigates to event detail
+  async function handleEventJoin() {
+    if (rsvpToggling) return;
+    if (isAttending || isWaitlisted) {
+      // Already attending/waitlisted — tapping navigates to event detail
       navigate();
       return;
     }
@@ -205,11 +218,16 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     setIsAttending(true);
     try {
       const res = await rsvpEvent(result.id, 'going');
-      const ok = res && (res as any).ok !== false;
-      if (ok) {
-        onActionStateChange?.(result.id, { isAttending: true });
-      } else {
+      if (!res.ok) {
         setIsAttending(false);
+        return;
+      }
+      if (res.data && (res.data as any).status === 'waitlisted') {
+        setIsAttending(false);
+        setIsWaitlisted(true);
+        onActionStateChange?.(result.id, { isWaitlisted: true });
+      } else {
+        onActionStateChange?.(result.id, { isAttending: true });
       }
     } catch {
       setIsAttending(false);
@@ -236,9 +254,12 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     setSaveToggling(false);
   }
 
+  // ── Invite-only / Request Access label ──────────────────────────────────
+  const showRequestAccess = !canAccess && (isEvent || isTrip);
+
   return (
     <Pressable style={styles.row} onPress={navigate}>
-      {/* Left — shared UserAvatarButton for travelers, icon square for others */}
+      {/* Left — shared UserAvatarButton for travelers/buddies, icon square for others */}
       {isTraveler ? (
         <View style={styles.avatarCircle}>
           <UserAvatarButton
@@ -329,21 +350,39 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         </Pressable>
       )}
 
-      {/* Event: Join → calls RSVP; Attending → navigates to detail */}
-      {isEvent && (
+      {/* Invite-only event or trip: Request Access → navigates to detail */}
+      {showRequestAccess && (
+        <Pressable style={styles.actionBtnOutline} onPress={navigate} hitSlop={8}>
+          <Lock size={11} color={color.mute} />
+          <Text style={styles.actionBtnOutlineText}>Request</Text>
+        </Pressable>
+      )}
+
+      {/* Event (accessible): Join → RSVP; Attending / Waitlisted → navigates */}
+      {isEvent && !showRequestAccess && (
         <Pressable
-          style={[styles.actionBtn, isAttending && styles.actionBtnActive]}
-          onPress={handleEventRsvp}
+          style={[
+            styles.actionBtn,
+            (isAttending || isWaitlisted) && styles.actionBtnActive,
+          ]}
+          onPress={handleEventJoin}
           disabled={rsvpToggling}
           hitSlop={8}
         >
           {rsvpToggling ? (
-            <ActivityIndicator size="small" color={isAttending ? color.mute : color.onInk} />
+            <ActivityIndicator size="small" color={(isAttending || isWaitlisted) ? color.mute : color.onInk} />
           ) : (
-            <Text style={isAttending ? styles.actionBtnActiveText : styles.actionBtnText}>
-              {isAttending ? 'Attending' : 'Join'}
+            <Text style={(isAttending || isWaitlisted) ? styles.actionBtnActiveText : styles.actionBtnText}>
+              {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : 'Join'}
             </Text>
           )}
+        </Pressable>
+      )}
+
+      {/* Trip (accessible): Join → navigates to trip detail */}
+      {isTrip && !showRequestAccess && (
+        <Pressable style={styles.actionBtnOutline} onPress={navigate} hitSlop={8}>
+          <Text style={styles.actionBtnOutlineText}>Join</Text>
         </Pressable>
       )}
 
@@ -463,6 +502,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
+  actionBtnOutline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    minWidth: 60,
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   actionBtnText: {
     ...t.stamp,
     color: color.onInk,
@@ -471,6 +524,11 @@ const styles = StyleSheet.create({
   actionBtnActiveText: {
     ...t.stamp,
     color: color.mute,
+    fontSize: 11,
+  },
+  actionBtnOutlineText: {
+    ...t.stamp,
+    color: color.ink,
     fontSize: 11,
   },
   saveBtn: {
