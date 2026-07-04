@@ -166,26 +166,18 @@ Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`.
 
 Added by migration `0087_profiles_cover_photo_url.sql` (`ADD COLUMN IF NOT EXISTS cover_photo_url TEXT`). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
 
-### Migrations 0095, 0097, 0098 — applied manually 2026-07-04
+### Migrations 0095, 0097, 0098, 0099 — applied manually 2026-07-04
 
-These three migrations were applied directly via the Supabase SQL editor and have no automated runner entry. The SQL source files are committed to `artifacts/api-server/src/migrations/` for reference and future idempotent re-runs.
+These migrations were applied directly via the Supabase SQL editor and have no automated runner entry. The SQL source files are committed to `artifacts/api-server/src/migrations/` for reference and future idempotent re-runs.
 
 | Migration | Key SQL | Verify |
 |-----------|---------|--------|
 | `0095_post_category.sql` | `ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT` | `SELECT column_name FROM information_schema.columns WHERE table_name='posts' AND column_name='category'` |
 | `0097_post_saves.sql` | `CREATE TABLE IF NOT EXISTS post_saves (user_id UUID, post_id UUID, PRIMARY KEY (user_id, post_id))` + `ALTER TABLE posts ADD COLUMN IF NOT EXISTS save_count INTEGER NOT NULL DEFAULT 0` | `SELECT to_regclass('public.post_saves')` |
 | `0098_profile_translation_prefs.sql` | Four `ADD COLUMN IF NOT EXISTS` on `profiles`: `preferred_message_language TEXT`, `auto_translate_messages BOOLEAN`, `show_original_messages BOOLEAN`, `translation_updated_at TIMESTAMPTZ` | `SELECT column_name FROM information_schema.columns WHERE table_name='profiles' AND column_name='auto_translate_messages'` |
+| `0099_missing_indexes.sql` | `CREATE INDEX IF NOT EXISTS posts_author_status_idx ON posts (author_id, post_status)` + `CREATE INDEX IF NOT EXISTS post_saves_post_created_idx ON post_saves (post_id, created_at DESC)` | `SELECT indexname FROM pg_indexes WHERE indexname IN ('posts_author_status_idx','post_saves_post_created_idx')` |
 
-All statements are idempotent (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`) — safe to re-run.
-
-### Migration 0099 — not yet applied (manual SQL required)
-
-`artifacts/api-server/src/migrations/0099_missing_indexes.sql` adds two performance indexes that were missing from earlier migrations. Run these in the Supabase SQL editor when convenient — both are `CREATE INDEX IF NOT EXISTS` and fully safe to apply at any time without a deploy.
-
-| Index | Table | Purpose |
-|-------|-------|---------|
-| `posts_author_status_idx` | `posts(author_id, post_status)` | Feed queries that filter by author + publication state |
-| `post_saves_post_created_idx` | `post_saves(post_id, created_at DESC)` | Ordered listing of saves per post |
+All statements are idempotent — safe to re-run.
 
 ### Migration 0100 — applied 2026-07-04
 
