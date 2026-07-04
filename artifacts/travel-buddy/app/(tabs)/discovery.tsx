@@ -297,7 +297,7 @@ export default function DiscoveryHub() {
       {/* ── Search entry bar ── */}
       <Pressable
         style={styles.searchEntryBar}
-        onPress={() => router.push({ pathname: '/search' } as any)}
+        onPress={() => router.push({ pathname: '/search', params: { q: '', type: 'all' } } as any)}
         accessible
         accessibilityRole="search"
         accessibilityLabel="Open search"

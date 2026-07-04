@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, FlatList, Pressable, StyleSheet,
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { Search, X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
@@ -102,6 +102,7 @@ export default function SearchScreen() {
 
     setLoading(true);
     debounceRef.current = setTimeout(() => {
+      router.setParams({ q: query.trim(), type: activeTab });
       runSearch(query, activeTab);
     }, 300);
 
