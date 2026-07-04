@@ -4,7 +4,7 @@
  * Bottom sheet / modal for configuring and starting a Safe Return session.
  * Shown when the user taps "Set up Safe Return" from a plan item or settings.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, Modal, ScrollView, Pressable, Switch,
   TextInput, StyleSheet, ActivityIndicator, Alert,
@@ -70,6 +70,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   const [contactsLoading, setContactsLoading] = useState(false);
   const [showWhyExpanded, setShowWhyExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const startLock = useRef(false);
 
   useEffect(() => {
     if (visible) {
@@ -109,55 +110,60 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   }
 
   async function handleStart() {
+    if (startLock.current) return;
+    startLock.current = true;
     setSaving(true);
-    const contacts: SafeReturnContactInput[] = [
-      ...trustedContacts
-        .filter((c) => selectedContacts.has(c.userId))
-        .map((c) => ({
-          contactUserId: c.userId,
-          contactName: c.displayName,
-          contactMethod: 'in_app' as const,
-          canReceiveLiveLocation: liveShareEnabled,
-        })),
-      ...emergencyContacts
-        .filter((ec) => selectedEmergencyContacts.has(ec.id))
-        .map((ec) => ({
-          contactName: ec.name,
-          contactPhone: ec.phone ?? undefined,
-          contactEmail: ec.email ?? undefined,
-          contactMethod: ec.notifyMethod,
-          canReceiveLiveLocation: liveShareEnabled && ec.notifyMethod !== 'sms',
-        })),
-    ];
+    try {
+      const contacts: SafeReturnContactInput[] = [
+        ...trustedContacts
+          .filter((c) => selectedContacts.has(c.userId))
+          .map((c) => ({
+            contactUserId: c.userId,
+            contactName: c.displayName,
+            contactMethod: 'in_app' as const,
+            canReceiveLiveLocation: liveShareEnabled,
+          })),
+        ...emergencyContacts
+          .filter((ec) => selectedEmergencyContacts.has(ec.id))
+          .map((ec) => ({
+            contactName: ec.name,
+            contactPhone: ec.phone ?? undefined,
+            contactEmail: ec.email ?? undefined,
+            contactMethod: ec.notifyMethod,
+            canReceiveLiveLocation: liveShareEnabled && ec.notifyMethod !== 'sms',
+          })),
+      ];
 
-    const created = await createSession({
-      timerMinutes: timerMinutes ?? undefined,
-      escalationLevel,
-      trustedCircleEnabled,
-      liveShareEnabled,
-      notifyHostEnabled,
-      notifyTripCrewEnabled,
-      emergencyNote: emergencyNote.trim() || undefined,
-      planItemId,
-      tripId,
-      contacts,
-    });
+      const created = await createSession({
+        timerMinutes: timerMinutes ?? undefined,
+        escalationLevel,
+        trustedCircleEnabled,
+        liveShareEnabled,
+        notifyHostEnabled,
+        notifyTripCrewEnabled,
+        emergencyNote: emergencyNote.trim() || undefined,
+        planItemId,
+        tripId,
+        contacts,
+      });
 
-    if (!created.ok || !created.session) {
+      if (!created.ok || !created.session) {
+        Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
+        return;
+      }
+
+      // Immediately start the timer
+      const started = await startSession(created.session.id);
+
+      if (started.ok && started.session) {
+        onStarted?.(started.session.id);
+        onClose();
+      } else {
+        Alert.alert('Error', 'Session created but could not be started.');
+      }
+    } finally {
+      startLock.current = false;
       setSaving(false);
-      Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
-      return;
-    }
-
-    // Immediately start the timer
-    const started = await startSession(created.session.id);
-    setSaving(false);
-
-    if (started.ok && started.session) {
-      onStarted?.(started.session.id);
-      onClose();
-    } else {
-      Alert.alert('Error', 'Session created but could not be started.');
     }
   }
 
