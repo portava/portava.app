@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert,
 } from 'react-native';
@@ -44,6 +44,7 @@ export default function RentABuddyReview() {
   const [privateNote, setPrivateNote] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
   const [submitted, setSubmitted] = useState(false);
 
   const setCategoryRating = (id: string, val: number) => {
@@ -54,18 +55,24 @@ export default function RentABuddyReview() {
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setSubmitting(true);
-    const res = await submitReview(bookingId, {
-      rating: overallRating,
-      body: publicBody || undefined,
-      isPublic,
-    });
-    setSubmitting(false);
-    if (!res.ok) {
-      Alert.alert('Error', res.error);
-      return;
+    try {
+      const res = await submitReview(bookingId, {
+        rating: overallRating,
+        body: publicBody || undefined,
+        isPublic,
+      });
+      if (!res.ok) {
+        Alert.alert('Error', res.error);
+        return;
+      }
+      setSubmitted(true);
+    } finally {
+      submitLockRef.current = false;
+      setSubmitting(false);
     }
-    setSubmitted(true);
   };
 
   if (submitted) {

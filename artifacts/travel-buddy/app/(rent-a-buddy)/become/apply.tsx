@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, Pressable, StyleSheet,
   Alert, Switch, ActivityIndicator,
@@ -93,6 +93,7 @@ export default function ApplyToBeBuddy() {
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
   const [submitted, setSubmitted] = useState(false);
 
   // Training checklist gate — only shown when user already has an existing application.
@@ -190,44 +191,49 @@ export default function ApplyToBeBuddy() {
 
   async function handleSubmit() {
     if (!canAdvance()) return;
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setSubmitting(true);
 
-    // Check city rollout status before submitting — gracefully degrade if check fails
     try {
-      const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-      const { supabase } = await import('../../../src/lib/supabase');
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      const statusRes = await fetch(`${API_BASE}/api/rent-buddy/launch-status?city=${encodeURIComponent(city)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const statusData = await statusRes.json();
-      if (!statusData.applicationsOpen) {
-        setSubmitting(false);
-        const msg = statusData.status === 'waitlist_only'
-          ? `Buddy applications for ${city} aren't open yet. You can join the waitlist to be notified when they open.`
-          : statusData.status === 'disabled'
-          ? `Rent a Buddy is not available in ${city} yet. Check back soon!`
-          : `Buddy applications for ${city} are currently paused. Please try again later.`;
-        Alert.alert('Applications Not Open', msg);
-        return;
+      // Check city rollout status before submitting — gracefully degrade if check fails
+      try {
+        const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+        const { supabase } = await import('../../../src/lib/supabase');
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        const statusRes = await fetch(`${API_BASE}/api/rent-buddy/launch-status?city=${encodeURIComponent(city)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const statusData = await statusRes.json();
+        if (!statusData.applicationsOpen) {
+          const msg = statusData.status === 'waitlist_only'
+            ? `Buddy applications for ${city} aren't open yet. You can join the waitlist to be notified when they open.`
+            : statusData.status === 'disabled'
+            ? `Rent a Buddy is not available in ${city} yet. Check back soon!`
+            : `Buddy applications for ${city} are currently paused. Please try again later.`;
+          Alert.alert('Applications Not Open', msg);
+          return;
+        }
+      } catch {
+        // Status check failed — allow submission to proceed (graceful degradation)
       }
-    } catch {
-      // Status check failed — allow submission to proceed (graceful degradation)
-    }
 
-    const result = await rentABuddy.submitApplication({
-      city,
-      country: country || undefined,
-      categories,
-      languages: languages.filter((l) => l.lang.trim()).map((l) => l.lang.trim()),
-      motivation: motivation || undefined,
-    });
-    setSubmitting(false);
-    if (result.ok) {
-      setSubmitted(true);
-    } else {
-      Alert.alert('Could not submit', result.error ?? 'Please try again.');
+      const result = await rentABuddy.submitApplication({
+        city,
+        country: country || undefined,
+        categories,
+        languages: languages.filter((l) => l.lang.trim()).map((l) => l.lang.trim()),
+        motivation: motivation || undefined,
+      });
+      if (result.ok) {
+        setSubmitted(true);
+      } else {
+        Alert.alert('Could not submit', result.error ?? 'Please try again.');
+      }
+    } finally {
+      submitLockRef.current = false;
+      setSubmitting(false);
     }
   }
 
