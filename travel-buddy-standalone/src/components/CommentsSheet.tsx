@@ -50,6 +50,7 @@ import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
 import { computeOptimisticLike } from '../lib/commentLikeLogic';
 import { createSubmitGuard } from '../lib/commentSubmitGuard';
+import { createLikeToggleGuard } from '../lib/likeToggleGuard';
 
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
 
@@ -177,24 +178,27 @@ function ReplyRow({
   const likeHitSlop = React.useContext(LikeHitSlopCtx);
   const likedByMe = reply.likedByMe ?? false;
   const likeCount = reply.likeCount ?? 0;
+  const likeGuardRef = useRef(createLikeToggleGuard());
 
   const handleLike = useCallback(async () => {
-    if (liking) return;
+    if (likeGuardRef.current.isToggling()) return;
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
     const optimistic = computeOptimisticLike(wasLiked, prevCount);
     onLikeChange(reply.id, optimistic.likedByMe, optimistic.likeCount);
     try {
-      const result = wasLiked
-        ? await unlikeComment(postId, reply.id)
-        : await likeComment(postId, reply.id);
-      if (result) onLikeChange(reply.id, result.likedByMe, result.likeCount);
-      else onLikeChange(reply.id, wasLiked, prevCount);
+      await likeGuardRef.current.tryToggle(async () => {
+        const result = wasLiked
+          ? await unlikeComment(postId, reply.id)
+          : await likeComment(postId, reply.id);
+        if (result) onLikeChange(reply.id, result.likedByMe, result.likeCount);
+        else onLikeChange(reply.id, wasLiked, prevCount);
+      });
     } finally {
       setLiking(false);
     }
-  }, [liking, likedByMe, likeCount, reply.id, postId, onLikeChange]);
+  }, [likedByMe, likeCount, reply.id, postId, onLikeChange]);
 
   return (
     <View style={s.replyRow}>
@@ -274,24 +278,27 @@ function CommentItem({
   const likeHitSlop = React.useContext(LikeHitSlopCtx);
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
+  const likeGuardRef = useRef(createLikeToggleGuard());
 
   const handleLike = useCallback(async () => {
-    if (liking) return;
+    if (likeGuardRef.current.isToggling()) return;
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
     const optimistic = computeOptimisticLike(wasLiked, prevCount);
     onLikeChange(comment.id, optimistic.likedByMe, optimistic.likeCount);
     try {
-      const result = wasLiked
-        ? await unlikeComment(postId, comment.id)
-        : await likeComment(postId, comment.id);
-      if (result) onLikeChange(comment.id, result.likedByMe, result.likeCount);
-      else onLikeChange(comment.id, wasLiked, prevCount);
+      await likeGuardRef.current.tryToggle(async () => {
+        const result = wasLiked
+          ? await unlikeComment(postId, comment.id)
+          : await likeComment(postId, comment.id);
+        if (result) onLikeChange(comment.id, result.likedByMe, result.likeCount);
+        else onLikeChange(comment.id, wasLiked, prevCount);
+      });
     } finally {
       setLiking(false);
     }
-  }, [liking, likedByMe, likeCount, comment.id, postId, onLikeChange]);
+  }, [likedByMe, likeCount, comment.id, postId, onLikeChange]);
 
   const handleToggle = useCallback(() => {
     if (!repliesLoaded) {
