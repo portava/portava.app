@@ -233,6 +233,126 @@ describe('guard isolation — apply and review locks are independent', () => {
   });
 });
 
+// ── handleCheckItem — Set<string> per-item lock ───────────────────────────────
+//
+// The training checklist uses a Set<string> ref instead of a boolean because
+// multiple DIFFERENT items can be tapped concurrently (each has its own key).
+// Only the same item tapped twice is blocked.
+
+function createSetLock() {
+  const locked = new Set<string>();
+  return {
+    has(key: string) { return locked.has(key); },
+    add(key: string) { locked.add(key); },
+    delete(key: string) { locked.delete(key); },
+  };
+}
+
+type SetLockHandle = ReturnType<typeof createSetLock>;
+
+async function guardedCheckItem(
+  lock: SetLockHandle,
+  key: string,
+  doCheck: () => Promise<void>,
+): Promise<boolean> {
+  if (lock.has(key)) return false;
+  lock.add(key);
+  try {
+    await doCheck();
+    return true;
+  } finally {
+    lock.delete(key);
+  }
+}
+
+describe('handleCheckItem — Set-based per-item lock prevents double-tap', () => {
+  it('first tap on an item proceeds and calls completeTrainingItem once', async () => {
+    const lock = createSetLock();
+    let calls = 0;
+
+    const doCheck = async () => { calls++; await delay(10); };
+
+    const proceeded = await guardedCheckItem(lock, 'safety-pledge', doCheck);
+    assert.equal(proceeded, true);
+    assert.equal(calls, 1);
+  });
+
+  it('rapid double-tap on the same item fires only one completeTrainingItem call', async () => {
+    const lock = createSetLock();
+    let calls = 0;
+
+    const doCheck = async () => { calls++; await delay(20); };
+
+    const [first, second] = await Promise.all([
+      guardedCheckItem(lock, 'safety-pledge', doCheck),
+      guardedCheckItem(lock, 'safety-pledge', doCheck),
+    ]);
+
+    assert.equal(first, true);
+    assert.equal(second, false);
+    assert.equal(calls, 1);
+  });
+
+  it('three rapid taps on the same item fire exactly one call', async () => {
+    const lock = createSetLock();
+    let calls = 0;
+
+    const doCheck = async () => { calls++; await delay(20); };
+
+    const results = await Promise.all([
+      guardedCheckItem(lock, 'non-dating-policy', doCheck),
+      guardedCheckItem(lock, 'non-dating-policy', doCheck),
+      guardedCheckItem(lock, 'non-dating-policy', doCheck),
+    ]);
+
+    assert.equal(results.filter(Boolean).length, 1);
+    assert.equal(calls, 1);
+  });
+
+  it('tapping two DIFFERENT items concurrently is allowed — each gets its own slot', async () => {
+    const lock = createSetLock();
+    let callsA = 0;
+    let callsB = 0;
+
+    const [resA, resB] = await Promise.all([
+      guardedCheckItem(lock, 'item-a', async () => { callsA++; await delay(15); }),
+      guardedCheckItem(lock, 'item-b', async () => { callsB++; await delay(15); }),
+    ]);
+
+    assert.equal(resA, true, 'item-a should proceed');
+    assert.equal(resB, true, 'item-b should also proceed — different key');
+    assert.equal(callsA, 1);
+    assert.equal(callsB, 1);
+  });
+
+  it('lock releases after success — the same item can be confirmed again (idempotent retry)', async () => {
+    const lock = createSetLock();
+    let calls = 0;
+
+    const doCheck = async () => { calls++; await delay(5); };
+
+    await guardedCheckItem(lock, 'safety-pledge', doCheck);
+    const second = await guardedCheckItem(lock, 'safety-pledge', doCheck);
+
+    assert.equal(second, true);
+    assert.equal(calls, 2);
+  });
+
+  it('lock releases after API error — user can retry the same item', async () => {
+    const lock = createSetLock();
+    let calls = 0;
+
+    const doCheck = async () => { calls++; await delay(5); throw new Error('network'); };
+
+    await guardedCheckItem(lock, 'safety-pledge', doCheck).catch(() => {});
+    assert.equal(lock.has('safety-pledge'), false, 'lock must be released after a throw');
+
+    const retry = await guardedCheckItem(lock, 'safety-pledge', async () => { calls++; });
+    assert.equal(retry, true);
+    assert.equal(calls, 2);
+  });
+});
+
 // ── Documents why state-only is insufficient ──────────────────────────────────
 
 describe('documents why React state alone is insufficient', () => {
@@ -251,5 +371,13 @@ describe('documents why React state alone is insufficient', () => {
     lock.acquire(); // first tap
     const tap2Blocked = !lock.acquire(); // immediate — no re-render needed
     assert.equal(tap2Blocked, true);
+  });
+
+  it('Set-based ref allows different keys while blocking the same key', () => {
+    const lock = createSetLock();
+    lock.add('item-a');
+
+    assert.equal(lock.has('item-a'), true, 'same key is blocked');
+    assert.equal(lock.has('item-b'), false, 'different key is unblocked');
   });
 });

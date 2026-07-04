@@ -102,6 +102,7 @@ export default function ApplyToBeBuddy() {
   const [trainingComplete, setTrainingComplete] = useState(false);
   const [trainingItems, setTrainingItems] = useState<TrainingItem[]>([]);
   const [checkingItem, setCheckingItem] = useState<string | null>(null);
+  const checkingLockRef = useRef(new Set<string>());
   const [showTraining, setShowTraining] = useState(false);
 
   useEffect(() => {
@@ -126,16 +127,22 @@ export default function ApplyToBeBuddy() {
   }, []);
 
   async function handleCheckItem(key: string) {
+    if (checkingLockRef.current.has(key)) return;
+    checkingLockRef.current.add(key);
     setCheckingItem(key);
-    const res = await rentABuddy.completeTrainingItem(key);
-    if (res.ok && res.data) {
-      setTrainingItems((prev) => prev.map((i) => i.key === key ? { ...i, completed: true } : i));
-      if (res.data.allComplete) {
-        setTrainingComplete(true);
-        setShowTraining(false);
+    try {
+      const res = await rentABuddy.completeTrainingItem(key);
+      if (res.ok && res.data) {
+        setTrainingItems((prev) => prev.map((i) => i.key === key ? { ...i, completed: true } : i));
+        if (res.data.allComplete) {
+          setTrainingComplete(true);
+          setShowTraining(false);
+        }
       }
+    } finally {
+      checkingLockRef.current.delete(key);
+      setCheckingItem(null);
     }
-    setCheckingItem(null);
   }
 
   // Step 1
