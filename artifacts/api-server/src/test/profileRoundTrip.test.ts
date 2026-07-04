@@ -770,6 +770,101 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
       "avatar_url must remain unchanged when storage upload fails");
   });
 
+  it("storage rejection on cover upload returns 500 and leaves cover_photo_url unchanged", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Cover Test", display_name: "Cover Test", username: "cover_tester",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public",
+        cover_photo_url: "https://old.example.com/cover.jpg",
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    // Client whose storage upload always returns an error for the cover path.
+    // The from("feature_flags") path must return null so isFlagEnabled
+    // fails-open and doesn't block the upload with "feature_disabled".
+    const coverFailClient: any = {
+      auth: {
+        getUser: async (tok: string) => {
+          if (tok === ME_TOK) return { data: { user: { id: ME } }, error: null };
+          return { data: { user: null }, error: { message: "invalid token" } };
+        },
+      },
+      from: (table: string) => {
+        const localFilters: Array<(r: any) => boolean> = [];
+        const b: any = {
+          select()                     { return b; },
+          eq(col: string, val: any)    { localFilters.push((r) => String(r[col]) === String(val)); return b; },
+          neq()                        { return b; },
+          in()                         { return b; },
+          is()                         { return b; },
+          lt()                         { return b; },
+          gte()                        { return b; },
+          order()                      { return b; },
+          limit()                      { return b; },
+          nullsFirst()                 { return b; },
+          update()                     { return b; },
+          insert()                     { return b; },
+          upsert()                     { return b; },
+          maybeSingle() {
+            if (table === "profiles") {
+              const rows = profiles.filter((r) => localFilters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            // feature_flags → return null so isFlagEnabled fails-open (not disabled)
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() { return Promise.resolve({ data: null, error: null }); },
+          then(onF: any, onR: any) {
+            return Promise.resolve({ data: [], error: null, count: 0 }).then(onF, onR);
+          },
+          catch() { return b; },
+        };
+        return b;
+      },
+      storage: {
+        createBucket: async () => ({ error: null }),
+        from: () => ({
+          upload: async () => ({ error: { message: "Bucket policy violation: quota exceeded" } }),
+          getPublicUrl: () => ({ data: { publicUrl: "" } }),
+          remove: async () => ({ error: null }),
+        }),
+      },
+    };
+
+    _setTestClient(coverFailClient, true);
+    _setTestServiceClient(coverFailClient);
+
+    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+    const uploadRes = await fetch(`${base}/me/cover/upload`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ME_TOK}`,
+        "Content-Type": "image/jpeg",
+      },
+      body: fakeJpeg,
+    });
+
+    assert.equal(uploadRes.status, 500,
+      `cover storage rejection must return 500, not ${uploadRes.status}`);
+    const uploadBody = await uploadRes.json() as any;
+    assert.ok(
+      uploadBody.error === "db_error" || uploadBody.error === "upload_failed",
+      `error code must indicate upload failure, got: ${JSON.stringify(uploadBody)}`,
+    );
+
+    // The in-memory profile row must not have been mutated
+    assert.equal(profiles[0].cover_photo_url, "https://old.example.com/cover.jpg",
+      "cover_photo_url must remain unchanged when storage upload fails");
+  });
+
   it("unique-constraint violation on username write returns 409 conflict and leaves username unchanged", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "Racer", display_name: "Racer", username: "original_handle",
