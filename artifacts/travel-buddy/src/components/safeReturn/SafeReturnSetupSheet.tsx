@@ -91,21 +91,38 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       return;
     }
 
-    let cancelled = false;
+    // `live` becomes false when the effect is either cancelled (visible flipped
+    // back to false / unmount) OR when the pre-check timeout fires. Once false,
+    // no state mutations or caller callbacks should proceed.
+    let live = true;
+
+    // Safety net: if getActiveSession stalls (e.g. app goes to background
+    // mid-check and the network request hangs), reset the checking indicator
+    // and dismiss after 5 s so the trigger button never appears permanently
+    // stuck. Calling onClose() here resets the parent's visible flag so the
+    // user can tap the button again to retry.
+    const checkTimeoutId = setTimeout(() => {
+      if (live) {
+        live = false;
+        onCheckingChange?.(false);
+        onClose();
+      }
+    }, 5_000);
 
     (async () => {
       onCheckingChange?.(true);
 
       const { modalShouldOpen } = await runOpenEffect({
-        // Wrap callbacks with the cancellation guard so a stale in-flight
-        // effect (visible flipped false before getActiveSession resolved)
-        // cannot call onStarted/onClose a second time.
-        onStarted: (id) => { if (!cancelled) onStarted?.(id); },
-        onClose: () => { if (!cancelled) onClose(); },
+        // Guard with `live` so a stale in-flight effect (cancelled or timed
+        // out before getActiveSession resolved) cannot fire callbacks.
+        onStarted: (id) => { if (live) onStarted?.(id); },
+        onClose: () => { if (live) onClose(); },
         getActiveSession,
       });
 
-      if (cancelled) return;
+      clearTimeout(checkTimeoutId);
+
+      if (!live) return;
 
       onCheckingChange?.(false);
 
@@ -115,7 +132,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       setModalVisible(true);
       setContactsLoading(true);
       const contactResult = await runContactLoad({ getTrustedContacts, listEmergencyContacts });
-      if (!cancelled) {
+      if (live) {
         setTrustedContacts(contactResult.trustedContacts);
         setEmergencyContacts(contactResult.emergencyContacts);
         setContactsLoading(false);
@@ -123,7 +140,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     })();
 
     return () => {
-      cancelled = true;
+      live = false;
+      clearTimeout(checkTimeoutId);
       // If visible was toggled off while the pre-check was still in flight,
       // reset the caller's checking indicator so it doesn't stay stuck.
       onCheckingChange?.(false);
