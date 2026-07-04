@@ -1,0 +1,391 @@
+Continue Travel Buddy backend cleanup with Phase 2 from the SQL audit.
+
+Important rule:
+For every function or backend route touched, check SQL/schema support first. Do not wire code to missing tables or missing columns. If SQL is missing, stop and report the exact SQL I need to run manually before building the function.
+
+Context:
+Phase 1 is complete:
+- posts.category confirmed/wired
+- post_saves table manually added in Supabase
+- posts.save_count manually added
+- post save/unsave API routes added
+- feed/following/trip/single post now return savedByMe and saveCount
+- SaveButton now uses real post save routes for entityType='post'
+- Telegraph profile translation columns manually added and confirmed
+- thread_reports does not exist in production, so the UUID migration was skipped
+- API typecheck, standalone typecheck, sync regression 78/78, and validation all passed
+
+Now continue with Phase 2 only.
+
+==================================================
+PHASE 2A — Safe Return SQL verification first
+==================================================
+
+Goal:
+Verify whether Safe Return is truly backed by production-ready schema before touching any Safe Return UI/API.
+
+Inspect:
+- migrations
+- docs/migrations.md
+- backend Safe Return routes/services
+- frontend Safe Return services/screens
+- tests
+
+Check for these tables/objects:
+- safe_return_sessions
+- safe_return_trusted_contacts
+- safe_return_events
+- safe_return_check_ins or equivalent
+- safe return escalation/check-in schedule tables if included
+- emergency contact tables
+- SOS event/log tables
+
+Tasks:
+1. Verify whether migration 0040_safe_return.sql exists.
+2. List exactly what tables/columns it creates.
+3. Check whether backend routes match those exact table/column names.
+4. Check whether any Safe Return UI writes to missing tables.
+5. If the SQL is missing or production status is unknown, do not wire new Safe Return code. Report the exact SQL/migration I need to run manually.
+6. If schema exists and routes already match it, add or update tests only if a gap is confirmed.
+
+Do not build a new Safe Return system in this pass.
+
+Report:
+- Safe Return schema status
+- Backend route status
+- UI wiring status
+- Missing SQL, if any
+- Whether Safe Return is safe to expose or should remain subdued
+
+==================================================
+PHASE 2B — Generated database types
+==================================================
+
+Goal:
+Stop silent database field mistakes by adding or planning generated Supabase database types.
+
+Steps:
+1. Check whether a generated database.types.ts file exists anywhere.
+2. Check how Supabase client is currently created.
+3. If generated types already exist, wire createClient<Database>() safely.
+4. If generated types do not exist and the project has enough Supabase config/credentials locally, generate them.
+5. If the agent cannot generate types because it lacks Supabase project access, do not guess. Report the exact command I need to run manually:
+
+supabase gen types typescript --project-id <PROJECT_ID> > lib/database.types.ts
+
+6. If generation is not possible, create no fake types.
+7. Do not break API server typecheck.
+
+Report:
+- Whether DB types exist
+- Whether Supabase client is typed
+- Exact manual command needed if types cannot be generated
+- Files changed, if any
+
+==================================================
+PHASE 2C — TripRow/API missing fields from migration 0077
+==================================================
+
+Goal:
+Expose trip fields that already exist in SQL but are missing from API/frontend types.
+
+SQL-first:
+Before code, verify these columns exist in migrations/schema:
+- trip_type
+- timezone
+- destination_lat
+- destination_lng
+- destination_place_id
+- trip_notes
+- show_on_profile
+- show_in_discovery
+- allow_friend_suggestions
+- allow_trip_crew_invites
+- allow_join_requests
+- show_exact_dates
+- show_destination_city
+- delayed_posting_default
+- precise_location_visible
+- plan_edit_permission
+
+If these columns exist:
+- Update trip API select clauses to include them.
+- Update trip detail route if it separately selects trip fields.
+- Update frontend TripRow/interface types.
+- Update trip service mapping.
+- Use safe defaults for old trips/null fields.
+- Add tests if existing trip API/service test patterns exist.
+
+If columns do not exist:
+- Do not fake the fields.
+- Report exact SQL needed for me to run manually.
+
+Do not redesign the Trips UI.
+Do not add a new trip settings screen unless one already exists and was blocked only by these fields.
+
+Report:
+- Which columns exist
+- Which columns are exposed now
+- Files changed
+- Tests passed
+
+==================================================
+PHASE 2D — Trust score persistence decision
+==================================================
+
+Goal:
+Determine the correct SQL path for current trust score persistence.
+
+SQL-first:
+Check whether any of these already exist:
+- profiles.trust_score
+- profiles.trust_score_updated_at
+- user_trust_scores
+- trust_score_events
+- trust_admin_actions
+
+Then inspect:
+- profile/passport routes
+- trust score display
+- admin trust actions
+- scoring services/tests
+
+If no current score storage exists:
+- Do not fake profile trust score.
+- Do not patch UI to display a made-up score.
+- Recommend the better SQL option based on existing code.
+
+Option A — simple cached profile fields:
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS trust_score integer NOT NULL DEFAULT 50,
+  ADD COLUMN IF NOT EXISTS trust_score_updated_at timestamptz;
+
+Option B — dedicated current-score table:
+CREATE TABLE IF NOT EXISTS user_trust_scores (
+  user_id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  score integer NOT NULL DEFAULT 50,
+  computed_at timestamptz NOT NULL DEFAULT now()
+);
+
+Choose the better option, explain why, and provide final SQL for me to run manually.
+
+If current score storage already exists:
+- Wire the profile/passport API to the real value only.
+- Add tests if patterns exist.
+
+Report:
+- Existing trust schema
+- Whether current trust score is persisted
+- Recommended SQL
+- Any UI/backend blocked until SQL is applied
+
+==================================================
+PHASE 2E — Reports cleanup after thread_reports discovery
+==================================================
+
+Context:
+Production does not have thread_reports. Do not create it. Do not run the UUID cast migration.
+
+Goal:
+Make reporting use the unified reports table if that is the real schema.
+
+SQL-first:
+Verify which tables exist in migrations/schema and active code:
+- reports
+- report_evidence
+- message_reports
+- thread_reports
+
+Then inspect:
+- messaging report routes
+- thread report routes
+- UI report buttons
+- admin moderation/report views
+
+Rules:
+- Do not create thread_reports.
+- Do not run thread_reports UUID migration.
+- If messaging/thread reporting code still writes to missing old tables, fix it to write to unified reports only if reports has the needed fields.
+- If reports does not have required columns, stop and give me SQL first.
+- Ensure report creation is real, not a fake success toast.
+- Ensure non-admins cannot read admin report queues.
+
+Tests:
+- message report writes to reports
+- thread report writes to reports if thread reporting UI exists
+- missing/invalid target returns honest error
+- admin-only reads stay protected if tests exist
+
+Report:
+- Active report tables
+- Any old table references removed
+- Any SQL still needed
+- Tests passed
+
+==================================================
+PHASE 2F — Notification migration duplication
+==================================================
+
+Goal:
+Resolve the audit confusion around duplicate notification migrations.
+
+Inspect and compare:
+- artifacts/api-server/migrations/0041_notifications.sql
+- artifacts/api-server/src/migrations/0062_notifications_schema.sql
+- docs/migrations.md
+- notification routes/services
+- notification tests
+
+Tasks:
+1. Compare both migration files.
+2. Identify which one is authoritative.
+3. Check whether they create the same tables differently.
+4. Do not apply SQL.
+5. Do not delete migrations unless project convention clearly allows it.
+6. If one file is stale, mark/report it clearly.
+7. If docs/migrations.md is inaccurate, update docs only if safe.
+8. Do not break notifications.
+
+Report:
+- Duplication status
+- Authoritative migration
+- Any conflict
+- Recommended cleanup
+- Whether docs changed
+
+==================================================
+PHASE 2G — Missing indexes, SQL-first
+==================================================
+
+Goal:
+Verify and recommend additive indexes from the SQL audit.
+
+Check whether these indexes already exist:
+- hashtag_usage(source_type, source_id)
+- notifications(user_id, read_at) WHERE read_at IS NULL
+- posts(author_id, post_status)
+- post_saves(post_id, created_at DESC)
+
+If missing, produce this SQL for me to run manually, but do not apply unless the project has a local-only migration pattern and the task is explicitly safe:
+
+CREATE INDEX IF NOT EXISTS hashtag_usage_source_idx
+  ON hashtag_usage(source_type, source_id);
+
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
+  ON notifications(user_id, read_at)
+  WHERE read_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS posts_author_status_idx
+  ON posts(author_id, post_status);
+
+CREATE INDEX IF NOT EXISTS post_saves_post_created_idx
+  ON post_saves(post_id, created_at DESC);
+
+If any column/table does not exist, report the blocker instead of generating invalid SQL.
+
+Report:
+- Existing indexes
+- Missing indexes
+- Exact SQL I should run manually
+- Risk/benefit for each index
+
+==================================================
+PHASE 2H — Compass feedback table uncertainty
+==================================================
+
+Goal:
+Verify whether Compass feedback actually persists.
+
+SQL-first:
+Inspect:
+- POST /api/compass/feedback
+- Compass services
+- Compass feedback/dismiss/save UI
+- migrations/schema for backing table
+
+Determine:
+- What table the route writes to
+- Whether that table exists
+- Whether it has needed fields:
+  - user_id
+  - recommendation/entity type
+  - entity_id/source_id
+  - action
+  - created_at
+  - metadata if used
+
+If table exists:
+- Add/repair tests for feedback persistence if patterns exist.
+
+If table does not exist:
+- Do not build more Compass feedback UI.
+- Produce exact SQL for me to run manually, likely:
+
+CREATE TABLE IF NOT EXISTS compass_interaction_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  recommendation_token text,
+  entity_type text NOT NULL,
+  entity_id uuid,
+  action text NOT NULL,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS compass_interaction_log_user_idx
+  ON compass_interaction_log(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS compass_interaction_log_entity_idx
+  ON compass_interaction_log(entity_type, entity_id);
+
+Report:
+- Whether Compass feedback is real
+- Missing SQL if any
+- Whether UI should be hidden/subdued until SQL exists
+
+==================================================
+GLOBAL RULES
+==================================================
+
+- SQL/schema first, then backend, then UI.
+- Do not fake persistence.
+- Do not create local-only fake state to hide missing SQL.
+- Do not run destructive SQL.
+- Do not create production SQL automatically.
+- Do not add payment/RAB transaction schema in this pass.
+- Do not rebuild Safe Return, Trips, Compass, or Notifications.
+- Do not weaken privacy, auth, safety, RLS, or location rules.
+- Keep canonical source and standalone synced through the project workflow.
+
+==================================================
+VALIDATION
+==================================================
+
+Run after any file changes:
+- API server typecheck
+- Root typecheck
+- Standalone typecheck if frontend files changed
+- Relevant API tests
+- Relevant frontend/service tests
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh if canonical/standalone files changed
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return a phased report:
+
+1. Safe Return SQL status
+2. Database types status
+3. TripRow/API field exposure status
+4. Trust score persistence recommendation
+5. Reports cleanup status
+6. Notification migration duplication status
+7. Missing index SQL recommendations
+8. Compass feedback SQL status
+9. Files changed
+10. Tests/typechecks passed
+11. SQL I need to run manually next
+12. Backend/UI still blocked by SQL

@@ -1993,7 +1993,7 @@ router.post('/threads/:threadId/leave', async (req, res) => {
 /**
  * POST /api/threads/:threadId/report
  * Body: { reason: string }
- * Records a user report against a conversation. Best-effort insert.
+ * Records a user report against a conversation in the unified reports table.
  */
 router.post('/threads/:threadId/report', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2002,18 +2002,25 @@ router.post('/threads/:threadId/report', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
   const { threadId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
   const { error } = await sc
-    .from('thread_reports')
-    .upsert(
-      { thread_id: threadId, reporter_id: user.id, reason, created_at: new Date().toISOString() },
-      { onConflict: 'thread_id,reporter_id' },
-    );
+    .from('reports')
+    .insert({
+      reporter_id: user.id,
+      target_type: 'thread',
+      target_id: threadId,
+      reason_code: 'other',
+      reason_detail: reason,
+      severity: 'normal',
+    });
 
   if (error) {
-    req.log.warn({ err: error }, 'thread report insert failed (table may not exist yet)');
+    req.log.warn({ err: error }, 'thread report insert failed');
+    sendError(res, 'db_error', 'Could not file report');
+    return;
   }
 
   // Compass: reporter's cache should no longer surface content from this thread
@@ -2067,7 +2074,9 @@ router.post('/threads/:threadId/messages/:messageId/save', async (req, res) => {
 });
 
 /**
- * Records a user report against a message. Best-effort insert.
+ * POST /api/messages/:messageId/report
+ * Body: { reason: string }
+ * Records a user report against a message in the unified reports table.
  */
 router.post('/messages/:messageId/report', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2076,18 +2085,25 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
   const { messageId } = req.params;
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
   const { error } = await sc
-    .from('message_reports')
-    .upsert(
-      { message_id: messageId, reporter_id: user.id, reason, created_at: new Date().toISOString() },
-      { onConflict: 'message_id,reporter_id' },
-    );
+    .from('reports')
+    .insert({
+      reporter_id: user.id,
+      target_type: 'message',
+      target_id: messageId,
+      reason_code: 'other',
+      reason_detail: reason,
+      severity: 'normal',
+    });
 
   if (error) {
-    req.log.warn({ err: error }, 'message report insert failed (table may not exist yet)');
+    req.log.warn({ err: error }, 'message report insert failed');
+    sendError(res, 'db_error', 'Could not file report');
+    return;
   }
 
   // Compass: reporter's cache should no longer surface content from this message author

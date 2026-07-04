@@ -99,6 +99,22 @@ export interface TripRow {
   openToMeet: boolean;
   coverUrl: string | null;
   progress: number;
+  tripType: string | null;
+  timezone: string | null;
+  destinationLat: number | null;
+  destinationLng: number | null;
+  destinationPlaceId: string | null;
+  tripNotes: string | null;
+  showOnProfile: boolean;
+  showInDiscovery: boolean;
+  allowFriendSuggestions: boolean;
+  allowTripCrewInvites: boolean;
+  allowJoinRequests: boolean;
+  showExactDates: boolean;
+  showDestinationCity: boolean;
+  delayedPostingDefault: boolean;
+  preciseLocationVisible: boolean;
+  planEditPermission: string | null;
 }
 
 function mapTrip(r: any): TripRow {
@@ -108,6 +124,22 @@ function mapTrip(r: any): TripRow {
     startDate: r.start_date, endDate: r.end_date, status: r.status, visibility: r.visibility,
     travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: r.cover_url,
     progress: r.progress ?? 0,
+    tripType: r.trip_type ?? null,
+    timezone: r.timezone ?? null,
+    destinationLat: r.destination_lat ?? null,
+    destinationLng: r.destination_lng ?? null,
+    destinationPlaceId: r.destination_place_id ?? null,
+    tripNotes: r.trip_notes ?? null,
+    showOnProfile: r.show_on_profile ?? true,
+    showInDiscovery: r.show_in_discovery ?? false,
+    allowFriendSuggestions: r.allow_friend_suggestions ?? true,
+    allowTripCrewInvites: r.allow_trip_crew_invites ?? true,
+    allowJoinRequests: r.allow_join_requests ?? false,
+    showExactDates: r.show_exact_dates ?? true,
+    showDestinationCity: r.show_destination_city ?? true,
+    delayedPostingDefault: r.delayed_posting_default ?? false,
+    preciseLocationVisible: r.precise_location_visible ?? false,
+    planEditPermission: r.plan_edit_permission ?? null,
   };
 }
 

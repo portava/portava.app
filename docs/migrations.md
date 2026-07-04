@@ -176,3 +176,16 @@ These three migrations were applied directly via the Supabase SQL editor and hav
 | `0098_profile_translation_prefs.sql` | Four `ADD COLUMN IF NOT EXISTS` on `profiles`: `preferred_message_language TEXT`, `auto_translate_messages BOOLEAN`, `show_original_messages BOOLEAN`, `translation_updated_at TIMESTAMPTZ` | `SELECT column_name FROM information_schema.columns WHERE table_name='profiles' AND column_name='auto_translate_messages'` |
 
 All statements are idempotent (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`) — safe to re-run.
+
+### Migration 0099 — not yet applied (manual SQL required)
+
+`artifacts/api-server/src/migrations/0099_missing_indexes.sql` adds two performance indexes that were missing from earlier migrations. Run these in the Supabase SQL editor when convenient — both are `CREATE INDEX IF NOT EXISTS` and fully safe to apply at any time without a deploy.
+
+| Index | Table | Purpose |
+|-------|-------|---------|
+| `posts_author_status_idx` | `posts(author_id, post_status)` | Feed queries that filter by author + publication state |
+| `post_saves_post_created_idx` | `post_saves(post_id, created_at DESC)` | Ordered listing of saves per post |
+
+### Stale migration file — `artifacts/api-server/migrations/0041_notifications.sql`
+
+This file is **not applied to production** and is superseded by `0062_notifications_schema.sql` (applied 2026-06-28). The 0062 file is the authoritative notification schema: it adds `push_retry_queue`, uses `public.profiles(id)` foreign keys, and has the correct RLS policy names. Do not apply `0041_notifications.sql`.

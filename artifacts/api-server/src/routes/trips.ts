@@ -487,7 +487,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   // Fetch trip details
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, trip_type, show_exact_dates, show_destination_city")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
@@ -957,7 +957,7 @@ router.get("/me/plan-editable-trips", async (req, res) => {
   // Fetch trip details including plan_edit_permission
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, plan_edit_permission")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, plan_edit_permission, trip_type, timezone, trip_notes, show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, precise_location_visible, destination_lat, destination_lng, destination_place_id")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
