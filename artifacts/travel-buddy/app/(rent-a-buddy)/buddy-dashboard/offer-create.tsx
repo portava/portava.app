@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert,
 } from 'react-native';
@@ -38,6 +38,7 @@ export default function OfferCreate() {
   const [includedServices, setIncludedServices] = useState('');
   const [paymentMode, setPaymentMode] = useState<'full_in_app' | 'deposit_plus_cash'>('full_in_app');
   const [expiresInHours, setExpiresInHours] = useState(12);
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     async function init() {
@@ -65,29 +66,34 @@ export default function OfferCreate() {
   }, [requestId]);
 
   const submit = useCallback(async () => {
+    if (submitLockRef.current) return;
     if (!requestId || !proposedPriceUsd) {
       Alert.alert('Missing info', 'Please enter a proposed price.');
       return;
     }
+    submitLockRef.current = true;
     setSubmitting(true);
-    const result = await submitOffer(requestId, {
-      proposedPriceUsd: Number(proposedPriceUsd),
-      depositAmountUsd: paymentMode === 'deposit_plus_cash' ? Number(depositAmountUsd) || 0 : undefined,
-      cashBalanceDue: paymentMode === 'deposit_plus_cash'
-        ? Math.max(0, Number(proposedPriceUsd) - Number(depositAmountUsd || 0))
-        : 0,
-      meetupLocation: meetupLocation.trim() || undefined,
-      message: message.trim() || undefined,
-      includedServices: includedServices.trim() ? includedServices.split(',').map((sv) => sv.trim()) : [],
-      paymentMode,
-      expiresInHours,
-    });
-    setSubmitting(false);
-
-    if (!result.ok) { Alert.alert('Error', result.error); return; }
-    Alert.alert('Offer Sent!', 'The traveler will be notified of your offer.', [
-      { text: 'Back to Inbox', onPress: () => router.back() },
-    ]);
+    try {
+      const result = await submitOffer(requestId, {
+        proposedPriceUsd: Number(proposedPriceUsd),
+        depositAmountUsd: paymentMode === 'deposit_plus_cash' ? Number(depositAmountUsd) || 0 : undefined,
+        cashBalanceDue: paymentMode === 'deposit_plus_cash'
+          ? Math.max(0, Number(proposedPriceUsd) - Number(depositAmountUsd || 0))
+          : 0,
+        meetupLocation: meetupLocation.trim() || undefined,
+        message: message.trim() || undefined,
+        includedServices: includedServices.trim() ? includedServices.split(',').map((sv) => sv.trim()) : [],
+        paymentMode,
+        expiresInHours,
+      });
+      if (!result.ok) { Alert.alert('Error', result.error); return; }
+      Alert.alert('Offer Sent!', 'The traveler will be notified of your offer.', [
+        { text: 'Back to Inbox', onPress: () => router.back() },
+      ]);
+    } finally {
+      submitLockRef.current = false;
+      setSubmitting(false);
+    }
   }, [requestId, proposedPriceUsd, depositAmountUsd, meetupLocation, message, includedServices, paymentMode, expiresInHours]);
 
   if (loading) return <TravelLoadingState label="Loading request…" />;

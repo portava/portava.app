@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, StyleSheet, Pressable, Alert, ActivityIndicator,
 } from 'react-native';
@@ -49,6 +49,7 @@ export default function BuddyOffer() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const sendLockRef = useRef(false);
 
   function toggleIncluded(item: string) {
     setIncluded((prev) => prev.includes(item) ? prev.filter((i) => i !== item) : [...prev, item]);
@@ -79,21 +80,27 @@ export default function BuddyOffer() {
 
   async function handleSend() {
     if (!validate() || !category) return;
+    if (sendLockRef.current) return;
+    sendLockRef.current = true;
     setSending(true);
-    const res = await rentABuddy.createBuddyOffer({
-      category,
-      priceUsd: parseFloat(price),
-      proposedDate: date.trim(),
-      proposedTime: time.trim() || undefined,
-      meetupLocation: location.trim() || undefined,
-      includedServices: included,
-      message: message.trim() || undefined,
-    });
-    setSending(false);
-    if (res.ok) {
-      setSent(true);
-    } else {
-      Alert.alert('Could not send offer', res.error ?? 'Please try again.');
+    try {
+      const res = await rentABuddy.createBuddyOffer({
+        category,
+        priceUsd: parseFloat(price),
+        proposedDate: date.trim(),
+        proposedTime: time.trim() || undefined,
+        meetupLocation: location.trim() || undefined,
+        includedServices: included,
+        message: message.trim() || undefined,
+      });
+      if (res.ok) {
+        setSent(true);
+      } else {
+        Alert.alert('Could not send offer', res.error ?? 'Please try again.');
+      }
+    } finally {
+      sendLockRef.current = false;
+      setSending(false);
     }
   }
 
