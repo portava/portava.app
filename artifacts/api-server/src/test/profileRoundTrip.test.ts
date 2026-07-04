@@ -928,3 +928,79 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     assert.equal(profiles[0].display_name, "Short", "DB row must not be mutated on validation failure");
   });
 });
+
+// ── Single-field guard regression ─────────────────────────────────────────────
+//
+// Regression for the bug where `Object.keys(row).length <= 1` rejected any
+// patch that mapped to exactly one DB column.  Every patchable field must
+// return 200 when sent alone; none should ever return 400 "At least one field".
+//
+// Run: node --import tsx/esm --test src/test/profileRoundTrip.test.ts
+
+describe("PATCH /me/profile — single-field guard: each patchable field accepted alone", () => {
+  const BASE_ROW: ProfileRow = {
+    id: ME, name: "Solo Tester", display_name: "Solo Tester",
+    username: "solo_tester",
+    bio: null, avatar_url: null, home_city: null, home_country: null,
+    current_city: null, travel_style: null, interests: [], verified: false,
+    verification_status: "unverified", verified_at: null, open_to_meet: false,
+    is_private: false, passport_visibility: "public", cover_photo_url: null,
+    username_updated_at: null, created_at: null, spoken_languages: [],
+    default_language: null, travel_styles: [], travel_pace: null,
+    budget_style: null, travel_group_style: [], looking_for: [],
+    comfort_level: null, availability_tags: [], planning_style: null,
+    public_social_links: {}, preferred_language: null, date_of_birth: null,
+    dob_verified: false, handle: null,
+  };
+
+  function freshState() {
+    const profiles: ProfileRow[] = [{ ...BASE_ROW }];
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    return { profiles, client };
+  }
+
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["displayName",        { displayName: "Updated Name" }],
+    ["bio",                { bio: "Loves to explore" }],
+    ["homeCity",           { homeCity: "Cebu" }],
+    ["homeCountry",        { homeCountry: "Philippines" }],
+    ["currentCity",        { currentCity: "Manila" }],
+    ["interests",          { interests: ["food", "hiking"] }],
+    ["passportVisibility", { passportVisibility: "followers_only" }],
+    ["avatarUrl",          { avatarUrl: "https://example.com/avatar.jpg" }],
+    ["coverUrl",           { coverUrl: "https://example.com/cover.jpg" }],
+    ["travelStyle",        { travelStyle: "backpacker" }],
+    ["openToMeet",         { openToMeet: true }],
+    ["spokenLanguages",    { spokenLanguages: ["en", "tl"] }],
+    ["defaultLanguage",    { defaultLanguage: "en" }],
+    ["travelStyles",       { travelStyles: ["slow-travel", "cultural"] }],
+    ["travelPace",         { travelPace: "balanced" }],
+    ["budgetStyle",        { budgetStyle: "mid-range" }],
+    ["travelGroupStyle",   { travelGroupStyle: ["solo", "couples"] }],
+    ["lookingFor",         { lookingFor: ["adventure", "culture"] }],
+    ["comfortLevel",       { comfortLevel: "comfort" }],
+    ["availabilityTags",   { availabilityTags: ["weekends"] }],
+    ["planningStyle",      { planningStyle: "flexible" }],
+    ["publicSocialLinks",  { publicSocialLinks: { instagram: "https://instagram.com/x" } }],
+    ["preferredLanguage",  { preferredLanguage: "en" }],
+    ["dateOfBirth",        { dateOfBirth: "1990-06-15" }],
+    ["tagPermission",      { tagPermission: "friends_only" }],
+    ["isPrivate",          { isPrivate: true }],
+  ];
+
+  for (const [field, body] of cases) {
+    it(`single-field PATCH with only "${field}" returns 200`, async () => {
+      freshState();
+      const res = await api("/me/profile", { method: "PATCH", body });
+      const json = await res.json() as any;
+      assert.equal(
+        res.status,
+        200,
+        `single-field PATCH with only "${field}" must return 200 (not 400 / not rejected by the single-field guard), ` +
+        `got ${res.status}: ${JSON.stringify(json)}`,
+      );
+    });
+  }
+});
