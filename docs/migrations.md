@@ -165,40 +165,14 @@ Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`.
 
 Added by migration `0087_profiles_cover_photo_url.sql` (`ADD COLUMN IF NOT EXISTS cover_photo_url TEXT`). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
 
-### `posts.category` column (migration 0095) — applying to production
+### Migrations 0095, 0097, 0098 — applied manually 2026-07-04
 
-Migration file: `artifacts/api-server/migrations/0095_post_category.sql`
+These three migrations were applied directly via the Supabase SQL editor and have no automated runner entry. The SQL source files are committed to `artifacts/api-server/src/migrations/` for reference and future idempotent re-runs.
 
-**SQL (single idempotent statement — safe to run more than once):**
+| Migration | Key SQL | Verify |
+|-----------|---------|--------|
+| `0095_post_category.sql` | `ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT` | `SELECT column_name FROM information_schema.columns WHERE table_name='posts' AND column_name='category'` |
+| `0097_post_saves.sql` | `CREATE TABLE IF NOT EXISTS post_saves (user_id UUID, post_id UUID, PRIMARY KEY (user_id, post_id))` + `ALTER TABLE posts ADD COLUMN IF NOT EXISTS save_count INTEGER NOT NULL DEFAULT 0` | `SELECT to_regclass('public.post_saves')` |
+| `0098_profile_translation_prefs.sql` | Four `ADD COLUMN IF NOT EXISTS` on `profiles`: `preferred_message_language TEXT`, `auto_translate_messages BOOLEAN`, `show_original_messages BOOLEAN`, `translation_updated_at TIMESTAMPTZ` | `SELECT column_name FROM information_schema.columns WHERE table_name='profiles' AND column_name='auto_translate_messages'` |
 
-```sql
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT;
-```
-
-**Apply via Supabase SQL editor (recommended):**
-1. Open [supabase.com/dashboard](https://supabase.com/dashboard) → select project `ajrurzioarfkagpuxfnb`
-2. Left sidebar → **SQL Editor** → **New query**
-3. Paste the SQL above and click **Run**
-4. Expected result: `ALTER TABLE` with no errors
-5. Update the `Applied` column in the table above from `pending` to today's date
-
-**Apply via Management API (CI / scripted):**
-```bash
-SUPABASE_PROJECT_TOKEN=<your-token> \
-  PROJECT_REF=ajrurzioarfkagpuxfnb \
-  curl -s -X POST \
-    "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
-    -H "Authorization: Bearer ${SUPABASE_PROJECT_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"query":"ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT"}'
-```
-
-**Verify the column exists:**
-```sql
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name   = 'posts'
-  AND column_name  = 'category';
-```
-Expected: one row with `data_type = text`, `is_nullable = YES`.
+All statements are idempotent (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`) — safe to re-run.
