@@ -40,3 +40,4 @@
 - [Fake-client must return row copies not references](fake-client-row-copies.md) — select path must shallow-copy results; returning references lets later mutations silently change values the handler already captured
 - [hiddenGems admin guard](hidden-gems-admin-guard.md) — was reading profiles.is_admin (never existed); correct column is profiles.role === "admin"
 - [Sync-standalone direction](sync-standalone-direction.md) — SRC=artifacts/travel-buddy → DST=standalone; edit SRC not DST for mobile changes
+- [Search ranking + upsert fake-client pattern](search-ranking-pattern.md) — rankCombined: tier primary + upcomingFirst tiebreak + city tiebreak in one pass; upsert() in fake client must be chainable (return builder, not { error: null }); POST search-history returns row id so UI can patch synthetic local id
