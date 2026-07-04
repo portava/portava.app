@@ -14,7 +14,7 @@
  *    re-renders and disables the button.
  *
  * 2. No try/finally. `setSaving(false)` was called at individual early-return
- *    sites and at line 491 after the main Promise.all. If Promise.all throws
+ *    sites and at the end after the main Promise.all. If Promise.all throws
  *    unexpectedly, the finally path is skipped and the Save button is
  *    permanently frozen.
  *
