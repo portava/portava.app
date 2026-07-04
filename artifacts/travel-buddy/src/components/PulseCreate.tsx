@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory } from './PulseCreate.machine';
+import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage';
@@ -84,6 +84,13 @@ function validate(
   // Defense-in-depth: if the post type maps to a default category but none was
   // selected (e.g. due to a state bug), block submit before the API is called.
   if (TYPE_CATEGORY[type] && !selectedCategory) {
+    return 'Pick a category before posting.';
+  }
+  // Catch new post types that ship without a TYPE_CATEGORY mapping — the chip
+  // picker is hidden for those types, so selectedCategory stays null and would
+  // silently produce a category-less post without this guard.
+  const gate = validateCategoryGate(type, selectedCategory);
+  if (!gate.ok) {
     return 'Pick a category before posting.';
   }
   switch (type) {

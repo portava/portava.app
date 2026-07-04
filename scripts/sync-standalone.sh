@@ -140,6 +140,7 @@ STANDALONE_OWNED_FILES=(
   "src/components/PulseCreate.machine.ts"
   "src/components/__tests__/PulseCreate.backdrop.test.ts"
   "src/components/__tests__/PulseCreate.submit.test.ts"
+  "src/components/__tests__/PulseCreate.categoryGate.test.ts"
   "src/components/PulseFilterSheet.machine.ts"
   "src/components/__tests__/PulseFilterSheet.backdrop.test.ts"
   "src/services/__tests__/locationPrefs.load.test.ts"

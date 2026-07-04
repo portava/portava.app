@@ -357,3 +357,41 @@ export function handleCategoryChipPress(value: PostCategory): PostCategory {
 export function resolveCreateCategory(selectedCategory: PostCategory | null): PostCategory | undefined {
   return selectedCategory ?? undefined;
 }
+
+// ── Category-gate validation ───────────────────────────────────────────────────
+
+export interface CategoryGateValidation {
+  ok: boolean;
+  error?: 'missing_category';
+}
+
+/**
+ * Validates that a post with the given type has a category before submission.
+ *
+ * When a new post type ships without a TYPE_CATEGORY entry the chip picker is
+ * hidden (gated on !!TYPE_CATEGORY[selectedType]) and selectedCategory stays
+ * null. If submission were allowed in that state the post would be created
+ * without a category, silently breaking the feed filter. This guard catches
+ * that case and returns an error so handleSubmit() can surface feedback.
+ *
+ * Rules:
+ *   - TYPE_CATEGORY[typeId] is present  → ok (picker was shown, category may
+ *     have been auto-set or manually overridden; resolveCreateCategory handles
+ *     the null→undefined conversion for the payload)
+ *   - TYPE_CATEGORY[typeId] is absent   → selectedCategory MUST be non-null
+ *     (caller provided a category through another means); if it is null the
+ *     submission is blocked with error: 'missing_category'.
+ *
+ * Usage in PulseCreate.tsx (handleSubmit):
+ *   const gate = validateCategoryGate(selectedType, selectedCategory);
+ *   if (!gate.ok) { setError('Please select a category.'); return; }
+ */
+export function validateCategoryGate(
+  typeId: string,
+  selectedCategory: PostCategory | null,
+): CategoryGateValidation {
+  if (!TYPE_CATEGORY[typeId] && selectedCategory === null) {
+    return { ok: false, error: 'missing_category' };
+  }
+  return { ok: true };
+}

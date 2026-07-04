@@ -27,7 +27,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, CATEGORY_OPTIONS, TYPE_CATEGORY } from '../PulseCreate.machine.ts';
+import { createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate, CATEGORY_OPTIONS, TYPE_CATEGORY } from '../PulseCreate.machine.ts';
 
 // ── Success path ──────────────────────────────────────────────────────────────
 
@@ -978,6 +978,123 @@ describe('category chip picker — end-to-end: type → default → optional ove
       const payload = resolveCreateCategory(cat);           // handleSubmit result
       assert.equal(payload, expectedPayload,
         `type "${typeId}": create() category must be ${JSON.stringify(expectedPayload)}, got ${JSON.stringify(payload)}`);
+    }
+  });
+});
+
+// ── Category-gate validation — validateCategoryGate() ────────────────────────
+//
+// The category chip picker is gated on !!TYPE_CATEGORY[selectedType]. If a new
+// post type ships without a TYPE_CATEGORY entry the chip picker is hidden and
+// selectedCategory remains null. Without a validation guard the post would be
+// submitted with no category, silently breaking feed filters.
+//
+// validateCategoryGate() is the defensive guard that catches this. These tests
+// lock in the two contracts the task description requires:
+//
+//   1. resolveDefaultCategory returns null for a type not in TYPE_CATEGORY —
+//      confirming the picker would be hidden for such a type.
+//
+//   2. validateCategoryGate returns { ok: false, error: 'missing_category' }
+//      when TYPE_CATEGORY[type] is falsy and selectedCategory is null —
+//      so handleSubmit() blocks and surfaces feedback instead of submitting a
+//      category-less post.
+
+describe('category gate — resolveDefaultCategory returns null for unmapped types', () => {
+  it('returns null for a type that has no TYPE_CATEGORY entry', () => {
+    assert.equal(
+      resolveDefaultCategory('share_new_type'),
+      null,
+      'unmapped type must return null — the chip picker will be hidden for this type',
+    );
+  });
+
+  it('returns null for any string not present in TYPE_CATEGORY', () => {
+    const unmappedTypes = ['share_new_type', 'share_video', 'share_poll', 'live_update', ''];
+    for (const typeId of unmappedTypes) {
+      assert.equal(
+        resolveDefaultCategory(typeId),
+        null,
+        `"${typeId}" is not in TYPE_CATEGORY — resolveDefaultCategory must return null`,
+      );
+    }
+  });
+});
+
+describe('category gate — validateCategoryGate blocks submit for unmapped type + null category', () => {
+  it('returns ok: false when TYPE_CATEGORY[type] is absent and selectedCategory is null', () => {
+    const result = validateCategoryGate('share_new_type', null);
+    assert.equal(result.ok, false,
+      'submit must be blocked when the type has no TYPE_CATEGORY entry and no category is selected');
+  });
+
+  it('returns error: "missing_category" for unmapped type with null selectedCategory', () => {
+    const result = validateCategoryGate('share_new_type', null);
+    assert.equal(result.error, 'missing_category');
+  });
+
+  it('blocks submit for multiple unmapped types when selectedCategory is null', () => {
+    const unmappedTypes = ['share_new_type', 'share_video', 'share_poll', 'live_update'];
+    for (const typeId of unmappedTypes) {
+      const result = validateCategoryGate(typeId, null);
+      assert.equal(
+        result.ok,
+        false,
+        `type "${typeId}" is not in TYPE_CATEGORY — submit must be blocked when selectedCategory is null`,
+      );
+      assert.equal(result.error, 'missing_category');
+    }
+  });
+});
+
+describe('category gate — validateCategoryGate allows submit for mapped types', () => {
+  it('returns ok: true for a mapped type even with null selectedCategory', () => {
+    const result = validateCategoryGate('post_update', null);
+    assert.equal(result.ok, true,
+      'mapped type: chip picker is shown — user can still pick a category; gate must not block');
+  });
+
+  it('returns no error field for a mapped type with null selectedCategory', () => {
+    const result = validateCategoryGate('post_update', null);
+    assert.equal(result.error, undefined);
+  });
+
+  it('every type currently in TYPE_CATEGORY passes the gate with null selectedCategory', () => {
+    for (const typeId of Object.keys(TYPE_CATEGORY)) {
+      const result = validateCategoryGate(typeId, null);
+      assert.equal(
+        result.ok,
+        true,
+        `type "${typeId}" is in TYPE_CATEGORY — gate must not block null selectedCategory for mapped types`,
+      );
+    }
+  });
+});
+
+describe('category gate — validateCategoryGate allows submit when any category is provided', () => {
+  it('returns ok: true for an unmapped type when the caller provides a category', () => {
+    const result = validateCategoryGate('share_new_type', 'activity');
+    assert.equal(result.ok, true,
+      'caller-supplied category bypasses the gate even for unmapped types');
+  });
+
+  it('returns ok: true for a mapped type with a selected category', () => {
+    const result = validateCategoryGate('post_update', 'tip');
+    assert.equal(result.ok, true);
+  });
+
+  it('every valid category value passes the gate for an unmapped type', () => {
+    const categories = [
+      'food', 'beach', 'nightlife', 'activity', 'hotel',
+      'tip', 'safety', 'transport', 'airport', 'visa', 'question',
+    ] as const;
+    for (const cat of categories) {
+      const result = validateCategoryGate('share_new_type', cat);
+      assert.equal(
+        result.ok,
+        true,
+        `category "${cat}" with unmapped type must pass the gate — caller provided a valid category`,
+      );
     }
   });
 });
