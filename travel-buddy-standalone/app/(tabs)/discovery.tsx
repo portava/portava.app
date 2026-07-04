@@ -472,7 +472,7 @@ function DiscoveryHubScreen() {
       {/* ── Search entry bar ── */}
       <Pressable
         style={styles.searchEntryBar}
-        onPress={() => router.push('/search')}
+        onPress={() => router.push({ pathname: '/search' } as any)}
         accessible
         accessibilityRole="search"
         accessibilityLabel="Open search"

@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
 import {
-  View, Text, Image, Pressable, ActivityIndicator, StyleSheet,
+  View, Text, Pressable, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
 import {
   UserPlus, UserCheck, Calendar, MapPin, Hash, PlaneTakeoff,
-  Sparkles, Users, FileText, Globe, Award,
+  Sparkles, Users, FileText, Globe, Award, Bookmark, BookmarkCheck,
+  Clock,
 } from 'lucide-react-native';
+import { UserAvatarButton } from '../interaction/UserAvatarButton';
 import { followUser, unfollowUser } from '../../services/follows';
+import { rsvpEvent } from '../../services/events';
+import { saveItem, unsaveItem } from '../../services/collections';
 import type { UnifiedSearchResult } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 
@@ -67,22 +71,58 @@ function TypeIcon({ type, size = 15 }: { type: string; size?: number }) {
     case 'travelers': case 'buddies': case 'circles': return <Users size={size} color={c} />;
     case 'events': case 'plans': return <Calendar size={size} color={c} />;
     case 'trips': return <PlaneTakeoff size={size} color={c} />;
-    case 'places': return <MapPin size={size} color={c} />;
-    case 'hidden_gems': return <Sparkles size={size} color={c} />;
+    case 'places': case 'hidden_gems': return <MapPin size={size} color={c} />;
     case 'hashtags': return <Hash size={size} color={c} />;
     case 'posts': return <FileText size={size} color={c} />;
     case 'cities': case 'countries': return <Globe size={size} color={c} />;
     case 'stamps': return <Award size={size} color={c} />;
-    default: return <MapPin size={size} color={c} />;
+    default: return <Sparkles size={size} color={c} />;
   }
 }
 
-function resolveRoute(destinationRoute: string | null): string | null {
+/**
+ * Normalises backend destinationRoute values to actual in-app route paths.
+ *
+ * The backend emits paths from its own domain model which don't always match
+ * the Expo Router file layout.  This is the single authoritative mapping table.
+ */
+function resolveRoute(destinationRoute: string | null, type: string): string | null {
   if (!destinationRoute) return null;
-  const placeMatch = destinationRoute.match(/^\/place\/(.+)$/);
-  if (placeMatch) return `/gems/${placeMatch[1]}`;
+
+  // Travelers & buddies: backend emits /passport/:handle — app uses /u/:handle
+  const passportMatch = destinationRoute.match(/^\/passport\/(.+)$/);
+  if (passportMatch) return `/u/${passportMatch[1]}`;
+
+  // Places and hidden gems both land on /gems/:id
   const hiddenGemMatch = destinationRoute.match(/^\/hidden-gem\/(.+)$/);
   if (hiddenGemMatch) return `/gems/${hiddenGemMatch[1]}`;
+
+  const placeMatch = destinationRoute.match(/^\/place\/(.+)$/);
+  if (placeMatch) return `/gems/${placeMatch[1]}`;
+
+  // Cities and countries share /destination/:slug
+  const cityMatch = destinationRoute.match(/^\/city\/(.+)$/);
+  if (cityMatch) return `/destination/${cityMatch[1]}`;
+
+  const countryMatch = destinationRoute.match(/^\/country\/(.+)$/);
+  if (countryMatch) return `/destination/${countryMatch[1]}`;
+
+  // Stamps: /stamps/:slug (plural backend) → /stamp/:stampId (singular app)
+  const stampsMatch = destinationRoute.match(/^\/stamps\/(.+)$/);
+  if (stampsMatch) return `/stamp/${stampsMatch[1]}`;
+
+  // Circles: app has a singleton /circle screen with no parameterised route
+  if (destinationRoute.startsWith('/circle/') || destinationRoute === '/circle') {
+    return '/circle';
+  }
+
+  // Buddies with an un-normalised path: derive from id segment
+  if (type === 'buddies' && !destinationRoute.startsWith('/u/')) {
+    const seg = destinationRoute.match(/\/([^/]+)$/);
+    if (seg) return `/u/${seg[1]}`;
+  }
+
+  // All other routes pass through verbatim (event, trip, plan, hashtag, post …)
   return destinationRoute;
 }
 
@@ -92,35 +132,58 @@ interface Props {
 }
 
 export function SearchResultCard({ result, onActionStateChange }: Props) {
-  const [imgError, setImgError] = useState(false);
+  const route = resolveRoute(result.destinationRoute, result.type);
+  const isPrivate = result.privacyState?.isPrivate ?? false;
+
+  // ── Traveler follow state ──────────────────────────────────────────────────
   const [isFollowing, setIsFollowing] = useState(
     (result.actionState?.isFollowing as boolean | undefined) ?? false,
   );
-  const [toggling, setToggling] = useState(false);
+  const [isRequestSent, setIsRequestSent] = useState(false);
+  const [followToggling, setFollowToggling] = useState(false);
 
-  const route = resolveRoute(result.destinationRoute);
-  const isPrivate = result.privacyState?.isPrivate ?? false;
-  const isAttending = (result.actionState?.isAttending as boolean | undefined) ?? false;
+  // ── Event RSVP state ───────────────────────────────────────────────────────
+  const [isAttending, setIsAttending] = useState(
+    (result.actionState?.isAttending as boolean | undefined) ?? false,
+  );
+  const [rsvpToggling, setRsvpToggling] = useState(false);
+
+  // ── Place / post save state ────────────────────────────────────────────────
+  const [isSaved, setIsSaved] = useState(
+    (result.actionState?.isSaved as boolean | undefined) ?? false,
+  );
+  const [saveToggling, setSaveToggling] = useState(false);
+
+  const isTraveler = result.type === 'travelers' || result.type === 'buddies';
+  const isEvent = result.type === 'events';
+  const isSaveable = result.type === 'places' || result.type === 'hidden_gems' || result.type === 'posts';
 
   const label = TYPE_LABELS[result.type] ?? result.type;
   const badgeBg = TYPE_BADGE_BG[result.type] ?? color.haze;
   const badgeTextColor = TYPE_BADGE_TEXT[result.type] ?? color.mute;
-
-  const isTraveler = result.type === 'travelers' || result.type === 'buddies';
-  const isEvent = result.type === 'events';
-
-  const mediaUrl = isTraveler ? result.avatarUrl : result.imageUrl;
-  const hasMedia = !!mediaUrl && !imgError;
 
   function navigate() {
     if (!route) return;
     router.push(route as any);
   }
 
+  // ── Follow / request ────────────────────────────────────────────────────
   async function handleFollowToggle() {
-    if (toggling) return;
+    if (followToggling) return;
+    setFollowToggling(true);
+
+    if (isPrivate && !isFollowing) {
+      // Private profile — send a follow request
+      const res = await followUser(result.id);
+      if (res.ok) {
+        setIsRequestSent(true);
+        onActionStateChange?.(result.id, { isRequestSent: true });
+      }
+      setFollowToggling(false);
+      return;
+    }
+
     const was = isFollowing;
-    setToggling(true);
     setIsFollowing(!was);
     const res = was ? await unfollowUser(result.id) : await followUser(result.id);
     if (!res.ok) {
@@ -128,31 +191,69 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     } else {
       onActionStateChange?.(result.id, { isFollowing: !was });
     }
-    setToggling(false);
+    setFollowToggling(false);
+  }
+
+  // ── Event RSVP ──────────────────────────────────────────────────────────
+  async function handleEventRsvp() {
+    if (rsvpToggling || isAttending) {
+      // Already attending — tap navigates to event detail
+      navigate();
+      return;
+    }
+    setRsvpToggling(true);
+    setIsAttending(true);
+    try {
+      const res = await rsvpEvent(result.id, 'going');
+      const ok = res && (res as any).ok !== false;
+      if (ok) {
+        onActionStateChange?.(result.id, { isAttending: true });
+      } else {
+        setIsAttending(false);
+      }
+    } catch {
+      setIsAttending(false);
+    } finally {
+      setRsvpToggling(false);
+    }
+  }
+
+  // ── Place / post save ────────────────────────────────────────────────────
+  async function handleSaveToggle() {
+    if (saveToggling) return;
+    const was = isSaved;
+    setSaveToggling(true);
+    setIsSaved(!was);
+    const entityType = result.type === 'posts' ? 'post' : 'place';
+    const res = was
+      ? await unsaveItem(entityType, result.id)
+      : await saveItem(entityType, result.id);
+    if (!res) {
+      setIsSaved(was);
+    } else {
+      onActionStateChange?.(result.id, { isSaved: !was });
+    }
+    setSaveToggling(false);
   }
 
   return (
     <Pressable style={styles.row} onPress={navigate}>
-      {/* Left — avatar or icon */}
-      <View style={isTraveler ? styles.avatarCircle : styles.avatarSquare}>
-        {hasMedia ? (
-          <Image
-            source={{ uri: mediaUrl! }}
-            style={isTraveler ? styles.avatarImg : styles.coverImg}
-            onError={() => setImgError(true)}
+      {/* Left — shared UserAvatarButton for travelers, icon square for others */}
+      {isTraveler ? (
+        <View style={styles.avatarCircle}>
+          <UserAvatarButton
+            userId={result.id}
+            handle={result.subtitle ?? result.id}
+            avatarUrl={result.avatarUrl}
+            size={AVATAR_SIZE}
+            disabled
           />
-        ) : (
-          <View style={[styles.avatarFallback, isTraveler && styles.avatarFallbackCircle]}>
-            {isTraveler ? (
-              <Text style={styles.initials}>
-                {result.fallbackInitials ?? '?'}
-              </Text>
-            ) : (
-              <TypeIcon type={result.type} />
-            )}
-          </View>
-        )}
-      </View>
+        </View>
+      ) : (
+        <View style={styles.avatarSquare}>
+          <TypeIcon type={result.type} />
+        </View>
+      )}
 
       {/* Centre — text */}
       <View style={styles.content}>
@@ -181,19 +282,18 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         )}
       </View>
 
-      {/* Right — action button */}
-      {isTraveler && !isPrivate ? (
+      {/* Right — action buttons per type */}
+
+      {/* Public traveler: Follow ↔ Following */}
+      {isTraveler && !isPrivate && (
         <Pressable
           style={[styles.actionBtn, isFollowing && styles.actionBtnActive]}
           onPress={handleFollowToggle}
-          disabled={toggling}
+          disabled={followToggling}
           hitSlop={8}
         >
-          {toggling ? (
-            <ActivityIndicator
-              size="small"
-              color={isFollowing ? color.mute : color.onInk}
-            />
+          {followToggling ? (
+            <ActivityIndicator size="small" color={isFollowing ? color.mute : color.onInk} />
           ) : isFollowing ? (
             <>
               <UserCheck size={12} color={color.mute} />
@@ -206,21 +306,64 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
             </>
           )}
         </Pressable>
-      ) : isTraveler && isPrivate && !isFollowing ? (
-        <Pressable style={[styles.actionBtn, styles.actionBtnOutline]} onPress={navigate} hitSlop={8}>
-          <Text style={styles.actionBtnOutlineText}>Request</Text>
-        </Pressable>
-      ) : isEvent ? (
+      )}
+
+      {/* Private traveler (not yet following): Request / Requested */}
+      {isTraveler && isPrivate && !isFollowing && (
         <Pressable
-          style={[styles.actionBtn, isAttending && styles.actionBtnActive]}
-          onPress={navigate}
+          style={[styles.actionBtn, isRequestSent && styles.actionBtnActive]}
+          onPress={isRequestSent ? undefined : handleFollowToggle}
+          disabled={followToggling || isRequestSent}
           hitSlop={8}
         >
-          <Text style={isAttending ? styles.actionBtnActiveText : styles.actionBtnText}>
-            {isAttending ? 'Attending' : 'Join'}
-          </Text>
+          {followToggling ? (
+            <ActivityIndicator size="small" color={color.onInk} />
+          ) : isRequestSent ? (
+            <>
+              <Clock size={12} color={color.mute} />
+              <Text style={styles.actionBtnActiveText}>Requested</Text>
+            </>
+          ) : (
+            <Text style={styles.actionBtnText}>Request</Text>
+          )}
         </Pressable>
-      ) : null}
+      )}
+
+      {/* Event: Join → calls RSVP; Attending → navigates to detail */}
+      {isEvent && (
+        <Pressable
+          style={[styles.actionBtn, isAttending && styles.actionBtnActive]}
+          onPress={handleEventRsvp}
+          disabled={rsvpToggling}
+          hitSlop={8}
+        >
+          {rsvpToggling ? (
+            <ActivityIndicator size="small" color={isAttending ? color.mute : color.onInk} />
+          ) : (
+            <Text style={isAttending ? styles.actionBtnActiveText : styles.actionBtnText}>
+              {isAttending ? 'Attending' : 'Join'}
+            </Text>
+          )}
+        </Pressable>
+      )}
+
+      {/* Place / hidden gem / post: Save ↔ Saved bookmark */}
+      {isSaveable && (
+        <Pressable
+          style={[styles.saveBtn, isSaved && styles.saveBtnActive]}
+          onPress={handleSaveToggle}
+          disabled={saveToggling}
+          hitSlop={8}
+        >
+          {saveToggling ? (
+            <ActivityIndicator size="small" color={isSaved ? color.signal : color.mute} />
+          ) : isSaved ? (
+            <BookmarkCheck size={16} color={color.signal} />
+          ) : (
+            <Bookmark size={16} color={color.mute} />
+          )}
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -243,7 +386,6 @@ const styles = StyleSheet.create({
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
     overflow: 'hidden',
-    backgroundColor: color.haze,
   },
   avatarSquare: {
     width: AVATAR_SIZE,
@@ -255,33 +397,6 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarImg: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-  },
-  coverImg: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: radius.sm,
-  },
-  avatarFallback: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: radius.sm,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarFallbackCircle: {
-    borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: color.deep,
-  },
-  initials: {
-    ...t.stamp,
-    color: color.onInk,
-    fontSize: 15,
   },
   content: {
     flex: 1,
@@ -348,11 +463,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
-  actionBtnOutline: {
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: color.haze,
-  },
   actionBtnText: {
     ...t.stamp,
     color: color.onInk,
@@ -363,9 +473,19 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 11,
   },
-  actionBtnOutlineText: {
-    ...t.stamp,
-    color: color.ink,
-    fontSize: 11,
+  saveBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  saveBtnActive: {
+    borderColor: color.signal,
+    backgroundColor: '#FFF0EE',
   },
 });
