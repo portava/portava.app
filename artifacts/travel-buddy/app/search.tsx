@@ -4,7 +4,7 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Search, X, Clock, Zap } from 'lucide-react-native';
+import { Search, X, Clock, Zap, MapPin, AlertCircle } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
 import {
@@ -30,8 +30,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 const VALID_TAB_KEYS = new Set<string>(TABS.map((tb) => tb.key));
 
-const RECOVERY_CHIPS = [
-  'travelers nearby',
+const RECOVERY_CHIPS_BASE = [
   'beach events',
   'hiking spots',
   'food & restaurants',
@@ -40,7 +39,7 @@ const RECOVERY_CHIPS = [
 
 export default function SearchScreen() {
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
-  const { locationState } = useActiveLocation();
+  const { locationState, requestLocation } = useActiveLocation();
 
   const [query, setQuery] = useState(params.q ?? '');
   const [activeTab, setActiveTab] = useState<TabKey>(
@@ -53,6 +52,7 @@ export default function SearchScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timeLabel, setTimeLabel] = useState<string | null>(null);
 
   const [recentSearches, setRecentSearches] = useState<SearchHistoryEntry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -62,13 +62,15 @@ export default function SearchScreen() {
   const activeQueryRef = useRef('');
   const activeTabRef = useRef<TabKey>('all');
 
-  // Pass user coords only when already granted — never prompt for location from the search screen.
+  const locationGranted = locationState.permissionStatus === 'granted';
+
+  // Pass user coords only when permission already granted — never prompt from search screen
   const userCoords = useMemo(() => {
-    if (locationState.permissionStatus === 'granted' && locationState.coords) {
+    if (locationGranted && locationState.coords) {
       return { lat: locationState.coords.lat, lng: locationState.coords.lng };
     }
     return undefined;
-  }, [locationState.permissionStatus, locationState.coords]);
+  }, [locationGranted, locationState.coords]);
 
   const tz = useMemo(() => {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
@@ -92,6 +94,7 @@ export default function SearchScreen() {
     if (isFirstPage) {
       setLoading(true);
       setError(null);
+      setTimeLabel(null);
       setSearched(true);
       activeQueryRef.current = trimmed;
       activeTabRef.current = tab;
@@ -102,7 +105,6 @@ export default function SearchScreen() {
     try {
       const res = await searchUnified(trimmed, tab, cursor, { ...userCoords, tz });
 
-      // Discard stale responses when query/tab changed mid-flight
       if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
 
       if (!res.ok) {
@@ -110,11 +112,12 @@ export default function SearchScreen() {
         return;
       }
 
-      const { results: newRows, nextCursor: newCursor } = res.data;
+      const { results: newRows, nextCursor: newCursor, timeLabel: label } = res.data;
 
       if (isFirstPage) {
         setResults(newRows);
-        // Optimistically update history list + persist to API
+        setTimeLabel(label ?? null);
+
         if (newRows.length > 0) {
           void saveSearchHistory(trimmed, tab);
           const newEntry: SearchHistoryEntry = {
@@ -155,6 +158,7 @@ export default function SearchScreen() {
       setSearched(false);
       setLoading(false);
       setError(null);
+      setTimeLabel(null);
       return;
     }
 
@@ -175,6 +179,7 @@ export default function SearchScreen() {
     setNextCursor(null);
     setSearched(false);
     setError(null);
+    setTimeLabel(null);
   }
 
   function clearQuery() {
@@ -183,6 +188,7 @@ export default function SearchScreen() {
     setNextCursor(null);
     setSearched(false);
     setError(null);
+    setTimeLabel(null);
     inputRef.current?.focus();
   }
 
@@ -201,9 +207,10 @@ export default function SearchScreen() {
     );
   }
 
-  async function handleClearOneHistory(q: string) {
-    setRecentSearches((prev) => prev.filter((r) => r.query !== q));
-    await clearSearchHistory(q);
+  // Delete by entry id (not query string) to avoid cross-type collisions
+  async function handleClearOneHistory(entryId: string) {
+    setRecentSearches((prev) => prev.filter((r) => r.id !== entryId));
+    await clearSearchHistory(entryId);
   }
 
   async function handleClearAllHistory() {
@@ -214,6 +221,16 @@ export default function SearchScreen() {
   const showTabs = query.trim().length >= 2;
   const showEmptyStart = !showTabs;
   const isEmpty = searched && !loading && !error && results.length === 0;
+
+  // Detect "enable location" label from the API (returned when nearby intent + no coords)
+  const needsLocationForNearby = timeLabel === 'Nearby (enable location)';
+
+  // Build recovery chips — include "Search nearby" only when location is available
+  const recoveryChips = useMemo(() => {
+    const chips = [...RECOVERY_CHIPS_BASE];
+    if (locationGranted) chips.unshift('travelers nearby');
+    return chips;
+  }, [locationGranted]);
 
   return (
     <KeyboardAvoidingView
@@ -244,7 +261,7 @@ export default function SearchScreen() {
         )}
       </View>
 
-      {/* Filter tabs — only shown when query ≥ 2 chars */}
+      {/* Filter tabs */}
       {showTabs && (
         <ScrollView
           horizontal
@@ -266,6 +283,26 @@ export default function SearchScreen() {
         </ScrollView>
       )}
 
+      {/* Time/nearby label pill — shown below tabs when a filter is active */}
+      {showTabs && timeLabel && !needsLocationForNearby && (
+        <View style={styles.timeLabelRow}>
+          <View style={styles.timeLabelPill}>
+            <Text style={styles.timeLabelText}>Showing · {timeLabel}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Location needed banner — shown when nearby search but no location permission */}
+      {showTabs && needsLocationForNearby && (
+        <Pressable style={styles.locationBanner} onPress={requestLocation}>
+          <AlertCircle size={14} color={color.warn} />
+          <Text style={styles.locationBannerText}>
+            Enable location to find nearby results
+          </Text>
+          <Text style={styles.locationBannerAction}>Enable</Text>
+        </Pressable>
+      )}
+
       {/* Content area */}
       {loading ? (
         <View style={styles.center}>
@@ -277,29 +314,62 @@ export default function SearchScreen() {
           <Text style={styles.retryHint}>Tap to retry</Text>
         </Pressable>
       ) : isEmpty ? (
-        /* No results — show recovery chips */
+        /* No results */
         <ScrollView
           contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.emptyTitle}>No results for "{query.trim()}"</Text>
-          <Text style={styles.emptySub}>Try a different search term or filter.</Text>
+          <Text style={styles.emptyTitle}>No results found.</Text>
+          <Text style={styles.emptySub}>
+            {timeLabel && !needsLocationForNearby
+              ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
+              : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
+          </Text>
+
+          {/* Contextual recovery chips */}
+          <View style={[styles.chipsRow, { marginTop: space.lg }]}>
+            {locationGranted && (
+              <Pressable
+                style={[styles.chip, styles.chipPrimary]}
+                onPress={() => setQuery('travelers nearby')}
+              >
+                <MapPin size={12} color={color.onInk} />
+                <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
+              </Pressable>
+            )}
+            {!locationGranted && (
+              <Pressable
+                style={[styles.chip, styles.chipPrimary]}
+                onPress={requestLocation}
+              >
+                <MapPin size={12} color={color.onInk} />
+                <Text style={[styles.chipText, { color: color.onInk }]}>Enable location</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={styles.chip}
+              onPress={() => router.push('/compass' as any)}
+            >
+              <Zap size={12} color={color.signal} />
+              <Text style={styles.chipText}>Ask Compass</Text>
+            </Pressable>
+          </View>
+
           <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
           <View style={styles.chipsRow}>
-            {RECOVERY_CHIPS.map((chip) => (
+            {recoveryChips.slice(0, 4).map((chip) => (
               <Pressable
                 key={chip}
                 style={styles.chip}
                 onPress={() => setQuery(chip)}
               >
-                <Zap size={12} color={color.signal} />
                 <Text style={styles.chipText}>{chip}</Text>
               </Pressable>
             ))}
           </View>
         </ScrollView>
       ) : showEmptyStart ? (
-        /* Query empty — recent searches + suggestions */
+        /* Pre-search — recent history + quick suggestions */
         <ScrollView
           contentContainerStyle={{ paddingBottom: 100 }}
           keyboardShouldPersistTaps="handled"
@@ -314,13 +384,13 @@ export default function SearchScreen() {
               </View>
               {recentSearches.map((item) => (
                 <Pressable
-                  key={`${item.query}:${item.search_type}`}
+                  key={item.id}
                   style={styles.historyRow}
                   onPress={() => setQuery(item.query)}
                 >
                   <Clock size={14} color={color.mute} />
                   <Text style={styles.historyRowText} numberOfLines={1}>{item.query}</Text>
-                  <Pressable hitSlop={8} onPress={() => handleClearOneHistory(item.query)}>
+                  <Pressable hitSlop={8} onPress={() => handleClearOneHistory(item.id)}>
                     <X size={14} color={color.faint} />
                   </Pressable>
                 </Pressable>
@@ -338,11 +408,16 @@ export default function SearchScreen() {
             </View>
           )}
 
-          {/* Quick suggestions */}
           <View style={styles.historySection}>
             <Text style={styles.historyTitle}>Try searching for</Text>
             <View style={[styles.chipsRow, { marginTop: space.sm }]}>
-              {RECOVERY_CHIPS.map((chip) => (
+              {locationGranted && (
+                <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => setQuery('travelers nearby')}>
+                  <MapPin size={12} color={color.onInk} />
+                  <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
+                </Pressable>
+              )}
+              {recoveryChips.map((chip) => (
                 <Pressable key={chip} style={styles.chip} onPress={() => setQuery(chip)}>
                   <Zap size={12} color={color.signal} />
                   <Text style={styles.chipText}>{chip}</Text>
@@ -427,6 +502,45 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: color.onInk,
+  },
+  timeLabelRow: {
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  timeLabelPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,77,46,0.10)',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 4,
+  },
+  timeLabelText: {
+    ...t.small,
+    color: color.signal,
+    fontWeight: '600' as const,
+  },
+  locationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(200,133,26,0.10)',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(200,133,26,0.30)',
+  },
+  locationBannerText: {
+    flex: 1,
+    ...t.small,
+    color: color.warn,
+  },
+  locationBannerAction: {
+    ...t.small,
+    fontWeight: '700' as const,
+    color: color.warn,
   },
   center: {
     flex: 1,
@@ -522,6 +636,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
     backgroundColor: color.paperRaised,
+  },
+  chipPrimary: {
+    backgroundColor: color.signal,
+    borderColor: color.signal,
   },
   chipText: {
     ...t.small,

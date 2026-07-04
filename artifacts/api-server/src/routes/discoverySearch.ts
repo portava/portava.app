@@ -53,6 +53,7 @@ import {
   applyAliases,
   rankByMatchTier,
   parseTimeIntent,
+  parseNearbyIntent,
   haversineKm,
   type SearchQueryContext,
 } from "./discoverySearchHelpers.js";
@@ -386,11 +387,12 @@ async function searchTrips(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
-    const { data, error } = await sc
+    let trQ: any = sc
       .from("trips")
       .select("id, title, destination_city, destination_country, owner_id, cover_image_url, start_date, status, visibility, created_at")
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
@@ -398,8 +400,11 @@ async function searchTrips(
       .neq("status", "cancelled")
       .neq("status", "deleted")
       .neq("status", "banned")
-      .order("created_at", { ascending: false })
-      .range(offset, offset + fetchLimit - 1);
+      .order("created_at", { ascending: false });
+    // Apply time-intent date bounds to trip start_date when present
+    if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
+    if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
+    const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
 
     if (error || !data) return [];
 
@@ -1067,7 +1072,7 @@ async function dispatchSearch(
     case "travelers":   return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false), q);
     case "buddies":     return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true),  q);
     case "events":      return rankByMatchTier(await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),       q);
-    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
+    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),        q);
     case "plans":       return rankByMatchTier(await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
     case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),        q);
@@ -1108,7 +1113,7 @@ async function searchAll(
     searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),        // travelers
     searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true),  // buddies
     searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),      // events
-    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // trips
+    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),       // trips
     searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // plans
     searchPlaces(sc, q, 0, FAN_LIMIT, ctx),                                            // places
     searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // hidden_gems
@@ -1175,8 +1180,13 @@ router.get("/discovery/search", async (req, res) => {
     return;
   }
 
+  // Strip leading @ for handle-specific searches (e.g. @alice → alice)
+  const rawQ = parsed.data.q;
+  const isHandleQuery = rawQ.startsWith("@");
+  const qAfterHandle = isHandleQuery ? rawQ.slice(1) : rawQ;
+
   // Apply alias expansion (typo tolerance) before sanitization
-  let q = applyAliases(parsed.data.q);
+  let q = applyAliases(qAfterHandle);
   // Apply PostgREST injection sanitization on top of Zod validation
   q = sanitizeQuery(q);
   if (q.length < 2) {
@@ -1191,20 +1201,32 @@ router.get("/discovery/search", async (req, res) => {
   const lng = Number.isFinite(rawLng) && rawLng >= -180 && rawLng <= 180 ? rawLng : null;
   const tz  = typeof req.query.tz === "string" && req.query.tz.length <= 50 ? req.query.tz : null;
 
-  // Parse time intent — strip time keywords from q and derive UTC date bounds for events
-  const timeIntentResult = parseTimeIntent(q, tz);
+  // Parse proximity intent ("nearby", "near me") — strip it and flag ctx
+  const nearbyResult = parseNearbyIntent(q);
+  const qAfterNearby = nearbyResult.nearbyIntent
+    ? (nearbyResult.strippedQuery.trim().length >= 2 ? nearbyResult.strippedQuery : q)
+    : q;
+
+  // Parse time intent — strip time keywords and derive UTC date bounds for events/trips
+  const timeIntentResult = parseTimeIntent(qAfterNearby, tz);
   // Only use stripped query when it still meets the min-length requirement
   const effectiveQ = timeIntentResult.strippedQuery.trim().length >= 2
     ? timeIntentResult.strippedQuery
-    : q;
+    : qAfterNearby;
+
+  // Resolve the response timeLabel: nearby takes precedence over time intents for display
+  const displayLabel = nearbyResult.nearbyIntent
+    ? (lat !== null && lng !== null ? "Nearby" : "Nearby (enable location)")
+    : (timeIntentResult.intent?.label ?? null);
 
   const ctx: SearchQueryContext = {
     lat,
     lng,
     tz,
-    startsAfter:  timeIntentResult.intent?.startsAfter  ?? null,
-    startsBefore: timeIntentResult.intent?.startsBefore ?? null,
-    timeLabel:    timeIntentResult.intent?.label        ?? null,
+    startsAfter:    timeIntentResult.intent?.startsAfter  ?? null,
+    startsBefore:   timeIntentResult.intent?.startsBefore ?? null,
+    timeLabel:      displayLabel,
+    nearbyIntent:   nearbyResult.nearbyIntent,
   };
 
   const type = (parsed.data.type ?? "all") as SearchType;

@@ -115,11 +115,13 @@ router.delete("/me/search-history", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const specificQuery = req.query.q ? String(req.query.q).trim() : null;
+  const specificId    = req.query.id ? String(req.query.id).trim() : null;
+  const specificQuery = req.query.q  ? String(req.query.q).trim()  : null;
 
   try {
     let del = sc.from("search_history").delete().eq("user_id", user.id);
-    if (specificQuery) del = del.eq("query", specificQuery);
+    if (specificId)    del = del.eq("id",    specificId);
+    else if (specificQuery) del = del.eq("query", specificQuery);
 
     const { error } = await del;
     if (error) {

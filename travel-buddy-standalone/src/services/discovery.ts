@@ -361,6 +361,7 @@ export interface UnifiedSearchResponse {
   hasMore: boolean;
   query: string;
   type: string;
+  timeLabel: string | null;
 }
 
 /**
@@ -456,16 +457,16 @@ export async function saveSearchHistory(query: string, searchType = 'all'): Prom
 
 /**
  * Clear the current user's search history.
- * Pass `query` to remove a single term; omit to clear all.
+ * Pass `id` (UUID) to remove a single entry by its row id; omit to clear all.
  */
-export async function clearSearchHistory(query?: string): Promise<void> {
+export async function clearSearchHistory(id?: string): Promise<void> {
   const base = apiBase();
   if (!base) return;
   const token = await freshToken();
   if (!token) return;
   try {
-    const url = query
-      ? `${base}/api/me/search-history?q=${encodeURIComponent(query)}`
+    const url = id
+      ? `${base}/api/me/search-history?id=${encodeURIComponent(id)}`
       : `${base}/api/me/search-history`;
     await fetch(url, {
       method: 'DELETE',

@@ -8,7 +8,7 @@
  *   Phase 11–12: Multi-tier ranking (exact > prefix > contains)
  *   Phase 13–14: Typo tolerance via static alias map
  *   Phase 15–16: Time-intent parsing ("tonight", "tomorrow", etc.)
- *   Phase 17–18: Location context type definitions
+ *   Phase 17–18: Location / nearby-intent context
  */
 
 // ── Search query context ───────────────────────────────────────────────────────
@@ -20,60 +20,83 @@ export interface SearchQueryContext {
   startsAfter?: string | null;
   startsBefore?: string | null;
   timeLabel?: string | null;
+  /** True when the query contained a proximity keyword ("nearby", "near me", etc.) */
+  nearbyIntent?: boolean;
 }
 
 // ── Alias / typo-tolerance map ─────────────────────────────────────────────────
-// Maps common travel-domain misspellings and synonyms to canonical search terms.
-// Keys are lowercase; matching is case-insensitive word-boundary.
+// Maps common travel-domain misspellings and synonyms to canonical terms.
+// Keys are lowercase; matching is case-insensitive, word-boundary only.
 
 export const SEARCH_ALIASES: Record<string, string> = {
   // People
-  "travler":     "traveler",
-  "tarveler":    "traveler",
-  "traveller":   "traveler",
-  "backpaker":   "backpacker",
-  // Food
-  "restaurnt":   "restaurant",
-  "reataurant":  "restaurant",
-  "resturant":   "restaurant",
-  "restrant":    "restaurant",
-  "restraunt":   "restaurant",
-  "resterant":   "restaurant",
+  "travler":      "traveler",
+  "tarveler":     "traveler",
+  "traveller":    "traveler",
+  "backpaker":    "backpacker",
+  // Food & drink
+  "restaurnt":    "restaurant",
+  "reataurant":   "restaurant",
+  "resturant":    "restaurant",
+  "restrant":     "restaurant",
+  "restraunt":    "restaurant",
+  "resterant":    "restaurant",
+  "coctail":      "cocktail",
+  "coctails":     "cocktails",
+  // Philippine destinations (common misspellings)
+  "siargou":      "siargao",
+  "siargow":      "siargao",
+  "borocay":      "boracay",
+  "phlippines":   "philippines",
+  "philippnes":   "philippines",
+  "davou":        "davao",
+  "ceboo":        "cebu",
+  "manilla":      "manila",
+  "maniila":      "manila",
+  "gensan":       "general santos",
+  // International cities
+  "tokoyo":       "tokyo",
+  "tokio":        "tokyo",
+  "bankok":       "bangkok",
+  "bangok":       "bangkok",
+  "phuket":       "phuket",  // common misspelling covered by ilike anyway
+  "pukhet":       "phuket",
+  "barcalona":    "barcelona",
+  "singapor":     "singapore",
+  "istambul":     "istanbul",
   // Places
-  "bech":        "beach",
-  "beachh":      "beach",
-  "musem":       "museum",
-  "museam":      "museum",
-  "hotell":      "hotel",
-  "hostle":      "hostel",
+  "bech":         "beach",
+  "beachh":       "beach",
+  "musem":        "museum",
+  "museam":       "museum",
+  "hotell":       "hotel",
+  "hostle":       "hostel",
   // Activities
-  "hiing":       "hiking",
-  "hikng":       "hiking",
-  "treking":     "trekking",
-  "swiming":     "swimming",
-  "snorkling":   "snorkeling",
-  "divng":       "diving",
+  "hiing":        "hiking",
+  "hikng":        "hiking",
+  "treking":      "trekking",
+  "swiming":      "swimming",
+  "snorkling":    "snorkeling",
+  "divng":        "diving",
   // Nightlife
-  "nightlif":    "nightlife",
-  "nighlife":    "nightlife",
-  "coctail":     "cocktail",
-  "coctails":    "cocktails",
-  "clubing":     "clubbing",
+  "nightlif":     "nightlife",
+  "nighlife":     "nightlife",
+  "clubing":      "clubbing",
   // Events
-  "evnt":        "event",
-  "evenet":      "event",
-  "festval":     "festival",
-  "festivel":    "festival",
+  "evnt":         "event",
+  "evenet":       "event",
+  "festval":      "festival",
+  "festivel":     "festival",
   // Misc travel
-  "acivity":     "activity",
-  "activty":     "activity",
-  "adveture":    "adventure",
-  "adventur":    "adventure",
-  "photograpy":  "photography",
-  "photigraphy": "photography",
-  "wknd":        "weekend",
-  "tonite":      "tonight",
-  "tmrw":        "tomorrow",
+  "acivity":      "activity",
+  "activty":      "activity",
+  "adveture":     "adventure",
+  "adventur":     "adventure",
+  "photograpy":   "photography",
+  "photigraphy":  "photography",
+  "wknd":         "weekend",
+  "tonite":       "tonight",
+  "tmrw":         "tomorrow",
 };
 
 /**
@@ -94,27 +117,45 @@ export function applyAliases(q: string): string {
 // ── Multi-tier ranking ─────────────────────────────────────────────────────────
 
 /**
- * Score a result title against the search query.
- *   3 = exact match (title === query)
- *   2 = prefix match (title starts with query)
- *   1 = substring match (title contains query)
- *   0 = no title match (subtitle/location may still match via DB query)
+ * Score a result title (and optional subtitle) against the search query.
+ *   3 = exact match
+ *   2 = prefix match
+ *   1 = substring match
+ *   0 = no match
+ *
+ * For traveler results the subtitle carries the @handle.
+ * Passing subtitle lets @username searches rank handle-exact matches at tier 3.
  */
-export function matchTier(title: string, q: string): number {
-  const t = (title ?? "").toLowerCase().trim();
+export function matchTier(title: string, q: string, subtitle?: string | null): number {
   const lq = q.toLowerCase().trim();
-  if (t === lq) return 3;
+  const t  = (title ?? "").toLowerCase().trim();
+
+  if (t === lq)         return 3;
   if (t.startsWith(lq)) return 2;
-  if (t.includes(lq)) return 1;
+  if (t.includes(lq))   return 1;
+
+  // Also score against the subtitle (strip leading @)
+  if (subtitle) {
+    const s = subtitle.replace(/^@/, "").toLowerCase().trim();
+    if (s === lq)         return 3;
+    if (s.startsWith(lq)) return 2;
+    if (s.includes(lq))   return 1;
+  }
   return 0;
 }
 
 /**
  * Stable-sort items so higher match tiers appear first.
- * Items with equal tier preserve their original (DB-order) relative position.
+ * Accepts any object with a `title` field and an optional `subtitle` field.
  */
-export function rankByMatchTier<T extends { title: string }>(items: T[], q: string): T[] {
-  return [...items].sort((a, b) => matchTier(b.title, q) - matchTier(a.title, q));
+export function rankByMatchTier<T extends { title: string; subtitle?: string | null }>(
+  items: T[],
+  q: string,
+): T[] {
+  return [...items].sort(
+    (a, b) =>
+      matchTier(b.title, q, b.subtitle) - matchTier(a.title, q, a.subtitle),
+  );
 }
 
 // ── Distance helpers ───────────────────────────────────────────────────────────
@@ -133,6 +174,35 @@ export function haversineKm(
       Math.cos((lat2 * Math.PI) / 180) *
       Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── Nearby-intent parsing ──────────────────────────────────────────────────────
+
+const NEARBY_PATTERNS: RegExp[] = [
+  /\bnearby\b/i,
+  /\bnear\s+me\b/i,
+  /\baround\s+me\b/i,
+  /\bnear\s+here\b/i,
+  /\bclose\s+by\b/i,
+];
+
+export interface NearbyIntentResult {
+  nearbyIntent: boolean;
+  strippedQuery: string;
+}
+
+/**
+ * Detect a proximity keyword in the query and strip it.
+ * Returns { nearbyIntent: false, strippedQuery: q } when no keyword found.
+ */
+export function parseNearbyIntent(q: string): NearbyIntentResult {
+  for (const re of NEARBY_PATTERNS) {
+    if (re.test(q)) {
+      const stripped = q.replace(re, "").replace(/\s{2,}/g, " ").trim();
+      return { nearbyIntent: true, strippedQuery: stripped || q };
+    }
+  }
+  return { nearbyIntent: false, strippedQuery: q };
 }
 
 // ── Time-intent parsing ────────────────────────────────────────────────────────
@@ -159,16 +229,14 @@ const INTENT_PATTERNS: { re: RegExp; type: TimeIntentType; label: string }[] = [
   { re: /\btonite\b/i,         type: "tonight",      label: "Tonight" },
   { re: /\btomorrow\b/i,       type: "tomorrow",     label: "Tomorrow" },
   { re: /\btmrw\b/i,           type: "tomorrow",     label: "Tomorrow" },
-  { re: /\bthis\s+weekend\b/i, type: "this_weekend", label: "This weekend" },
-  { re: /\bnext\s+week\b/i,    type: "next_week",    label: "Next week" },
+  { re: /\bthis\s+weekend\b/i, type: "this_weekend", label: "This Weekend" },
+  { re: /\bnext\s+week\b/i,    type: "next_week",    label: "Next Week" },
 ];
 
 /**
  * Parse a time-intent keyword from the query and derive UTC date bounds.
  * Uses the IANA timezone string (tz) for local-date computation.
  * Falls back to UTC when tz is absent or invalid.
- *
- * Returns { intent: null, strippedQuery: q } when no time keyword is found.
  */
 export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult {
   for (const { re, type, label } of INTENT_PATTERNS) {
@@ -177,7 +245,6 @@ export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult
     const stripped = q.replace(re, "").replace(/\s{2,}/g, " ").trim();
     const now = new Date();
 
-    // Compute the local timezone offset in ms so we can work with "local midnight".
     let tzOffsetMs = 0;
     if (tz) {
       try {
@@ -189,17 +256,13 @@ export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult
       }
     }
 
-    // Build a "local now" by shifting UTC by the offset.
-    const localNow = new Date(now.getTime() + tzOffsetMs);
-
-    // Local midnight (as UTC ms) — the basis for all date arithmetic.
+    const localNow    = new Date(now.getTime() + tzOffsetMs);
     const localMidnight = Date.UTC(
       localNow.getUTCFullYear(),
       localNow.getUTCMonth(),
       localNow.getUTCDate(),
     );
 
-    // Convenience: convert a local ms timestamp back to real UTC.
     const toUtc = (localMs: number) => new Date(localMs - tzOffsetMs).toISOString();
 
     let startsAfter: string;
@@ -207,7 +270,6 @@ export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult
 
     switch (type) {
       case "tonight": {
-        // 18:00–24:00 local
         startsAfter  = toUtc(localMidnight + 18 * 3600_000);
         startsBefore = toUtc(localMidnight + 24 * 3600_000);
         break;
@@ -218,24 +280,22 @@ export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult
         break;
       }
       case "this_weekend": {
-        // Saturday–Sunday of the current week (or today if already Sat/Sun)
-        const dow = localNow.getUTCDay(); // 0=Sun … 6=Sat
-        const daysToSat = dow === 0 ? 6 : (6 - dow); // days until next Saturday
-        const satMs = localMidnight + daysToSat * 24 * 3600_000;
-        const monMs = satMs + 2 * 24 * 3600_000;
-        const startMs = dow === 0 || dow === 6 ? localMidnight : satMs;
-        startsAfter  = toUtc(startMs);
-        startsBefore = toUtc(monMs);
+        const dow      = localNow.getUTCDay();
+        const daysToSat = dow === 0 ? 6 : (6 - dow);
+        const satMs    = localMidnight + daysToSat * 24 * 3600_000;
+        const monMs    = satMs + 2 * 24 * 3600_000;
+        const startMs  = dow === 0 || dow === 6 ? localMidnight : satMs;
+        startsAfter    = toUtc(startMs);
+        startsBefore   = toUtc(monMs);
         break;
       }
       case "next_week": {
-        // Monday–Sunday of next ISO week
-        const dow = localNow.getUTCDay();
+        const dow       = localNow.getUTCDay();
         const daysToMon = dow === 0 ? 1 : (8 - dow);
-        const monMs    = localMidnight + daysToMon       * 24 * 3600_000;
+        const monMs     = localMidnight + daysToMon       * 24 * 3600_000;
         const nextMonMs = localMidnight + (daysToMon + 7) * 24 * 3600_000;
-        startsAfter  = toUtc(monMs);
-        startsBefore = toUtc(nextMonMs);
+        startsAfter     = toUtc(monMs);
+        startsBefore    = toUtc(nextMonMs);
         break;
       }
     }

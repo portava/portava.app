@@ -2,12 +2,13 @@
  * Search Intelligence unit + integration tests
  *
  * Covers Phases 11–18, 26:
- *   - applyAliases: typo tolerance / synonym expansion
- *   - matchTier: exact > prefix > contains > none
- *   - rankByMatchTier: stable descending sort by tier
+ *   - applyAliases: typo tolerance / synonym expansion (incl. travel destinations)
+ *   - matchTier: exact > prefix > contains > none, subtitle-aware
+ *   - rankByMatchTier: stable descending sort; subtitle checked for handle searches
  *   - haversineKm: approximate distance computation
  *   - parseTimeIntent: keyword detection, stripped query, UTC date bounds
- *   - GET/POST/DELETE /api/me/search-history
+ *   - parseNearbyIntent: proximity keyword detection + stripping
+ *   - GET/POST/DELETE /api/me/search-history (incl. delete by id)
  *
  * Run: node --import tsx/esm --test src/test/discoverySearchIntelligence.test.ts
  */
@@ -25,6 +26,7 @@ import {
   rankByMatchTier,
   haversineKm,
   parseTimeIntent,
+  parseNearbyIntent,
 } from "../routes/discoverySearchHelpers.js";
 
 // ── Pure-logic tests ──────────────────────────────────────────────────────────
@@ -47,19 +49,38 @@ describe("applyAliases", () => {
   });
 
   it("replaces only the first match", () => {
-    // Only one substitution per call
     const result = applyAliases("bech bech bech");
     assert.equal(result, "beach bech bech");
   });
 
   it("does not match substrings — word boundary only", () => {
-    // 'beaches' should NOT match alias 'bech'
     const r = applyAliases("beautiful beaches");
     assert.equal(r, "beautiful beaches");
   });
 
   it("expands tonite → tonight", () => {
     assert.equal(applyAliases("events tonite"), "events tonight");
+  });
+
+  // Travel destination aliases
+  it("corrects siargou → siargao", () => {
+    assert.equal(applyAliases("siargou surf"), "siargao surf");
+  });
+
+  it("corrects manilla → manila", () => {
+    assert.equal(applyAliases("manilla hotels"), "manila hotels");
+  });
+
+  it("corrects tokoyo → tokyo", () => {
+    assert.equal(applyAliases("tokoyo food"), "tokyo food");
+  });
+
+  it("corrects pukhet → phuket", () => {
+    assert.equal(applyAliases("pukhet beaches"), "phuket beaches");
+  });
+
+  it("corrects borocay → boracay", () => {
+    assert.equal(applyAliases("borocay trip"), "boracay trip");
   });
 });
 
@@ -83,15 +104,33 @@ describe("matchTier", () => {
   it("returns 0 for no match", () => {
     assert.equal(matchTier("mountain trek", "beach"), 0);
   });
+
+  // Subtitle-aware (handle matching for @username searches)
+  it("returns 3 for exact subtitle match (handle)", () => {
+    assert.equal(matchTier("John Smith", "alice", "@alice"), 3);
+  });
+
+  it("returns 2 for prefix subtitle match", () => {
+    assert.equal(matchTier("John Smith", "ali", "@alice"), 2);
+  });
+
+  it("returns 0 when neither title nor subtitle matches", () => {
+    assert.equal(matchTier("Bob Jones", "alice", "@bob"), 0);
+  });
+
+  it("strips leading @ from subtitle before comparing", () => {
+    // query "alice", subtitle "@alice" → exact tier 3
+    assert.equal(matchTier("Full Name", "alice", "@alice"), 3);
+  });
 });
 
 describe("rankByMatchTier", () => {
   it("sorts exact > prefix > contains > none", () => {
     const items = [
-      { title: "great beach experience" }, // tier 1
-      { title: "mountain trek" },           // tier 0
-      { title: "Beach",  },                 // tier 3 (exact, case-insensitive)
-      { title: "beach party" },             // tier 2
+      { title: "great beach experience" },
+      { title: "mountain trek" },
+      { title: "Beach" },
+      { title: "beach party" },
     ];
     const ranked = rankByMatchTier(items, "beach");
     assert.equal(ranked[0]!.title, "Beach");
@@ -116,6 +155,16 @@ describe("rankByMatchTier", () => {
     rankByMatchTier(items, "foobar");
     assert.deepEqual(items, copy);
   });
+
+  it("ranks handle-subtitle matches above unrelated titles (@username search)", () => {
+    const items = [
+      { title: "Random Person", subtitle: "@randomuser" },
+      { title: "Full Name",     subtitle: "@alice" },
+    ];
+    const ranked = rankByMatchTier(items, "alice");
+    assert.equal(ranked[0]!.subtitle, "@alice");
+    assert.equal(ranked[1]!.subtitle, "@randomuser");
+  });
 });
 
 describe("haversineKm", () => {
@@ -135,6 +184,44 @@ describe("haversineKm", () => {
   });
 });
 
+describe("parseNearbyIntent", () => {
+  it("returns nearbyIntent:false when no keyword", () => {
+    const r = parseNearbyIntent("beach events");
+    assert.equal(r.nearbyIntent, false);
+    assert.equal(r.strippedQuery, "beach events");
+  });
+
+  it("detects 'nearby' keyword", () => {
+    const r = parseNearbyIntent("events nearby");
+    assert.equal(r.nearbyIntent, true);
+    assert.equal(r.strippedQuery, "events");
+  });
+
+  it("detects 'near me'", () => {
+    const r = parseNearbyIntent("food near me");
+    assert.equal(r.nearbyIntent, true);
+    assert.equal(r.strippedQuery, "food");
+  });
+
+  it("detects 'around me'", () => {
+    const r = parseNearbyIntent("travelers around me");
+    assert.equal(r.nearbyIntent, true);
+    assert.equal(r.strippedQuery, "travelers");
+  });
+
+  it("is case-insensitive", () => {
+    const r = parseNearbyIntent("Events NEARBY");
+    assert.equal(r.nearbyIntent, true);
+    assert.equal(r.strippedQuery, "Events");
+  });
+
+  it("falls back to original q when stripping leaves empty", () => {
+    const r = parseNearbyIntent("nearby");
+    assert.equal(r.nearbyIntent, true);
+    assert.equal(r.strippedQuery, "nearby");
+  });
+});
+
 describe("parseTimeIntent", () => {
   it("returns null intent when no keyword found", () => {
     const r = parseTimeIntent("beach events", "UTC");
@@ -147,11 +234,9 @@ describe("parseTimeIntent", () => {
     assert.equal(r.intent?.type, "tonight");
     assert.equal(r.intent?.label, "Tonight");
     assert.equal(r.strippedQuery, "events");
-    // startsAfter should be before startsBefore
     const after  = new Date(r.intent!.startsAfter);
     const before = new Date(r.intent!.startsBefore);
     assert.ok(after < before);
-    // window should span ≤ 8 hours (tonight = 18:00–24:00)
     const spanHrs = (before.getTime() - after.getTime()) / 3600_000;
     assert.ok(spanHrs <= 8, `Tonight span should be ≤ 8h, got ${spanHrs}`);
   });
@@ -174,7 +259,6 @@ describe("parseTimeIntent", () => {
     assert.equal(r.intent?.type, "this_weekend");
     assert.equal(r.strippedQuery, "hiking");
     const spanHrs = (new Date(r.intent!.startsBefore).getTime() - new Date(r.intent!.startsAfter).getTime()) / 3600_000;
-    // should span ≤ 2 days (48 hours)
     assert.ok(spanHrs <= 48, `Weekend span should be ≤ 48h, got ${spanHrs}`);
   });
 
@@ -187,7 +271,6 @@ describe("parseTimeIntent", () => {
 
   it("falls back to original q when stripping leaves it empty", () => {
     const r = parseTimeIntent("tonight", "UTC");
-    // "tonight" stripped is "", so strippedQuery should fall back to "tonight"
     assert.equal(r.strippedQuery, "tonight");
   });
 
@@ -200,7 +283,7 @@ describe("parseTimeIntent", () => {
 
 // ── Search history HTTP tests ─────────────────────────────────────────────────
 
-const ME    = "aa000000-0000-4000-a000-000000000001";
+const ME     = "aa000000-0000-4000-a000-000000000001";
 const ME_TOK = "tok-me";
 
 interface HistoryRow {
@@ -259,7 +342,6 @@ function makeFakeClient(state: FakeState) {
         in(col: string, vals: string[])  { inIds = vals; return builder; },
         then(onF: any, onR: any) {
           if (pending === "delete") {
-            const before = rows.length;
             const toRemove = rows.filter((r) => {
               const passFilters = filters.every((f) => f(r));
               const passIn = inIds ? inIds.includes(r.id) : true;
@@ -282,10 +364,11 @@ function makeFakeClient(state: FakeState) {
 
 let base: string;
 let server: Server;
+let currentState: FakeState = {};
 
 function setup(state: Partial<FakeState> = {}) {
-  const full: FakeState = { search_history: [], ...state };
-  _setTestClient(makeFakeClient(full) as any, true);
+  currentState = { search_history: [], ...state };
+  _setTestClient(makeFakeClient(currentState) as any, true);
 }
 
 before(async () => {
@@ -387,10 +470,26 @@ describe("DELETE /api/me/search-history", () => {
     assert.equal(body.ok, true);
   });
 
-  it("200 on clear specific query", async () => {
+  it("200 on clear specific query via ?q=", async () => {
     const res = await del("/me/search-history?q=beach");
     assert.equal(res.status, 200);
     const body = await res.json() as { ok: boolean };
     assert.equal(body.ok, true);
+  });
+
+  it("200 on delete by id via ?id=", async () => {
+    setup({
+      search_history: [
+        { id: "uuid-h1", user_id: ME, query: "beach", search_type: "all", searched_at: new Date().toISOString() },
+        { id: "uuid-h2", user_id: ME, query: "hiking", search_type: "all", searched_at: new Date().toISOString() },
+      ],
+    });
+    const res = await del("/me/search-history?id=uuid-h1");
+    assert.equal(res.status, 200);
+    // Only the targeted entry should be removed; the other survives
+    const getRes = await get("/me/search-history");
+    const body = await getRes.json() as { history: HistoryRow[] };
+    assert.equal(body.history.length, 1);
+    assert.equal(body.history[0]!.id, "uuid-h2");
   });
 });
