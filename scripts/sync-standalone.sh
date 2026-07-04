@@ -163,6 +163,7 @@ STANDALONE_OWNED_FILES=(
   "src/components/__tests__/ChangePassword.doubletap.test.ts"
   "src/components/__tests__/SettingsScreens.doubletap.test.ts"
   "src/components/__tests__/SafeReturn.doubletap.test.ts"
+  "src/components/__tests__/SafeReturnActiveCard.doubletap.test.ts"
   "app/profile/change-password.tsx"
 )
 
