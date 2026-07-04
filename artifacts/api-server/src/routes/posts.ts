@@ -101,7 +101,8 @@ const POST_COLUMNS =
   "location_name, location_city, location_country, " +
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
-  "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level";
+  "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
+  "category";
 
 /**
  * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
@@ -150,7 +151,7 @@ router.post("/posts", async (req, res) => {
     locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
-    venueName, venueId,
+    venueName, venueId, category,
   } = parsed.data;
   const locationSource = locationSrc ?? 'none';
 
@@ -224,6 +225,8 @@ router.post("/posts", async (req, res) => {
       created_by: user.id,
       updated_by: user.id,
       source: "api_server",
+      // editorial category
+      category: category ?? null,
       // media filters
       filter_id: filterId ?? 'original',
       filter_intensity: filterIntensity ?? 100,

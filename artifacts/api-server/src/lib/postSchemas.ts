@@ -207,6 +207,8 @@ export const createPostSchema = z
     // venue metadata for sensitivity classification
     venueName: z.string().max(200).nullish(),
     venueId: z.string().max(256).nullish(),
+    // editorial category (food, nightlife, beach, etc.)
+    category: z.string().max(64).nullish(),
   })
   .superRefine((val, ctx) => {
     if (val.visibility === "trip_only" && !val.tripId) {
