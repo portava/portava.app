@@ -483,6 +483,9 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
 
   beforeEach(() => {
     setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
       blocks: [],
       events: [
         {
@@ -518,6 +521,9 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
 
   it("derives actionState.isAttending=false when caller has no RSVP", async () => {
     setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
       blocks: [],
       events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: null, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
@@ -538,6 +544,22 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
     const r = await get("/discovery/search?q=paris&type=events");
     const { results } = await r.json() as any;
     assert.ok(!(results as any[]).some((e: any) => e.id === EVT_ID), "Blocked host's event must not appear");
+  });
+
+  it("excludes events hosted by a suspended account", async () => {
+    const SUSPENDED = "su000000-0000-4000-a000-000000000099";
+    setup({
+      profiles: [
+        { id: SUSPENDED, handle: "susp", name: "Suspended User", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "suspended" },
+      ],
+      blocks: [],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: SUSPENDED, city: "Paris", country: "France", starts_at: null, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      event_rsvps: [],
+      profile_privacy_settings: [],
+    });
+    const r = await get("/discovery/search?q=paris&type=events");
+    const { results } = await r.json() as any;
+    assert.ok(!(results as any[]).some((e: any) => e.id === EVT_ID), "Suspended host's event must not appear");
   });
 });
 
@@ -641,7 +663,12 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       status: "planning", visibility: "public",
       created_at: "2026-01-01T00:00:00Z",
     }));
-    setup({ blocks: [], trips, profile_privacy_settings: [] });
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [], trips, profile_privacy_settings: [],
+    });
 
     const r = await get("/discovery/search?q=tokyo&type=trips&limit=3");
     assert.equal(r.status, 200);
@@ -661,13 +688,40 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       status: "planning", visibility: "public",
       created_at: "2026-01-01T00:00:00Z",
     }));
-    setup({ blocks: [], trips, profile_privacy_settings: [] });
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [], trips, profile_privacy_settings: [],
+    });
 
     const r = await get("/discovery/search?q=tokyo&type=trips&limit=3");
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.hasMore, false,   "No false-positive hasMore when DB has exactly limit rows");
     assert.equal(body.nextCursor, null, "nextCursor must be null when hasMore=false");
+  });
+
+  it("excludes trips owned by a suspended account", async () => {
+    const SUSPENDED = "su000000-0000-4000-a000-000000000099";
+    const trips = [{
+      id: "tt-susp-0000-4000-a000-000000000099",
+      title: "Tokyo Adventure", destination_city: "Tokyo",
+      destination_country: "Japan", owner_id: SUSPENDED,
+      cover_image_url: null, start_date: "2026-09-01",
+      status: "planning", visibility: "public",
+      created_at: "2026-01-01T00:00:00Z",
+    }];
+    setup({
+      profiles: [
+        { id: SUSPENDED, handle: "susp", name: "Suspended", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "suspended" },
+      ],
+      blocks: [], trips, profile_privacy_settings: [],
+    });
+    const r = await get("/discovery/search?q=tokyo&type=trips");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 0, "Suspended owner's trip must not appear");
   });
 
   it("type=all: hasMore and nextCursor reflect merged pool size vs limit", async () => {

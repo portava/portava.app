@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: discovery
+    description: Discovery and search operations
 paths:
   /healthz:
     get:
@@ -37,6 +39,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CleanupStatus"
+  /discovery/search:
+    get:
+      operationId: discoverySearch
+      tags: [discovery]
+      summary: Unified cross-type search
+      description: >
+        Search across all Travel Buddy content types from a single endpoint.
+        Results follow a normalized shape. Server-side privacy and access rules
+        are enforced: blocked users (both directions), private accounts,
+        private trips/circles/events, deleted/suspended/banned accounts, and
+        moderation-removed content never appear. Rate-limited to 30 req/min
+        per authenticated user.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query (minimum 2 characters, maximum 200). PostgREST metacharacters are stripped server-side.
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 200
+        - name: type
+          in: query
+          required: false
+          description: Content type to search. Defaults to "all".
+          schema:
+            $ref: "#/components/schemas/SearchType"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum results per page (1-50). Defaults to 20.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a previous response nextCursor field.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search results page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          description: Invalid query parameters (q too short, unknown type, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded (30 req/min per user)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -52,7 +121,7 @@ components:
         cleanupStatus:
           type: string
           enum: [ok, overdue, critical]
-          description: "'ok' when the job last ran within the expected window (interval + 1 h grace), 'overdue' when slightly late (up to 2× interval), 'critical' when significantly late (≥ 2× interval) or never run."
+          description: "'ok' when the job last ran within the expected window (interval + 1 h grace), 'overdue' when slightly late (up to 2× interval), 'critical' when significantly late (>= 2x interval) or never run."
         lastRunAt:
           type: string
           nullable: true
@@ -75,3 +144,157 @@ components:
         - lastOutcome
         - lastDeletedCount
         - consecutiveFailures
+    SearchType:
+      type: string
+      enum:
+        - all
+        - travelers
+        - buddies
+        - events
+        - trips
+        - plans
+        - places
+        - hidden_gems
+        - hashtags
+        - posts
+        - circles
+        - stamps
+        - activities
+        - cities
+        - countries
+        - languages
+        - interests
+        - vibes
+      default: all
+    SearchResult:
+      type: object
+      description: >
+        Normalized search result. All types share this shape.
+        Private fields (email, phone, location coords, safety fields,
+        verification details) are never included.
+      properties:
+        id:
+          type: string
+          description: Unique identifier of the result item
+        type:
+          $ref: "#/components/schemas/SearchType"
+        title:
+          type: string
+          description: Primary display text
+        subtitle:
+          type: string
+          nullable: true
+          description: Secondary display text (e.g. @handle for travelers, city for events)
+        avatarUrl:
+          type: string
+          nullable: true
+          description: Profile photo or avatar URL
+        imageUrl:
+          type: string
+          nullable: true
+          description: Cover or feature image URL
+        fallbackInitials:
+          type: string
+          nullable: true
+          description: Initials to display when no avatar/image is available
+        locationPreview:
+          type: string
+          nullable: true
+          description: Human-readable location string (city, country)
+        matchedReason:
+          type: string
+          nullable: true
+          description: Short human-readable explanation of why this result matched
+        actionState:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >
+            Viewer-specific action state.
+            travelers/buddies: { isFollowing: boolean }.
+            events: { isAttending: boolean }.
+            Others: null.
+        privacyState:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Privacy metadata for this result (isPrivate, isPublic)
+        accessState:
+          type: object
+          nullable: true
+          properties:
+            canAccess:
+              type: boolean
+          description: Whether the caller can fully access this item
+        destinationRoute:
+          type: string
+          nullable: true
+          description: In-app route to navigate to when this result is tapped
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Type-specific extra fields (hostId, ownerId, category, etc.)
+        createdAt:
+          type: string
+          nullable: true
+          description: ISO-8601 creation timestamp
+        startsAt:
+          type: string
+          nullable: true
+          description: ISO-8601 start timestamp (events, trips)
+      required:
+        - id
+        - type
+        - title
+        - subtitle
+        - avatarUrl
+        - imageUrl
+        - fallbackInitials
+        - locationPreview
+        - matchedReason
+        - actionState
+        - privacyState
+        - accessState
+        - destinationRoute
+        - metadata
+        - createdAt
+        - startsAt
+    SearchResponse:
+      type: object
+      description: Paginated search results envelope
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque cursor to pass as the cursor param in the next request, or null when no further pages exist
+        hasMore:
+          type: boolean
+          description: True when additional results are available beyond this page
+        query:
+          type: string
+          description: The sanitized query string that was applied
+        type:
+          type: string
+          description: The type value that was applied
+      required:
+        - results
+        - nextCursor
+        - hasMore
+        - query
+        - type
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error detail
+      required:
+        - error
