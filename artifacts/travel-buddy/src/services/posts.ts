@@ -71,6 +71,8 @@ export interface PostRow {
   commentCount: number;
   shareCount: number;
   likedByMe: boolean;
+  savedByMe: boolean;
+  saveCount: number;
   canLike: boolean;
   canComment: boolean;
   canShare: boolean;
@@ -124,6 +126,8 @@ function mapPost(r: any): PostRow {
     commentCount: r.commentCount ?? r.comment_count ?? 0,
     shareCount: r.shareCount ?? r.share_count ?? 0,
     likedByMe: r.likedByMe ?? false,
+    savedByMe: r.savedByMe ?? false,
+    saveCount: r.saveCount ?? r.save_count ?? 0,
     canLike: r.canLike ?? (r.visibility === 'public'),
     canComment: r.canComment ?? (r.visibility === 'public'),
     canShare: r.canShare ?? (r.visibility === 'public'),
@@ -569,5 +573,39 @@ export async function exitGeofence(opts: {
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+// ── Post saves ────────────────────────────────────────────────────────────────
+
+export async function savePost(postId: string): Promise<{ ok: boolean; savedByMe: boolean; saveCount: number }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, savedByMe: false, saveCount: 0 };
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(postId)}/save`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, savedByMe: false, saveCount: 0 };
+    const body = await res.json();
+    return { ok: true, savedByMe: body.savedByMe ?? true, saveCount: body.saveCount ?? 0 };
+  } catch {
+    return { ok: false, savedByMe: false, saveCount: 0 };
+  }
+}
+
+export async function unsavePost(postId: string): Promise<{ ok: boolean; savedByMe: boolean; saveCount: number }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, savedByMe: true, saveCount: 0 };
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(postId)}/save`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, savedByMe: true, saveCount: 0 };
+    const body = await res.json();
+    return { ok: true, savedByMe: body.savedByMe ?? false, saveCount: body.saveCount ?? 0 };
+  } catch {
+    return { ok: false, savedByMe: true, saveCount: 0 };
   }
 }

@@ -102,7 +102,7 @@ const POST_COLUMNS =
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
-  "category";
+  "category, save_count";
 
 /**
  * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
@@ -700,20 +700,24 @@ router.get("/posts", async (req, res) => {
       for (const p of profiles ?? []) profileMap[p.id] = p;
     }
 
-    // Step 4: batch-fetch engagement counts + likedByMe (graceful pre-migration).
+    // Step 4: batch-fetch engagement counts + likedByMe + savedByMe.
     const postIds = posts.map((p) => p.id);
-    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
     if (postIds.length > 0) {
-      const [{ data: engData }, { data: likedData }] = await Promise.all([
-        sc.from("posts").select("id, like_count, comment_count").in("id", postIds),
+      const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+        sc.from("posts").select("id, like_count, comment_count, save_count").in("id", postIds),
         sc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", postIds),
+        sc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", postIds),
       ]);
       const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+      const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
       for (const r of engData ?? []) {
         engMap[r.id] = {
           likeCount: r.like_count ?? 0,
           commentCount: r.comment_count ?? 0,
           likedByMe: likedSet.has(r.id),
+          saveCount: r.save_count ?? 0,
+          savedByMe: savedSet.has(r.id),
         };
       }
     }
@@ -727,7 +731,7 @@ router.get("/posts", async (req, res) => {
     const merged = posts.map((p) => {
       const safe = mapPublicPost(p);
       const pr = profileMap[p.author_id];
-      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
         ...safe,
@@ -737,6 +741,8 @@ router.get("/posts", async (req, res) => {
         likeCount: eng.likeCount,
         commentCount: eng.commentCount,
         likedByMe: eng.likedByMe,
+        saveCount: eng.saveCount,
+        savedByMe: eng.savedByMe,
         canLike: true,
         canComment: true,
         canShare: true,
@@ -784,19 +790,23 @@ router.get("/posts", async (req, res) => {
     for (const p of profiles ?? []) globalProfileMap[p.id] = p;
   }
 
-  // Batch-fetch engagement (graceful pre-migration)
-  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+  // Batch-fetch engagement + likedByMe + savedByMe
+  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
   if (globalPostIds.length > 0) {
-    const [{ data: engData }, { data: likedData }] = await Promise.all([
-      svc.from("posts").select("id, like_count, comment_count").in("id", globalPostIds),
+    const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+      svc.from("posts").select("id, like_count, comment_count, save_count").in("id", globalPostIds),
       svc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
+      svc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
     ]);
     const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+    const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
     for (const r of engData ?? []) {
       globalEngMap[r.id] = {
         likeCount: r.like_count ?? 0,
         commentCount: r.comment_count ?? 0,
         likedByMe: likedSet.has(r.id),
+        saveCount: r.save_count ?? 0,
+        savedByMe: savedSet.has(r.id),
       };
     }
   }
@@ -806,31 +816,10 @@ router.get("/posts", async (req, res) => {
     ? await enrichSpans(svc, 'post', globalPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
     : {};
 
-  // Batch-fetch saved state for the global feed
-  const globalSavedSet = new Set<string>();
-  try {
-    if (globalPostIds.length > 0) {
-      const { data: userCols } = await svc
-        .from("collections")
-        .select("id")
-        .eq("owner_id", user.id);
-      const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
-      if (colIds.length > 0) {
-        const { data: savedItems } = await svc
-          .from("collection_items")
-          .select("entity_id")
-          .eq("entity_type", "post")
-          .in("collection_id", colIds)
-          .in("entity_id", globalPostIds);
-        for (const s of (savedItems ?? []) as any[]) globalSavedSet.add((s as any).entity_id as string);
-      }
-    }
-  } catch { /* non-fatal */ }
-
   const mergedGlobal = globalPosts.map((p) => {
     const safe = mapPublicPost(p);
     const pr = globalProfileMap[p.author_id];
-    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
       ...safe,
@@ -838,7 +827,8 @@ router.get("/posts", async (req, res) => {
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
-      saved: globalSavedSet.has(p.id as string),
+      saveCount: eng.saveCount,
+      savedByMe: eng.savedByMe,
       canLike: true,
       canComment: true,
       canShare: true,
@@ -944,15 +934,17 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     for (const p of profiles ?? []) tripProfileMap[p.id] = p;
   }
 
-  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean }> = {};
+  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
   if (tripSvc && tripPostIds.length > 0) {
-    const [{ data: engData }, { data: likedData }] = await Promise.all([
-      tripSvc.from("posts").select("id, like_count, comment_count").in("id", tripPostIds),
+    const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+      tripSvc.from("posts").select("id, like_count, comment_count, save_count").in("id", tripPostIds),
       tripSvc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
+      tripSvc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
     ]);
     const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
+    const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
     for (const r of engData ?? []) {
-      tripEngMap[r.id] = { likeCount: r.like_count ?? 0, commentCount: r.comment_count ?? 0, likedByMe: likedSet.has(r.id) };
+      tripEngMap[r.id] = { likeCount: r.like_count ?? 0, commentCount: r.comment_count ?? 0, likedByMe: likedSet.has(r.id), saveCount: r.save_count ?? 0, savedByMe: savedSet.has(r.id) };
     }
   }
 
@@ -963,7 +955,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
 
   const mergedTrip = tripPosts.map((p) => {
     const pr = tripProfileMap[p.author_id];
-    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false };
+    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
     const spans = (tripSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
@@ -973,6 +965,8 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
+      saveCount: eng.saveCount,
+      savedByMe: eng.savedByMe,
       canLike: canEngage,
       canComment: canEngage,
       canShare: canEngage,
@@ -1048,7 +1042,23 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  res.status(200).json(isAuthor ? post : mapPublicPost(post));
+  const [{ data: likedRow }, { data: savedRow }] = await Promise.all([
+    sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
+    sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
+  ]);
+
+  const base = isAuthor ? post : mapPublicPost(post);
+  res.status(200).json({
+    ...base,
+    likeCount: post.like_count ?? 0,
+    commentCount: post.comment_count ?? 0,
+    saveCount: post.save_count ?? 0,
+    likedByMe: !!likedRow,
+    savedByMe: !!savedRow,
+    canLike: true,
+    canComment: true,
+    canShare: true,
+  });
 });
 
 /* ===========================================================================
@@ -1474,6 +1484,64 @@ router.delete("/posts/:postId/like", async (req, res) => {
   await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
 
   res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * POST /posts/:postId/save   — save a post (idempotent, writes to post_saves)
+ * DELETE /posts/:postId/save — unsave a post (idempotent)
+ * ============================================================================
+ */
+router.post("/posts/:postId/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post, error: postErr } = await sc
+    .from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
+  if (postErr) { sendError(res, "db_error", postErr.message); return; }
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+
+  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  const { error: upsertErr } = await sc
+    .from("post_saves")
+    .upsert({ post_id: postId, user_id: user.id }, { onConflict: "post_id,user_id", ignoreDuplicates: true });
+  if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
+
+  const { count } = await sc.from("post_saves").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
+
+  res.status(200).json({ savedByMe: true, saveCount: count ?? 0 });
+});
+
+router.delete("/posts/:postId/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Allow unsave even if post is no longer accessible (idempotent removal)
+  const { data: post } = await sc
+    .from("posts").select("id, visibility, trip_id").eq("id", postId).maybeSingle();
+  if (post && !(await checkEngagePermission(res, post as any, user.id, client))) return;
+
+  const { error: delErr } = await sc
+    .from("post_saves").delete().eq("post_id", postId).eq("user_id", user.id);
+  if (delErr) { sendError(res, "db_error", delErr.message); return; }
+
+  const { count } = await sc.from("post_saves").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
+
+  res.status(200).json({ savedByMe: false, saveCount: count ?? 0 });
 });
 
 /* ============================================================================

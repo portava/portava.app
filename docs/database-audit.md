@@ -12,7 +12,7 @@ The schema is broadly healthy for the core features (trips, posts, messaging, st
 | Severity | Count | Examples |
 |----------|-------|---------|
 | P0 — Security / Privacy | 3 | Thread-ID type mismatch; no generated DB types; GPS coordinate leakage risk |
-| P1 — UI broken / insert failures | 5 | No post-saves table; `posts.category` pending; translation profile columns unconfirmed |
+| P1 — UI broken / insert failures | 2 | `post_saves`, `posts.category`, and translation profile columns **applied manually 2026-07-04** and wired to backend. Remaining: `trust_score` column missing; `post_impressions` table unconfirmed |
 | P2 — Schema/code mismatch | 5 | TripRow missing 15+ DB columns; redundant report tables; notification migration dupe |
 | P3 — Performance / integrity | 4 | Missing indexes on hashtag_usage, notifications, posts |
 | P4 — Future / analytics | 4 | Compass logs; RAB payments; stamp artwork; recommendation analytics |
@@ -71,11 +71,11 @@ No `database.types.ts` or Supabase type export exists anywhere in the project. T
 | `verification_status` / `verified_at` | ✅ (mig 0027) | ✅ | 0027 not in log — verify applied |
 | `trust_score` (current value) | ❌ **MISSING** | ❌ | No column on `profiles`; no dedicated `user_trust_scores` table confirmed |
 | `account_status` / deactivation | ✅ (mig 0094) | ✅ | `user_account_states` table added in 0094 |
-| **`preferred_message_language`** | ⚠️ **UNCONFIRMED** | ✅ read | `messaging.ts` reads this from `profiles`; no migration found |
-| **`auto_translate_messages`** | ⚠️ **UNCONFIRMED** | ✅ read | Same — no migration found |
-| **`show_original_messages`** | ⚠️ **UNCONFIRMED** | ✅ read | Same |
-| **`translation_updated_at`** | ⚠️ **UNCONFIRMED** | ✅ read | Same |
-| **`tag_permission`** | ⚠️ **UNCONFIRMED** | ✅ read | `telegraph.ts` checks `profiles.tag_permission`; no migration found |
+| **`preferred_message_language`** | ✅ **APPLIED** | ✅ read | Applied manually 2026-07-04; `messaging.ts` reads it |
+| **`auto_translate_messages`** | ✅ **APPLIED** | ✅ read | Applied manually 2026-07-04 |
+| **`show_original_messages`** | ✅ **APPLIED** | ✅ read | Applied manually 2026-07-04 |
+| **`translation_updated_at`** | ✅ **APPLIED** | ✅ read | Applied manually 2026-07-04 |
+| **`tag_permission`** | ✅ **APPLIED** | ✅ read | Applied manually 2026-07-04; `telegraph.ts` checks it |
 
 **Missing:** `trust_score` current value is never stored on the profile. The trust engine (mig 0043) has `trust_admin_actions` and `trust_score_events` but there is no column or table holding the user's current trust score that API routes return.
 
@@ -107,7 +107,7 @@ ALTER TABLE profiles
 | Post status (`draft`/`pending_publish`/`published`) | ✅ | `post_status` column |
 | Likes | ✅ | `posts_likes` with RLS |
 | Comments | ✅ | `posts_comments` with RLS; `reply_to_id` added in mig 0057 (replies) |
-| **Post saves / bookmarks** | ❌ **MISSING** | No `post_saves` table found in any migration. `saves.ts` route only handles profile/user saves. `PostRow.savedByMe` has no persistence. |
+| **Post saves / bookmarks** | ✅ **APPLIED** | `post_saves` table + RLS applied manually 2026-07-04. `POST /api/posts/:id/save` and `DELETE /api/posts/:id/save` routes added. `savedByMe` and `saveCount` now populated in all feed responses. `SaveButton` (`collections.ts`) redirects post saves to the dedicated route. |
 | Shares | ✅ counter only | `share_count` column exists; no `post_shares` join table for tracking who shared |
 | Tags (user mentions) | ✅ | `tags` table in mig 0044 |
 | Hashtags | ✅ | `hashtag_usage` with `source_type='post'` pattern |
@@ -115,13 +115,14 @@ ALTER TABLE profiles
 | Linked place / event / gem | ⚠️ partial | `posts.venue_id`, `posts.venue_name` exist; no FK to `hidden_gems` or `events` |
 | Reports | ✅ | Unified `reports` table (mig 0063) |
 | Moderation status | ✅ | `posts.status` column |
-| **`posts.category`** | ❌ **PENDING** | Migration 0095 adds this column; not in migrations.md — likely not in production. POST /api/posts will fail with `category` if not applied. |
+| **`posts.category`** | ✅ **APPLIED** | Applied manually 2026-07-04 (0095_post_category.sql). Already in `POST_COLUMNS` and wired through `mapPost()` and Pulse feed stamp. |
 | **`post_impressions`** | ❌ **UNCONFIRMED** | `GET /me/profile/analytics` has fail-open for this table; it may not exist |
 | Comment reply_to_id | ✅ | `posts_comments.reply_to_id` added mig 0057 |
 
-**Required SQL (P1):**
+**Applied (2026-07-04):** `post_saves` table, RLS policies, and `posts.save_count` column were applied manually. `posts.category` was applied via 0095_post_category.sql. The SQL below is kept for reference / future environments:
+
 ```sql
--- 0096_post_saves.sql
+-- post_saves table (applied 2026-07-04)
 CREATE TABLE IF NOT EXISTS post_saves (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -129,22 +130,15 @@ CREATE TABLE IF NOT EXISTS post_saves (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, post_id)
 );
-
 CREATE INDEX IF NOT EXISTS post_saves_user_idx ON post_saves(user_id);
 CREATE INDEX IF NOT EXISTS post_saves_post_idx ON post_saves(post_id);
-
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS save_count integer NOT NULL DEFAULT 0;
-
--- RLS
 ALTER TABLE post_saves ENABLE ROW LEVEL SECURITY;
 CREATE POLICY post_saves_owner_read ON post_saves FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY post_saves_insert ON post_saves FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY post_saves_delete ON post_saves FOR DELETE USING (auth.uid() = user_id);
-```
 
-Apply migration 0095 in production to unblock `posts.category`:
-```sql
--- Already in 0095_post_category.sql — apply via Supabase dashboard
+-- posts.category (applied 2026-07-04 via 0095_post_category.sql)
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS category text;
 ```
 
@@ -228,13 +222,14 @@ The frontend `TripRow` interface in `trips.ts` is **missing 15+ columns** that e
 
 **Tables confirmed:** `message_threads`, `message_thread_members`, `messages`, `message_requests`, `message_translations`, `saved_messages`, `message_reports`, `thread_reports`
 
-#### Gap 1 — Thread Reports ID Type Mismatch (P0)
+#### Gap 1 — Thread Reports ID Type Mismatch (P0) — SKIPPED
 
 Migration `0031_thread_reports.sql` defines `thread_id` as **TEXT**, but `message_threads.id` is **UUID**. Routes pass UUID values. This may cause `ERROR: operator does not exist: text = uuid` in strict PostgreSQL environments.
 
-**Required SQL:**
+**Status (2026-07-04):** Fix skipped — `thread_reports` table does not exist in the production database (0031 was never applied). No live data at risk. If 0031 is applied in the future, apply the column type fix below at the same time.
+
 ```sql
--- 0096_fix_thread_reports_id_type.sql
+-- Apply only if/when thread_reports is created in production
 ALTER TABLE thread_reports
   ALTER COLUMN thread_id TYPE uuid USING thread_id::uuid;
 ```
@@ -245,9 +240,9 @@ The old `message_reports` (mig 0030) and `thread_reports` (mig 0031) tables co-e
 
 **Recommendation:** Migrate `messaging.ts` to write to the unified `reports` table (`target_type='message'` or `'thread'`) and deprecate the old tables. No immediate migration needed but technical debt.
 
-#### Gap 3 — Translation Profile Columns (P1)
+#### Gap 3 — Translation Profile Columns — RESOLVED ✅
 
-`messaging.ts` reads `profiles.preferred_message_language`, `profiles.auto_translate_messages`, `profiles.show_original_messages`, `profiles.translation_updated_at` — none confirmed in any migration file. If these columns are absent, the translation feature silently falls back or breaks.
+`messaging.ts` reads `profiles.preferred_message_language`, `profiles.auto_translate_messages`, `profiles.show_original_messages`, `profiles.translation_updated_at`, and `profiles.tag_permission`. All five columns were applied manually on 2026-07-04 and are now confirmed present in the database. No further action required.
 
 (See required SQL under section A.)
 

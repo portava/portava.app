@@ -164,6 +164,18 @@ export async function saveItem(
   if (!isSupabaseConfigured || !apiBase()) return false;
   const headers = await authHeaders();
   if (!headers) return false;
+  // Posts use the dedicated post_saves table via /api/posts/:id/save
+  if (entityType === 'post') {
+    try {
+      const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(entityId)}/save`, {
+        method: 'POST',
+        headers,
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
   try {
     const res = await fetch(`${apiBase()}/api/saves`, {
       method: 'POST',
@@ -192,6 +204,18 @@ export async function unsaveItem(
   if (!isSupabaseConfigured || !apiBase()) return false;
   const headers = await authHeaders();
   if (!headers) return false;
+  // Posts use the dedicated post_saves table via /api/posts/:id/save
+  if (entityType === 'post') {
+    try {
+      const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(entityId)}/save`, {
+        method: 'DELETE',
+        headers,
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
   try {
     const res = await fetch(`${apiBase()}/api/saves`, {
       method: 'DELETE',
