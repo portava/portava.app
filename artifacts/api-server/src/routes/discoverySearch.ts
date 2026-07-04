@@ -20,8 +20,14 @@
  *     non-blocked profiles so private/blocked signals cannot leak via geo.
  *   - Private fields (email, phone, location coords, safety data, verification)
  *     are never selected or included in any result.
- *   - Age-restricted content: enforcement deferred; requires viewer age in session
- *     which is not available in this endpoint (tracked as future task).
+ *   - Age-restricted content: profiles with user_privacy_settings.age_restriction_enabled=true
+ *     are excluded entirely (fail-closed). Because viewer age is not available in
+ *     the session, the endpoint cannot verify whether the viewer meets the age gate —
+ *     so all age-restricted profiles are hidden from discovery. Content owned/hosted by
+ *     an age-restricted profile is also excluded (events, trips, circles, posts).
+ *     City/country aggregation excludes age-restricted profiles for the same reason.
+ *     If the age-restricted set lookup fails, the search returns empty results
+ *     (consistent with the block-state fail-closed pattern).
  *
  * Pagination:
  *   - Each per-type query fetches limit+1 rows from DB. hasMore is derived from
@@ -160,6 +166,26 @@ async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | n
   }
 }
 
+// ── Age-restricted profile set (fail-closed) ──────────────────────────────────
+//
+// Returns the set of user IDs who have set age_restriction_enabled=true in their
+// user_privacy_settings. Because viewer age is unavailable in this endpoint,
+// all such profiles are hidden from discovery (fail-closed).
+// Returns null on any DB error — callers MUST return [] in that case.
+
+async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null> {
+  try {
+    const { data, error } = await sc
+      .from("user_privacy_settings")
+      .select("user_id")
+      .eq("age_restriction_enabled", true);
+    if (error) return null;
+    return new Set<string>((data ?? []).map((r: any) => r.user_id as string));
+  } catch {
+    return null;
+  }
+}
+
 // ── Owner account-status guard ─────────────────────────────────────────────────
 //
 // Fetches the set of IDs (from a candidate owner/host list) that have an
@@ -198,10 +224,11 @@ async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<str
  * actionState: { isFollowing: boolean }
  */
 async function searchTravelers(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number, isBuddy = false,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     let query = sc
@@ -219,7 +246,9 @@ async function searchTravelers(
     const { data, error } = await query;
     if (error || !data) return [];
 
-    const rows = (data as any[]).filter((p: any) => !blockedSet.has(p.id as string));
+    const rows = (data as any[]).filter(
+      (p: any) => !blockedSet.has(p.id as string) && !ageRestrictedSet.has(p.id as string),
+    );
     if (rows.length === 0) return [];
 
     const ids = rows.map((p: any) => p.id as string);
@@ -275,10 +304,11 @@ async function searchTravelers(
  * actionState: { isAttending: boolean }
  */
 async function searchEvents(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -294,7 +324,9 @@ async function searchEvents(
 
     if (error || !data) return [];
 
-    const rows = (data as any[]).filter((e: any) => !blockedSet.has(e.host_id as string));
+    const rows = (data as any[]).filter(
+      (e: any) => !blockedSet.has(e.host_id as string) && !ageRestrictedSet.has(e.host_id as string),
+    );
     if (rows.length === 0) return [];
 
     // Exclude events from suspended/banned/deleted hosts
@@ -339,10 +371,11 @@ async function searchEvents(
  * Trips — public only; blocked/suspended owners excluded.
  */
 async function searchTrips(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -357,7 +390,9 @@ async function searchTrips(
 
     if (error || !data) return [];
 
-    const rows = (data as any[]).filter((t: any) => !blockedSet.has(t.owner_id as string));
+    const rows = (data as any[]).filter(
+      (t: any) => !blockedSet.has(t.owner_id as string) && !ageRestrictedSet.has(t.owner_id as string),
+    );
     if (rows.length === 0) return [];
 
     const ownerIds = [...new Set(rows.map((t: any) => t.owner_id as string))];
@@ -393,10 +428,11 @@ async function searchTrips(
  * Blocked creator excluded.
  */
 async function searchPlans(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -409,7 +445,9 @@ async function searchPlans(
 
     if (error || !data) return [];
 
-    const items = (data as any[]).filter((p: any) => !blockedSet.has(p.creator_id as string));
+    const items = (data as any[]).filter(
+      (p: any) => !blockedSet.has(p.creator_id as string) && !ageRestrictedSet.has(p.creator_id as string),
+    );
     if (items.length === 0) return [];
 
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
@@ -580,10 +618,11 @@ async function searchHashtags(
  * Posts — public only; blocked/suspended author excluded.
  */
 async function searchPosts(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -598,7 +637,9 @@ async function searchPosts(
 
     if (error || !data) return [];
 
-    const rows = (data as any[]).filter((p: any) => !blockedSet.has(p.author_id as string));
+    const rows = (data as any[]).filter(
+      (p: any) => !blockedSet.has(p.author_id as string) && !ageRestrictedSet.has(p.author_id as string),
+    );
     if (rows.length === 0) return [];
 
     const authorIds = [...new Set(rows.map((p: any) => p.author_id as string))];
@@ -636,10 +677,11 @@ async function searchPosts(
  * Circles — public only; blocked/suspended owner excluded.
  */
 async function searchCircles(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -652,7 +694,9 @@ async function searchCircles(
 
     if (error || !data) return [];
 
-    const rows = (data as any[]).filter((c: any) => !blockedSet.has(c.owner_id as string));
+    const rows = (data as any[]).filter(
+      (c: any) => !blockedSet.has(c.owner_id as string) && !ageRestrictedSet.has(c.owner_id as string),
+    );
     if (rows.length === 0) return [];
 
     const ownerIds = [...new Set(rows.map((c: any) => c.owner_id as string))];
@@ -772,10 +816,11 @@ async function searchActivities(
  * city list so private/blocked user signals cannot leak via geo data.
  */
 async function searchCities(
-  sc: any, q: string, blockedSet: Set<string> | null,
+  sc: any, q: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -793,8 +838,8 @@ async function searchCities(
     const results: SearchResult[] = [];
     let skipped = 0;
     for (const p of (data as any[])) {
-      // Exclude profiles from blocked users
-      if (blockedSet.has(p.id as string)) continue;
+      // Exclude blocked and age-restricted profiles (fail-closed)
+      if (blockedSet.has(p.id as string) || ageRestrictedSet.has(p.id as string)) continue;
       const city = ((p.home_city as string | null) ?? "").trim();
       if (!city) continue;
       const key = city.toLowerCase();
@@ -832,10 +877,11 @@ async function searchCities(
  * Same privacy model as cities.
  */
 async function searchCountries(
-  sc: any, q: string, blockedSet: Set<string> | null,
+  sc: any, q: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+  if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -853,7 +899,7 @@ async function searchCountries(
     const results: SearchResult[] = [];
     let skipped = 0;
     for (const p of (data as any[])) {
-      if (blockedSet.has(p.id as string)) continue;
+      if (blockedSet.has(p.id as string) || ageRestrictedSet.has(p.id as string)) continue;
       const country = ((p.home_country as string | null) ?? "").trim();
       if (!country) continue;
       const key = country.toLowerCase();
@@ -924,25 +970,26 @@ async function dispatchSearch(
   q: string,
   userId: string,
   blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
   type: Exclude<SearchType, "all">,
   offset: number,
   fetchLimit: number,
 ): Promise<SearchResult[]> {
   switch (type) {
-    case "travelers":   return searchTravelers(sc, q, userId, blockedSet, offset, fetchLimit, false);
-    case "buddies":     return searchTravelers(sc, q, userId, blockedSet, offset, fetchLimit, true);
-    case "events":      return searchEvents(sc, q, userId, blockedSet, offset, fetchLimit);
-    case "trips":       return searchTrips(sc, q, userId, blockedSet, offset, fetchLimit);
-    case "plans":       return searchPlans(sc, q, userId, blockedSet, offset, fetchLimit);
+    case "travelers":   return searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false);
+    case "buddies":     return searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true);
+    case "events":      return searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
+    case "trips":       return searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
+    case "plans":       return searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
     case "places":      return searchPlaces(sc, q, offset, fetchLimit);
     case "hidden_gems": return searchHiddenGems(sc, q, userId, blockedSet, offset, fetchLimit);
     case "hashtags":    return searchHashtags(sc, q, offset, fetchLimit);
-    case "posts":       return searchPosts(sc, q, userId, blockedSet, offset, fetchLimit);
-    case "circles":     return searchCircles(sc, q, userId, blockedSet, offset, fetchLimit);
+    case "posts":       return searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
+    case "circles":     return searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
     case "stamps":      return searchStamps(sc, q, offset, fetchLimit);
     case "activities":  return searchActivities(sc, q, offset, fetchLimit);
-    case "cities":      return searchCities(sc, q, blockedSet, offset, fetchLimit);
-    case "countries":   return searchCountries(sc, q, blockedSet, offset, fetchLimit);
+    case "cities":      return searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
+    case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
     case "languages":   return Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit));
     case "interests":   return Promise.resolve(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit));
     case "vibes":       return Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", offset, fetchLimit));
@@ -960,28 +1007,29 @@ async function dispatchSearch(
 const FAN_LIMIT = 20;
 
 async function searchAll(
-  sc: any, q: string, userId: string, blockedSet: Set<string> | null,
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   globalOffset: number, limit: number,
 ): Promise<{ results: SearchResult[]; hasMore: boolean; nextCursor: string | null }> {
-  if (blockedSet === null) {
+  if (blockedSet === null || ageRestrictedSet === null) {
     return { results: [], hasMore: false, nextCursor: null };
   }
 
   const settled = await Promise.allSettled([
-    searchTravelers(sc, q, userId, blockedSet, 0, FAN_LIMIT),       // travelers
-    searchTravelers(sc, q, userId, blockedSet, 0, FAN_LIMIT, true), // buddies
-    searchEvents(sc, q, userId, blockedSet, 0, FAN_LIMIT),          // events
-    searchTrips(sc, q, userId, blockedSet, 0, FAN_LIMIT),           // trips
-    searchPlans(sc, q, userId, blockedSet, 0, FAN_LIMIT),           // plans
-    searchPlaces(sc, q, 0, FAN_LIMIT),                              // places
-    searchHiddenGems(sc, q, userId, blockedSet, 0, FAN_LIMIT),      // hidden_gems
-    searchHashtags(sc, q, 0, FAN_LIMIT),                            // hashtags
-    searchPosts(sc, q, userId, blockedSet, 0, FAN_LIMIT),           // posts
-    searchCircles(sc, q, userId, blockedSet, 0, FAN_LIMIT),         // circles
-    searchStamps(sc, q, 0, FAN_LIMIT),                              // stamps
-    searchActivities(sc, q, 0, FAN_LIMIT),                          // activities
-    searchCities(sc, q, blockedSet, 0, FAN_LIMIT),                  // cities
-    searchCountries(sc, q, blockedSet, 0, FAN_LIMIT),               // countries
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // travelers
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true), // buddies
+    searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),          // events
+    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // trips
+    searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // plans
+    searchPlaces(sc, q, 0, FAN_LIMIT),                                                // places
+    searchHiddenGems(sc, q, userId, blockedSet, 0, FAN_LIMIT),                        // hidden_gems
+    searchHashtags(sc, q, 0, FAN_LIMIT),                                              // hashtags
+    searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // posts
+    searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),         // circles
+    searchStamps(sc, q, 0, FAN_LIMIT),                                                // stamps
+    searchActivities(sc, q, 0, FAN_LIMIT),                                            // activities
+    searchCities(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                  // cities
+    searchCountries(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),               // countries
     Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", 0, FAN_LIMIT)),
@@ -1062,16 +1110,19 @@ router.get("/discovery/search", async (req, res) => {
   }
 
   try {
-    // Fail-closed: unknown block state → return empty results, never leak content
-    const blockedSet = await fetchBlockedSet(sc, user.id);
+    // Fail-closed: unknown block or age-restriction state → return empty results, never leak content
+    const [blockedSet, ageRestrictedSet] = await Promise.all([
+      fetchBlockedSet(sc, user.id),
+      fetchAgeRestrictedSet(sc),
+    ]);
 
     if (type === "all") {
-      const { results, hasMore, nextCursor } = await searchAll(sc, q, user.id, blockedSet, offset, limit);
+      const { results, hasMore, nextCursor } = await searchAll(sc, q, user.id, blockedSet, ageRestrictedSet, offset, limit);
       res.status(200).json({ results, nextCursor, hasMore, query: q, type });
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
-      const raw = await dispatchSearch(sc, q, user.id, blockedSet, type, offset, fetchLimit);
+      const raw = await dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit);
       const hasMore = raw.length > limit;
       const results = raw.slice(0, limit);
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;

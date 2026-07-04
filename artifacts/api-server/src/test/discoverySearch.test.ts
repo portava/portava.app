@@ -16,6 +16,7 @@
  *   - Cursor pagination: limit+1 over-fetch semantics, no false-positive hasMore
  *   - type=all: all type buckets including cities/countries; round-robin; cursor
  *   - Rate limiting: 429 on request 31
+ *   - Age-restriction: profiles with age_restriction_enabled=true excluded from travelers, events; fail-closed on DB error
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -853,5 +854,107 @@ describe("GET /api/discovery/search — rate limiting", () => {
     assert.equal(limited.status, 429, "31st request should be rate-limited");
     const body = await limited.json() as any;
     assert.equal(body.error, "rate_limited");
+  });
+});
+
+// ── Age-restriction exclusion ──────────────────────────────────────────────────
+//
+// Profiles with age_restriction_enabled=true in user_privacy_settings must be
+// excluded fail-closed from all search types. Viewer age is unverifiable, so
+// the rule is unconditional.
+
+const AGE_DAVE = "ee000000-0000-4000-a000-000000000020";
+const EVT_AGE  = "ee000000-0000-4000-a000-000000000021";
+
+describe("GET /api/discovery/search — age-restricted content exclusion", () => {
+  it("excludes a traveler whose profile has age_restriction_enabled=true", async () => {
+    setup({
+      profiles: [
+        {
+          id: ALICE, handle: "alice", name: "Alice Travel", avatar_url: null,
+          is_private: false, home_city: null, home_country: null, account_status: "active",
+        },
+        {
+          id: AGE_DAVE, handle: "dave", name: "Dave Travel", avatar_url: null,
+          is_private: false, home_city: null, home_country: null, account_status: "active",
+        },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+      user_privacy_settings: [
+        { user_id: AGE_DAVE, age_restriction_enabled: true },
+      ],
+    });
+
+    const r = await get("/discovery/search?q=travel&type=travelers");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const ids = (results as any[]).map((u: any) => u.id as string);
+    assert.ok(!ids.includes(AGE_DAVE), "Age-restricted profile must NOT appear in travelers");
+    assert.ok(ids.includes(ALICE),     "Non-age-restricted profile should appear");
+  });
+
+  it("excludes an event whose host has age_restriction_enabled=true", async () => {
+    setup({
+      profiles: [
+        {
+          id: AGE_DAVE, handle: "dave", name: "Dave", avatar_url: null,
+          is_private: false, home_city: null, home_country: null, account_status: "active",
+        },
+        {
+          id: ALICE, handle: "alice", name: "Alice", avatar_url: null,
+          is_private: false, home_city: null, home_country: null, account_status: "active",
+        },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+      events: [
+        {
+          id: EVT_AGE, title: "Night Travel Fest", host_id: AGE_DAVE,
+          city: "Manila", country: null, starts_at: null, cover_image_url: null,
+          description: null, visibility: "public", status: "upcoming", created_at: "2026-09-01T00:00:00Z",
+        },
+        {
+          id: "ee000000-0000-4000-a000-000000000022", title: "Day Travel Fair", host_id: ALICE,
+          city: "Cebu", country: null, starts_at: null, cover_image_url: null,
+          description: null, visibility: "public", status: "upcoming", created_at: "2026-09-02T00:00:00Z",
+        },
+      ],
+      event_rsvps: [],
+      user_privacy_settings: [
+        { user_id: AGE_DAVE, age_restriction_enabled: true },
+      ],
+    });
+
+    const r = await get("/discovery/search?q=travel&type=events");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const ids = (results as any[]).map((u: any) => u.id as string);
+    assert.ok(!ids.includes(EVT_AGE), "Event hosted by age-restricted user must NOT appear");
+    assert.ok(ids.some((id: string) => id !== EVT_AGE), "Events from non-age-restricted hosts should appear");
+  });
+
+  it("returns empty results (fail-closed) when user_privacy_settings table returns a DB error", async () => {
+    setup(
+      {
+        profiles: [
+          {
+            id: ALICE, handle: "alice", name: "Alice Travel", avatar_url: null,
+            is_private: false, home_city: null, home_country: null, account_status: "active",
+          },
+        ],
+        blocks: [],
+        profile_privacy_settings: [],
+        user_follows: [],
+      },
+      ["user_privacy_settings"],
+    );
+
+    const r = await get("/discovery/search?q=alice&type=travelers");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 0, "Fail-closed: must return empty when age-restriction state is unknown");
   });
 });
