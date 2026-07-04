@@ -316,7 +316,10 @@ router.patch("/me/profile", async (req, res) => {
 
   const row: Record<string, unknown> = { updated_by: user.id };
 
-  if (p.displayName !== undefined) row.name = p.displayName;
+  if (p.displayName !== undefined) {
+    row.name = p.displayName;
+    row.display_name = p.displayName;
+  }
   if (p.bio !== undefined) row.bio = p.bio;
   if (p.homeCity !== undefined) row.home_city = p.homeCity;
   if (p.homeCountry !== undefined) row.home_country = p.homeCountry;
