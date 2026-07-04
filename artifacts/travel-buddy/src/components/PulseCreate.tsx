@@ -193,11 +193,16 @@ export function UnifiedPostComposer({
 
   // Restore the last-used category for the selected post type, falling back to
   // the type default when no preference has been saved yet.
+  // The cancellation flag prevents a slow earlier load from overwriting the
+  // result of a later load when the user switches types quickly.
   useEffect(() => {
     if (!selectedType) return;
+    let cancelled = false;
     loadLastCategory(AsyncStorage, selectedType).then((saved) => {
+      if (cancelled) return;
       setSelectedCategory(saved ?? resolveDefaultCategory(selectedType));
     });
+    return () => { cancelled = true; };
   }, [selectedType]);
 
   // Auto-select delayed_until_exit when the user attaches a GPS location
