@@ -36,3 +36,9 @@ id = "IT2-D_81mAwoS7XuISjdG"
 uri = "file://docs/supabase-beta-runbook.md"
 type = "text"
 title = "Supabase Production SQL Runbook — Beta Launch"
+
+[[outputs]]
+id = "Wm5LKHDpkxIPRdXZt8J3I"
+uri = "file://docs/database-audit.md"
+type = "text"
+title = "Travel Buddy — SQL/Backend Database Audit"
