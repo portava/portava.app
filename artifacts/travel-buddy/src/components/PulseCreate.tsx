@@ -488,7 +488,7 @@ export function UnifiedPostComposer({
             {selectedType && (
               <View style={uc.form}>
                 {/* category chip picker */}
-                {!DEDICATED_COMPOSERS[selectedType] && (
+                {!DEDICATED_COMPOSERS[selectedType] && !!TYPE_CATEGORY[selectedType] && (
                   <View style={uc.field}>
                     <View style={uc.fieldLabelRow}>
                       <Text style={uc.fieldLabel}>Category</Text>
