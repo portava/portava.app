@@ -89,7 +89,8 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
 
   const pillBg      = isDark ? 'rgba(20,20,20,0.30)'     : 'rgba(255,255,255,0.30)';
   const pillBorder  = isDark ? 'rgba(255,255,255,0.12)'  : 'rgba(255,255,255,0.45)';
-  const blurTint    = isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterial';
+  const blurTint    = (isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterial') as
+    'systemChromeMaterialDark' | 'systemChromeMaterial';
   const iconActive  = isDark ? color.onInk               : color.ink;
   const iconMuted   = isDark ? color.onInkMute            : color.mute;
   const activeHighlight = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)';
@@ -106,7 +107,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         {/* Glass blur layer — iOS: real blur; Android: rgba only */}
         {Platform.OS === 'ios' && (
           <BlurView
-            tint={blurTint as any}
+            tint={blurTint}
             intensity={70}
             style={StyleSheet.absoluteFillObject}
           />
@@ -133,7 +134,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, active && [fb.labelActive, { color: iconActive }]]}>{label}</Text>
+                <Text style={[fb.label, { color: active ? iconActive : iconMuted }, active && fb.labelActive]}>{label}</Text>
               </View>
             </Pressable>
           );
@@ -177,7 +178,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, active && [fb.labelActive, { color: iconActive }]]}>{label}</Text>
+                <Text style={[fb.label, { color: active ? iconActive : iconMuted }, active && fb.labelActive]}>{label}</Text>
               </View>
             </Pressable>
           );
