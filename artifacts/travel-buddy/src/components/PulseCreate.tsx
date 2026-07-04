@@ -14,7 +14,7 @@ import {
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PULSE_FILTERS } from '../types/models';
-import type { PulseFilter } from '../types/models';
+import type { PulseFilter, PostCategory } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { usePostActions } from '../hooks/usePosts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts';
@@ -49,6 +49,21 @@ const TYPE_CATEGORY: Record<PostTypeId, string> = {
   share_food_spot: 'food',
   share_highlight: 'highlight',
 };
+
+/** Ordered list of categories shown in the chip picker. */
+const CATEGORY_OPTIONS: { value: PostCategory; label: string }[] = [
+  { value: 'food',      label: 'Food' },
+  { value: 'beach',     label: 'Beach' },
+  { value: 'nightlife', label: 'Nightlife' },
+  { value: 'activity',  label: 'Activity' },
+  { value: 'hotel',     label: 'Hotel' },
+  { value: 'tip',       label: 'Tip' },
+  { value: 'safety',    label: 'Safety' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'airport',   label: 'Airport' },
+  { value: 'visa',      label: 'Visa' },
+  { value: 'question',  label: 'Question' },
+];
 
 const SUBMIT_LABEL: Record<PostTypeId, string> = {
   post_update: 'Post Update',
@@ -159,6 +174,7 @@ export function UnifiedPostComposer({
   const { signOut } = useSession();
 
   const [selectedType, setSelectedType] = useState<PostTypeId | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(null);
   const [text, setText] = useState('');
   const [placeName, setPlaceName] = useState('');
   const mentionRef = useRef<MentionInputHandle>(null);
@@ -184,6 +200,16 @@ export function UnifiedPostComposer({
   const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none');
   const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
 
+  // Auto-set the default category whenever the post type changes.
+  // The user can override it via the chip picker.
+  useEffect(() => {
+    if (selectedType) {
+      const defaultCat = TYPE_CATEGORY[selectedType];
+      const asCat = CATEGORY_OPTIONS.find(o => o.value === defaultCat)?.value ?? null;
+      setSelectedCategory(asCat);
+    }
+  }, [selectedType]);
+
   // Auto-select delayed_until_exit when the user attaches a GPS location
   useEffect(() => {
     if (loc.source === 'none') {
@@ -206,6 +232,7 @@ export function UnifiedPostComposer({
   useEffect(() => {
     if (visible) {
       setSelectedType(null);
+      setSelectedCategory(null);
       setText('');
       setPlaceName('');
       setMedia(null);
@@ -359,6 +386,7 @@ export function UnifiedPostComposer({
         filterIntensity,
         locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
         publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
+        category: selectedCategory ?? undefined,
       });
 
       await handleSubmitResult(res, {
@@ -464,6 +492,27 @@ export function UnifiedPostComposer({
             {/* form fields — appear once type is selected */}
             {selectedType && (
               <View style={uc.form}>
+                {/* category chip picker */}
+                {!DEDICATED_COMPOSERS[selectedType] && (
+                  <View style={uc.field}>
+                    <Text style={uc.fieldLabel}>Category</Text>
+                    <View style={uc.chipRowWrap}>
+                      {CATEGORY_OPTIONS.map(({ value, label }) => (
+                        <Pressable
+                          key={value}
+                          style={[uc.visChip, selectedCategory === value && uc.visChipOn]}
+                          onPress={() => setSelectedCategory(value)}
+                          disabled={submitting}
+                        >
+                          <Text style={[uc.visChipText, selectedCategory === value && uc.visChipTextOn]}>
+                            {label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
                 {/* place name — hidden gem / food spot only */}
                 {needsPlace(selectedType) && (
                   <View style={uc.field}>

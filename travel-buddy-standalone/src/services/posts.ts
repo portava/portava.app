@@ -78,6 +78,8 @@ export interface PostRow {
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  /** Editorial category (food, beach, nightlife, etc.) — null if untagged. */
+  category?: string | null;
   /** @mention span annotations from the server whitelist. */
   tags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** #hashtag span annotations from the server whitelist. */
@@ -129,6 +131,7 @@ function mapPost(r: any): PostRow {
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
     mediaDurationSeconds: r.media_duration_seconds ?? null,
+    category: r.category ?? null,
     tags: r.tags ?? [],
     hashtagUsages: r.hashtagUsages ?? [],
     // Delayed geotag fields
@@ -242,6 +245,8 @@ interface CreatePostInput {
   geofenceRadiusMeters?: number | null;
   venueName?: string | null;
   venueId?: string | null;
+  /** Editorial category sent to the API (food, beach, nightlife, etc.). */
+  category?: string | null;
 }
 
 export async function createPost(input: CreatePostInput): Promise<PostResult<PostRow>> {
@@ -285,6 +290,7 @@ export async function createPost(input: CreatePostInput): Promise<PostResult<Pos
         geofenceRadiusMeters: input.geofenceRadiusMeters ?? null,
         venueName: input.venueName ?? null,
         venueId: input.venueId ?? null,
+        category: input.category ?? null,
       }),
     });
     if (!res.ok) {
