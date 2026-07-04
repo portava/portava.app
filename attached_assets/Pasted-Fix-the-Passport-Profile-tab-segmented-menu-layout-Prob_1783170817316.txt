@@ -1,0 +1,71 @@
+Fix the Passport/Profile tab segmented menu layout.
+
+Problem:
+There are two menus visible on the Passport screen:
+1. The top stats/count row: Postcards, Stamps, Countries, Cities, Trips
+2. The profile content menu: Postcards, Stamps, Trips, Map
+
+The profile content menu currently looks too much like separate floating pills with spacing between each button. It should visually match the count/stats menu style more closely, but the whole menu should stretch/touch the left and right screen edges.
+
+Required design:
+- Convert the profile content menu into one full-width segmented control container.
+- It should span edge-to-edge across the screen width, or as close as the screen-safe padding allows.
+- Remove the large gaps between Postcards, Stamps, Trips, and Map.
+- Each tab should live inside one shared rounded container, similar to the count menu.
+- Keep the selected tab black with white text.
+- Unselected tabs should have light/cream background with dark text.
+- Use subtle dividers or hairline borders between segments, like the count row.
+- Height should feel similar to the count menu row, not oversized.
+- Corners should be rounded on the outside container, not every tab looking like a separate bubble.
+- The first segment should align/touch the left edge of the container.
+- The last segment should align/touch the right edge of the container.
+- Do not break tab switching logic.
+- Do not change the counts row functionality.
+- Do not rebuild the Passport screen. Patch only the segmented menu styles/layout.
+
+Implementation guidance:
+Find the Passport/Profile tabs component where Postcards / Stamps / Trips / Map are rendered.
+
+Replace the current pill row styling with something like:
+
+- Wrapper:
+  - width: 100%
+  - marginHorizontal: 0 or negative screen padding if needed to touch screen edges
+  - borderRadius: 28
+  - borderWidth: 1
+  - borderColor: soft border
+  - backgroundColor: cream/off-white
+  - flexDirection: row
+  - overflow: hidden
+
+- Each tab:
+  - flex: 1
+  - alignItems: center
+  - justifyContent: center
+  - paddingVertical: 14–16
+  - borderRadius: 0 by default
+
+- Selected tab:
+  - backgroundColor: #050505 or existing black token
+  - borderRadius: 24 only if needed inside the shared container
+  - margin: 4 if using inset active pill style
+  - text color: white
+
+- Unselected tab:
+  - backgroundColor: transparent
+  - text color: existing dark text
+
+Important visual target:
+The final menu should look like the count menu’s full connected bar, but with the Map tab selected in black. It should not look like four separate buttons floating across the page.
+
+Also check mobile safe-area/padding:
+If the Passport page has a parent horizontal padding, allow this profile menu to bleed to the screen edges by using negative marginHorizontal equal to the parent padding, then add internal padding only if needed.
+
+Validation:
+- Open Passport/Profile screen.
+- Confirm the Postcards / Stamps / Trips / Map menu touches the screen edges.
+- Confirm the tabs appear as one connected segmented control.
+- Confirm Map selected state still works.
+- Confirm tapping Postcards, Stamps, Trips, and Map still switches the content.
+- Confirm no horizontal scrolling or clipping occurs.
+- Confirm count row above is unchanged.
