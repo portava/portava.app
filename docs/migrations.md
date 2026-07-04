@@ -176,6 +176,7 @@ These migrations were applied directly via the Supabase SQL editor and have no a
 | `0097_post_saves.sql` | `CREATE TABLE IF NOT EXISTS post_saves (user_id UUID, post_id UUID, PRIMARY KEY (user_id, post_id))` + `ALTER TABLE posts ADD COLUMN IF NOT EXISTS save_count INTEGER NOT NULL DEFAULT 0` | `SELECT to_regclass('public.post_saves')` |
 | `0098_profile_translation_prefs.sql` | Four `ADD COLUMN IF NOT EXISTS` on `profiles`: `preferred_message_language TEXT`, `auto_translate_messages BOOLEAN`, `show_original_messages BOOLEAN`, `translation_updated_at TIMESTAMPTZ` | `SELECT column_name FROM information_schema.columns WHERE table_name='profiles' AND column_name='auto_translate_messages'` |
 | `0099_missing_indexes.sql` | `CREATE INDEX IF NOT EXISTS posts_author_status_idx ON posts (author_id, post_status)` + `CREATE INDEX IF NOT EXISTS post_saves_post_created_idx ON post_saves (post_id, created_at DESC)` | `SELECT indexname FROM pg_indexes WHERE indexname IN ('posts_author_status_idx','post_saves_post_created_idx')` |
+| `0101_feed_save_indexes.sql` | `CREATE INDEX IF NOT EXISTS posts_status_published_at_idx ON posts (post_status, published_at DESC)` + `CREATE INDEX IF NOT EXISTS post_saves_created_at_idx ON post_saves (created_at DESC)` | `SELECT indexname FROM pg_indexes WHERE indexname IN ('posts_status_published_at_idx','post_saves_created_at_idx')` |
 
 All statements are idempotent — safe to re-run.
 
@@ -188,6 +189,30 @@ All statements are idempotent — safe to re-run.
 | Rows updated | All `profiles` rows where `display_name IS NULL AND name IS NOT NULL` (at time of apply) |
 | Rows unchanged | Rows that already had `display_name` set, or where `name` was also NULL |
 | Safe to re-run | Yes — `WHERE display_name IS NULL` makes subsequent runs a no-op |
+
+### Migration 0101 — pending production apply
+
+`artifacts/api-server/src/migrations/0101_feed_save_indexes.sql` adds two indexes to keep the feed and saves queries fast as data grows:
+
+| Index | Table | Columns | Query served |
+|-------|-------|---------|--------------|
+| `posts_status_published_at_idx` | `posts` | `(post_status, published_at DESC)` | Feed: `WHERE post_status = 'published' ORDER BY published_at DESC LIMIT 20` |
+| `post_saves_created_at_idx` | `post_saves` | `(created_at DESC)` | Saves listing: `ORDER BY created_at DESC` |
+
+**Apply:** paste the file contents into the Supabase SQL editor and run. Both `CREATE INDEX IF NOT EXISTS` statements are idempotent.
+
+**Verify:**
+```sql
+SELECT indexname FROM pg_indexes
+WHERE indexname IN ('posts_status_published_at_idx', 'post_saves_created_at_idx');
+```
+
+Both index names should appear in the result before marking this migration applied.
+
+**Why these two indexes?**
+
+- `posts_author_status_idx` (0099) covers `(author_id, post_status)` — good for per-author filtered feeds — but the public feed query only filters on `post_status` and sorts by `published_at`. Without `posts_status_published_at_idx`, Postgres cannot use that index and falls back to a sequential scan + sort.
+- `post_saves_post_created_idx` (0099) covers `(post_id, created_at DESC)` — efficient for "who saved this post" lookups — but a full saves listing sorted only by `created_at` still requires a seq-scan + sort. `post_saves_created_at_idx` on `(created_at DESC)` lets Postgres walk the index in order and stop at the LIMIT.
 
 ### Stale migration file — `artifacts/api-server/migrations/0041_notifications.sql`
 
