@@ -9,6 +9,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@db-types": [
+        "../lib/database.types.ts"
       ]
     }
   },
