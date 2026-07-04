@@ -119,6 +119,7 @@ When the idempotency check at step 3 finds an existing `awarded` event but no co
 | `0095_post_category.sql` | Adds nullable `category TEXT` column to `posts` (`ADD COLUMN IF NOT EXISTS` — idempotent). Values match the `PostCategory` enum on the client (e.g. `food`, `nightlife`, `beach`, `adventure`). Required for the category stamp overlay on the post detail screen and for the category picker in the post composer. `POST /api/posts` accepts and persists category; all feed and post-detail routes select and return it. | 2026-07-04 |
 | `0097_post_saves.sql` | Creates `post_saves` table (`user_id`, `post_id`, `created_at`; `PRIMARY KEY (user_id, post_id)` enforces uniqueness; index on `post_id`; RLS: users manage own rows via `post_saves_own` policy). Adds `save_count INTEGER NOT NULL DEFAULT 0` to `posts` (maintained by the API server on `POST /api/posts/:id/save` and `DELETE /api/posts/:id/save`). Duplicate-save is always idempotent via `ON CONFLICT DO NOTHING`; unsave of a non-existent row is handled gracefully. Feed and post-detail responses include `savedByMe` and `save_count`. Applied manually to Supabase. | 2026-07-04 |
 | `0098_profile_translation_prefs.sql` | Adds four Telegraph translation-preference columns to `profiles` (all `ADD COLUMN IF NOT EXISTS` — idempotent): `preferred_message_language TEXT`, `auto_translate_messages BOOLEAN NOT NULL DEFAULT FALSE`, `show_original_messages BOOLEAN NOT NULL DEFAULT FALSE`, `translation_updated_at TIMESTAMPTZ`. Read/written by `GET /api/me/translation-settings` and `PATCH /api/me/translation-settings` in `messaging.ts`. Note: `preferred_language` (BCP-47 fallback) was added in migration 0018; `tag_permission` was added in migration 0043. Applied manually to Supabase. | 2026-07-04 |
+| `0100_backfill_display_name.sql` | One-time data backfill: copies `name → display_name` for every `profiles` row where `display_name IS NULL AND name IS NOT NULL`. Makes historical rows consistent with the dual-write pattern introduced in `PATCH /api/me/profile`. Idempotent — rows that already have `display_name` set are untouched. Verified post-apply: 0 rows remain with `display_name IS NULL AND name IS NOT NULL`. | 2026-07-04 |
 
 ## Schema verification notes (2026-07-03)
 
@@ -186,23 +187,14 @@ All statements are idempotent (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT
 | `posts_author_status_idx` | `posts(author_id, post_status)` | Feed queries that filter by author + publication state |
 | `post_saves_post_created_idx` | `post_saves(post_id, created_at DESC)` | Ordered listing of saves per post |
 
-### Migration 0100 — not yet applied (manual SQL required)
+### Migration 0100 — applied 2026-07-04
 
-`artifacts/api-server/migrations/0100_backfill_display_name.sql` is a one-time data-backfill that copies `name → display_name` for every `profiles` row where `display_name IS NULL AND name IS NOT NULL`. This makes historical rows consistent with the dual-write pattern introduced in `PATCH /api/me/profile`. The statement is idempotent — rows that already have `display_name` set are untouched.
-
-Run in the Supabase SQL editor:
-
-```sql
-UPDATE public.profiles
-SET display_name = name
-WHERE display_name IS NULL
-  AND name IS NOT NULL;
-```
+`artifacts/api-server/migrations/0100_backfill_display_name.sql` was applied to production on 2026-07-04 via the Supabase Management API. The backfill copied `name → display_name` for every `profiles` row where `display_name IS NULL AND name IS NOT NULL`. Post-apply verification confirmed 0 remaining rows with `display_name IS NULL AND name IS NOT NULL`.
 
 | Effect | Detail |
 |--------|--------|
-| Rows updated | All `profiles` rows where `display_name IS NULL AND name IS NOT NULL` |
-| Rows unchanged | Rows that already have `display_name` set, or where `name` is also NULL |
+| Rows updated | All `profiles` rows where `display_name IS NULL AND name IS NOT NULL` (at time of apply) |
+| Rows unchanged | Rows that already had `display_name` set, or where `name` was also NULL |
 | Safe to re-run | Yes — `WHERE display_name IS NULL` makes subsequent runs a no-op |
 
 ### Stale migration file — `artifacts/api-server/migrations/0041_notifications.sql`
