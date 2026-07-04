@@ -160,6 +160,8 @@ STANDALONE_OWNED_FILES=(
   "src/components/__tests__/CreateMemory.doubletap.test.ts"
   "src/components/__tests__/TripEditor.doubletap.test.ts"
   "src/components/__tests__/ProfileEdit.doubletap.test.ts"
+  "src/components/__tests__/ChangePassword.doubletap.test.ts"
+  "app/profile/change-password.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

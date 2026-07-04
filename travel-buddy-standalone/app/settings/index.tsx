@@ -217,6 +217,8 @@ export default function Settings() {
       router.push('/settings/safety' as any);
     } else if (label === 'Edit profile') {
       router.push('/profile/edit');
+    } else if (label === 'Change password') {
+      router.push('/profile/change-password' as any);
     } else if (label === 'Notifications') {
       router.push('/settings/notifications' as any);
     } else if (label === 'Location settings') {
@@ -251,7 +253,7 @@ export default function Settings() {
   }
 
   const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
-  const ACCOUNT_ITEMS = ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals'];
+  const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];
   const FOOD_OPTIONS = ['street food', 'seafood', 'vegetarian', 'vegan', 'local cuisine', 'fine dining', 'coffee'];

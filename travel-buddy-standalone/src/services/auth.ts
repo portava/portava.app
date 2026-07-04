@@ -126,6 +126,22 @@ export async function requestPasswordReset(email: string): Promise<{ error?: str
   return {};
 }
 
+/**
+ * Change the authenticated user's password via Supabase Auth.
+ * Requires an active session (the user must be signed in).
+ */
+export async function changePassword(newPassword: string): Promise<{ error?: string }> {
+  if (!isSupabaseConfigured) return { error: 'Backend not configured.' };
+  let error: any;
+  try {
+    ({ error } = await supabase.auth.updateUser({ password: newPassword }));
+  } catch (e) {
+    return { error: networkMessage(e) };
+  }
+  if (error) return { error: error.message };
+  return {};
+}
+
 /** Ask the API server to look up the @handle associated with an email address. */
 export async function lookupUsernameByEmail(email: string): Promise<{ handle?: string; error?: string }> {
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
