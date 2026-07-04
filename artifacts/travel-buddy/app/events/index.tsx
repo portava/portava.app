@@ -4,7 +4,7 @@
  * Shows upcoming public events filterable by city/category/date.
  * Each card has inline RSVP action.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, RefreshControl, TextInput,
@@ -54,10 +54,18 @@ export default function EventsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const rsvpingLockRef = useRef<Set<string>>(new Set());
+
   async function handleRsvp(eventId: string, status: 'going' | 'maybe' | 'interested' | 'cant_go') {
-    const res = await rsvpEvent(eventId, status);
-    if (res.ok) {
-      setEvents((prev) => prev.map((e) => e.id === eventId ? { ...e, myRsvp: status } : e));
+    if (rsvpingLockRef.current.has(eventId)) return;
+    rsvpingLockRef.current.add(eventId);
+    try {
+      const res = await rsvpEvent(eventId, status);
+      if (res.ok) {
+        setEvents((prev) => prev.map((e) => e.id === eventId ? { ...e, myRsvp: status } : e));
+      }
+    } finally {
+      rsvpingLockRef.current.delete(eventId);
     }
   }
 

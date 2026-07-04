@@ -959,6 +959,18 @@ catch (e) { console.error('Cannot read standalone tsconfig.json:', e.message); p
 delete srcCfg.references;
 delete dstCfg.references;
 
+// The @db-types path alias is intentionally different between source and standalone:
+// source uses ../../lib/database.types.ts (from artifacts/travel-buddy/) and
+// standalone uses ../lib/database.types.ts (from travel-buddy-standalone/) —
+// both resolve to workspace/lib/database.types.ts but use different relative strings.
+// Normalise both to the same sentinel so this known difference is not flagged as drift.
+if (srcCfg.compilerOptions && srcCfg.compilerOptions.paths && srcCfg.compilerOptions.paths['@db-types']) {
+  srcCfg.compilerOptions.paths['@db-types'] = ['<workspace-lib-db-types>'];
+}
+if (dstCfg.compilerOptions && dstCfg.compilerOptions.paths && dstCfg.compilerOptions.paths['@db-types']) {
+  dstCfg.compilerOptions.paths['@db-types'] = ['<workspace-lib-db-types>'];
+}
+
 // Stable serialiser: sort object keys recursively so key order doesn't cause false diffs.
 function stableStringify(val) {
   if (val === null || typeof val !== 'object' || Array.isArray(val)) {
