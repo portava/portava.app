@@ -9,7 +9,7 @@
  *   - Toggle "hide viewer list"
  *   - Post — uploads media to Supabase Storage, then calls POST /api/stories
  */
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet, TextInput,
   Image, Alert, ActivityIndicator, ScrollView,
@@ -45,6 +45,7 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   const [hideViewerList, setHideViewerList] = useState(false);
   const [tripId] = useState<string | null>(defaultTripId ?? null);
   const [posting, setPosting] = useState(false);
+  const postLockRef = useRef(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
 
@@ -82,6 +83,8 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
 
   async function handlePost() {
     if (!mediaUri) { Alert.alert('Pick media first'); return; }
+    if (postLockRef.current) return;
+    postLockRef.current = true;
     setPosting(true);
     try {
       // Upload local file to Supabase Storage to get a shareable public URL
@@ -117,6 +120,7 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
         Alert.alert('Could not post story', result.message ?? 'Please try again.');
       }
     } finally {
+      postLockRef.current = false;
       setPosting(false);
       setUploadProgress(null);
     }

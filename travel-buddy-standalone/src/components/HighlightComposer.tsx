@@ -5,7 +5,7 @@
  *
  * Video picks are previewed with a native expo-av player (muted, looping).
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
   Image, ActivityIndicator, KeyboardAvoidingView, Platform,
@@ -66,6 +66,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
   const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [filterEditorOpen, setFilterEditorOpen] = useState(false);
   const [filterEditorAsset, setFilterEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -174,7 +175,9 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   }
 
   async function handleSubmit() {
-    if (!mediaUri || submitting) return;
+    if (!mediaUri) return;
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setSubmitting(true);
     setError(null);
 
@@ -228,6 +231,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
       onSuccess?.();
       onClose();
     } finally {
+      submitLockRef.current = false;
       setSubmitting(false);
     }
   }
