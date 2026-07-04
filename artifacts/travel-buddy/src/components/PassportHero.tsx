@@ -143,7 +143,8 @@ export function PassportHero({
             <Pressable
               style={styles.cameraOverlay}
               onPress={onNewHighlightPress}
-              accessibilityLabel="Add new Highlight"
+              accessibilityLabel="Edit profile photo or highlight"
+              accessibilityHint="Opens a menu to change your display photo or add a new highlight"
             >
               <Camera size={14} color={color.onInk} />
             </Pressable>
