@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, type LayoutChangeEvent } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck } from 'lucide-react-native';
@@ -419,6 +419,14 @@ function TripDetailScreen() {
           onClose={handleSafeReturnClose}
           onCheckingChange={setSafeReturnChecking}
         />
+        <Modal visible={safeReturnChecking} transparent animationType="fade" statusBarTranslucent>
+          <View style={srStyles.overlay}>
+            <View style={srStyles.card}>
+              <ActivityIndicator color={color.deep} />
+              <Text style={srStyles.label}>Checking Safe Return…</Text>
+            </View>
+          </View>
+        </Modal>
         <TripPostsSection posts={[]} />
         {live && trip.id ? (
           <TripMemorySection
@@ -537,6 +545,29 @@ const styles = StyleSheet.create({
   safeSetupBtnText: { ...t.body, color: color.deep, fontWeight: '600' },
   markCompleteBtn: { marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.success, backgroundColor: '#F0FDF4', alignItems: 'center' },
   markCompleteBtnText: { ...t.body, color: color.success, fontWeight: '700' },
+});
+
+const srStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: color.paper,
+    borderRadius: radius.lg,
+    paddingVertical: space.lg,
+    paddingHorizontal: space.xl,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  label: { ...t.body, color: color.ink, fontSize: 14 },
 });
 
 function formatGapLabel(dateStr: string): string {

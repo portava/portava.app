@@ -16,7 +16,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, Alert, Linking,
+  ActivityIndicator, Alert, Linking, Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import {
@@ -541,6 +541,14 @@ export default function ActiveRouteScreen() {
         suggestionReason={`Your route has ${totalCount} stops — estimated ~${estimatedReturnMinutes} min total.`}
         onCheckingChange={setSafeReturnChecking}
       />
+      <Modal visible={safeReturnChecking} transparent animationType="fade" statusBarTranslucent>
+        <View style={srStyles.overlay}>
+          <View style={srStyles.card}>
+            <ActivityIndicator color={color.deep} />
+            <Text style={srStyles.label}>Checking Safe Return…</Text>
+          </View>
+        </View>
+      </Modal>
 
       <RouteFullMapModal
         visible={fullMapVisible}
@@ -688,4 +696,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF0EE', padding: space.md, paddingHorizontal: space.lg,
   },
   endBtnText: { ...t.bodyStrong, color: color.signal, fontSize: 14 },
+});
+
+const srStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: color.paper,
+    borderRadius: radius.lg,
+    paddingVertical: space.lg,
+    paddingHorizontal: space.xl,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  label: { ...t.body, color: color.ink, fontSize: 14 },
 });
