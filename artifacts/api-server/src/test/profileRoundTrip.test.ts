@@ -407,6 +407,119 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     assert.match(body.error ?? body.message ?? "", /field|payload/i);
   });
 
+  it("DB write failure returns 500 db_error and leaves the profile row unchanged", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Stable", display_name: "Stable", username: "stable_user",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    // Client that returns a DB error on every update attempt (both full and
+    // fallback paths) without mutating the in-memory row.
+    function makeFailingUpdateClient() {
+      function makeBuilder(table: string) {
+        const filters: Array<(r: any) => boolean> = [];
+        let isUpdate = false;
+
+        const builder: any = {
+          select()                      { return builder; },
+          eq(col: string, val: any)     { filters.push((r) => String(r[col]) === String(val)); return builder; },
+          neq(col: string, val: any)    { filters.push((r) => r[col] !== val); return builder; },
+          in(col: string, vals: any[])  { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+          is(col: string, val: any)     { filters.push((r) => val === null ? r[col] == null : r[col] === val); return builder; },
+          lt(col: string, val: any)     { filters.push((r) => r[col] < val); return builder; },
+          gte(col: string, val: any)    { filters.push((r) => r[col] >= val); return builder; },
+          order()                       { return builder; },
+          limit()                       { return builder; },
+          nullsFirst()                  { return builder; },
+          update(_patch: Record<string, unknown>) {
+            isUpdate = true;
+            return builder;
+          },
+          insert(_row: any) { return builder; },
+          upsert(_row: any) { return builder; },
+          maybeSingle() {
+            if (isUpdate) {
+              return Promise.resolve({ data: null, error: { message: "simulated write failure", code: "42P01" } });
+            }
+            if (table === "profiles") {
+              const rows = profiles.filter((r) => filters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() {
+            if (isUpdate) {
+              return Promise.resolve({ data: null, error: { message: "simulated write failure", code: "42P01" } });
+            }
+            if (table === "profiles") {
+              const rows = profiles.filter((r) => filters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          then(onF: any, onR: any) {
+            if (isUpdate) {
+              return Promise.resolve({ data: [], error: { message: "simulated write failure", code: "42P01" } }).then(onF, onR);
+            }
+            const rows = table === "profiles"
+              ? profiles.filter((r) => filters.every((f) => f(r))).map((r) => ({ ...r }))
+              : [];
+            return Promise.resolve({ data: rows, error: null, count: rows.length }).then(onF, onR);
+          },
+          catch() { return builder; },
+        };
+        return builder;
+      }
+
+      const client: any = {
+        auth: {
+          getUser: async (tok: string) => {
+            if (tok === ME_TOK) return { data: { user: { id: ME } }, error: null };
+            return { data: { user: null }, error: { message: "invalid token" } };
+          },
+        },
+        from: (table: string) => makeBuilder(table),
+        storage: {
+          createBucket: async () => ({ error: null }),
+          from: () => ({
+            upload: async () => ({ error: null }),
+            getPublicUrl: () => ({ data: { publicUrl: "" } }),
+          }),
+        },
+      };
+      return client;
+    }
+
+    const client = makeFailingUpdateClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { displayName: "Should Not Stick" },
+    });
+
+    assert.equal(patchRes.status, 500, "DB write failure must return 500");
+    const patchBody = await patchRes.json() as any;
+    assert.equal(patchBody.error, "db_error",
+      "error code must be db_error when the database rejects the write");
+
+    // The in-memory row must be unchanged — no partial mutation on DB failure
+    assert.equal(profiles[0].display_name, "Stable",
+      "profile row must not be mutated when the DB write fails");
+    assert.equal(profiles[0].name, "Stable",
+      "name column must not be mutated when the DB write fails");
+  });
+
   it("displayName exceeding 60 chars is rejected before any DB write", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "Short", display_name: "Short", username: "short",
