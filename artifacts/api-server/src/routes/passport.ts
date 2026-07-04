@@ -128,7 +128,7 @@ router.get("/users/:username/passport", async (req, res) => {
     return;
   }
 
-  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
   if (!username || username.length < 1) {
     sendError(res, "invalid_payload", "Invalid username");
     return;
@@ -139,14 +139,14 @@ router.get("/users/:username/passport", async (req, res) => {
   let { data, error } = await sc
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
-    .eq("username", username)
+    .or(`username.eq.${username},handle.eq.${username}`)
     .maybeSingle();
 
   if (error && (error as any).code === "42703") {
     ({ data, error } = await sc
       .from("profiles")
       .select(PUBLIC_PROFILE_COLUMNS_FALLBACK)
-      .eq("username", username)
+      .or(`username.eq.${username},handle.eq.${username}`)
       .maybeSingle());
   }
 
@@ -294,12 +294,12 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     return;
   }
 
-  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
 
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, passport_visibility")
-    .eq("username", username)
+    .or(`username.eq.${username},handle.eq.${username}`)
     .maybeSingle();
 
   if (profileErr || !profile) {
@@ -526,7 +526,7 @@ router.get("/users/:username/profile", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const username = req.params.username.replace(/^@/, "").toLowerCase().trim();
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
   if (!username) {
     sendError(res, "invalid_payload", "Invalid username");
     return;
@@ -535,7 +535,7 @@ router.get("/users/:username/profile", async (req, res) => {
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private")
-    .eq("username", username)
+    .or(`username.eq.${username},handle.eq.${username}`)
     .maybeSingle();
 
   if (profileErr || !profile) {

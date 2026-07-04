@@ -42,4 +42,12 @@ export EXPO_PUBLIC_DOMAIN="${REPLIT_DEV_DOMAIN}"
 export EXPO_PUBLIC_REPL_ID="${REPL_ID}"
 export REACT_NATIVE_PACKAGER_HOSTNAME="${REPLIT_DEV_DOMAIN}"
 
-exec expo start --dev-client --localhost --port "${PORT:-20682}" "$@"
+# Guard: Replit may inject PORT=8080 (the API server's port) as the system
+# default. The artifact system sets PORT=20682 via [services.env], but if that
+# override is not applied, fall back to 20682 so Metro never conflicts with the
+# API server.
+EXPO_PORT="${PORT:-20682}"
+if [ "$EXPO_PORT" = "8080" ]; then
+  EXPO_PORT="20682"
+fi
+exec expo start --dev-client --localhost --port "$EXPO_PORT" "$@"
