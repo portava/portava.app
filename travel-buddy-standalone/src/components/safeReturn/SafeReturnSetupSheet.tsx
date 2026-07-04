@@ -71,12 +71,15 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   const [contactsLoading, setContactsLoading] = useState(false);
   const [showWhyExpanded, setShowWhyExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [checking, setChecking] = useState(true);
+  // Tracks whether the Modal itself should be open. We only open it after the
+  // active-session pre-check resolves with no session, so the user never sees
+  // a modal that immediately dismisses itself on slower connections.
+  const [modalVisible, setModalVisible] = useState(false);
   const startLock = useRef(false);
 
   useEffect(() => {
     if (!visible) {
-      setChecking(true);
+      setModalVisible(false);
       return;
     }
 
@@ -91,7 +94,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           onClose();
           return;
         }
-        setChecking(false);
+        // No active session — now open the modal and load contacts in parallel.
+        setModalVisible(true);
         setContactsLoading(true);
         try {
           const [tc, ec] = await Promise.all([getTrustedContacts(), listEmergencyContacts()]);
@@ -104,7 +108,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
         }
       } catch {
         if (!cancelled) {
-          setChecking(false);
+          // On error, open the modal anyway so the user can still try.
+          setModalVisible(true);
           setContactsLoading(false);
         }
       }
@@ -202,7 +207,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.root}>
         {/* Header */}
         <View style={styles.header}>
@@ -215,14 +220,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           </Pressable>
         </View>
 
-        {checking ? (
-          <View style={styles.checkingContainer}>
-            <ActivityIndicator size="large" color={color.deep} />
-          </View>
-        ) : null}
-
         <ScrollView
-          style={[styles.body, checking && { display: 'none' }]}
+          style={styles.body}
           contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
         >
@@ -526,5 +525,4 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: space.xl,
   },
   startBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 15 },
-  checkingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });
