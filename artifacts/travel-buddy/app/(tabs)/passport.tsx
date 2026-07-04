@@ -371,6 +371,11 @@ function PassportContent({
           ) : (
             <View style={[StyleSheet.absoluteFill, { backgroundColor: color.haze }]} />
           )}
+          {coverUploading && (
+            <View style={styles.coverUploadingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          )}
           <Pressable
             style={styles.coverEditBtn}
             onPress={handleChangeCover}
@@ -531,6 +536,12 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
 
   coverBand: { width: '100%', height: 140, overflow: 'hidden' },
+  coverUploadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   coverEditBtn: {
     position: 'absolute',
     bottom: 10,
