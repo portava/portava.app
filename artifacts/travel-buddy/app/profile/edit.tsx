@@ -601,11 +601,16 @@ export default function EditProfileScreen() {
       return;
     }
     if (!profileRes.ok) {
-      if ((profileRes as any).errorKind === 'invalid_payload' && (profileRes as any).message?.toLowerCase().includes('username')) {
+      const kind = (profileRes as any).errorKind as string;
+      const msg: string = (profileRes as any).message ?? '';
+      const isUsernameTaken =
+        (kind === 'invalid_payload' || kind === 'conflict') &&
+        msg.toLowerCase().includes('username');
+      if (isUsernameTaken) {
         setUsernameStatus('taken');
-        setUsernameMessage((profileRes as any).message ?? 'Username not available');
+        setUsernameMessage(msg || 'Username not available');
       } else {
-        setSaveError((profileRes as any).message ?? 'Failed to save profile');
+        setSaveError(msg || 'Failed to save profile');
       }
       return;
     }
