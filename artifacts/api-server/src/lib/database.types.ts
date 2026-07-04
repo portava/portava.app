@@ -216,6 +216,35 @@ export type Database = {
           },
         ]
       }
+      circles: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circles_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       close_friends: {
         Row: {
           created_at: string
@@ -3955,8 +3984,10 @@ export type Database = {
           cover_photo_url: string | null
           created_at: string
           current_city: string | null
+          date_of_birth: string | null
           default_language: string | null
           display_name: string | null
+          dob_verified: boolean
           expo_push_token: string | null
           handle: string
           highlights_last_viewed_at: string | null
@@ -3969,6 +4000,7 @@ export type Database = {
           name: string
           notifications_inbox_viewed_at: string | null
           open_to_meet: boolean
+          passport_visibility: string
           planning_style: string | null
           preferred_language: string | null
           preferred_message_language: string
@@ -3986,6 +4018,9 @@ export type Database = {
           travel_style: string | null
           travel_styles: string[] | null
           updated_at: string
+          updated_by: string | null
+          username: string | null
+          username_updated_at: string | null
           verification_expires_at: string | null
           verification_method: string | null
           verification_status: string
@@ -4003,8 +4038,10 @@ export type Database = {
           cover_photo_url?: string | null
           created_at?: string
           current_city?: string | null
+          date_of_birth?: string | null
           default_language?: string | null
           display_name?: string | null
+          dob_verified?: boolean
           expo_push_token?: string | null
           handle: string
           highlights_last_viewed_at?: string | null
@@ -4017,6 +4054,7 @@ export type Database = {
           name: string
           notifications_inbox_viewed_at?: string | null
           open_to_meet?: boolean
+          passport_visibility?: string
           planning_style?: string | null
           preferred_language?: string | null
           preferred_message_language?: string
@@ -4034,6 +4072,9 @@ export type Database = {
           travel_style?: string | null
           travel_styles?: string[] | null
           updated_at?: string
+          updated_by?: string | null
+          username?: string | null
+          username_updated_at?: string | null
           verification_expires_at?: string | null
           verification_method?: string | null
           verification_status?: string
@@ -4051,8 +4092,10 @@ export type Database = {
           cover_photo_url?: string | null
           created_at?: string
           current_city?: string | null
+          date_of_birth?: string | null
           default_language?: string | null
           display_name?: string | null
+          dob_verified?: boolean
           expo_push_token?: string | null
           handle?: string
           highlights_last_viewed_at?: string | null
@@ -4065,6 +4108,7 @@ export type Database = {
           name?: string
           notifications_inbox_viewed_at?: string | null
           open_to_meet?: boolean
+          passport_visibility?: string
           planning_style?: string | null
           preferred_language?: string | null
           preferred_message_language?: string
@@ -4082,6 +4126,9 @@ export type Database = {
           travel_style?: string | null
           travel_styles?: string[] | null
           updated_at?: string
+          updated_by?: string | null
+          username?: string | null
+          username_updated_at?: string | null
           verification_expires_at?: string | null
           verification_method?: string | null
           verification_status?: string
@@ -4647,39 +4694,84 @@ export type Database = {
         }
         Relationships: []
       }
+      rent_buddy_fee_rules: {
+        Row: {
+          buddy_level: string
+          description: string | null
+          platform_fee_percent: number
+          traveler_service_fee_pct: number
+          traveler_service_fee_usd: number
+        }
+        Insert: {
+          buddy_level: string
+          description?: string | null
+          platform_fee_percent: number
+          traveler_service_fee_pct: number
+          traveler_service_fee_usd: number
+        }
+        Update: {
+          buddy_level?: string
+          description?: string | null
+          platform_fee_percent?: number
+          traveler_service_fee_pct?: number
+          traveler_service_fee_usd?: number
+        }
+        Relationships: []
+      }
       rent_buddy_packages: {
         Row: {
+          admin_review_status: string | null
           buddy_id: string
+          category: string | null
+          city: string | null
           created_at: string
           currency: string
           description: string | null
+          duration_h: number | null
           duration_hours: number | null
           id: string
           is_active: boolean
+          max_group: number | null
           name: string
           price: number
+          price_usd: number | null
+          title: string | null
         }
         Insert: {
+          admin_review_status?: string | null
           buddy_id: string
+          category?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           description?: string | null
+          duration_h?: number | null
           duration_hours?: number | null
           id?: string
           is_active?: boolean
+          max_group?: number | null
           name: string
           price: number
+          price_usd?: number | null
+          title?: string | null
         }
         Update: {
+          admin_review_status?: string | null
           buddy_id?: string
+          category?: string | null
+          city?: string | null
           created_at?: string
           currency?: string
           description?: string | null
+          duration_h?: number | null
           duration_hours?: number | null
           id?: string
           is_active?: boolean
+          max_group?: number | null
           name?: string
           price?: number
+          price_usd?: number | null
+          title?: string | null
         }
         Relationships: [
           {

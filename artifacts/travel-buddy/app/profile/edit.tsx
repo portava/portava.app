@@ -76,6 +76,56 @@ const SOCIAL_INTEREST_OPTIONS = [
   'Nature', 'History', 'Architecture', 'Music', 'Art', 'Sport', 'Reading',
 ];
 
+const TRAVEL_PACE_OPTIONS: { key: string; label: string }[] = [
+  { key: 'slow', label: 'Slow & relaxed' },
+  { key: 'balanced', label: 'Balanced' },
+  { key: 'packed', label: 'Action-packed' },
+];
+
+const BUDGET_STYLE_OPTIONS: { key: string; label: string }[] = [
+  { key: 'budget', label: 'Budget' },
+  { key: 'mid-range', label: 'Mid-range' },
+  { key: 'luxury', label: 'Luxury' },
+  { key: 'flexible', label: 'Flexible' },
+];
+
+const COMFORT_LEVEL_OPTIONS: { key: string; label: string }[] = [
+  { key: 'chill', label: 'Chill' },
+  { key: 'social', label: 'Social' },
+  { key: 'adventurous', label: 'Adventurous' },
+  { key: 'anything_goes', label: 'Anything goes' },
+];
+
+const PLANNING_STYLE_OPTIONS: { key: string; label: string }[] = [
+  { key: 'planner', label: 'Planner' },
+  { key: 'flexible', label: 'Flexible' },
+  { key: 'spontaneous', label: 'Spontaneous' },
+];
+
+const LOOKING_FOR_OPTIONS = [
+  'friends', 'activities', 'nightlife', 'food', 'culture',
+  'sightseeing', 'hidden_gems', 'local_help',
+];
+
+const LOOKING_FOR_LABELS: Record<string, string> = {
+  friends: 'Friends',
+  activities: 'Activities',
+  nightlife: 'Nightlife',
+  food: 'Food & drink',
+  culture: 'Culture',
+  sightseeing: 'Sightseeing',
+  hidden_gems: 'Hidden gems',
+  local_help: 'Local help',
+};
+
+const TRAVEL_GROUP_OPTIONS: { key: string; label: string }[] = [
+  { key: 'solo', label: 'Solo' },
+  { key: 'couple', label: 'Couple' },
+  { key: 'small_group', label: 'Small group' },
+  { key: 'big_group', label: 'Big group' },
+  { key: 'open_to_any', label: 'Open to any' },
+];
+
 interface FormState {
   displayName: string;
   username: string;
@@ -94,6 +144,13 @@ interface FormState {
   spokenLanguages: string[];
   travelStyles: string[];
   interests: string[];
+  travelPace: string | null;
+  budgetStyle: string | null;
+  comfortLevel: string | null;
+  planningStyle: string | null;
+  lookingFor: string[];
+  openToMeet: boolean;
+  travelGroupStyle: string[];
 }
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -117,6 +174,13 @@ export default function EditProfileScreen() {
     spokenLanguages: [],
     travelStyles: [],
     interests: [],
+    travelPace: null,
+    budgetStyle: null,
+    comfortLevel: null,
+    planningStyle: null,
+    lookingFor: [],
+    openToMeet: false,
+    travelGroupStyle: [],
     avatarUri: null,
     coverUri: null,
     avatarUrl: null,
@@ -160,7 +224,14 @@ export default function EditProfileScreen() {
     form.currentCity !== originalForm.currentCity ||
     form.spokenLanguages.join(',') !== originalForm.spokenLanguages.join(',') ||
     form.travelStyles.join(',') !== originalForm.travelStyles.join(',') ||
-    form.interests.join(',') !== originalForm.interests.join(',')
+    form.interests.join(',') !== originalForm.interests.join(',') ||
+    form.travelPace !== originalForm.travelPace ||
+    form.budgetStyle !== originalForm.budgetStyle ||
+    form.comfortLevel !== originalForm.comfortLevel ||
+    form.planningStyle !== originalForm.planningStyle ||
+    form.lookingFor.join(',') !== originalForm.lookingFor.join(',') ||
+    form.openToMeet !== originalForm.openToMeet ||
+    form.travelGroupStyle.join(',') !== originalForm.travelGroupStyle.join(',')
   );
 
   useEffect(() => {
@@ -189,6 +260,13 @@ export default function EditProfileScreen() {
           spokenLanguages: p.spokenLanguages ?? [],
           travelStyles: p.travelStyles ?? [],
           interests: p.interests ?? [],
+          travelPace: p.travelPace ?? null,
+          budgetStyle: p.budgetStyle ?? null,
+          comfortLevel: p.comfortLevel ?? null,
+          planningStyle: p.planningStyle ?? null,
+          lookingFor: p.lookingFor ?? [],
+          openToMeet: p.openToMeet ?? false,
+          travelGroupStyle: p.travelGroupStyle ?? [],
           avatarUri: null,
           coverUri: null,
           avatarUrl: p.avatarUrl,
@@ -420,6 +498,27 @@ export default function EditProfileScreen() {
     }
     if (form.interests.join(',') !== (originalForm?.interests ?? []).join(',')) {
       patch.interests = form.interests;
+    }
+    if (form.travelPace !== (originalForm?.travelPace ?? null)) {
+      patch.travelPace = form.travelPace as 'slow' | 'balanced' | 'packed' | null;
+    }
+    if (form.budgetStyle !== (originalForm?.budgetStyle ?? null)) {
+      patch.budgetStyle = form.budgetStyle as 'budget' | 'mid-range' | 'luxury' | 'flexible' | null;
+    }
+    if (form.comfortLevel !== (originalForm?.comfortLevel ?? null)) {
+      patch.comfortLevel = form.comfortLevel ?? undefined;
+    }
+    if (form.planningStyle !== (originalForm?.planningStyle ?? null)) {
+      patch.planningStyle = form.planningStyle ?? undefined;
+    }
+    if (form.lookingFor.join(',') !== (originalForm?.lookingFor ?? []).join(',')) {
+      patch.lookingFor = form.lookingFor;
+    }
+    if (form.openToMeet !== (originalForm?.openToMeet ?? false)) {
+      patch.openToMeet = form.openToMeet;
+    }
+    if (form.travelGroupStyle.join(',') !== (originalForm?.travelGroupStyle ?? []).join(',')) {
+      patch.travelGroupStyle = form.travelGroupStyle;
     }
     if (form.visibility !== (originalForm?.visibility ?? 'public')) {
       patch.passportVisibility = form.visibility;
@@ -824,6 +923,153 @@ export default function EditProfileScreen() {
                 </View>
               </View>
 
+              {/* ── Travel Persona ─────────────────────────────────── */}
+              <View style={styles.sectionDivider}>
+                <Text style={styles.sectionDividerText}>Travel Persona</Text>
+              </View>
+
+              {/* Travel Pace */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Travel pace</Text>
+                <View style={styles.chipGrid}>
+                  {TRAVEL_PACE_OPTIONS.map((opt) => {
+                    const active = form.travelPace === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setForm((f) => ({ ...f, travelPace: active ? null : opt.key }))}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Budget Style */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Travel budget</Text>
+                <View style={styles.chipGrid}>
+                  {BUDGET_STYLE_OPTIONS.map((opt) => {
+                    const active = form.budgetStyle === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setForm((f) => ({ ...f, budgetStyle: active ? null : opt.key }))}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Comfort Level / Vibe */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Vibe</Text>
+                <View style={styles.chipGrid}>
+                  {COMFORT_LEVEL_OPTIONS.map((opt) => {
+                    const active = form.comfortLevel === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setForm((f) => ({ ...f, comfortLevel: active ? null : opt.key }))}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Planning Style */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Planning style</Text>
+                <View style={styles.chipGrid}>
+                  {PLANNING_STYLE_OPTIONS.map((opt) => {
+                    const active = form.planningStyle === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setForm((f) => ({ ...f, planningStyle: active ? null : opt.key }))}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Looking For */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Looking for</Text>
+                <View style={styles.chipGrid}>
+                  {LOOKING_FOR_OPTIONS.map((key) => {
+                    const active = form.lookingFor.includes(key);
+                    return (
+                      <Pressable
+                        key={key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          const next = active
+                            ? form.lookingFor.filter((k) => k !== key)
+                            : [...form.lookingFor, key];
+                          setForm((f) => ({ ...f, lookingFor: next }));
+                        }}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                          {LOOKING_FOR_LABELS[key] ?? key}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Travel Group Style */}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>I travel as</Text>
+                <View style={styles.chipGrid}>
+                  {TRAVEL_GROUP_OPTIONS.map((opt) => {
+                    const active = form.travelGroupStyle.includes(opt.key);
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          const next = active
+                            ? form.travelGroupStyle.filter((k) => k !== opt.key)
+                            : [...form.travelGroupStyle, opt.key];
+                          setForm((f) => ({ ...f, travelGroupStyle: next }));
+                        }}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Open to Meet */}
+              <View style={styles.field}>
+                <Pressable
+                  style={styles.toggleRow}
+                  onPress={() => setForm((f) => ({ ...f, openToMeet: !f.openToMeet }))}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>Open to meeting travelers</Text>
+                    <Text style={styles.fieldHint}>Show you're open to connecting in person</Text>
+                  </View>
+                  <View style={[styles.personaToggle, form.openToMeet && styles.personaToggleOn]}>
+                    <View style={[styles.personaToggleKnob, form.openToMeet && styles.personaToggleKnobOn]} />
+                  </View>
+                </Pressable>
+              </View>
+
               {/* Date of Birth */}
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Date of Birth</Text>
@@ -1174,6 +1420,44 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: color.deep, borderColor: color.deep },
   chipText: { ...t.small, color: color.ink, fontSize: 12, fontWeight: '600' },
   chipTextActive: { color: color.onInk },
+
+  sectionDivider: {
+    paddingVertical: space.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    marginBottom: space.xs,
+  },
+  sectionDividerText: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.xs,
+  },
+  toggleLabel: { ...t.body, color: color.ink, fontWeight: '600' },
+  personaToggle: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: color.haze,
+    padding: 3,
+    justifyContent: 'center',
+  },
+  personaToggleOn: { backgroundColor: color.deep },
+  personaToggleKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: color.paper,
+    alignSelf: 'flex-start',
+  },
+  personaToggleKnobOn: { alignSelf: 'flex-end' },
 
   langPickerRow: {
     flexDirection: 'row',

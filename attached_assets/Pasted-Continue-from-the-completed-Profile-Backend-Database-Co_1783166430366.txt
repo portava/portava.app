@@ -1,0 +1,148 @@
+Continue from the completed Profile Backend/Database Connectivity Audit.
+
+Do not rebuild the profile system. Apply only the remaining confirmed follow-up fixes from the audit.
+
+Context:
+- Task #1561 fixed the double-tap Edit Profile Save issue with a save guard and try/finally.
+- The profile audit confirmed most profile/backend wiring is correct.
+- One backend gap was fixed: POST /profile/ensure now writes display_name.
+- Remaining issues:
+  1. database.types.ts is stale and missing profile/table columns added by migrations.
+  2. Travel Persona fields are accepted by the backend but are not exposed in the Edit Profile UI.
+
+Work to complete:
+
+1. Fix/regenerate stale Supabase database types
+
+Audit lib/database.types.ts against the actual migrations and current schema.
+
+The audit report says the generated profile types are missing columns such as:
+- username
+- passport_visibility
+- date_of_birth
+- username_updated_at
+- dob_verified
+- updated_by
+
+It also mentioned unrelated typecheck failures for:
+- rent_buddy_fee_rules
+- circles
+
+Do this safely:
+- Confirm which columns exist in migrations and live schema assumptions.
+- Regenerate Supabase database types if the project tooling/token is available.
+- If regeneration is not available in this environment, patch the local generated types only to match the migrations already in the repo.
+- Do not invent columns that are not in migrations.
+- Do not change runtime behavior just to satisfy types.
+- After updating types, run typecheck again and confirm whether the previous type errors are resolved.
+
+2. Add Travel Persona fields to Edit Profile UI
+
+The backend already accepts and stores these fields through PATCH /me/profile:
+- travelPace
+- budgetStyle
+- comfortLevel
+- planningStyle
+- lookingFor
+- openToMeet
+- travelGroupStyle
+
+Add them to the active Edit Profile screen, likely app/profile/edit.tsx, using the existing form patterns.
+
+Requirements:
+- Add a clear “Travel Persona” section.
+- Use clean, mobile-friendly controls such as chips, segmented controls, selects, or toggles consistent with the existing app design.
+- Load existing values from the profile record.
+- Save them through the existing profile save handler.
+- Do not break existing fields.
+- Do not trigger username validation when only Travel Persona fields are edited.
+- Do not overwrite unrelated profile fields.
+- Show saved values immediately on return to Passport/Profile if the app currently displays or uses them.
+- If Passport does not yet display these fields, add a compact, tasteful summary section only if it fits the existing Passport design. Otherwise keep them editable and stored for Compass/Discovery personalization.
+
+Suggested option values, unless existing constants already exist:
+
+travelPace:
+- relaxed
+- balanced
+- packed
+
+budgetStyle:
+- budget
+- mid_range
+- luxury
+- flexible
+
+comfortLevel:
+- chill
+- social
+- adventurous
+- anything_goes
+
+planningStyle:
+- planner
+- flexible
+- spontaneous
+
+lookingFor:
+- friends
+- activities
+- nightlife
+- food
+- culture
+- sightseeing
+- hidden_gems
+- local_help
+
+openToMeet:
+- true
+- false
+
+travelGroupStyle:
+- solo
+- couple
+- small_group
+- big_group
+- open_to_any
+
+Reuse any existing app constants if they already exist. Do not create conflicting values if backend already expects specific enums/strings.
+
+3. Confirm profile save remains fixed
+
+Add or update tests proving:
+- Editing Travel Persona fields saves successfully.
+- Editing Travel Persona fields does not trigger username validation.
+- Existing username is preserved.
+- Existing display name is preserved.
+- Avatar, cover photo, highlights, trust score, verification status, and home country lock are not overwritten.
+- Saved Travel Persona fields persist after refetch/reload.
+- Typecheck no longer fails from stale database types, if type regeneration/patching was possible.
+
+4. Manual QA
+
+Manually verify:
+- Open Passport/Profile.
+- Tap Edit Profile.
+- Change display name only.
+- Save.
+- No username error appears.
+- Reopen Edit Profile.
+- Change Travel Persona fields only.
+- Save.
+- No username error appears.
+- Reopen Edit Profile.
+- Travel Persona choices persist.
+- Confirm profile image, cover photo, username, display name, and highlights were not wiped.
+- Run relevant tests and typecheck.
+
+5. Final report
+
+Report:
+- Whether database types were regenerated or patched manually.
+- Which missing columns were added to database.types.ts.
+- Whether typecheck now passes.
+- Which Travel Persona fields were added to the UI.
+- Exact files changed.
+- Tests added/updated.
+- Commands run.
+- Any remaining limitation.
