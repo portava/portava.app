@@ -451,9 +451,10 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    await submitGuardRef.current.trySubmit(text, async (t) => {
-      setSubmitting(true);
-      try {
+    if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    setSubmitting(true);
+    try {
+      await submitGuardRef.current.trySubmit(text, async (t) => {
         if (replyingTo) {
           const result = await addReply(postId, replyingTo.id, t);
           if (result && 'reply' in result) {
@@ -493,10 +494,10 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
             Alert.alert('Could not post comment', 'Please try again.');
           }
         }
-      } finally {
-        setSubmitting(false);
-      }
-    });
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }, [text, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
@@ -728,9 +729,10 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    await submitGuardRef.current.trySubmit(text, async (t) => {
-      setSubmitting(true);
-      try {
+    if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    setSubmitting(true);
+    try {
+      await submitGuardRef.current.trySubmit(text, async (t) => {
         if (replyingTo) {
           const result = await addReply(postId, replyingTo.id, t);
           if (result && 'reply' in result) {
@@ -771,10 +773,10 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             Alert.alert('Could not post comment', 'Please try again.');
           }
         }
-      } finally {
-        setSubmitting(false);
-      }
-    });
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }, [text, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
