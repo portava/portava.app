@@ -1099,3 +1099,57 @@ describe("PATCH /me/profile — single-field guard: each patchable field accepte
     });
   }
 });
+
+// ── Username cooldown ──────────────────────────────────────────────────────────
+
+describe("PATCH /me/profile — username 30-day cooldown", () => {
+  function cooldownProfile(username_updated_at: string | null): ProfileRow[] {
+    return [
+      {
+        id: ME, name: "Traveler", display_name: "Traveler", username: "old_handle",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null,
+      },
+    ];
+  }
+
+  it("rejects username change when cooldown window is still open (15 days since last change)", async () => {
+    const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(cooldownProfile(fifteenDaysAgo));
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const res = await api("/me/profile", { method: "PATCH", body: { username: "new_handle" } });
+    const body = await res.json() as any;
+
+    assert.equal(res.status, 400,
+      `Expected 400 when cooldown is active, got ${res.status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "invalid_payload",
+      `Expected error code "invalid_payload", got: ${JSON.stringify(body)}`);
+    assert.match(String(body.message), /30 days/,
+      `Error message should mention "30 days", got: ${body.message}`);
+  });
+
+  it("allows username change when cooldown window has passed (31 days since last change)", async () => {
+    const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(cooldownProfile(thirtyOneDaysAgo));
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const res = await api("/me/profile", { method: "PATCH", body: { username: "new_handle" } });
+    const body = await res.json() as any;
+
+    assert.equal(res.status, 200,
+      `Expected 200 when cooldown has passed, got ${res.status}: ${JSON.stringify(body)}`);
+    assert.equal(body.username, "new_handle",
+      `Expected updated username in response, got: ${JSON.stringify(body)}`);
+  });
+});
