@@ -699,6 +699,94 @@ function runVisibleOnEffect(opts: {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 8: 5-second timeout safety net
+//
+// SafeReturnSetupSheet's useEffect sets a 5 s safety-net timeout: if
+// getActiveSession stalls (network hang, app backgrounded mid-check), the
+// timeout fires onCheckingChange(false) and onClose() so the trigger button
+// never stays permanently stuck. After the timeout fires it sets live=false,
+// so any callbacks inside the IIFE's finally-block are suppressed when the
+// stalled getActiveSession eventually resolves.
+//
+// Tests use timeoutMs: 20 so the suite runs fast while exercising the real
+// timeout branch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Models the FULL SafeReturnSetupSheet useEffect body, including the
+ * 5-second safety-net timeout.
+ *
+ * Structure mirrors the component exactly:
+ *
+ *   let live = true;
+ *   const checkTimeoutId = setTimeout(() => {
+ *     if (live) { live = false; onCheckingChange(false); onClose(); }
+ *   }, timeoutMs);
+ *   (async () => {
+ *     onCheckingChange(true);
+ *     try { await runOpenEffect(...) } catch {} finally {
+ *       clearTimeout(checkTimeoutId);
+ *       if (live) onCheckingChange(false);
+ *     }
+ *   })();
+ *   // cleanup:  live = false; clearTimeout; onCheckingChange(false);
+ *
+ * @param timeoutMs  defaults to 5000 in production; pass a small value (e.g.
+ *                   20) in tests so they don't block for 5 seconds.
+ *
+ * Returns:
+ *   timeoutFired — Promise that resolves once the safety-net timeout fires
+ *                  (does NOT resolve if cancel() clears the timer first).
+ *   cancel()     — mirrors the effect cleanup (visible flipped back to false).
+ */
+function runTimeoutEffect(opts: {
+  onClose: () => void;
+  onCheckingChange: (v: boolean) => void;
+  getActiveSession: () => Promise<{ session: { id: string } | null }>;
+  timeoutMs?: number;
+}): { timeoutFired: Promise<void>; cancel: () => void } {
+  let live = true;
+
+  let resolveTimeoutFired!: () => void;
+  const timeoutFired = new Promise<void>((r) => { resolveTimeoutFired = r; });
+
+  const checkTimeoutId = setTimeout(() => {
+    if (live) {
+      live = false;
+      opts.onCheckingChange(false);
+      opts.onClose();
+      resolveTimeoutFired();
+    }
+  }, opts.timeoutMs ?? 5_000);
+
+  (async () => {
+    opts.onCheckingChange(true);
+
+    try {
+      await runOpenEffect({
+        onStarted: () => {},
+        onClose:   () => { if (live) opts.onClose(); },
+        getActiveSession: opts.getActiveSession,
+      });
+    } catch {
+      // fail-open
+    } finally {
+      clearTimeout(checkTimeoutId);
+      if (live) opts.onCheckingChange(false);
+    }
+  })();
+
+  return {
+    timeoutFired,
+    cancel: () => {
+      live = false;
+      clearTimeout(checkTimeoutId);
+      opts.onCheckingChange(false);
+    },
+  };
+}
+
 describe('SafeReturnSetupSheet — onCheckingChange overlay (all exit paths)', () => {
   // ── Path 1: no active session → form opens ─────────────────────────────────
 
@@ -914,5 +1002,145 @@ describe('SafeReturnSetupSheet — onCheckingChange overlay (all exit paths)', (
 
     assert.equal(modalShouldOpen, true,
       'on runOpenEffect error the form must still open (fail-open) so the user is not blocked');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 8: 5-second timeout safety net
+//
+// Verifies that when getActiveSession stalls (never resolves within 5 s),
+// the safety-net timeout resets the trigger button correctly:
+//   1. onCheckingChange(false) fires exactly once — trigger button unlocks
+//   2. onClose() fires exactly once — parent resets visible → user can retry
+//   3. Neither callback fires again when the stalled getActiveSession eventually
+//      resolves (live=false guard in the IIFE's finally-block)
+//   4. cancel() before the timeout clears the timer, so the timeout callback
+//      is suppressed and cannot double-fire onClose / onCheckingChange
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SafeReturnSetupSheet — 5-second timeout safety net', () => {
+  // Run all timeout tests at 20 ms instead of 5 000 ms.
+  const TIMEOUT_MS = 20;
+
+  // ── Timeout fires: basic sequence ──────────────────────────────────────────
+
+  it('timeout: onCheckingChange sequence is [true, false] when getActiveSession stalls', async () => {
+    const log: boolean[] = [];
+
+    const { timeoutFired } = runTimeoutEffect({
+      onClose:          () => {},
+      onCheckingChange: (v) => { log.push(v); },
+      getActiveSession: () => new Promise(() => {}), // never resolves
+      timeoutMs:        TIMEOUT_MS,
+    });
+    await timeoutFired;
+
+    assert.deepEqual(log, [true, false],
+      'timeout must deliver onCheckingChange(true) then onCheckingChange(false)');
+  });
+
+  it('timeout: onCheckingChange ends as false — trigger button is unlocked', async () => {
+    let checking = false;
+
+    const { timeoutFired } = runTimeoutEffect({
+      onClose:          () => {},
+      onCheckingChange: (v) => { checking = v; },
+      getActiveSession: () => new Promise(() => {}), // stalled
+      timeoutMs:        TIMEOUT_MS,
+    });
+    await timeoutFired;
+
+    assert.equal(checking, false,
+      'safeReturnChecking must be false after the timeout fires');
+  });
+
+  it('timeout: onClose() fires exactly once from the timeout path', async () => {
+    let closeCalls = 0;
+
+    const { timeoutFired } = runTimeoutEffect({
+      onClose:          () => { closeCalls++; },
+      onCheckingChange: () => {},
+      getActiveSession: () => new Promise(() => {}), // stalled
+      timeoutMs:        TIMEOUT_MS,
+    });
+    await timeoutFired;
+
+    assert.equal(closeCalls, 1,
+      'onClose must fire exactly once from the timeout — not zero, not two');
+  });
+
+  // ── live=false guard: stalled getActiveSession eventually resolves ──────────
+
+  it('timeout: live=false guard — onCheckingChange(false) NOT called again when stalled session resolves', async () => {
+    let falseCalls = 0;
+
+    let resolveSession!: (v: { session: null }) => void;
+    const sessionPromise = new Promise<{ session: null }>((r) => { resolveSession = r; });
+
+    const { timeoutFired } = runTimeoutEffect({
+      onClose:          () => {},
+      onCheckingChange: (v) => { if (!v) falseCalls++; },
+      getActiveSession: () => sessionPromise,
+      timeoutMs:        TIMEOUT_MS,
+    });
+
+    await timeoutFired; // timeout fires: live=false, onCheckingChange(false) × 1
+
+    // Now let the stalled getActiveSession resolve (the IIFE is still running)
+    resolveSession({ session: null });
+    // Drain pending microtasks so the IIFE finally-block has a chance to run
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    assert.equal(falseCalls, 1,
+      'onCheckingChange(false) must not fire a second time when the stalled ' +
+      'getActiveSession resolves after the timeout (live=false guard)');
+  });
+
+  it('timeout: live=false guard — onClose NOT called again when stalled session resolves', async () => {
+    let closeCalls = 0;
+
+    let resolveSession!: (v: { session: null }) => void;
+    const sessionPromise = new Promise<{ session: null }>((r) => { resolveSession = r; });
+
+    const { timeoutFired } = runTimeoutEffect({
+      onClose:          () => { closeCalls++; },
+      onCheckingChange: () => {},
+      getActiveSession: () => sessionPromise,
+      timeoutMs:        TIMEOUT_MS,
+    });
+
+    await timeoutFired;
+
+    resolveSession({ session: null });
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    assert.equal(closeCalls, 1,
+      'onClose must not fire a second time when the stalled getActiveSession ' +
+      'resolves after the timeout (live=false guard in IIFE finally)');
+  });
+
+  // ── cancel() before timeout: timer is cleared, timeout callback suppressed ──
+
+  it('cleanup before timeout: cancel() prevents the timeout callback from firing', async () => {
+    let closeCalls = 0;
+    let falseCalls = 0;
+
+    const { cancel } = runTimeoutEffect({
+      onClose:          () => { closeCalls++; },
+      onCheckingChange: (v) => { if (!v) falseCalls++; },
+      getActiveSession: () => new Promise(() => {}), // stalled
+      timeoutMs:        TIMEOUT_MS,
+    });
+
+    // cancel() clears the timer before it fires
+    cancel();
+
+    // Wait 3× the timeout to give the (now-cleared) setTimeout every chance to fire
+    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS * 3));
+
+    assert.equal(closeCalls, 0,
+      'timeout must not call onClose after cancel() cleared the timer');
+    assert.equal(falseCalls, 1,
+      'cancel() itself delivers onCheckingChange(false) exactly once (cleanup path)');
   });
 });
