@@ -6,7 +6,9 @@ import {
   View, Text, ScrollView, Pressable, Image,
   ActivityIndicator, StyleSheet, Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import EventsTabScreen from './events';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import {
   Plus, Users, CalendarDays, MapPin, CalendarClock,
@@ -167,12 +169,16 @@ function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   );
 }
 
+type TripsTab = 'trips' | 'events';
+
 function TripsScreen() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
   const { data: realTrips, loading, error, reload } = useMyTrips();
   const { meetups: meetupCount } = useUnreadCounts();
   const [layoverOpen, setLayoverOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<TripsTab>('trips');
+  const insets = useSafeAreaInsets();
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
@@ -182,46 +188,75 @@ function TripsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader
-        title="Trips"
-        right={
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <NotificationBell />
-            <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
-              <Plus size={16} color={color.onInk} />
-              <Text style={styles.newBtnText}>New trip</Text>
-            </Pressable>
-          </View>
-        }
-      />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
-        <MeetupsShortcut count={meetupCount} />
+      {/* Header — hidden when Events tab is active (EventsTabScreen renders its own) */}
+      {activeTab === 'trips' && (
+        <ScreenHeader
+          title="Trips"
+          right={
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <NotificationBell />
+              <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
+                <Plus size={16} color={color.onInk} />
+                <Text style={styles.newBtnText}>New trip</Text>
+              </Pressable>
+            </View>
+          }
+        />
+      )}
 
-        {/* Layover Mode quick-access banner */}
-        <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
-          <Plane size={16} color="#1565C0" />
-          <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
-        </Pressable>
-
-        {live && <PendingInvitesSection onAccepted={reload} />}
-        {live ? (
-          <LiveTrips trips={realTrips} loading={loading} error={error} />
-        ) : (
-          <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
-            <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
-            <Text style={styles.signInCtaSub}>Log or plan a trip, track destinations, and share your travel story.</Text>
+      {/* Segmented tab control — Trips | Events */}
+      <View style={styles.segControl}>
+        {(['trips', 'events'] as const).map((tab) => (
+          <Pressable
+            key={tab}
+            style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
+              {tab === 'trips' ? 'Trips' : 'Events'}
+            </Text>
           </Pressable>
-        )}
-        <Pressable style={styles.empty} onPress={() => router.push('/trip/new')}>
-          <Plus size={20} color={color.deep} />
-          <Text style={styles.emptyText}>Start a new trip</Text>
-        </Pressable>
-      </ScrollView>
+        ))}
+      </View>
 
-      <LayoverModeSheet
-        visible={layoverOpen}
-        onClose={() => setLayoverOpen(false)}
-      />
+      {activeTab === 'trips' ? (
+        <>
+          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
+            <MeetupsShortcut count={meetupCount} />
+
+            {/* Layover Mode quick-access banner */}
+            <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
+              <Plane size={16} color="#1565C0" />
+              <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
+            </Pressable>
+
+            {live && <PendingInvitesSection onAccepted={reload} />}
+            {live ? (
+              <LiveTrips trips={realTrips} loading={loading} error={error} />
+            ) : (
+              <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
+                <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
+                <Text style={styles.signInCtaSub}>Log or plan a trip, track destinations, and share your travel story.</Text>
+              </Pressable>
+            )}
+            <Pressable style={styles.empty} onPress={() => router.push('/trip/new')}>
+              <Plus size={20} color={color.deep} />
+              <Text style={styles.emptyText}>Start a new trip</Text>
+            </Pressable>
+          </ScrollView>
+
+          <LayoverModeSheet
+            visible={layoverOpen}
+            onClose={() => setLayoverOpen(false)}
+          />
+        </>
+      ) : (
+        /* Offset the EventsTabScreen's own paddingTop: insets.top so it sits
+           flush under our segmented control, not behind the status bar again. */
+        <View style={{ flex: 1, marginTop: -insets.top }}>
+          <EventsTabScreen />
+        </View>
+      )}
     </View>
   );
 }
@@ -384,6 +419,28 @@ const styles = StyleSheet.create({
   inviteBtnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700' },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+
+  segControl: {
+    flexDirection: 'row',
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    marginBottom: space.xs,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: 4,
+  },
+  segBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+  },
+  segBtnActive: { backgroundColor: color.ink },
+  segLabel: { ...t.small, fontWeight: '700', color: color.mute, fontSize: 13 },
+  segLabelActive: { color: color.onInk },
 });
 
 export default function Trips() {

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, CalendarDays, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
+import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
@@ -15,7 +15,6 @@ import { useSession } from '../../src/context/SessionContext';
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
-  { href: '/(tabs)/events', label: 'Events', icon: CalendarDays, match: ['/(tabs)/events'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
@@ -94,8 +93,8 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
       pointerEvents="box-none"
     >
       <View style={fb.pill}>
-        {/* Left items: Pulse, Explore, Events */}
-        {NAV_ITEMS.slice(0, 3).map(({ href, label, icon: Icon, match }) => {
+        {/* Left items: Pulse, Explore */}
+        {NAV_ITEMS.slice(0, 2).map(({ href, label, icon: Icon, match }) => {
           const active = isActive(match);
           const badge =
             label === 'Explore' ? newHighlights : 0;
@@ -137,7 +136,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         </Pressable>
 
         {/* Right items: Trips, Passport */}
-        {NAV_ITEMS.slice(3).map(({ href, label, icon: Icon, match }) => {
+        {NAV_ITEMS.slice(2).map(({ href, label, icon: Icon, match }) => {
           const active = isActive(match);
           const badge =
             label === 'Trips' ? pendingTripInvites
@@ -225,7 +224,7 @@ export default function TabLayout() {
         options={{ title: 'Explore' }}
         listeners={{ focus: refreshUnread }}
       />
-      <Tabs.Screen name="events" options={{ title: 'Events' }} />
+      <Tabs.Screen name="events" options={{ title: 'Events', href: null }} />
       <Tabs.Screen
         name="create-tab"
         options={{ title: 'Post', href: null }}
