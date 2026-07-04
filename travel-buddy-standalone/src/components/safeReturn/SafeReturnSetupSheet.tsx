@@ -20,6 +20,7 @@ import {
   type SafeReturnContactInput,
 } from '../../services/safeReturn';
 import { runOpenEffect } from './SafeReturnSetupSheet.openEffect';
+import { runContactLoad } from './SafeReturnSetupSheet.contactLoad';
 import {
   listEmergencyContacts,
   type EmergencyContact,
@@ -100,16 +101,11 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       // No active session (or error) — open the form and load contacts.
       setModalVisible(true);
       setContactsLoading(true);
-      try {
-        const [tc, ec] = await Promise.all([getTrustedContacts(), listEmergencyContacts()]);
-        if (!cancelled) {
-          setTrustedContacts(tc);
-          setEmergencyContacts(ec.contacts);
-        }
-      } catch {
-        // Contact loading failure is non-fatal; the user can still start a session.
-      } finally {
-        if (!cancelled) setContactsLoading(false);
+      const contactResult = await runContactLoad({ getTrustedContacts, listEmergencyContacts });
+      if (!cancelled) {
+        setTrustedContacts(contactResult.trustedContacts);
+        setEmergencyContacts(contactResult.emergencyContacts);
+        setContactsLoading(false);
       }
     })();
 

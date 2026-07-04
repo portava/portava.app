@@ -166,6 +166,7 @@ STANDALONE_OWNED_FILES=(
   "src/components/__tests__/SafeReturnActiveCard.doubletap.test.ts"
   "src/components/safeReturn/SafeReturnSetupSheet.openEffect.ts"
   "src/components/__tests__/SafeReturnSetupSheet.openEffect.test.ts"
+  "src/components/__tests__/SafeReturnSetupSheet.contactLoad.test.ts"
   "app/profile/change-password.tsx"
 )
 
