@@ -20,6 +20,7 @@ import {
   type SafeReturnContactInput,
 } from '../../services/safeReturn';
 import { runOpenEffect } from './SafeReturnSetupSheet.openEffect';
+import { runHandleStart } from './SafeReturnSetupSheet.handleStart';
 import { runContactLoad } from './SafeReturnSetupSheet.contactLoad';
 import {
   listEmergencyContacts,
@@ -196,40 +197,35 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           })),
       ];
 
-      const created = await createSession({
-        timerMinutes: timerMinutes ?? undefined,
-        escalationLevel,
-        trustedCircleEnabled,
-        liveShareEnabled,
-        notifyHostEnabled,
-        notifyTripCrewEnabled,
-        emergencyNote: emergencyNote.trim() || undefined,
-        planItemId,
-        tripId,
-        contacts,
+      const outcome = await runHandleStart({
+        createSession: () => createSession({
+          timerMinutes: timerMinutes ?? undefined,
+          escalationLevel,
+          trustedCircleEnabled,
+          liveShareEnabled,
+          notifyHostEnabled,
+          notifyTripCrewEnabled,
+          emergencyNote: emergencyNote.trim() || undefined,
+          planItemId,
+          tripId,
+          contacts,
+        }),
+        startSession,
+        onStarted,
+        onClose,
       });
 
-      if (!created.ok || !created.session) {
-        if (created.error === 'conflict') {
-          Alert.alert(
-            'Session already active',
-            'You already have an active Safe Return session. Cancel or confirm that one before starting a new one.',
-          );
-        } else {
-          Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
-        }
-        return;
-      }
-
-      // Immediately start the timer
-      const started = await startSession(created.session.id);
-
-      if (started.ok && started.session) {
-        onStarted?.(started.session.id);
-        onClose();
-      } else {
+      if (outcome === 'conflict') {
+        Alert.alert(
+          'Session already active',
+          'You already have an active Safe Return session. Cancel or confirm that one before starting a new one.',
+        );
+      } else if (outcome === 'createFailed') {
+        Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
+      } else if (outcome === 'startFailed') {
         Alert.alert('Error', 'Session created but could not be started.');
       }
+      // 'started' → onStarted + onClose already fired inside runHandleStart
     } finally {
       startLock.current = false;
       setSaving(false);
