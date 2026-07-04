@@ -42,7 +42,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
-    tags: [],
+    tags: [categoryToStamp(p.category)],
     mediaUrl: p.mediaUrls[0],
     caption: p.content,
     source: 'user',
@@ -57,6 +57,12 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     spanTags: p.tags,
     spanHashtags: p.hashtagUsages,
   };
+}
+
+/** Map a PostCategory slug to a human-readable stamp label. Falls back to 'Travel'. */
+function categoryToStamp(cat: string | null | undefined): string {
+  if (!cat) return 'Travel';
+  return cat.charAt(0).toUpperCase() + cat.slice(1);
 }
 
 function timeAgo(iso: string): string {
