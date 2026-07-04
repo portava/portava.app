@@ -253,6 +253,135 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     assert.equal(body.homeCountry, "Philippines");
   });
 
+  it("bio, homeCity, and homeCountry survive a round-trip without being wiped", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Wanderer", display_name: "Wanderer", username: "wanderer",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: {
+        bio: "Digital nomad at heart",
+        homeCity: "Cebu City",
+        homeCountry: "Philippines",
+      },
+    });
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(await patchRes.clone().json())}`);
+
+    const getRes = await api("/me/profile");
+    assert.equal(getRes.status, 200);
+    const body = await getRes.json() as any;
+
+    assert.equal(body.bio, "Digital nomad at heart", "bio must survive PATCH round-trip");
+    assert.equal(body.homeCity, "Cebu City", "homeCity must survive PATCH round-trip");
+    assert.equal(body.homeCountry, "Philippines", "homeCountry must survive PATCH round-trip");
+
+    // Verify in-memory columns are written with the correct DB column names
+    assert.equal(profiles[0].bio, "Digital nomad at heart", "bio column must be written");
+    assert.equal(profiles[0].home_city, "Cebu City", "home_city column must be written");
+    assert.equal(profiles[0].home_country, "Philippines", "home_country column must be written");
+  });
+
+  it("spokenLanguages and travelStyles survive a round-trip without being wiped", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Polyglot", display_name: "Polyglot", username: "polyglot",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: {
+        spokenLanguages: ["en", "tl", "es"],
+        travelStyles: ["backpacker", "slow-travel"],
+      },
+    });
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(await patchRes.clone().json())}`);
+
+    const getRes = await api("/me/profile");
+    assert.equal(getRes.status, 200);
+    const body = await getRes.json() as any;
+
+    assert.deepEqual(body.spokenLanguages, ["en", "tl", "es"],
+      "spokenLanguages must survive PATCH round-trip");
+    assert.deepEqual(body.travelStyles, ["backpacker", "slow-travel"],
+      "travelStyles must survive PATCH round-trip");
+
+    // Verify correct DB column names are written
+    assert.deepEqual(profiles[0].spoken_languages, ["en", "tl", "es"],
+      "spoken_languages column must be written");
+    assert.deepEqual(profiles[0].travel_styles, ["backpacker", "slow-travel"],
+      "travel_styles column must be written");
+  });
+
+  it("publicSocialLinks survive a round-trip without being wiped", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Linked", display_name: "Linked", username: "linked_up",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const links = {
+      instagram: "https://instagram.com/linked_up",
+      twitter: "https://twitter.com/linked_up",
+    };
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { publicSocialLinks: links },
+    });
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(await patchRes.clone().json())}`);
+
+    const getRes = await api("/me/profile");
+    assert.equal(getRes.status, 200);
+    const body = await getRes.json() as any;
+
+    assert.deepEqual(body.publicSocialLinks, links,
+      "publicSocialLinks must survive PATCH round-trip");
+
+    // Verify correct DB column name is written
+    assert.deepEqual(profiles[0].public_social_links, links,
+      "public_social_links column must be written");
+  });
+
   it("PATCH with no fields returns 400 invalid_payload", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "No-Op", display_name: "No-Op", username: "noop",
