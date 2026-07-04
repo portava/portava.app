@@ -32,7 +32,10 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { runOpenEffect } from '../safeReturn/SafeReturnSetupSheet.openEffect.ts';
+import {
+  runOpenEffect,
+  startCheckedOpenEffect,
+} from '../safeReturn/SafeReturnSetupSheet.openEffect.ts';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -425,5 +428,410 @@ describe('SafeReturnSetupSheet open-effect — cancellation guard (rapid re-open
     await Promise.all([e1, e2, e3]);
 
     assert.deepEqual(fired, [3], 'only the non-cancelled effect (effect 3) must fire onStarted');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// startCheckedOpenEffect — safety-net timeout tests
+//
+// These tests exercise the 5 s safety-net that prevents the "Checking…" button
+// from getting permanently stuck when the network stalls. All tests pass a very
+// short `timeoutMs` (≤ 10 ms) so the safety-net fires without fake timers.
+//
+// Scenarios:
+//   T1 – getActiveSession never resolves (stalled) → timeout fires →
+//          onCheckingChange(false) + onClose() called
+//   T2 – timeout fires first, then resolve arrives late →
+//          stale callbacks are NOT fired a second time
+//   T3 – getActiveSession resolves before timeout (normal path) →
+//          timeout cleared, onCheckingChange(false) exactly once, onClose not called
+//   T4 – cancel() called before timeout → checking reset, timer cleared
+//   T5 – cancel() then late resolve → no phantom callbacks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── helpers ────────────────────────────────────────────────────────────────────
+
+/** A Promise that never settles — simulates a stalled network call. */
+function neverResolves(): Promise<{ session: null }> {
+  return new Promise(() => {});
+}
+
+/** Deferred: resolves externally — simulates a late network response. */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
+/**
+ * Waits `ms` milliseconds, then drains the microtask queue twice so all async
+ * continuations that became unblocked during the wait have settled.
+ */
+async function waitFor(ms: number): Promise<void> {
+  await new Promise<void>((res) => setTimeout(res, ms));
+  await new Promise<void>((res) => setImmediate(res));
+  await new Promise<void>((res) => setImmediate(res));
+}
+
+// ── T1: stalled network — timeout must always unblock the button ──────────────
+
+describe('startCheckedOpenEffect T1 — stalled network: safety-net timeout fires', () => {
+  it('calls onCheckingChange(false) after timeout when getActiveSession never resolves', async () => {
+    const checkingValues: boolean[] = [];
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => checkingValues.push(v),
+        onClose: () => {},
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+
+    assert.ok(
+      checkingValues.includes(false),
+      `onCheckingChange(false) must be called by the timeout; got: [${checkingValues}]`,
+    );
+
+    handle.cancel();
+  });
+
+  it('calls onClose() after timeout when getActiveSession never resolves', async () => {
+    let closeCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => { closeCalled = true; },
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(closeCalled, true, 'onClose must be called by the safety-net timeout');
+
+    handle.cancel();
+  });
+
+  it('onCheckingChange(true) fires first, then onCheckingChange(false) fires from timeout', async () => {
+    const seq: boolean[] = [];
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => seq.push(v),
+        onClose: () => {},
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(seq[0], true,  'first call must be onCheckingChange(true) — check started');
+    assert.equal(seq[1], false, 'second call must be onCheckingChange(false) — timeout fired');
+
+    handle.cancel();
+  });
+
+  it('isLive() returns false after the timeout fires', async () => {
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(handle.isLive(), false, 'isLive() must be false once the safety-net has fired');
+  });
+});
+
+// ── T2: late resolve after timeout — stale callbacks suppressed ───────────────
+
+describe('startCheckedOpenEffect T2 — late resolve after timeout: stale callbacks are NOT fired', () => {
+  it('does not call onCheckingChange(false) a second time when getActiveSession resolves late', async () => {
+    const d = deferred<{ session: null }>();
+    const checkingValues: boolean[] = [];
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => checkingValues.push(v),
+        onClose: () => {},
+        getActiveSession: () => d.promise,
+      },
+      { timeoutMs: 5 },
+    );
+
+    // Let the timeout fire.
+    await waitFor(20);
+    const countAfterTimeout = checkingValues.length;
+
+    // Simulate the stalled network call finally returning.
+    d.resolve({ session: null });
+    await waitFor(5);
+
+    assert.equal(
+      checkingValues.length,
+      countAfterTimeout,
+      'no additional onCheckingChange calls must fire after the late resolve (stale guard)',
+    );
+
+    handle.cancel();
+  });
+
+  it('does not call onClose() a second time when getActiveSession resolves late', async () => {
+    const d = deferred<{ session: null }>();
+    let closeCount = 0;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => { closeCount++; },
+        getActiveSession: () => d.promise,
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+    const closesAfterTimeout = closeCount;
+
+    d.resolve({ session: null });
+    await waitFor(5);
+
+    assert.equal(
+      closeCount,
+      closesAfterTimeout,
+      'onClose must not fire again after late resolve — the timeout already dismissed',
+    );
+
+    handle.cancel();
+  });
+
+  it('does not call onModalShouldOpen after the timeout marks the effect dead', async () => {
+    const d = deferred<{ session: null }>();
+    let modalOpenCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => d.promise,
+        onModalShouldOpen: () => { modalOpenCalled = true; },
+      },
+      { timeoutMs: 5 },
+    );
+
+    await waitFor(20);
+
+    // The timeout has fired, live=false. Now the network call returns.
+    d.resolve({ session: null });
+    await waitFor(5);
+
+    assert.equal(
+      modalOpenCalled,
+      false,
+      'onModalShouldOpen must NOT fire when the effect was already killed by timeout',
+    );
+
+    handle.cancel();
+  });
+});
+
+// ── T3: normal fast path — timeout cleared, button resets correctly ───────────
+
+describe('startCheckedOpenEffect T3 — fast getActiveSession: normal happy path', () => {
+  it('calls onCheckingChange(false) exactly once (from finally, not from timeout)', async () => {
+    const checkingValues: boolean[] = [];
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => checkingValues.push(v),
+        onClose: () => {},
+        getActiveSession: () => Promise.resolve({ session: null }),
+      },
+      { timeoutMs: 200 }, // long enough that it will NOT fire during the test
+    );
+
+    await waitFor(20);
+
+    const falseCount = checkingValues.filter((v) => v === false).length;
+    assert.equal(
+      falseCount,
+      1,
+      `onCheckingChange(false) must be called exactly once; got sequence: [${checkingValues}]`,
+    );
+
+    handle.cancel();
+  });
+
+  it('does NOT call onClose when the network resolves quickly (no redirect)', async () => {
+    let closeCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => { closeCalled = true; },
+        getActiveSession: () => Promise.resolve({ session: null }),
+      },
+      { timeoutMs: 200 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(closeCalled, false, 'safety-net onClose must NOT fire when network was fast');
+
+    handle.cancel();
+  });
+
+  it('calls onModalShouldOpen when no active session is found before timeout', async () => {
+    let modalOpenCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => Promise.resolve({ session: null }),
+        onModalShouldOpen: () => { modalOpenCalled = true; },
+      },
+      { timeoutMs: 200 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(modalOpenCalled, true, 'onModalShouldOpen must fire on the no-session fast path');
+
+    handle.cancel();
+  });
+
+  it('calls onStarted (not onModalShouldOpen) when an active session is found', async () => {
+    let modalOpenCalled = false;
+    let startedId = '';
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => Promise.resolve({ session: { id: 'sess-fast' } }),
+        onStarted: (id) => { startedId = id; },
+        onModalShouldOpen: () => { modalOpenCalled = true; },
+      },
+      { timeoutMs: 200 },
+    );
+
+    await waitFor(20);
+
+    assert.equal(modalOpenCalled, false, 'onModalShouldOpen must NOT fire when an active session redirects');
+    assert.equal(startedId, 'sess-fast', 'onStarted must be called with the session id');
+
+    handle.cancel();
+  });
+});
+
+// ── T4: cancel() before timeout ───────────────────────────────────────────────
+
+describe('startCheckedOpenEffect T4 — cancel() called before timeout fires', () => {
+  it('calls onCheckingChange(false) synchronously on cancel', () => {
+    const checkingValues: boolean[] = [];
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => checkingValues.push(v),
+        onClose: () => {},
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 500 },
+    );
+
+    handle.cancel();
+
+    assert.ok(
+      checkingValues.includes(false),
+      'cancel() must call onCheckingChange(false) immediately',
+    );
+    assert.equal(handle.isLive(), false, 'isLive() must be false after cancel()');
+  });
+
+  it('does NOT call onClose when cancel() fires before the timeout', async () => {
+    let closeCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => { closeCalled = true; },
+        getActiveSession: neverResolves,
+      },
+      { timeoutMs: 30 },
+    );
+
+    handle.cancel();
+
+    // Wait past the would-have-been timeout to confirm it was cleared.
+    await waitFor(50);
+
+    assert.equal(closeCalled, false, 'cancel() must clear the timer so onClose is never called');
+  });
+});
+
+// ── T5: cancel() + late resolve — no phantom callbacks ───────────────────────
+
+describe('startCheckedOpenEffect T5 — cancel() then late resolve: no phantom callbacks', () => {
+  it('does not fire additional onCheckingChange or onClose after cancel + late resolve', async () => {
+    const d = deferred<{ session: null }>();
+    const checkingAfterCancel: boolean[] = [];
+    let closeCount = 0;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => checkingAfterCancel.push(v),
+        onClose: () => { closeCount++; },
+        getActiveSession: () => d.promise,
+      },
+      { timeoutMs: 500 },
+    );
+
+    // Cancel immediately (simulates visible flipping back to false).
+    handle.cancel();
+
+    const checkingAtCancel = checkingAfterCancel.length;
+    const closeAtCancel = closeCount;
+
+    // Simulate the in-flight network call returning after cancel.
+    d.resolve({ session: null });
+    await waitFor(10);
+
+    assert.equal(
+      checkingAfterCancel.length,
+      checkingAtCancel,
+      'no additional onCheckingChange calls after cancel + late resolve',
+    );
+    assert.equal(
+      closeCount,
+      closeAtCancel,
+      'no additional onClose calls after cancel + late resolve',
+    );
+  });
+
+  it('does not call onModalShouldOpen after cancel + late resolve', async () => {
+    const d = deferred<{ session: null }>();
+    let modalOpenCalled = false;
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => d.promise,
+        onModalShouldOpen: () => { modalOpenCalled = true; },
+      },
+      { timeoutMs: 500 },
+    );
+
+    handle.cancel();
+
+    d.resolve({ session: null });
+    await waitFor(10);
+
+    assert.equal(
+      modalOpenCalled,
+      false,
+      'onModalShouldOpen must NOT fire after cancel() even when the network call eventually resolves',
+    );
   });
 });

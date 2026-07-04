@@ -19,7 +19,7 @@ import {
   type TrustedContact,
   type SafeReturnContactInput,
 } from '../../services/safeReturn';
-import { runOpenEffect } from './SafeReturnSetupSheet.openEffect';
+import { startCheckedOpenEffect } from './SafeReturnSetupSheet.openEffect';
 import { runHandleStart } from './SafeReturnSetupSheet.handleStart';
 import { runContactLoad } from './SafeReturnSetupSheet.contactLoad';
 import {
@@ -92,70 +92,32 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       return;
     }
 
-    // `live` becomes false when the effect is either cancelled (visible flipped
-    // back to false / unmount) OR when the pre-check timeout fires. Once false,
-    // no state mutations or caller callbacks should proceed.
-    let live = true;
+    // startCheckedOpenEffect owns the safety-net 5 s timeout + onCheckingChange
+    // signalling + live-flag guard. The handle returned here lets us (a) query
+    // liveness from the contact-loading continuation and (b) cancel from the
+    // cleanup function below.
+    const handle = startCheckedOpenEffect({
+      onCheckingChange,
+      onStarted,
+      onClose,
+      getActiveSession,
+      onModalShouldOpen: () => {
+        // No active session (or error) — open the form and load contacts.
+        // handle.isLive() guards the async continuation below; by the time
+        // this callback fires the pre-check is already resolved/live.
+        setModalVisible(true);
+        setContactsLoading(true);
+        runContactLoad({ getTrustedContacts, listEmergencyContacts }).then((contactResult) => {
+          if (handle.isLive()) {
+            setTrustedContacts(contactResult.trustedContacts);
+            setEmergencyContacts(contactResult.emergencyContacts);
+            setContactsLoading(false);
+          }
+        });
+      },
+    });
 
-    // Safety net: if getActiveSession stalls (e.g. app goes to background
-    // mid-check and the network request hangs), reset the checking indicator
-    // and dismiss after 5 s so the trigger button never appears permanently
-    // stuck. Calling onClose() here resets the parent's visible flag so the
-    // user can tap the button again to retry.
-    const checkTimeoutId = setTimeout(() => {
-      if (live) {
-        live = false;
-        onCheckingChange?.(false);
-        onClose();
-      }
-    }, 5_000);
-
-    (async () => {
-      onCheckingChange?.(true);
-
-      // fail-open default — if runOpenEffect ever throws despite its own
-      // internal try/catch, we still open the form rather than blocking the user.
-      let modalShouldOpen = true;
-      try {
-        ({ modalShouldOpen } = await runOpenEffect({
-          // Guard with `live` so a stale in-flight effect (cancelled or timed
-          // out before getActiveSession resolved) cannot fire callbacks.
-          onStarted: (id) => { if (live) onStarted?.(id); },
-          onClose: () => { if (live) onClose(); },
-          getActiveSession,
-        }));
-      } catch {
-        // runOpenEffect has its own try/catch, but guard defensively so the
-        // overlay cannot get permanently stuck if it ever throws.
-      } finally {
-        clearTimeout(checkTimeoutId);
-        // Always reset the checking indicator while the effect is still live.
-        // The cleanup return () => { … } handles the cancelled path.
-        if (live) onCheckingChange?.(false);
-      }
-
-      if (!live) return;
-
-      if (!modalShouldOpen) return; // redirected to an active session
-
-      // No active session (or error) — open the form and load contacts.
-      setModalVisible(true);
-      setContactsLoading(true);
-      const contactResult = await runContactLoad({ getTrustedContacts, listEmergencyContacts });
-      if (live) {
-        setTrustedContacts(contactResult.trustedContacts);
-        setEmergencyContacts(contactResult.emergencyContacts);
-        setContactsLoading(false);
-      }
-    })();
-
-    return () => {
-      live = false;
-      clearTimeout(checkTimeoutId);
-      // If visible was toggled off while the pre-check was still in flight,
-      // reset the caller's checking indicator so it doesn't stay stuck.
-      onCheckingChange?.(false);
-    };
+    return handle.cancel;
   }, [visible]);
 
   // Auto-enable TC when escalation >= 1

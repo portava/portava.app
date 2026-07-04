@@ -1,15 +1,21 @@
 /**
  * SafeReturnSetupSheet — open-effect logic.
  *
- * Extracted from the component's `useEffect([visible])` so that the three
- * critical branches can be covered by node:test without a React renderer:
+ * Extracted from the component's `useEffect([visible])` so that the critical
+ * branches can be covered by node:test without a React renderer:
  *
+ * `runOpenEffect` (pure, no timeout):
  *   A) active session exists   → call onStarted(id) + onClose, leave modal hidden
  *   B) no active session       → signal that the modal should open (form path)
  *   C) getActiveSession throws → signal that the modal should open (fail-open)
  *
- * The function is deliberately dependency-free (no React, no React Native, no
- * supabase) so it can be imported by node:test + tsx/esm with no shimming.
+ * `startCheckedOpenEffect` (full effect with safety-net timeout):
+ *   Wraps runOpenEffect with a configurable safety-net timeout so that the
+ *   trigger button cannot get permanently stuck when the network stalls.
+ *   Returns a handle with `cancel()` (cleanup) and `isLive()` (state query).
+ *
+ * Both exports are deliberately dependency-free (no React, no React Native, no
+ * supabase) so they can be imported by node:test + tsx/esm with no shimming.
  *
  * Run tests with:
  *   node --import tsx/esm --test \
@@ -59,4 +65,110 @@ export async function runOpenEffect(opts: OpenEffectCallbacks): Promise<OpenEffe
     // Network / server error — fail-open so the user can still attempt setup.
     return { modalShouldOpen: true };
   }
+}
+
+// ── startCheckedOpenEffect ─────────────────────────────────────────────────────
+
+export interface CheckedOpenEffectCallbacks {
+  /** Called with `true` when the check starts and `false` when it resolves. */
+  onCheckingChange?: (checking: boolean) => void;
+  onStarted?: (sessionId: string) => void;
+  onClose: () => void;
+  getActiveSession: () => Promise<{ session: ActiveSession | null }>;
+  /**
+   * Called when no active session was found and the form modal should become
+   * visible. This is the point where the component should set `modalVisible`
+   * and start loading contacts.
+   */
+  onModalShouldOpen?: () => void;
+}
+
+export interface CheckedOpenEffectOptions {
+  /**
+   * Safety-net timeout in milliseconds. If `getActiveSession` doesn't resolve
+   * before this fires, `onCheckingChange(false)` + `onClose()` are called so
+   * the trigger button never appears permanently stuck. Defaults to 5 000 ms.
+   */
+  timeoutMs?: number;
+}
+
+export interface CheckedOpenEffectHandle {
+  /**
+   * Cancel the in-flight effect — call from the useEffect cleanup function
+   * (i.e. when `visible` flips back to false or the component unmounts).
+   * Clears the safety-net timer, prevents any pending callbacks from firing,
+   * and calls `onCheckingChange(false)` to reset the caller's indicator.
+   */
+  cancel: () => void;
+  /**
+   * Returns whether the effect is still live (not yet cancelled or timed out).
+   * Useful for callers that do async work after `onModalShouldOpen` fires and
+   * need to guard subsequent state mutations.
+   */
+  isLive: () => boolean;
+}
+
+/**
+ * Full open-effect runner: wraps `runOpenEffect` with a safety-net timeout so
+ * the trigger button cannot get permanently stuck when the network stalls.
+ *
+ * Lifecycle:
+ *   1. Immediately calls `onCheckingChange(true)`.
+ *   2. Awaits `runOpenEffect` (which calls `getActiveSession`).
+ *   3a. If `getActiveSession` resolves before `timeoutMs`:
+ *       – Clears the timer.
+ *       – Calls `onCheckingChange(false)`.
+ *       – Calls `onModalShouldOpen()` when no active session was found.
+ *   3b. If `timeoutMs` elapses first (stalled network):
+ *       – Sets `live = false` so the in-flight promise cannot fire callbacks.
+ *       – Calls `onCheckingChange(false)` + `onClose()`.
+ *
+ * @returns A handle with `cancel()` and `isLive()`. Pass `handle.cancel` as
+ *   the useEffect cleanup function.
+ */
+export function startCheckedOpenEffect(
+  callbacks: CheckedOpenEffectCallbacks,
+  { timeoutMs = 5_000 }: CheckedOpenEffectOptions = {},
+): CheckedOpenEffectHandle {
+  const { onCheckingChange, onStarted, onClose, getActiveSession, onModalShouldOpen } = callbacks;
+  let live = true;
+
+  const timeoutId = setTimeout(() => {
+    if (live) {
+      live = false;
+      onCheckingChange?.(false);
+      onClose();
+    }
+  }, timeoutMs);
+
+  (async () => {
+    onCheckingChange?.(true);
+
+    let modalShouldOpen = true;
+    try {
+      ({ modalShouldOpen } = await runOpenEffect({
+        onStarted: (id) => { if (live) onStarted?.(id); },
+        onClose: () => { if (live) onClose(); },
+        getActiveSession,
+      }));
+    } catch {
+      // runOpenEffect has its own try/catch; this guard prevents a permanently
+      // stuck indicator in the unlikely event it throws anyway.
+    } finally {
+      clearTimeout(timeoutId);
+      if (live) onCheckingChange?.(false);
+    }
+
+    if (!live) return;
+    if (modalShouldOpen) onModalShouldOpen?.();
+  })();
+
+  return {
+    cancel: () => {
+      live = false;
+      clearTimeout(timeoutId);
+      onCheckingChange?.(false);
+    },
+    isLive: () => live,
+  };
 }
